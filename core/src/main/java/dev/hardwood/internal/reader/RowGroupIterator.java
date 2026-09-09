@@ -23,7 +23,6 @@ import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.ExceptionContext.ReadContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.predicate.FilterDecision;
@@ -1444,7 +1443,7 @@ public class RowGroupIterator {
     private int validateColumn(InputFile inputFile, FileSchema fileSchema, int originalIndex) {
         ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
         try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
-                .column(ReadContext.UNKNOWN_ROW_GROUP, refColumn.fieldPath())) {
+                .column(refColumn.fieldPath())) {
             return compareColumn(fileSchema, refColumn);
         }
     }
@@ -1519,7 +1518,8 @@ public class RowGroupIterator {
     private static SchemaIncompatibleException chunkMismatch(InputFile inputFile, int rowGroupIndex,
             FieldPath column, String message, Object... args) {
         try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
-                .column(rowGroupIndex, column)) {
+                .rowGroup(rowGroupIndex)
+                .column(column)) {
             return new SchemaIncompatibleException(String.format(message, args));
         }
     }

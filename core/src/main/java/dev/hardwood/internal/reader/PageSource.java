@@ -94,7 +94,8 @@ public class PageSource {
                 // is inside it because deciding whether a page is coming reads
                 // the headers that say so.
                 try (ReadScope.Scope scope = ReadScope.file(getCurrentFileName())
-                        .column(getCurrentRowGroupIndex(), columnPath())) {
+                        .rowGroup(getCurrentRowGroupIndex())
+                        .column(columnPath())) {
                     if (currentPlan.hasNext()) {
                         return currentPlan.next();
                     }
@@ -119,7 +120,8 @@ public class PageSource {
             // sits in — and the work item names the file and row group that
             // `getCurrentRowGroupIndex` cannot until the plan is in hand.
             try (ReadScope.Scope scope = ReadScope.file(workItem.inputFile().name())
-                    .column(workItem.rowGroupIndex(), columnPath())) {
+                    .rowGroup(workItem.rowGroupIndex())
+                    .column(columnPath())) {
                 plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             }
             currentPlan = plan.isEmpty() ? null : plan.pages();

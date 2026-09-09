@@ -266,8 +266,9 @@ public class PageFilterEvaluator {
     private static ReadScope.Scope at(IndexLocation location, ColumnChunk columnChunk,
             int columnIndex) {
         return columnChunk.metaData() == null
-                ? ReadScope.column(location.rowGroupIndex(), "#" + columnIndex)
-                : ReadScope.column(location.rowGroupIndex(), columnChunk.metaData().pathInSchema());
+                ? ReadScope.rowGroup(location.rowGroupIndex()).column("#" + columnIndex)
+                : ReadScope.rowGroup(location.rowGroupIndex())
+                        .column(columnChunk.metaData().pathInSchema());
     }
 
     /// The column chunk whose page index is being parsed, minus the column: file and row group

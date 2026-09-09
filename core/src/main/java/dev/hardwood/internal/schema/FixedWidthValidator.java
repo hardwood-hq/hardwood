@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.schema;
 
-import dev.hardwood.internal.ExceptionContext.ReadContext;
 import dev.hardwood.internal.ReadScope;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.SchemaIncompatibleException;
@@ -58,8 +57,7 @@ public final class FixedWidthValidator {
         }
         // The file comes from the scope the caller is already in; only the column is
         // narrowed here, so the failure names both without either being passed.
-        try (ReadScope.Scope scope = ReadScope.column(
-                ReadContext.UNKNOWN_ROW_GROUP, column.fieldPath())) {
+        try (ReadScope.Scope scope = ReadScope.column(column.fieldPath())) {
             throw width == null
                     ? new SchemaIncompatibleException("FIXED_LEN_BYTE_ARRAY declares no type length")
                     : new SchemaIncompatibleException(String.format(

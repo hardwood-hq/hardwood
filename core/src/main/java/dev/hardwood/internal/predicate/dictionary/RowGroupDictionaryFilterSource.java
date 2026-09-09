@@ -118,7 +118,8 @@ public final class RowGroupDictionaryFilterSource {
         requireSameFile(columnChunk, columnIndex);
 
         try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
-                .column(rowGroupIndex, columnPath(columnIndex))
+                .rowGroup(rowGroupIndex)
+                .column(columnPath(columnIndex))
                 .region(Region.DICTIONARY_PAGE, columnChunk.chunkStartOffset())) {
             return readDictionaryPage(columnChunk, metaData, columnIndex);
         }

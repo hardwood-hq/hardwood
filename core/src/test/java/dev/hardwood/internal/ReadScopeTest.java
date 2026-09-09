@@ -26,7 +26,7 @@ class ReadScopeTest {
     @Test
     void aFailureRaisedInAScopeNamesTheFileColumnAndRegion() {
         try (ReadScope.Scope file = ReadScope.file("f.parquet");
-             ReadScope.Scope column = ReadScope.column(2, "id");
+             ReadScope.Scope column = ReadScope.rowGroup(2).column("id");
              ReadScope.Scope region = ReadScope.region(Region.DICTIONARY_PAGE, 4096)) {
             assertThat(new ParquetReadException("the page is not a page"))
                     .hasMessage("[f.parquet] row group 2, column id, dictionary page at byte 4096"
@@ -61,7 +61,7 @@ class ReadScopeTest {
     @Test
     void aRegionWithNoAddressNamesNoByte() {
         try (ReadScope.Scope file = ReadScope.file("f.parquet");
-             ReadScope.Scope column = ReadScope.column(1, "amount");
+             ReadScope.Scope column = ReadScope.rowGroup(1).column("amount");
              ReadScope.Scope page = ReadScope.region(Region.DATA_PAGE)) {
             assertThat(new ParquetReadException("bad run"))
                     .hasMessage("[f.parquet] row group 1, column amount, data page — bad run");
@@ -74,7 +74,7 @@ class ReadScopeTest {
     @Test
     void anUnsupportedFileIsNamedButNeverPositioned() {
         try (ReadScope.Scope file = ReadScope.file("f.parquet");
-             ReadScope.Scope column = ReadScope.column(0, "amount");
+             ReadScope.Scope column = ReadScope.rowGroup(0).column("amount");
              ReadScope.Scope region = ReadScope.region(Region.DATA_PAGE, 900)) {
             assertThat(new UnsupportedOperationException(
                     ReadScope.fileHere() + "no codec here"))
@@ -128,7 +128,7 @@ class ReadScopeTest {
     void aResumedPlaceDescribesWhereTheWorkCameFrom() {
         ReadScope.Place page;
         try (ReadScope.Scope file = ReadScope.file("f.parquet");
-             ReadScope.Scope column = ReadScope.column(3, "ts");
+             ReadScope.Scope column = ReadScope.rowGroup(3).column("ts");
              ReadScope.Scope region = ReadScope.region(Region.BLOOM_FILTER, 720)) {
             page = ReadScope.current();
         }
@@ -170,6 +170,41 @@ class ReadScopeTest {
         assertThat(ReadScope.fileHere()).isEmpty();
     }
 
+    /// Which column is being read and where in a file the read is are independent, so a
+    /// worker that holds one column across several files enters it once and moves the file
+    /// underneath it.
+    @Test
+    void enteringAFileKeepsTheColumnItIsBeingReadFor() {
+        try (ReadScope.Scope column = ReadScope.column("amount")) {
+            try (ReadScope.Scope first = ReadScope.file("a.parquet").rowGroup(0)) {
+                assertThat(new ParquetReadException("bad"))
+                        .hasMessage("[a.parquet] row group 0, column amount — bad");
+            }
+            try (ReadScope.Scope second = ReadScope.file("b.parquet").rowGroup(3)) {
+                assertThat(new ParquetReadException("bad"))
+                        .hasMessage("[b.parquet] row group 3, column amount — bad");
+            }
+        }
+    }
+
+    /// The parts of a position nest, so entering a coarser one drops the finer ones: they
+    /// described somewhere else, and a row group carried into the next file would name a
+    /// row group that read nothing.
+    @Test
+    void enteringAFileDropsWhereInThePreviousFileTheReadWas() {
+        try (ReadScope.Scope first = ReadScope.file("a.parquet")
+                .rowGroup(2)
+                .region(Region.DATA_PAGE, 900)) {
+            try (ReadScope.Scope second = ReadScope.file("b.parquet")) {
+                assertThat(new ParquetReadException("bad")).hasMessage("[b.parquet] bad");
+            }
+            try (ReadScope.Scope third = ReadScope.rowGroup(5)) {
+                assertThat(new ParquetReadException("bad"))
+                        .hasMessage("[a.parquet] row group 5 — bad");
+            }
+        }
+    }
+
     /// A read is entered all at once and left all at once: the narrowing methods extend the
     /// scope already opened rather than opening more, so one place is restored on close
     /// however many were chained.
@@ -177,7 +212,8 @@ class ReadScopeTest {
     void aChainedScopeNarrowsOnceAndRestoresOnce() {
         try (ReadScope.Scope outer = ReadScope.file("outer.parquet")) {
             try (ReadScope.Scope scope = ReadScope.file("f.parquet")
-                    .column(2, "id")
+                    .rowGroup(2)
+                    .column("id")
                     .region(Region.DICTIONARY_PAGE, 4096)) {
                 assertThat(new ParquetReadException("bad"))
                         .hasMessage("[f.parquet] row group 2, column id, dictionary page at byte"

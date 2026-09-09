@@ -87,7 +87,8 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         requireSameFile(columnChunk, columnIndex);
 
         try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
-                .column(rowGroupIndex, columnPath(columnIndex))
+                .rowGroup(rowGroupIndex)
+                .column(columnPath(columnIndex))
                 .region(Region.BLOOM_FILTER, offset)) {
             return readFilterAt(metaData, offset);
         }

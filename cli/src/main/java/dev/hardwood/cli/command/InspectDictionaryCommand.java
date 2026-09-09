@@ -182,7 +182,8 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             ColumnChunk chunk, HardwoodContextImpl context, String fileName, int rowGroupIndex,
             long dictionaryOffset) {
         try (ReadScope.Scope scope = ReadScope.file(fileName)
-                .column(rowGroupIndex, columnSchema.name())
+                .rowGroup(rowGroupIndex)
+                .column(columnSchema.name())
                 .region(Region.DICTIONARY_PAGE, dictionaryOffset)) {
             return DictionaryParser.parse(dictRegion, columnSchema, chunk.metaData(), context);
         }
