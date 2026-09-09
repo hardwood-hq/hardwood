@@ -16,11 +16,12 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.function.IntFunction;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -137,10 +138,12 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::get);
         }
+        int projCol = listDesc.firstLeafProjCol();
         if (ValueConverter.isStringLeaf(elementSchema)) {
-            return new LeafList<>(raw -> raw, true);
+            return new LeafList<>(pos -> batch.getString(projCol, pos));
         }
-        return new LeafList<>(raw -> ValueConverter.convertValue(raw, elementSchema));
+        return new LeafList<>(pos ->
+                ValueConverter.convertValue(batch.getValue(projCol, pos), elementSchema));
     }
 
     @Override
@@ -174,7 +177,8 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::getRaw);
         }
-        return new LeafList<>(raw -> raw);
+        int projCol = listDesc.firstLeafProjCol();
+        return new LeafList<>(pos -> batch.getValue(projCol, pos));
     }
 
     // ==================== Primitive Type Accessors ====================
@@ -195,12 +199,14 @@ final class PqListImpl implements PqList {
         // plain FLOAT is a direct cast. Ruling out FLOAT first lets the shared guard name
         // an element that is neither, rather than leaving it to the cast below — and it
         // decides once per view, as the element's annotation is decided once.
+        int projCol = listDesc.firstLeafProjCol();
         if (elementSchema instanceof SchemaNode.PrimitiveNode prim
                 && prim.type() != PhysicalType.FLOAT) {
             batch.requireFloatAccess(prim);
-            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
+            return new LeafList<>(pos ->
+                    ((BinaryBatchValues) batch.valueArrays[projCol]).float16At(pos));
         }
-        return new LeafList<>(raw -> (Float) raw);
+        return new LeafList<>(pos -> ((float[]) batch.valueArrays[projCol])[pos]);
     }
 
     @Override
@@ -210,56 +216,100 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<Boolean> booleans() {
-        return new LeafList<>(raw -> (Boolean) raw);
+        int projCol = listDesc.firstLeafProjCol();
+        return new LeafList<>(pos -> ((boolean[]) batch.valueArrays[projCol])[pos]);
     }
 
     // ==================== Object Type Accessors ====================
 
     @Override
     public List<String> strings() {
-        return new LeafList<>(raw -> (String) raw, true);
+        int projCol = listDesc.firstLeafProjCol();
+        return new LeafList<>(pos -> batch.getString(projCol, pos));
     }
 
     @Override
     public List<byte[]> binaries() {
-        return new LeafList<>(raw -> (byte[]) raw);
+        int projCol = listDesc.firstLeafProjCol();
+        return new LeafList<>(pos -> batch.getBinary(projCol, pos));
     }
 
     @Override
     public List<LocalDate> dates() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
+        int projCol = listDesc.firstLeafProjCol();
+        requirePrimitiveElement();
+        return new LeafList<>(pos -> LogicalTypeConverter.intToDate(
+                ((int[]) batch.valueArrays[projCol])[pos]));
     }
 
     @Override
     public List<LocalTime> times() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
+        int projCol = listDesc.firstLeafProjCol();
+        SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        LogicalType.TimeUnit unit = ((LogicalType.TimeType) leaf.logicalType()).unit();
+        if (leaf.type() == PhysicalType.INT32) {
+            return new LeafList<>(pos -> LogicalTypeConverter.longToTime(
+                    ((int[]) batch.valueArrays[projCol])[pos], unit));
+        }
+        return new LeafList<>(pos -> LogicalTypeConverter.longToTime(
+                ((long[]) batch.valueArrays[projCol])[pos], unit));
     }
 
     @Override
     public List<Instant> timestamps() {
         TimestampAccessorKind.require(elementSchema, true);
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
+        int projCol = listDesc.firstLeafProjCol();
+        SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        if (leaf.logicalType() == null && leaf.type() == PhysicalType.INT96) {
+            return new LeafList<>(pos -> LogicalTypeConverter.int96ToInstant(
+                    batch.getBinary(projCol, pos)));
+        }
+        LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
+        return new LeafList<>(pos -> LogicalTypeConverter.longToTimestamp(
+                ((long[]) batch.valueArrays[projCol])[pos], unit));
     }
 
     @Override
     public List<LocalDateTime> localTimestamps() {
         TimestampAccessorKind.require(elementSchema, false);
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDateTime.class));
+        int projCol = listDesc.firstLeafProjCol();
+        LogicalType.TimeUnit unit =
+                ((LogicalType.TimestampType) requirePrimitiveElement().logicalType()).unit();
+        return new LeafList<>(pos -> LogicalTypeConverter.longToLocalTimestamp(
+                ((long[]) batch.valueArrays[projCol])[pos], unit));
     }
 
     @Override
     public List<BigDecimal> decimals() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
+        int projCol = listDesc.firstLeafProjCol();
+        SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        int scale = ((LogicalType.DecimalType) leaf.logicalType()).scale();
+        return switch (leaf.type()) {
+            case INT32 -> new LeafList<>(pos -> LogicalTypeConverter.longToDecimal(
+                    ((int[]) batch.valueArrays[projCol])[pos], scale));
+            case INT64 -> new LeafList<>(pos -> LogicalTypeConverter.longToDecimal(
+                    ((long[]) batch.valueArrays[projCol])[pos], scale));
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> new LeafList<>(pos ->
+                    LogicalTypeConverter.bytesToDecimal(batch.getBinary(projCol, pos), scale));
+            default -> throw new IllegalArgumentException(
+                    "Unexpected physical type for DECIMAL: " + leaf.type());
+        };
     }
 
     @Override
     public List<UUID> uuids() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
+        int projCol = listDesc.firstLeafProjCol();
+        requirePrimitiveElement();
+        return new LeafList<>(pos -> LogicalTypeConverter.bytesToUuid(
+                batch.getBinary(projCol, pos)));
     }
 
     @Override
     public List<PqInterval> intervals() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
+        int projCol = listDesc.firstLeafProjCol();
+        requirePrimitiveElement();
+        return new LeafList<>(pos -> LogicalTypeConverter.bytesToInterval(
+                batch.getBinary(projCol, pos)));
     }
 
     // ==================== Nested Type Accessors ====================
@@ -538,19 +588,26 @@ final class PqListImpl implements PqList {
     /// Lazy [List] view over the list's leaf-column values. `size()` is the
     /// list length; `get(int)` decodes one element on demand via `converter`,
     /// short-circuiting nulls before the converter runs.
+    /// The element column's leaf schema, for the accessors that decode a logical
+    /// type from it.
+    ///
+    /// A list whose elements are a group has no such leaf, and every one of those
+    /// accessors would otherwise read the group's first leaf column and decode
+    /// whatever it holds. The cast is what stops that, so it runs even where the
+    /// leaf itself is not needed.
+    private SchemaNode.PrimitiveNode requirePrimitiveElement() {
+        return (SchemaNode.PrimitiveNode) elementSchema;
+    }
+
+    /// Lazy [List] view over a leaf column's elements. `reader` is handed the
+    /// element's position in the leaf column and reads it out of the column array
+    /// itself, so an accessor that returns a decoded type decodes straight from the
+    /// stored primitive.
     private final class LeafList<T> extends AbstractList<T> {
-        private final Function<Object, T> converter;
-        /// When true, fetch the interned `String` via `getString` (one instance
-        /// per chunk) instead of the raw value; the converter then just casts.
-        private final boolean internString;
+        private final IntFunction<T> reader;
 
-        LeafList(Function<Object, T> converter) {
-            this(converter, false);
-        }
-
-        LeafList(Function<Object, T> converter, boolean internString) {
-            this.converter = converter;
-            this.internString = internString;
+        LeafList(IntFunction<T> reader) {
+            this.reader = reader;
         }
 
         @Override
@@ -561,13 +618,11 @@ final class PqListImpl implements PqList {
         @Override
         public T get(int index) {
             Objects.checkIndex(index, size());
-            int projCol = listDesc.firstLeafProjCol();
             int pos = start + index;
-            if (batch.isElementNull(projCol, pos)) {
+            if (batch.isElementNull(listDesc.firstLeafProjCol(), pos)) {
                 return null;
             }
-            Object raw = internString ? batch.getString(projCol, pos) : batch.getValue(projCol, pos);
-            return converter.apply(raw);
+            return reader.apply(pos);
         }
     }
 

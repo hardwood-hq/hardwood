@@ -12,13 +12,15 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
 
-/// The `SchemaNode`-aware decode the `PqStruct`, `PqList` and `PqMap` flyweights
-/// share, and the predicate that tells them which leaves skip it.
+/// The `SchemaNode`-aware decode behind the generic accessors on the `PqStruct`,
+/// `PqList` and `PqMap` flyweights, and the predicate that tells them which leaves
+/// skip it.
 ///
 /// The decode table itself lives in [LogicalTypeConverter], which knows only a
 /// physical type and an annotation. What is added here is the `SchemaNode`
 /// unwrap, the INT96 convention, and the group short-circuit the flyweights
-/// need.
+/// need. A typed accessor names the type it returns and reads the stored
+/// primitive directly, so it does not come through here.
 final class ValueConverter {
 
     private ValueConverter() {
@@ -62,15 +64,6 @@ final class ValueConverter {
             return rawValue;
         }
         return convertPrimitive(rawValue, (SchemaNode.PrimitiveNode) schema);
-    }
-
-    /// Decode a leaf value for a typed accessor, cast to the type that accessor
-    /// promised its caller.
-    static <T> T convertLogicalType(Object rawValue, SchemaNode schema, Class<T> expectedClass) {
-        if (rawValue == null) {
-            return null;
-        }
-        return expectedClass.cast(convertPrimitive(rawValue, (SchemaNode.PrimitiveNode) schema));
     }
 
     /// The one decode a leaf goes through, so a struct field, a list element and a

@@ -14,14 +14,17 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
+import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
 ///
@@ -140,80 +143,80 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public LocalDate getDate(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalDate.class);
+        return readDate(lookupPrimitive(name));
     }
 
     @Override
     public LocalDate getDate(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), LocalDate.class);
+        return readDate(primitiveAt(fieldIndex));
     }
 
     @Override
     public LocalTime getTime(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalTime.class);
+        return readTime(lookupPrimitive(name));
     }
 
     @Override
     public LocalTime getTime(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), LocalTime.class);
+        return readTime(primitiveAt(fieldIndex));
     }
 
     @Override
     public Instant getTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
         TimestampAccessorKind.require(child.schema(), true);
-        return readLogicalType(child, Instant.class);
+        return readTimestamp(child);
     }
 
     @Override
     public Instant getTimestamp(int fieldIndex) {
         TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
         TimestampAccessorKind.require(child.schema(), true);
-        return readLogicalType(child, Instant.class);
+        return readTimestamp(child);
     }
 
     @Override
     public LocalDateTime getLocalTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
         TimestampAccessorKind.require(child.schema(), false);
-        return readLogicalType(child, LocalDateTime.class);
+        return readLocalTimestamp(child);
     }
 
     @Override
     public LocalDateTime getLocalTimestamp(int fieldIndex) {
         TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
         TimestampAccessorKind.require(child.schema(), false);
-        return readLogicalType(child, LocalDateTime.class);
+        return readLocalTimestamp(child);
     }
 
     @Override
     public BigDecimal getDecimal(String name) {
-        return readLogicalType(lookupPrimitive(name), BigDecimal.class);
+        return readDecimal(lookupPrimitive(name));
     }
 
     @Override
     public BigDecimal getDecimal(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), BigDecimal.class);
+        return readDecimal(primitiveAt(fieldIndex));
     }
 
     @Override
     public UUID getUuid(String name) {
-        return readLogicalType(lookupPrimitive(name), UUID.class);
+        return readUuid(lookupPrimitive(name));
     }
 
     @Override
     public UUID getUuid(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), UUID.class);
+        return readUuid(primitiveAt(fieldIndex));
     }
 
     @Override
     public PqInterval getInterval(String name) {
-        return readLogicalType(lookupPrimitive(name), PqInterval.class);
+        return readInterval(lookupPrimitive(name));
     }
 
     @Override
     public PqInterval getInterval(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), PqInterval.class);
+        return readInterval(primitiveAt(fieldIndex));
     }
 
     // ==================== Nested Types ====================
@@ -375,14 +378,92 @@ final class PqStructImpl implements PqStruct {
         return batch.getBinary(projCol, idx);
     }
 
-    private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive child, Class<T> resultClass) {
+    private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return ValueConverter.convertLogicalType(
-                batch.getValue(projCol, idx), child.schema(), resultClass);
+        return LogicalTypeConverter.intToDate(((int[]) batch.valueArrays[projCol])[idx]);
+    }
+
+    private LocalTime readTime(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        SchemaNode.PrimitiveNode schema = child.schema();
+        long rawValue = schema.type() == PhysicalType.INT32
+                ? ((int[]) batch.valueArrays[projCol])[idx]
+                : ((long[]) batch.valueArrays[projCol])[idx];
+        return LogicalTypeConverter.longToTime(rawValue,
+                ((LogicalType.TimeType) schema.logicalType()).unit());
+    }
+
+    /// The [Instant] a UTC-adjusted `TIMESTAMP` field holds, or the one a legacy
+    /// `INT96` field holds by convention. The caller has already established through
+    /// [TimestampAccessorKind] that the field is the UTC-adjusted kind.
+    private Instant readTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        SchemaNode.PrimitiveNode schema = child.schema();
+        if (schema.logicalType() == null && schema.type() == PhysicalType.INT96) {
+            return LogicalTypeConverter.int96ToInstant(batch.getBinary(projCol, idx));
+        }
+        return LogicalTypeConverter.longToTimestamp(((long[]) batch.valueArrays[projCol])[idx],
+                ((LogicalType.TimestampType) schema.logicalType()).unit());
+    }
+
+    private LocalDateTime readLocalTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        return LogicalTypeConverter.longToLocalTimestamp(((long[]) batch.valueArrays[projCol])[idx],
+                ((LogicalType.TimestampType) child.schema().logicalType()).unit());
+    }
+
+    private BigDecimal readDecimal(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        SchemaNode.PrimitiveNode schema = child.schema();
+        int scale = ((LogicalType.DecimalType) schema.logicalType()).scale();
+        return switch (schema.type()) {
+            case INT32 -> LogicalTypeConverter.longToDecimal(
+                    ((int[]) batch.valueArrays[projCol])[idx], scale);
+            case INT64 -> LogicalTypeConverter.longToDecimal(
+                    ((long[]) batch.valueArrays[projCol])[idx], scale);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
+                    batch.getBinary(projCol, idx), scale);
+            default -> throw new IllegalArgumentException(
+                    "Unexpected physical type for DECIMAL: " + schema.type());
+        };
+    }
+
+    private UUID readUuid(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        return LogicalTypeConverter.bytesToUuid(batch.getBinary(projCol, idx));
+    }
+
+    private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int projCol = child.projectedCol();
+        int idx = resolveValueIndex(projCol);
+        if (batch.isElementNull(projCol, idx)) {
+            return null;
+        }
+        return LogicalTypeConverter.bytesToInterval(batch.getBinary(projCol, idx));
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {

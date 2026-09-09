@@ -15,9 +15,11 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -26,6 +28,7 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// Batch data view for nested schemas.
 ///
@@ -309,35 +312,35 @@ public final class NestedBatchDataView {
     }
 
     public LocalDate getDate(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalDate.class);
+        return readDate(lookupPrimitive(name));
     }
 
     public LocalTime getTime(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalTime.class);
+        return readTime(lookupPrimitive(name));
     }
 
     public Instant getTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         TimestampAccessorKind.require(p.schema(), true);
-        return readLogicalType(p, Instant.class);
+        return readTimestamp(p);
     }
 
     public LocalDateTime getLocalTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         TimestampAccessorKind.require(p.schema(), false);
-        return readLogicalType(p, LocalDateTime.class);
+        return readLocalTimestamp(p);
     }
 
     public BigDecimal getDecimal(String name) {
-        return readLogicalType(lookupPrimitive(name), BigDecimal.class);
+        return readDecimal(lookupPrimitive(name));
     }
 
     public UUID getUuid(String name) {
-        return readLogicalType(lookupPrimitive(name), UUID.class);
+        return readUuid(lookupPrimitive(name));
     }
 
     public PqInterval getInterval(String name) {
-        return readLogicalType(lookupPrimitive(name), PqInterval.class);
+        return readInterval(lookupPrimitive(name));
     }
 
     // ==================== Object Type Accessors (by index) ====================
@@ -361,35 +364,35 @@ public final class NestedBatchDataView {
     }
 
     public LocalDate getDate(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LocalDate.class);
+        return readDate(lookupPrimitiveByIndex(projectedIndex));
     }
 
     public LocalTime getTime(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LocalTime.class);
+        return readTime(lookupPrimitiveByIndex(projectedIndex));
     }
 
     public Instant getTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
         TimestampAccessorKind.require(p.schema(), true);
-        return readLogicalType(p, Instant.class);
+        return readTimestamp(p);
     }
 
     public LocalDateTime getLocalTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
         TimestampAccessorKind.require(p.schema(), false);
-        return readLogicalType(p, LocalDateTime.class);
+        return readLocalTimestamp(p);
     }
 
     public BigDecimal getDecimal(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), BigDecimal.class);
+        return readDecimal(lookupPrimitiveByIndex(projectedIndex));
     }
 
     public UUID getUuid(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), UUID.class);
+        return readUuid(lookupPrimitiveByIndex(projectedIndex));
     }
 
     public PqInterval getInterval(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), PqInterval.class);
+        return readInterval(lookupPrimitiveByIndex(projectedIndex));
     }
 
     // ==================== Nested Type Accessors (by name) ====================
@@ -493,15 +496,129 @@ public final class NestedBatchDataView {
         return batchIndex.getBinary(projCol, valueIdx);
     }
 
-    private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive p, Class<T> resultClass) {
+    /// The value index of `p` in the current record, or -1 when the field is null.
+    private int valueIndexOrNull(TopLevelFieldMap.FieldDesc.Primitive p) {
         int projCol = p.projectedCol();
         int valueIdx = cachedValueIndex[projCol];
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        return batchIndex.isElementNull(projCol, valueIdx) ? -1 : valueIdx;
+    }
+
+    private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
             return null;
         }
         try {
-            return ValueConverter.convertLogicalType(
-                    batchIndex.getValue(projCol, valueIdx), p.schema(), resultClass);
+            return LogicalTypeConverter.intToDate(
+                    ((int[]) batchIndex.valueArrays[p.projectedCol()])[valueIdx]);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private LocalTime readTime(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        int projCol = p.projectedCol();
+        SchemaNode.PrimitiveNode schema = p.schema();
+        try {
+            long rawValue = schema.type() == PhysicalType.INT32
+                    ? ((int[]) batchIndex.valueArrays[projCol])[valueIdx]
+                    : ((long[]) batchIndex.valueArrays[projCol])[valueIdx];
+            return LogicalTypeConverter.longToTime(rawValue,
+                    ((LogicalType.TimeType) schema.logicalType()).unit());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    /// The [Instant] a UTC-adjusted `TIMESTAMP` field holds, or the one a legacy
+    /// `INT96` field holds by convention. The caller has already established through
+    /// [TimestampAccessorKind] that the field is the UTC-adjusted kind.
+    private Instant readTimestamp(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        int projCol = p.projectedCol();
+        SchemaNode.PrimitiveNode schema = p.schema();
+        try {
+            if (schema.logicalType() == null && schema.type() == PhysicalType.INT96) {
+                return LogicalTypeConverter.int96ToInstant(batchIndex.getBinary(projCol, valueIdx));
+            }
+            return LogicalTypeConverter.longToTimestamp(
+                    ((long[]) batchIndex.valueArrays[projCol])[valueIdx],
+                    ((LogicalType.TimestampType) schema.logicalType()).unit());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private LocalDateTime readLocalTimestamp(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        try {
+            return LogicalTypeConverter.longToLocalTimestamp(
+                    ((long[]) batchIndex.valueArrays[p.projectedCol()])[valueIdx],
+                    ((LogicalType.TimestampType) p.schema().logicalType()).unit());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private BigDecimal readDecimal(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        int projCol = p.projectedCol();
+        SchemaNode.PrimitiveNode schema = p.schema();
+        int scale = ((LogicalType.DecimalType) schema.logicalType()).scale();
+        try {
+            return switch (schema.type()) {
+                case INT32 -> LogicalTypeConverter.longToDecimal(
+                        ((int[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
+                case INT64 -> LogicalTypeConverter.longToDecimal(
+                        ((long[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
+                        batchIndex.getBinary(projCol, valueIdx), scale);
+                default -> throw new IllegalArgumentException(prefix()
+                        + "Unexpected physical type for DECIMAL: " + schema.type());
+            };
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private UUID readUuid(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        try {
+            return LogicalTypeConverter.bytesToUuid(batchIndex.getBinary(p.projectedCol(), valueIdx));
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive p) {
+        int valueIdx = valueIndexOrNull(p);
+        if (valueIdx < 0) {
+            return null;
+        }
+        try {
+            return LogicalTypeConverter.bytesToInterval(batchIndex.getBinary(p.projectedCol(), valueIdx));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
