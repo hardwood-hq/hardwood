@@ -69,16 +69,16 @@ INT96 TIMESTAMP columns have no `isAdjustedToUTC` field. The reader treats them 
 
 ## Internal converters
 
-`LogicalTypeConverter` exposes two split helpers:
+`LogicalTypeConverter` exposes two split entry points, each taking the stored int64 and the unit:
 
 ```java
-Instant       convertToTimestamp(Object value, PhysicalType pt, LogicalType.TimestampType tt);
-LocalDateTime convertToLocalTimestamp(Object value, PhysicalType pt, LogicalType.TimestampType tt);
+Instant       longToTimestamp(long rawValue, LogicalType.TimeUnit unit);
+LocalDateTime longToLocalTimestamp(long rawValue, LogicalType.TimeUnit unit);
 ```
 
-Each enforces the `isAdjustedToUTC` precondition (throws `IllegalStateException` if called for the wrong kind) as defense in depth; accessor sites do the user-facing check earlier so the rejection message names the column.
+Neither checks the kind — a primitive signature carries no annotation to check it against. `TimestampAccessorKind` is the single statement of that rule and runs at the accessor site, where the rejection can name the column.
 
-The generic `LogicalTypeConverter.convert` switch dispatches the `TimestampType` arm on `isAdjustedToUTC` so `ValueConverter.convertValue` (which backs `getValue` and the `PqList.values()` / `PqMap.Entry.getValue()` fallback path) automatically returns the right Java type.
+`longToTemporal(long, LogicalType.TimestampType)` states the routing between the two, for a caller that decodes whatever the column holds rather than asking for one kind. The generic `LogicalTypeConverter.convert` switch dispatches the `TimestampType` arm through it, so `ValueConverter.convertValue` (which backs `getValue` and the `PqList.values()` / `PqMap.Entry.getValue()` fallback path) returns the right Java type.
 
 `VariantValueDecoder` splits along the same line:
 

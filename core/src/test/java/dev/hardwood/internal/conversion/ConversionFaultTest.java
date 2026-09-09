@@ -43,6 +43,8 @@ class ConversionFaultTest {
                 .isEqualTo("DATE is read from INT32, but the column is INT64");
         assertThat(fault(PhysicalType.INT32, null, new LogicalType.StringType()))
                 .isEqualTo("STRING is read from BYTE_ARRAY, but the column is INT32");
+        assertThat(fault(PhysicalType.INT32, null, timestamp()))
+                .isEqualTo("TIMESTAMP is read from INT64, but the column is INT32");
     }
 
     @Test
@@ -51,6 +53,8 @@ class ConversionFaultTest {
                 .isEqualTo("FLOAT16 is exactly 2 bytes, but the column declares 3");
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, new LogicalType.UuidType()))
                 .isEqualTo("UUID is exactly 16 bytes, but the column declares 8");
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, new LogicalType.IntervalType()))
+                .isEqualTo("INTERVAL is exactly 12 bytes, but the column declares 8");
     }
 
     /// The wrong physical type is reported before the width, because a column that is not
@@ -59,6 +63,10 @@ class ConversionFaultTest {
     void theWrongPhysicalTypeIsReportedAheadOfTheWidth() {
         assertThat(fault(PhysicalType.INT64, null, new LogicalType.Float16Type()))
                 .isEqualTo("FLOAT16 is read from FIXED_LEN_BYTE_ARRAY, but the column is INT64");
+        assertThat(fault(PhysicalType.INT64, null, new LogicalType.IntervalType()))
+                .isEqualTo("INTERVAL is read from FIXED_LEN_BYTE_ARRAY, but the column is INT64");
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.UuidType()))
+                .isEqualTo("UUID is read from FIXED_LEN_BYTE_ARRAY, but the column is BYTE_ARRAY");
     }
 
     /// Reading accepts either width for `TIME` and `INT` whatever the unit or bit width,

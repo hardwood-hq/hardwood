@@ -314,59 +314,20 @@ public final class LogicalTypeConverter {
         return Instant.ofEpochSecond(epochSecond, nanoAdjustment);
     }
 
-    // ==================== Boxed forms ====================
+    // ==================== Boxed unboxing helpers ====================
+    //
+    // The three arms of `convert` whose unboxing genuinely depends on the physical type,
+    // because the same annotation is stored over more than one of them. Every other arm
+    // decodes from a single representation and calls its primitive entry point directly.
 
-    public static LocalDate convertToDate(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.INT32) {
-            throw new IllegalArgumentException("DATE logical type requires INT32 physical type, got " + physicalType);
-        }
-        return intToDate((Integer) value);
-    }
-
-    public static Instant convertToTimestamp(Object value, PhysicalType physicalType,
-                                             LogicalType.TimestampType timestampType) {
-        if (physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
-        }
-        return longToTimestamp((Long) value, timestampType.unit());
-    }
-
-    public static LocalDateTime convertToLocalTimestamp(Object value, PhysicalType physicalType,
-                                                        LogicalType.TimestampType timestampType) {
-        if (physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
-        }
-        return longToLocalTimestamp((Long) value, timestampType.unit());
-    }
-
-    public static PqInterval convertToInterval(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            throw new IllegalArgumentException(
-                    "INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
-        }
-        return bytesToInterval((byte[]) value);
-    }
-
-    public static float convertToFloat16(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            throw new IllegalArgumentException(
-                    "FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
-        }
-        return bytesToFloat16((byte[]) value);
-    }
-
-    public static LocalTime convertToTime(Object value, PhysicalType physicalType,
-                                          LogicalType.TimeType timeType) {
-        if (physicalType != PhysicalType.INT32 && physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException(
-                    "TIME logical type requires INT32 or INT64 physical type, got " + physicalType);
-        }
+    private static LocalTime convertToTime(Object value, PhysicalType physicalType,
+                                           LogicalType.TimeType timeType) {
         long rawValue = physicalType == PhysicalType.INT32 ? (Integer) value : (Long) value;
         return longToTime(rawValue, timeType.unit());
     }
 
-    public static BigDecimal convertToDecimal(Object value, PhysicalType physicalType,
-                                              LogicalType.DecimalType decimalType) {
+    private static BigDecimal convertToDecimal(Object value, PhysicalType physicalType,
+                                               LogicalType.DecimalType decimalType) {
         return switch (physicalType) {
             case INT32 -> longToDecimal((Integer) value, decimalType.scale());
             case INT64 -> longToDecimal((Long) value, decimalType.scale());
@@ -376,31 +337,20 @@ public final class LogicalTypeConverter {
         };
     }
 
+    /// Narrows an `INT(8)` or `INT(16)` value to the box its bit width states. Java has no
+    /// native unsigned types, so an unsigned annotation passes its value through unchanged
+    /// and the caller reads the magnitude with `Integer.toUnsignedLong` or
+    /// `Long.toUnsignedString`.
     private static Object convertToInt(Object value, PhysicalType physicalType,
                                        LogicalType.IntType intType) {
-        if (physicalType != PhysicalType.INT32 && physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException("INT logical type requires INT32 or INT64 physical type, got " + physicalType);
-        }
-
-        // For signed integers with narrowing
-        if (intType.isSigned()) {
-            if (intType.bitWidth() == 8 && physicalType == PhysicalType.INT32) {
+        if (intType.isSigned() && physicalType == PhysicalType.INT32) {
+            if (intType.bitWidth() == 8) {
                 return ((Integer) value).byteValue();
             }
-            else if (intType.bitWidth() == 16 && physicalType == PhysicalType.INT32) {
+            if (intType.bitWidth() == 16) {
                 return ((Integer) value).shortValue();
             }
         }
-
-        // For 32 or 64 bit, or unsigned types, pass through
-        // Note: Java doesn't have native unsigned types, so we return the same value
         return value;
-    }
-
-    public static UUID convertToUuid(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            throw new IllegalArgumentException("UUID logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
-        }
-        return bytesToUuid((byte[]) value);
     }
 }

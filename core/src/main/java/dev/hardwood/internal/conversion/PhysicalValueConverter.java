@@ -231,7 +231,7 @@ public final class PhysicalValueConverter {
     }
 
     /// The 12 bytes of an `INTERVAL`: months, days and millis as little-endian unsigned
-    /// 4-byte fields, the layout [LogicalTypeConverter#convertToInterval] reads back.
+    /// 4-byte fields, the layout [LogicalTypeConverter#bytesToInterval] reads back.
     public static byte[] intervalToBytes(String field, PqInterval value) {
         byte[] bytes = new byte[INTERVAL_BYTES];
         writeUnsignedIntLittleEndian(field, bytes, 0, value.months(), "months");

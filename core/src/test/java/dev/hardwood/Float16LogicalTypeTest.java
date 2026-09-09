@@ -111,17 +111,9 @@ class Float16LogicalTypeTest {
     }
 
     @Test
-    void testConvertToFloat16RejectsWrongPhysicalType() {
+    void testFloat16RejectsWrongByteLength() {
         assertThatThrownBy(() ->
-                LogicalTypeConverter.convertToFloat16(0L, PhysicalType.INT64))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got INT64");
-    }
-
-    @Test
-    void testConvertToFloat16RejectsWrongByteLength() {
-        assertThatThrownBy(() ->
-                LogicalTypeConverter.convertToFloat16(new byte[4], PhysicalType.FIXED_LEN_BYTE_ARRAY))
+                LogicalTypeConverter.bytesToFloat16(new byte[4]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FLOAT16 requires exactly 2 bytes, got 4");
     }

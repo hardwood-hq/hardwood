@@ -99,24 +99,16 @@ class IntervalLogicalTypeTest {
         buf.putInt((int) maxUint32);
         buf.putInt((int) maxUint32);
         buf.putInt((int) maxUint32);
-        PqInterval interval = LogicalTypeConverter.convertToInterval(buf.array(), PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        PqInterval interval = LogicalTypeConverter.bytesToInterval(buf.array());
         assertThat(interval.months()).isEqualTo(maxUint32);
         assertThat(interval.days()).isEqualTo(maxUint32);
         assertThat(interval.milliseconds()).isEqualTo(maxUint32);
     }
 
     @Test
-    void testConvertToIntervalRejectsWrongPhysicalType() {
+    void testIntervalRejectsWrongByteLength() {
         assertThatThrownBy(() ->
-                LogicalTypeConverter.convertToInterval(0L, PhysicalType.INT64))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got INT64");
-    }
-
-    @Test
-    void testConvertToIntervalRejectsWrongByteLength() {
-        assertThatThrownBy(() ->
-                LogicalTypeConverter.convertToInterval(new byte[8], PhysicalType.FIXED_LEN_BYTE_ARRAY))
+                LogicalTypeConverter.bytesToInterval(new byte[8]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("INTERVAL requires exactly 12 bytes, got 8");
     }
