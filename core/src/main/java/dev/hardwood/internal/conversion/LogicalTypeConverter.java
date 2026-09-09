@@ -24,7 +24,10 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 
 /// Converts physical values to their logical type representations.
-public class LogicalTypeConverter {
+public final class LogicalTypeConverter {
+
+    private LogicalTypeConverter() {
+    }
 
     /// Why `logicalType` cannot be read from a column of this physical type and width, or
     /// `null` when it can.
@@ -166,7 +169,7 @@ public class LogicalTypeConverter {
                         + " reached primitive-value conversion");
     }
 
-    public static String convertToString(Object value, PhysicalType physicalType) {
+    private static String convertToString(Object value, PhysicalType physicalType) {
         if (physicalType != PhysicalType.BYTE_ARRAY) {
             throw new IllegalArgumentException("STRING logical type requires BYTE_ARRAY physical type, got " + physicalType);
         }
@@ -320,7 +323,7 @@ public class LogicalTypeConverter {
         return new BigDecimal(unscaled, decimalType.scale());
     }
 
-    public static Object convertToInt(Object value, PhysicalType physicalType,
+    private static Object convertToInt(Object value, PhysicalType physicalType,
                                       LogicalType.IntType intType) {
         if (physicalType != PhysicalType.INT32 && physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException("INT logical type requires INT32 or INT64 physical type, got " + physicalType);

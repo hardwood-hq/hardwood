@@ -51,7 +51,7 @@ final class TimestampAccessorKind {
         }
     }
 
-    static void requireUtcAdjusted(String columnName, LogicalType.TimestampType tt) {
+    private static void requireUtcAdjusted(String columnName, LogicalType.TimestampType tt) {
         if (!tt.isAdjustedToUTC()) {
             throw new IllegalStateException("Column '" + columnName
                     + "' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false); "
@@ -59,7 +59,7 @@ final class TimestampAccessorKind {
         }
     }
 
-    static void requireLocal(String columnName, LogicalType.TimestampType tt) {
+    private static void requireLocal(String columnName, LogicalType.TimestampType tt) {
         if (tt.isAdjustedToUTC()) {
             throw new IllegalStateException("Column '" + columnName
                     + "' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true); "
