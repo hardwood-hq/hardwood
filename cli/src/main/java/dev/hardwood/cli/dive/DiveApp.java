@@ -7,7 +7,6 @@
  */
 package dev.hardwood.cli.dive;
 
-import java.io.UncheckedIOException;
 import java.time.Duration;
 
 import dev.hardwood.cli.dive.internal.Chrome;
@@ -31,7 +30,6 @@ import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.hardwood.cli.dive.internal.ScrollPane;
 import dev.hardwood.cli.dive.internal.Theme;
-import dev.hardwood.reader.ParquetReadException;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.terminal.Frame;
@@ -140,6 +138,7 @@ public final class DiveApp {
             return Action.IGNORED;
         }
         if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'o' && !ke.hasCtrl() && !ke.hasAlt()) {
+            clearReadFailure();
             stack.clearToRoot();
             return Action.HANDLED;
         }
@@ -158,9 +157,15 @@ public final class DiveApp {
         // something of its own, but one that cannot read cannot honour that,
         // and its handler reads too — leaving Esc to it means the only key out
         // of the overlay fails on its way to the door.
-        if (readFailure != null && ke.isCancel() && stack.depth() > 1) {
+        //
+        // At the root there is nothing to pop, and Esc still has to dismiss the
+        // overlay: a failure carried up to Overview by another key outlives the
+        // screen it came from, and Overview reads nothing that could clear it.
+        if (readFailure != null && ke.isCancel()) {
             clearReadFailure();
-            stack.pop();
+            if (stack.depth() > 1) {
+                stack.pop();
+            }
             return Action.HANDLED;
         }
         // Screen gets first crack at the event so it can claim keys like Esc (filter-cancel)
@@ -171,19 +176,24 @@ public final class DiveApp {
         // it: the stack holds the last state that rendered, so paging from it
         // loads a different window, and a key that fails again simply replaces
         // one failure with the next.
-        // IndexOutOfBounds is in the list because a corrupt file produces it:
-        // a dictionary reference past the end of its dictionary is an array
-        // index, and reading a damaged page is how you get one. A programming
-        // error can raise it too, and that is the cost of not ending the
-        // session over a file that is merely broken.
+        //
+        // The guard takes RuntimeException whole rather than a list of types.
+        // What a damaged file raises is decided by the decoder that trips over
+        // it — a dictionary index past its dictionary is an ArrayIndexOutOfBounds,
+        // an impossible RLE run header an IllegalStateException, a length that
+        // will not fit an ArithmeticException — and these screens parse outside
+        // the read pipeline, so nothing narrows that set to ParquetReadException
+        // first. A list has to be revisited every time a decoder learns a new
+        // way to fail, and the one thing this guard exists to promise is that
+        // no file ends the session. A programming error is reported as a read
+        // failure instead of a stack trace, which is the price.
         try {
             if (dispatchToScreen(ke)) {
                 clearReadFailure();
                 return Action.HANDLED;
             }
         }
-        catch (UncheckedIOException | ParquetReadException | IllegalStateException
-                | IllegalArgumentException | IndexOutOfBoundsException e) {
+        catch (RuntimeException e) {
             recordReadFailure(e);
             return Action.HANDLED;
         }
@@ -255,8 +265,7 @@ public final class DiveApp {
         try {
             screenKeys = keybarForActive();
         }
-        catch (UncheckedIOException | ParquetReadException | IllegalStateException
-                | IllegalArgumentException | IndexOutOfBoundsException e) {
+        catch (RuntimeException e) {
             // The keybar reads from the file too — a screen that reports how
             // many pages a chunk has had to go and count them.
             recordReadFailure(e);
@@ -276,8 +285,7 @@ public final class DiveApp {
                 DataPreviewScreen.fitToViewport(model, stack, regions.body());
                 renderBody(buffer, regions.body());
             }
-            catch (UncheckedIOException | ParquetReadException | IllegalStateException
-                    | IllegalArgumentException | IndexOutOfBoundsException e) {
+            catch (RuntimeException e) {
                 recordReadFailure(e);
             }
         }

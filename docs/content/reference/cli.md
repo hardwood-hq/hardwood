@@ -333,6 +333,11 @@ itself when the read does not come back. The session stays up: `Esc` leaves the
 screen, and the keys that move between pages, chunks or rows still work, so a
 damaged region can be stepped over rather than backed out of.
 
+A message longer than the box scrolls first: while there is more of it below,
+`↑/↓`, `PgUp/PgDn` and `g/G` move the message rather than the screen under it,
+and reach the screen again once it is at its end. The hint row along the bottom
+of the box says which of them are doing that.
+
 The overlay carries the reader's own message, which names the file, the row
 group and the column the screen was reading:
 

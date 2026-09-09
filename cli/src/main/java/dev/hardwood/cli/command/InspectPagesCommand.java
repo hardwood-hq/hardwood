@@ -443,7 +443,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
         long chunkSize = cmd.totalCompressedSize();
 
-        ByteBuffer buffer = inputFile.readRange(chunkStart, (int) chunkSize);
+        ByteBuffer buffer = inputFile.readRange(chunkStart, Math.toIntExact(chunkSize));
 
         List<PageInfo> rows = new ArrayList<>();
         int pageIndex = 0;

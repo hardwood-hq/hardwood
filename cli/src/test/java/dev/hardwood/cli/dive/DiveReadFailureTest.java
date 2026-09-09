@@ -150,6 +150,78 @@ class DiveReadFailureTest {
         assertThat(frameText()).contains("Read failed", "damaged.parquet", "ColumnIndex");
     }
 
+    /// The screen that reads a column's offset index once per row group, so the
+    /// failure comes out of a loop rather than out of a single read.
+    @Test
+    void aDamagedOffsetIndexAcrossRowGroupsIsReportedRatherThanFatal() throws Exception {
+        damage(m -> m.chunk(0, 0).offsetIndexOffset(), 24);
+        app.stack().push(new ScreenState.ColumnAcrossRowGroups(0, 0, false));
+
+        assertThatCode(() -> app.renderOnce(buffer())).doesNotThrowAnyException();
+        assertThat(frameText()).contains("Read failed", "damaged.parquet");
+    }
+
+    /// Data preview reads through the row pipeline rather than at the bytes, and
+    /// it is entered by a key rather than by a render — so this is the guard on
+    /// the dispatch side, on the one screen whose page is fitted inside the
+    /// render guard as well.
+    @Test
+    void aDamagedDataPageIsReportedRatherThanFatalOnDataPreview() throws Exception {
+        damageFirstDataPageHeader();
+        app.renderOnce(buffer());
+        for (int i = 0; i < MENU_ROWS_TO_DATA_PREVIEW; i++) {
+            app.dispatchKey(new KeyEvent(KeyCode.DOWN, KeyModifiers.NONE, '\0'));
+        }
+
+        DiveApp.Action enter = app.dispatchKey(new KeyEvent(KeyCode.ENTER, KeyModifiers.NONE, '\0'));
+
+        assertThat(enter).isEqualTo(DiveApp.Action.HANDLED);
+        assertThatCode(() -> app.renderOnce(buffer())).doesNotThrowAnyException();
+        assertThat(frameText()).contains("Read failed", "damaged.parquet");
+    }
+
+    /// `o` collapses to Overview, which reads nothing that could fail — so it
+    /// has to take the failure with it. Left behind, it paints an error box over
+    /// a screen that reads, and `Esc` at the root has no frame to pop.
+    @Test
+    void collapsingToTheRootLeavesNoFailureBehind() throws Exception {
+        damageFirstDataPageHeader();
+        toPagesScreen();
+        app.renderOnce(buffer());
+        assertThat(frameText()).contains("Read failed");
+
+        app.dispatchKey(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'o'));
+
+        app.renderOnce(buffer());
+        assertThat(frameText()).doesNotContain("Read failed");
+    }
+
+    /// A failure the root screen is left holding still has to be dismissable.
+    /// Esc dismisses the overlay with no frame to pop.
+    @Test
+    void escapeDismissesAFailureAtTheRoot() throws Exception {
+        damageFirstDataPageHeader();
+        toPagesScreen();
+        app.renderOnce(buffer());
+        app.dispatchKey(new KeyEvent(KeyCode.ESCAPE, KeyModifiers.NONE, '\0'));
+        assertThat(app.stack().depth()).isEqualTo(1);
+
+        // Put the root back into a failure the way a carried-over one would look.
+        app.stack().push(new ScreenState.Pages(0, 0, 0, false, true, 0));
+        app.renderOnce(buffer());
+        app.stack().pop();
+        assertThat(frameText()).contains("Read failed");
+
+        DiveApp.Action esc = app.dispatchKey(new KeyEvent(KeyCode.ESCAPE, KeyModifiers.NONE, '\0'));
+
+        assertThat(esc).isEqualTo(DiveApp.Action.HANDLED);
+        app.renderOnce(buffer());
+        assertThat(frameText()).doesNotContain("Read failed");
+    }
+
+    /// Overview's menu cursor starts on the first entry; Data preview is the last.
+    private static final int MENU_ROWS_TO_DATA_PREVIEW = 3;
+
     @Test
     void aDamagedOffsetIndexIsReportedRatherThanFatal() throws Exception {
         damage(m -> m.chunk(0, 0).offsetIndexOffset(), 24);

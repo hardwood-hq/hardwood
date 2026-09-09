@@ -33,6 +33,16 @@ into it.
 
 - **Key dispatch** is guarded. A read failure while handling a key records the
   failure; the navigation stack is left as it was.
+- **The guard catches `RuntimeException`**, not a list of types. Which one a
+  damaged file raises is decided by the decoder that trips over it — a
+  dictionary index past its dictionary is an `ArrayIndexOutOfBoundsException`,
+  an impossible RLE run header an `IllegalStateException`, a length that will
+  not fit an `ArithmeticException` — and the four regions below are parsed
+  outside the read pipeline, so nothing narrows that set to
+  `ParquetReadException` on the way here. An enumeration would have to be
+  revisited every time a decoder learns a new way to fail, and the promise this
+  guard exists to make is that no file ends the session. The price is that a
+  defect of ours in a render path is reported as a read failure.
 - **Render** is guarded, around both `keybarForActive()` and `renderBody()`. A
   failure records itself and paints the overlay in the same frame, over a body
   cleared first: a half-drawn screen under the overlay is what makes a reported
@@ -44,7 +54,13 @@ into it.
   key that fails again replaces the failure with the new one.
 - **`Esc` is taken from the screen** while a failure shows. A screen normally
   gets first refusal on it so it can claim it for something of its own, but a
-  screen that cannot read cannot honour that, and its handler reads too.
+  screen that cannot read cannot honour that, and its handler reads too. At the
+  root there is nothing to pop and `Esc` dismisses the failure alone; `o`, which
+  collapses to the root, clears it on the way. Neither leaves an overlay
+  standing over a screen that reads.
+- **The overlay scrolls before the screen moves.** While there is more message
+  than box the navigation keys address the overlay, and reach the screen again
+  once it is at its end.
 - **The overlay** is a `ScrollPane` modal, per the navigation model: the
   navigation keys scroll it while there is more message than box.
 
@@ -58,6 +74,12 @@ The four regions a dive screen parses for itself (column index, offset index,
 page headers, dictionary page) bypass the read pipeline and go at the bytes
 directly, so `ParquetModel` places those failures itself. The Thrift structure
 that would not parse names itself in the message the reader raises.
+
+Placing a failure restates it, and restating it must not change what it is. A
+`ParquetReadException` leaves `ExceptionContext` as one, through the subclass's
+own `(String, Throwable)` constructor where there is one and through the base
+type where there is not — otherwise the callers that catch that type to report a
+broken file cleanly, `hardwood inspect pages` among them, stop seeing it.
 
 ## What it does not do
 
@@ -76,8 +98,13 @@ How the non-interactive commands report a failure is #1094.
 ## Validation
 
 `DiveReadFailureTest` clobbers a page header, a column index, an offset index, a
-dictionary page header and a dictionary page *body* in turn, each at an offset
-derived from the file's own metadata, and drives the screen that reads it:
-the session survives, the overlay names the file and the structure, and `Esc`
-leaves. Which screen a damaged file takes down depends on which region is
+dictionary page header, a dictionary page *body* and a row of data in turn, each
+at an offset derived from the file's own metadata, and drives the screen that
+reads it: the session survives, the overlay names the file and the structure, and
+`Esc` leaves. Which screen a damaged file takes down depends on which region is
 damaged, so one region proves nothing about the rest.
+
+Truncation is covered separately from malformation. Overwriting bytes in place
+tends to raise `ParquetReadException`; a field declaring more bytes than its
+buffer holds raises `ThriftTruncatedException`, which is the shape that tells
+whether restating a failure has kept its type.
