@@ -19,6 +19,7 @@ import java.util.Set;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Encodings;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.Dictionary;
@@ -190,7 +191,12 @@ public final class ParquetModel implements AutoCloseable {
         ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         ColumnIndex result = null;
         if (buffers != null && buffers.columnIndex() != null) {
-            result = ColumnIndexReader.read(new ThriftCompactReader(buffers.columnIndex()));
+            try {
+                result = ColumnIndexReader.read(new ThriftCompactReader(buffers.columnIndex()));
+            }
+            catch (RuntimeException e) {
+                throw placed(e, rowGroupIndex, columnIndex);
+            }
         }
         columnIndexCache.put(key, result);
         return result;
@@ -206,7 +212,12 @@ public final class ParquetModel implements AutoCloseable {
         ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         OffsetIndex result = null;
         if (buffers != null && buffers.offsetIndex() != null) {
-            result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
+            try {
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
+            }
+            catch (RuntimeException e) {
+                throw placed(e, rowGroupIndex, columnIndex);
+            }
         }
         offsetIndexCache.put(key, result);
         return result;
@@ -272,6 +283,9 @@ public final class ParquetModel implements AutoCloseable {
         catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        catch (RuntimeException e) {
+            throw placed(e, rowGroupIndex, columnIndex);
+        }
         List<PageHeader> result = List.copyOf(headers);
         pageHeaderCache.put(key, result);
         return result;
@@ -335,6 +349,18 @@ public final class ParquetModel implements AutoCloseable {
         catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+        catch (RuntimeException e) {
+            throw placed(e, rowGroupIndex, columnIndex);
+        }
+    }
+
+    /// Names the file, row group and column on a failure raised while parsing
+    /// what a screen asked for. The reader pipeline places its own failures;
+    /// these reads bypass it and go at the bytes directly, so nothing else
+    /// would say which chunk the screen was looking at.
+    private RuntimeException placed(RuntimeException e, int rowGroupIndex, int columnIndex) {
+        return ExceptionContext.addReadContext(displayPath, rowGroupIndex,
+                schema.getColumn(columnIndex).fieldPath().toString(), e);
     }
 
     public InputFile inputFile() {

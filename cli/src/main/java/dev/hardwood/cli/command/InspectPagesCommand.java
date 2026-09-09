@@ -25,6 +25,7 @@ import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -160,7 +161,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             }
 
             boolean trackRowIndex = chunk.metaData().numValues() == rg.numRows();
-            List<PageInfo> pages = collectPageHeaders(chunk, inputFile, trackRowIndex);
+            List<PageInfo> pages = collectPageHeaders(chunk, inputFile, trackRowIndex,
+                    rgIdx, col.fieldPath().toString());
 
             boolean rgHasIndex = columnIndex != null && offsetIndex != null;
             boolean rgHasInline = !noStats && hasInlineStats(pages);
@@ -418,7 +420,21 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             boolean isDictionary, Long firstRowIndex, Statistics inlineStats) {
     }
 
-    private List<PageInfo> collectPageHeaders(ColumnChunk chunk, InputFile inputFile, boolean trackRowIndex) throws IOException {
+    /// Walks a chunk's page headers, naming the file, row group and column on
+    /// anything the parser raises. A read through `ColumnReader` gets that from
+    /// the read pipeline; this command reaches the parser directly, so without
+    /// it a corrupt header reports only "Unknown field type: 15".
+    private List<PageInfo> collectPageHeaders(ColumnChunk chunk, InputFile inputFile,
+            boolean trackRowIndex, int rowGroupIndex, String columnPath) throws IOException {
+        try {
+            return walkPageHeaders(chunk, inputFile, trackRowIndex);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
+        }
+    }
+
+    private List<PageInfo> walkPageHeaders(ColumnChunk chunk, InputFile inputFile, boolean trackRowIndex) throws IOException {
         // Under the split-file layout the offsets below address a different file, so scanning
         // this one at them would print page headers decoded from unrelated bytes.
         chunk.requireSameFile();

@@ -326,6 +326,25 @@ Available screens:
 - **Dictionary** — full-value modal on Enter and `/` inline search
 - **Data preview** — row values via `RowReader`; `←/→` scrolls the visible column window, `PgDn/PgUp` flips pages
 
+### When a file will not read
+
+Any screen that reads from the file shows a **Read failed** overlay in place of
+itself when the read does not come back. The session stays up: `Esc` leaves the
+screen, and the keys that move between pages, chunks or rows still work, so a
+damaged region can be stepped over rather than backed out of.
+
+The overlay carries the reader's own message, which names the file, the row
+group and the column the screen was reading:
+
+```
+╭ Read failed ─────────────────────────────────────────────╮
+│ [data.parquet: row group 0, column 'id'] PageHeader      │
+│ field 15 — Unknown field type: 15                        │
+│                                                          │
+│ [Esc] back                                               │
+╰──────────────────────────────────────────────────────────╯
+```
+
 A tour through the main screens (click any shot to open it full size):
 
 <figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
