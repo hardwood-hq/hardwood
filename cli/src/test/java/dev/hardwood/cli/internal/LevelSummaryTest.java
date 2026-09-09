@@ -457,7 +457,7 @@ class LevelSummaryTest {
         assertThat(summary.hasPresentValues()).isFalse();
         assertThatThrownBy(summary::presentValues)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("max def 3");
+                .hasMessage("no present-value count: max def 3 column with no definition histogram");
         assertThatThrownBy(summary::lengthPrefixBytes).isInstanceOf(IllegalStateException.class);
     }
 
@@ -499,7 +499,7 @@ class LevelSummaryTest {
                 List.of(row(0, "tags null", 1L), row(1, "tags present", 3L)),
                 List.of(row(0, "tags null", 1L), row(1, "tags empty", 1L), row(2, "tags present", 3L)))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("2 and 3");
+                .hasMessage("chunks of one column disagree on level count: 2 and 3");
     }
 
     /// Either page-index field on its own means the pages are described. A

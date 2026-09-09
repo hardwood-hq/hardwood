@@ -92,7 +92,7 @@ class ByteArrayBuilderTest {
     void reserveRejectsANegativeLength() {
         assertThatThrownBy(() -> new ByteArrayBuilder().reserve(-1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("negative");
+                .hasMessage("Cannot reserve a negative length: -1");
     }
 
     @Test

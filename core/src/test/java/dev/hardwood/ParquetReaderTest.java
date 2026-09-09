@@ -239,10 +239,10 @@ class ParquetReaderTest {
 
             assertThatThrownBy(() -> parquet.buildColumnReader("id").batchSize(0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("batchSize must be positive");
+                    .hasMessage("batchSize must be positive: 0");
             assertThatThrownBy(() -> parquet.buildColumnReader("id").batchSize(-1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("batchSize must be positive");
+                    .hasMessage("batchSize must be positive: -1");
         }
     }
 

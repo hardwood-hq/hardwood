@@ -94,7 +94,7 @@ class ColumnReaderLayerModelTest {
             // STRUCT layers have no offsets buffer.
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> col.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("not REPEATED");
+                    .hasMessage("[nested_struct_test.parquet] Layer 0 is STRUCT, not REPEATED");
         }
     }
 

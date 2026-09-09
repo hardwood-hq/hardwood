@@ -73,8 +73,9 @@ class LocalTimestampTest {
             rows.next();
             assertThatThrownBy(() -> rows.getTimestamp("local_micros"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("local_micros")
-                    .hasMessageContaining("isAdjustedToUTC=false");
+                    .hasMessage("Column 'local_micros' is a local-wall-clock TIMESTAMP "
+                             + "(isAdjustedToUTC=false); use getLocalTimestamp instead")
+                    ;
         }
     }
 
@@ -85,8 +86,9 @@ class LocalTimestampTest {
             rows.next();
             assertThatThrownBy(() -> rows.getLocalTimestamp("utc_micros"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("utc_micros")
-                    .hasMessageContaining("isAdjustedToUTC=true");
+                    .hasMessage("Column 'utc_micros' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true); "
+                             + "use getTimestamp instead")
+                    ;
         }
     }
 
@@ -126,12 +128,14 @@ class LocalTimestampTest {
             // wrong-kind rejection through PqStructImpl
             assertThatThrownBy(() -> nested.getTimestamp("local_ts"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("local_ts")
-                    .hasMessageContaining("isAdjustedToUTC=false");
+                    .hasMessage("Column 'local_ts' is a local-wall-clock TIMESTAMP "
+                             + "(isAdjustedToUTC=false); use getLocalTimestamp instead")
+                    ;
             assertThatThrownBy(() -> nested.getLocalTimestamp("utc_ts"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("utc_ts")
-                    .hasMessageContaining("isAdjustedToUTC=true");
+                    .hasMessage("Column 'utc_ts' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true); use "
+                             + "getTimestamp instead")
+                    ;
         }
     }
 
@@ -146,7 +150,8 @@ class LocalTimestampTest {
             // wrong-kind rejection through PqListImpl
             assertThatThrownBy(list::timestamps)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("isAdjustedToUTC=false");
+                    .hasMessage("Column 'element' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false); "
+                             + "use getLocalTimestamp instead");
         }
     }
 
@@ -166,7 +171,8 @@ class LocalTimestampTest {
             // wrong-kind rejection through PqMapImpl
             assertThatThrownBy(first::getTimestampValue)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("isAdjustedToUTC=false");
+                    .hasMessage("Column 'value' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false); "
+                             + "use getLocalTimestamp instead");
         }
     }
 
@@ -185,8 +191,9 @@ class LocalTimestampTest {
             // The companion accessor rejects INT96 cleanly (was NPE pre-review).
             assertThatThrownBy(() -> rows.getLocalTimestamp("ts"))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("ts")
-                    .hasMessageContaining("INT96");
+                    .hasMessage("[int96_timestamp_test.parquet] Column 'ts' is a legacy INT96 TIMESTAMP "
+                             + "(no isAdjustedToUTC field); use getTimestamp instead")
+                    ;
         }
     }
 }

@@ -89,8 +89,9 @@ class UnknownEncodingReadTest {
 
             assertThatThrownBy(columnReader::nextBatch)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("Encoding not yet supported")
-                    .hasMessageContaining("Thrift encoding value " + ALP_THRIFT_VALUE);
+                    .hasMessage("[alp_extended.zstd.parquet] Encoding not yet supported: UNKNOWN (Thrift "
+                             + "encoding value 10)")
+                    ;
         }
     }
 

@@ -233,11 +233,11 @@ class RowWriterFieldIndexTest {
         withRowWriter(rows -> {
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(4, 1)))
                     .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessageContaining("4")
-                    .hasMessageContaining("the record");
+                    .hasMessage("Field index 4 is out of bounds for the record, which has 4 fields")
+                    ;
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(-1, 1)))
                     .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessageContaining("-1");
+                    .hasMessage("Field index -1 is out of bounds for the record, which has 4 fields");
             assertThatThrownBy(() -> rows.writeRow(row -> row.getFieldName(4)))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         });
@@ -251,7 +251,7 @@ class RowWriterFieldIndexTest {
                 .setInt(0, 1)
                 .setStruct(3, address -> address.setString(1, "Berlin"))))
                 .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessageContaining("address"));
+                .hasMessage("Field index 1 is out of bounds for struct address, which has 1 fields"));
     }
 
     @Test
@@ -259,10 +259,10 @@ class RowWriterFieldIndexTest {
         withRowWriter(rows -> {
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1).setInt(0, 2)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("already set");
+                    .hasMessage("Field id is already set in this record");
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt("id", 2)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("already set");
+                    .hasMessage("Field id is already set in this record");
         });
     }
 
@@ -271,12 +271,12 @@ class RowWriterFieldIndexTest {
         withRowWriter(rows -> {
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt(3, 2)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("address")
-                    .hasMessageContaining("setInt");
+                    .hasMessage("Field address is a struct group; setInt applies to a leaf field")
+                    ;
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setStruct(2, tags -> { })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("tags")
-                    .hasMessageContaining("setStruct");
+                    .hasMessage("Field tags is a LIST group; setStruct applies to a struct group")
+                    ;
         });
     }
 
@@ -292,13 +292,16 @@ class RowWriterFieldIndexTest {
             });
             assertThatThrownBy(() -> escaped.get().setInt(0, 2))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("scope has ended");
+                    .hasMessage("This builder's scope has ended; a builder is only valid inside the lambda "
+                             + "it was passed to");
             assertThatThrownBy(() -> escaped.get().getFieldCount())
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("scope has ended");
+                    .hasMessage("This builder's scope has ended; a builder is only valid inside the lambda "
+                             + "it was passed to");
             assertThatThrownBy(() -> escaped.get().getFieldName(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("scope has ended");
+                    .hasMessage("This builder's scope has ended; a builder is only valid inside the lambda "
+                             + "it was passed to");
         });
     }
 

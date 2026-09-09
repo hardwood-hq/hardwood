@@ -54,21 +54,21 @@ public class ColumnProjectionTest {
     void testColumnProjectionRejectsEmptyColumns() {
         assertThatThrownBy(ColumnProjection::columns)
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("At least one column");
+                .hasMessage("At least one column name must be specified");
     }
 
     @Test
     void testColumnProjectionRejectsNullColumnName() {
         assertThatThrownBy(() -> ColumnProjection.columns("id", null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("null or empty");
+                .hasMessage("Column name cannot be null or empty");
     }
 
     @Test
     void testColumnProjectionRejectsEmptyColumnName() {
         assertThatThrownBy(() -> ColumnProjection.columns("id", ""))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("null or empty");
+                .hasMessage("Column name cannot be null or empty");
     }
 
     // ==================== ProjectedSchema Unit Tests ====================
@@ -115,7 +115,7 @@ public class ColumnProjectionTest {
 
             assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("nonexistent")))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Column not found");
+                    .hasMessage("Column not found: nonexistent");
         }
     }
 
@@ -135,10 +135,10 @@ public class ColumnProjectionTest {
 
         assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address.city")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Column not found: acme.address.city");
+                .hasMessage("Column not found: acme.address.city");
         assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Column not found: acme.address");
+                .hasMessage("Column not found: acme.address");
 
         // The column is present and readable; only addressing it by path fails.
         assertThat(ProjectedSchema.create(schema, ColumnProjection.all()).getProjectedColumnCount())
@@ -208,7 +208,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getLong("value"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not in projection");
+                    .hasMessage("[plain_uncompressed.parquet] Column not in projection: value");
         }
     }
 
@@ -334,7 +334,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not in projection");
+                    .hasMessage("Field 'id' not in projection");
         }
     }
 
@@ -599,7 +599,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not in projection");
+                    .hasMessage("Field 'id' not in projection");
         }
     }
 
@@ -629,7 +629,7 @@ public class ColumnProjectionTest {
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("customer_id"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not in projection");
+                    .hasMessage("Field 'customer_id' not in projection");
         }
     }
 

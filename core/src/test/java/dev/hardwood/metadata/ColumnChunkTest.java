@@ -27,7 +27,8 @@ class ColumnChunkTest {
         ColumnChunk chunk = new ColumnChunk(null, null, null, null, null, "part-1.parquet");
         assertThatThrownBy(chunk::requireSameFile)
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("part-1.parquet")
-                .hasMessageContaining("separate file");
+                .hasMessage("Column chunk stores its data in a separate file ('part-1.parquet'); the "
+                         + "split-file layout is not supported")
+                ;
     }
 }

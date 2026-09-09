@@ -55,7 +55,7 @@ class BoundingBoxReaderTest {
 
         assertThatThrownBy(() -> BoundingBoxReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift))))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("ymax");
+                .hasMessage("BoundingBox is missing required field: ymax");
     }
 
     @Test
@@ -67,7 +67,7 @@ class BoundingBoxReaderTest {
 
         assertThatThrownBy(() -> BoundingBoxReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift))))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("xmin");
+                .hasMessage("BoundingBox.xmin \u2014 wrong Thrift wire type 0x5 (expected 0x7)");
     }
 
     private static ThriftStructBuilder bbox() {

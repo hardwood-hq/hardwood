@@ -214,13 +214,13 @@ class FileSchemaLogicalTypeTest {
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("BYTE_ARRAY");
+                .hasMessage("STRING annotates a BYTE_ARRAY column, not INT32 (column key)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
                 .map("byId", RepetitionType.OPTIONAL, PhysicalType.FIXED_LEN_BYTE_ARRAY,
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("type length");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column key requires a positive type length");
     }
 
     @Test
@@ -279,8 +279,8 @@ class FileSchemaLogicalTypeTest {
     void annotationMustMatchThePhysicalType() {
         assertThatThrownBy(() -> withColumn(PhysicalType.INT32, new LogicalType.StringType()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("BYTE_ARRAY")
-                .hasMessageContaining("annotated");
+                .hasMessage("STRING annotates a BYTE_ARRAY column, not INT32"
+                        + " (column annotated)");
         assertThatThrownBy(() -> withColumn(PhysicalType.INT64, new LogicalType.DateType()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> withColumn(PhysicalType.INT32, new LogicalType.IntType(64, true)))
@@ -299,33 +299,36 @@ class FileSchemaLogicalTypeTest {
                         new LogicalType.UuidType())
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("16");
+                .hasMessage("UUID annotates a FIXED_LEN_BYTE_ARRAY of length 16, not 8 (column id)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
                 .addColumn("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4,
                         new LogicalType.Float16Type())
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("2");
+                .hasMessage("FLOAT16 annotates a FIXED_LEN_BYTE_ARRAY of length 2, not 4 (column half)");
     }
 
     @Test
     void decimalPrecisionMustFitThePhysicalType() {
         assertThatThrownBy(() -> withColumn(PhysicalType.INT32, new LogicalType.DecimalType(0, 10)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("9");
+                .hasMessage("DECIMAL precision 10 exceeds the maximum 9 a INT32 can represent on column "
+                         + "annotated");
         assertThatThrownBy(() -> withColumn(PhysicalType.INT64, new LogicalType.DecimalType(0, 19)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("18");
+                .hasMessage("DECIMAL precision 19 exceeds the maximum 18 a INT64 can represent on column "
+                         + "annotated");
         // Four bytes of two's complement span 9 digits, the same as an INT32.
         assertThatThrownBy(() -> FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4,
                         new LogicalType.DecimalType(0, 10))
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("9");
+                .hasMessage("DECIMAL precision 10 exceeds the maximum 9 a FIXED_LEN_BYTE_ARRAY can "
+                         + "represent on column amount");
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(5, 4)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("scale");
+                .hasMessage("DECIMAL scale 5 exceeds precision 4 on column annotated");
         assertThatThrownBy(() -> withColumn(PhysicalType.BOOLEAN, new LogicalType.DecimalType(0, 4)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -334,12 +337,14 @@ class FileSchemaLogicalTypeTest {
     void groupAnnotationsAreRejectedOnAPrimitive() {
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, new LogicalType.ListType()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("list");
+                .hasMessage("LIST annotates a group, not a primitive column: annotated; declare it with "
+                         + "the list or map builder verb instead");
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, new LogicalType.MapType()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, new LogicalType.VariantType(1)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("VARIANT");
+                .hasMessage("VARIANT annotates a group of metadata and value children, which the writer "
+                         + "does not yet build: annotated");
     }
 
     /// UNKNOWN describes a column that holds only nulls, so it annotates any physical type.
@@ -361,9 +366,10 @@ class FileSchemaLogicalTypeTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.NullType())
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("UNKNOWN")
-                .hasMessageContaining("REQUIRED")
-                .hasMessageContaining("v");
+                .hasMessage("UNKNOWN annotates a column holding only nulls, so it cannot be REQUIRED "
+                         + "(column v)")
+                
+                ;
     }
 
     /// Every annotation with a legacy equivalent must resolve from the `converted_type` alone, so

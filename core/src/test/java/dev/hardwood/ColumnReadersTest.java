@@ -136,10 +136,10 @@ class ColumnReadersTest {
 
             assertThatThrownBy(() -> parquet.buildColumnReaders(ColumnProjection.columns("id", "value")).batchSize(0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("batchSize must be positive");
+                    .hasMessage("batchSize must be positive: 0");
             assertThatThrownBy(() -> parquet.buildColumnReaders(ColumnProjection.columns("id", "value")).batchSize(-1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("batchSize must be positive");
+                    .hasMessage("batchSize must be positive: -1");
         }
     }
 
@@ -153,7 +153,7 @@ class ColumnReadersTest {
 
             assertThatThrownBy(() -> columns.getColumnReader("nonexistent"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("nonexistent");
+                    .hasMessage("Column 'nonexistent' was not requested");
         }
     }
 
@@ -471,7 +471,7 @@ class ColumnReadersTest {
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
             assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("No batch available");
+                    .hasMessage("No batch available. Call nextBatch() first.");
         }
     }
 
@@ -487,7 +487,7 @@ class ColumnReadersTest {
             assertThat(reader.nextBatch()).isTrue();
             assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("out of range");
+                    .hasMessage("[plain_uncompressed.parquet] Layer 0 out of range [0, 0)");
         }
     }
 
@@ -503,7 +503,7 @@ class ColumnReadersTest {
             assertThat(reader.nextBatch()).isTrue();
             assertThatThrownBy(() -> reader.getLayerOffsets(5))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("out of range");
+                    .hasMessage("[primitive_lists_test.parquet] Layer 5 out of range [0, 1)");
         }
     }
 
@@ -569,7 +569,8 @@ class ColumnReadersTest {
 
             assertThatThrownBy(columns::getRecordCount)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("nextBatch()");
+                    .hasMessage("No batch available \u2014 call nextBatch() first, and check that it "
+                             + "returned true");
         }
     }
 

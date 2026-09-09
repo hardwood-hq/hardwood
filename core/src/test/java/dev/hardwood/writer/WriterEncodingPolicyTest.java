@@ -436,8 +436,9 @@ class WriterEncodingPolicyTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("typo")
-                .hasMessageContaining("[v]");
+                .hasMessage("Encoding configured for column 'typo', which the schema does not have. Its "
+                         + "leaf columns are: [v]")
+                ;
     }
 
     @Test
@@ -451,8 +452,9 @@ class WriterEncodingPolicyTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("DELTA_BINARY_PACKED")
-                .hasMessageContaining("BYTE_ARRAY");
+                .hasMessage("Encoding DELTA_BINARY_PACKED cannot be written for column 'v', which is "
+                         + "BYTE_ARRAY. Choose an encoding that column's type can carry.")
+                ;
     }
 
     @Test
@@ -468,8 +470,9 @@ class WriterEncodingPolicyTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("'s'")
-                .hasMessageContaining("file-wide default");
+                .hasMessage("Encoding BYTE_STREAM_SPLIT cannot be written for column 's', which is "
+                         + "BYTE_ARRAY. It is the file-wide default; set a per-column encoding instead.")
+                ;
     }
 
     @Test

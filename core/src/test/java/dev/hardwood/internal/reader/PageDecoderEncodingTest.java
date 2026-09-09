@@ -54,8 +54,8 @@ class PageDecoderEncodingTest {
     void rejectsDeltaLengthByteArrayOnAnIntegerColumn() {
         assertThatThrownBy(() -> decode(Encoding.DELTA_LENGTH_BYTE_ARRAY, PhysicalType.INT32))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("DELTA_LENGTH_BYTE_ARRAY")
-                .hasMessageContaining("INT32");
+                .hasMessage("DELTA_LENGTH_BYTE_ARRAY is not defined over INT32; the format defines it"
+                        + " over BYTE_ARRAY only");
     }
 
     /// Unlike `DELTA_BYTE_ARRAY`, `DELTA_LENGTH_BYTE_ARRAY` is defined over `BYTE_ARRAY` alone:
@@ -65,16 +65,17 @@ class PageDecoderEncodingTest {
     void rejectsDeltaLengthByteArrayOnAFixedLengthColumn() {
         assertThatThrownBy(() -> decode(Encoding.DELTA_LENGTH_BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("DELTA_LENGTH_BYTE_ARRAY")
-                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY");
+                .hasMessage("DELTA_LENGTH_BYTE_ARRAY is not defined over FIXED_LEN_BYTE_ARRAY;"
+                        + " the format defines it over BYTE_ARRAY only");
     }
 
     @Test
     void rejectsDeltaByteArrayOnADoubleColumn() {
         assertThatThrownBy(() -> decode(Encoding.DELTA_BYTE_ARRAY, PhysicalType.DOUBLE))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("DELTA_BYTE_ARRAY")
-                .hasMessageContaining("DOUBLE");
+                .hasMessage("DELTA_BYTE_ARRAY is not defined over DOUBLE; the format defines it over "
+                         + "BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY only")
+                ;
     }
 
     /// `DELTA_BYTE_ARRAY` is defined over `FIXED_LEN_BYTE_ARRAY` as well, so that pair must not be
@@ -100,8 +101,8 @@ class PageDecoderEncodingTest {
     void rejectsRleOnAnIntegerColumn() {
         assertThatThrownBy(() -> decode(Encoding.RLE, PhysicalType.INT32))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("RLE encodes only boolean values")
-                .hasMessageContaining("INT32");
+                .hasMessage("RLE encodes only boolean values in a data page, not INT32")
+                ;
     }
 
     /// `BYTE_STREAM_SPLIT` scatters the bytes of fixed-width values, so it has nothing to say
@@ -111,8 +112,9 @@ class PageDecoderEncodingTest {
     void rejectsByteStreamSplitOnAByteArrayColumn() {
         assertThatThrownBy(() -> decode(Encoding.BYTE_STREAM_SPLIT, PhysicalType.BYTE_ARRAY))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("BYTE_STREAM_SPLIT")
-                .hasMessageContaining("BYTE_ARRAY");
+                .hasMessage("BYTE_STREAM_SPLIT is not defined over BYTE_ARRAY; the format defines it over "
+                         + "INT32, INT64, FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY only")
+                ;
     }
 
     /// `BIT_PACKED` encodes levels; a page claiming it for its values is refused on the format's
@@ -121,7 +123,7 @@ class PageDecoderEncodingTest {
     void rejectsBitPackedAsAValueEncoding() {
         assertThatThrownBy(() -> decode(Encoding.BIT_PACKED, PhysicalType.INT32))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("BIT_PACKED encodes levels");
+                .hasMessage("BIT_PACKED encodes levels and is not valid for a data page's values");
     }
 
     /// `DELTA_BYTE_ARRAY` for `values`, each of [#FIXED_LENGTH] bytes, in the layout the encoder

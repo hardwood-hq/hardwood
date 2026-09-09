@@ -102,7 +102,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", Instant.now()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("TIMESTAMP");
+                .hasMessage("Column 'col' does not have a TIMESTAMP logical type");
     }
 
     // ==================== LocalTime ====================
@@ -137,7 +137,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalTime.NOON), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("TIME");
+                .hasMessage("Column 'col' does not have a TIME logical type");
     }
 
     // ==================== Decimal ====================
@@ -184,7 +184,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", new BigDecimal("1.0")), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("DECIMAL");
+                .hasMessage("Column 'col' does not have a DECIMAL logical type");
     }
 
     @Test
@@ -218,7 +218,7 @@ class FilterPredicateResolverTest {
                 new FilterPredicate.SignedBinaryColumnPredicate("data", FilterPredicate.Operator.EQ, value),
                 schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("DecimalType");
+                .hasMessage("Column 'data' is not a DecimalType column (logical type: null)");
     }
 
     @Test
@@ -261,7 +261,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("id", UUID.randomUUID()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("UuidType");
+                .hasMessage("Column 'id' is not a UuidType column (logical type: null)");
     }
 
     // ==================== Combinators ====================
@@ -308,7 +308,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("nonexistent", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not found");
+                .hasMessage("Column 'nonexistent' not found in schema");
     }
 
     @Test
@@ -322,7 +322,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.isNull("company.address"), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("group");
+                .hasMessage("Filter predicates require a leaf column. Column 'company.address' is a group.");
     }
 
     @Test
@@ -339,7 +339,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.isNull("address"), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("is a group")
+                .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.")
                 .hasMessageNotContaining("repeated");
     }
 
@@ -357,7 +357,8 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.isNull("addresses"), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("repeated");
+                .hasMessage("Filter predicates do not support repeated columns. Column 'addresses' is "
+                         + "repeated.");
     }
 
     // ==================== Type validation ====================
@@ -368,7 +369,8 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("incompatible");
+                .hasMessage("Column 'col' has physical type BYTE_ARRAY; given filter predicate type INT32 "
+                         + "is incompatible");
     }
 
     // ==================== IS NULL / IS NOT NULL ====================
@@ -416,7 +418,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.isNull("nonexistent"), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not found");
+                .hasMessage("Column 'nonexistent' not found in schema");
     }
 
     // ==================== Geospatial ====================
@@ -453,8 +455,8 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.intersects("col", 0.0, 0.0, 1.0, 1.0), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("GEOMETRY")
-                .hasMessageContaining("GEOGRAPHY");
+                .hasMessage("Column 'col' is not a GEOMETRY or GEOGRAPHY column")
+                ;
     }
 
     @Test
@@ -464,7 +466,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("Negation");
+                .hasMessage("Negation of spatial intersects predicate is not supported");
     }
 
     // ==================== Column order propagation (#595) ====================

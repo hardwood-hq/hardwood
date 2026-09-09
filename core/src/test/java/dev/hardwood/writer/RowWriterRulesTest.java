@@ -52,8 +52,8 @@ class RowWriterRulesTest {
     void unsetRequiredFieldFailsTheRecord() throws Exception {
         withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setString("name", "x")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("id")
-                .hasMessageContaining("REQUIRED"));
+                .hasMessage("Field id is REQUIRED; it must be set to a non-null value in every record")
+                );
     }
 
     @Test
@@ -62,7 +62,8 @@ class RowWriterRulesTest {
                 .setInt("id", 1)
                 .setStruct("address", address -> { })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("address.city"));
+                .hasMessage("Field address.city is REQUIRED; it must be set to a non-null value in every "
+                         + "record"));
     }
 
     /// The rule covers group fields too: a `REQUIRED` struct or list has no null to fall back
@@ -81,10 +82,12 @@ class RowWriterRulesTest {
             RowWriter rows = writer.rowWriter();
             assertThatThrownBy(() -> rows.writeRow(row -> row.setList("tags", tags -> { })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("address");
+                    .hasMessage("Field address is REQUIRED; it must be set to a non-null value in every "
+                             + "record");
             assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("address", address -> { })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("tags");
+                    .hasMessage("Field tags is REQUIRED; it must be set to a non-null value in every "
+                             + "record");
             rows.writeRow(row -> row.setStruct("address", address -> { }).setList("tags", tags -> { }));
         }
 
@@ -100,14 +103,14 @@ class RowWriterRulesTest {
                 .setString("name", "a")
                 .setString("name", "b")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("already set"));
+                .hasMessage("Field name is already set in this record"));
     }
 
     @Test
     void unknownFieldNameIsRejected() throws Exception {
         withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("nope", 1)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("No field named 'nope'"));
+                .hasMessage("No field named 'nope' in the record; it has id, name, tags, address"));
     }
 
     /// A null name is not a field either, and says so the same way. The name resolves through
@@ -117,15 +120,15 @@ class RowWriterRulesTest {
     void nullFieldNameIsRejectedTheSameWayAnUnknownOneIs() throws Exception {
         withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(null, 1)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("No field named 'null'")
-                .hasMessageContaining("the record"));
+                .hasMessage("No field named 'null' in the record; it has id, name, tags, address")
+                );
     }
 
     @Test
     void setterThatDoesNotFitTheFieldIsRejected() throws Exception {
         withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setLong("id", 1)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("setLong requires an INT64 column"));
+                .hasMessage("Field id is INT32; setLong requires an INT64 column"));
     }
 
     @Test
@@ -133,11 +136,12 @@ class RowWriterRulesTest {
         withRowWriter(rows -> {
             assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("tags", tags -> { })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("LIST group");
+                    .hasMessage("Field tags is a LIST group; setStruct applies to a struct group");
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1)
                     .setList("tags", tags -> tags.addStruct(entry -> { }))))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("addStruct applies to a struct element");
+                    .hasMessage("The element of list tags is a BYTE_ARRAY leaf field; addStruct applies to "
+                             + "a struct element");
         });
     }
 
@@ -147,7 +151,8 @@ class RowWriterRulesTest {
                 .setInt("id", 1)
                 .setList("tags", tags -> tags.addNull())))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("REQUIRED"));
+                .hasMessage("Field tags.list.element is REQUIRED; it must be set to a non-null value in "
+                         + "every record"));
     }
 
     @Test
@@ -160,7 +165,8 @@ class RowWriterRulesTest {
             });
             assertThatThrownBy(() -> escaped.get().setInt("id", 2))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("scope has ended");
+                    .hasMessage("This builder's scope has ended; a builder is only valid inside the lambda "
+                             + "it was passed to");
         });
     }
 
@@ -171,7 +177,8 @@ class RowWriterRulesTest {
             rows.writeRow(row -> row.setInt("id", 1).setList("tags", escaped::set));
             assertThatThrownBy(() -> escaped.get().addBinary(new byte[] { 1 }))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("scope has ended");
+                    .hasMessage("This builder's scope has ended; a builder is only valid inside the lambda "
+                             + "it was passed to");
         });
     }
 
@@ -216,7 +223,8 @@ class RowWriterRulesTest {
             writer.rowWriter().writeRow(row -> row.setInt("id", 1));
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1 })))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("rowWriter()");
+                    .hasMessage("This file is already being written through rowWriter(); a file is written "
+                             + "through one of the two, not both");
         }
 
         ByteBufferOutputFile other = new ByteBufferOutputFile();
@@ -229,7 +237,8 @@ class RowWriterRulesTest {
                     .bytes("address.city", new byte[][] { { 1 } }));
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("columnWriter()");
+                    .hasMessage("This file is already being written through columnWriter(); a file is "
+                             + "written through one of the two, not both");
         }
     }
 
@@ -266,10 +275,10 @@ class RowWriterRulesTest {
 
         assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 2)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("closed");
+                .hasMessage("Writer is closed");
         assertThatThrownBy(writer::rowWriter)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("closed");
+                .hasMessage("Writer is closed");
     }
 
     /// A filler must not re-enter the scope it is inside. Without this the staging silently
@@ -285,7 +294,8 @@ class RowWriterRulesTest {
                 uncheckedWriteRow(rows);
             }))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("Cannot start a record while it is already being written");
+                    .hasMessage("Cannot start a record while it is already being written; a filler must "
+                             + "not re-enter the scope it is inside");
             rows.writeRow(row -> row.setInt("id", 2));
         }
 
@@ -310,7 +320,8 @@ class RowWriterRulesTest {
                         people.addStruct(nested -> nested.setBinary("name", new byte[] { 2 }));
                     }))))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("while it is already being written");
+                    .hasMessage("Cannot start struct group people.list.element while it is already being "
+                             + "written; a filler must not re-enter the scope it is inside");
         }
     }
 
@@ -339,9 +350,12 @@ class RowWriterRulesTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("items")
-                    .hasMessageContaining("legacy two-level list")
-                    .hasMessageContaining("The columnar API writes this schema");
+                    .hasMessage("Group items is annotated LIST or MAP and its entry element is a leaf (a "
+                             + "legacy two-level list); the row API reaches a list's values through an "
+                             + "element node below the entry, so it writes three-level LIST groups only. "
+                             + "The columnar API writes this schema")
+                    
+                    ;
         }
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             writer.columnWriter().writeBatch(batch -> batch
@@ -364,9 +378,12 @@ class RowWriterRulesTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("items.element")
-                    .hasMessageContaining("the list's element itself")
-                    .hasMessageContaining("The columnar API writes this schema");
+                    .hasMessage("Group items.element holds 2 fields and is therefore the list's element "
+                             + "itself (a legacy two-level list of structs); the row API reaches a list's "
+                             + "values through a single element node below the entry, so it writes "
+                             + "three-level LIST groups only. The columnar API writes this schema")
+                    
+                    ;
         }
     }
 
@@ -384,8 +401,8 @@ class RowWriterRulesTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("two fields named 'id'")
-                    .hasMessageContaining("the record");
+                    .hasMessage("Schema has two fields named 'id' under the record")
+                    ;
         }
     }
 
@@ -400,8 +417,8 @@ class RowWriterRulesTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("two fields named 'city'")
-                    .hasMessageContaining("struct address");
+                    .hasMessage("Schema has two fields named 'city' under struct address")
+                    ;
         }
     }
 

@@ -241,7 +241,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
         assertThatThrownBy(() -> new DeltaBinaryPackedDecoder(encoded, 0)
                 .readLongs(new long[VALUE_COUNT + 1], null, 0))
                         .isInstanceOf(ParquetReadException.class)
-                        .hasMessageContaining("No more values to read");
+                        .hasMessage("No more values to read");
     }
 
     // ==================== Helpers ====================

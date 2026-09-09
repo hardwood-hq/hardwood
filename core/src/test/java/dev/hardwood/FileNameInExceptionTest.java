@@ -90,7 +90,8 @@ class FileNameInExceptionTest {
             }
             assertThatThrownBy(() -> reader.getInt("optional_value"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessageContaining("[" + firstFileName + "]");
+                    .hasMessage("[" + firstFileName + "] Column 'optional_value' is null"
+                            + " at row 2");
 
             // Advance through the rest of file 1 and to position 102 (first
             // null row of file 2)
@@ -100,7 +101,7 @@ class FileNameInExceptionTest {
             }
             assertThatThrownBy(() -> reader.getInt("optional_value"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessageContaining("[second_file.parquet]");
+                    .hasMessage("[second_file.parquet] Column 'optional_value' is null at row 2");
         }
     }
 

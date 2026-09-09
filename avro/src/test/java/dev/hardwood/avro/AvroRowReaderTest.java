@@ -66,7 +66,8 @@ class AvroRowReaderTest {
     @Test
     void rejectMapsWhoseKeysCannotBeRepresentedByAvro() throws Exception {
         assertUnsupportedMapKey("map_types_test.parquet", "int_map", "INT32");
-        assertUnsupportedMapKey("typed_accessors_issue_445.parquet", "time_keyed", "INT32");
+        assertUnsupportedMapKey("typed_accessors_issue_445.parquet", "time_keyed",
+                "INT32 (TIME(MILLIS, UTC))");
         assertUnsupportedMapKey("map_typed_keys_test.parquet", "long_keyed", "INT64");
     }
 
@@ -98,8 +99,9 @@ class AvroRowReaderTest {
                 }
             })
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining(column)
-                    .hasMessageContaining(keyType);
+                    .hasMessage("Map '" + column + "' key must be a BYTE_ARRAY annotated as STRING,"
+                            + " ENUM or JSON \u2014 Avro map keys are strings \u2014 but is "
+                            + keyType);
         }
     }
 
@@ -114,9 +116,10 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("field 'value'")
-                .hasMessageContaining("Avro INT")
-                .hasMessageContaining("java.lang.String");
+                .hasMessage("Cannot materialize field 'value' as Avro INT: actual Java value type "
+                         + "java.lang.String (required java.lang.Integer)")
+                
+                ;
     }
 
     @Test
@@ -165,9 +168,10 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("struct field 'value'")
-                .hasMessageContaining("Avro INT")
-                .hasMessageContaining("java.lang.String");
+                .hasMessage("Cannot materialize struct field 'value' as Avro INT: actual Java value type "
+                         + "java.lang.String (required java.lang.Integer)")
+                
+                ;
     }
 
     @Test
@@ -185,9 +189,10 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("list element 0")
-                .hasMessageContaining("Avro STRING")
-                .hasMessageContaining("java.lang.Integer");
+                .hasMessage("Cannot materialize list element 0 as Avro STRING: actual Java value type "
+                         + "java.lang.Integer (required java.lang.String)")
+                
+                ;
     }
 
     @Test
@@ -203,10 +208,11 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("field 'value'")
-                .hasMessageContaining("Avro FIXED")
-                .hasMessageContaining("required fixed width 4")
-                .hasMessageContaining("byte[]");
+                .hasMessage("Cannot materialize field 'value' as Avro FIXED: actual Java value type byte[] "
+                         + "(required fixed width 4 but received 2)")
+                
+                
+                ;
     }
 
     @Test
@@ -225,9 +231,10 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("map value for key 'key'")
-                .hasMessageContaining("Avro STRING")
-                .hasMessageContaining("actual Java value type null");
+                .hasMessage("Cannot materialize map value for key 'key' as Avro STRING: actual Java value "
+                         + "type null (required non-null value)")
+                
+                ;
     }
 
     @Test
@@ -244,10 +251,11 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("field 'value'")
-                .hasMessageContaining("Avro NULL")
-                .hasMessageContaining("java.lang.Integer")
-                .hasMessageContaining("NULL has no non-null materialization");
+                .hasMessage("Cannot materialize field 'value' as Avro NULL: actual Java value type "
+                         + "java.lang.Integer (NULL has no non-null materialization)")
+                
+                
+                ;
     }
 
     @Test
@@ -264,10 +272,11 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("list element 0")
-                .hasMessageContaining("Avro NULL")
-                .hasMessageContaining("java.lang.Integer")
-                .hasMessageContaining("NULL has no non-null materialization");
+                .hasMessage("Cannot materialize list element 0 as Avro NULL: actual Java value type "
+                         + "java.lang.Integer (NULL has no non-null materialization)")
+                
+                
+                ;
     }
 
     @Test
@@ -285,10 +294,11 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("map value for key 'key'")
-                .hasMessageContaining("Avro NULL")
-                .hasMessageContaining("java.lang.Integer")
-                .hasMessageContaining("NULL has no non-null materialization");
+                .hasMessage("Cannot materialize map value for key 'key' as Avro NULL: actual Java value "
+                         + "type java.lang.Integer (NULL has no non-null materialization)")
+                
+                
+                ;
     }
 
     /// A materialization failure is attributable to a file, the way the core readers
@@ -307,7 +317,8 @@ class AvroRowReaderTest {
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageStartingWith("[part-01.parquet] ")
-                .hasMessageContaining("field 'value'");
+                .hasMessage("[part-01.parquet] Cannot materialize field 'value' as Avro INT: actual Java "
+                         + "value type java.lang.String (required java.lang.Integer)");
     }
 
     /// The shape issue #897 reported: `UINT32` stores as `INT32` but converts to Avro
@@ -327,12 +338,13 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("field 'count'")
+                .hasMessage("Cannot materialize field 'count' as Avro LONG (UNSIGNED_INT32): actual Java "
+                         + "value type java.lang.Long (required java.lang.Integer)")
                 // Naming the kind keeps "Avro LONG … required java.lang.Integer" from
                 // reading as a contradiction.
-                .hasMessageContaining("Avro LONG (UNSIGNED_INT32)")
-                .hasMessageContaining("java.lang.Long")
-                .hasMessageContaining("required java.lang.Integer");
+                
+                
+                ;
     }
 
     @Test

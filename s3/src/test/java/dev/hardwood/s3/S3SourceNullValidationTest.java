@@ -36,41 +36,41 @@ class S3SourceNullValidationTest {
     void inputFileRejectsNullBucket() {
         assertThatThrownBy(() -> source.inputFile(null, "key"))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("bucket must not be null");
+                .hasMessage("bucket must not be null");
     }
 
     @Test
     void inputFileRejectsNullKey() {
         assertThatThrownBy(() -> source.inputFile("bucket", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("key must not be null");
+                .hasMessage("key must not be null");
     }
 
     @Test
     void inputFileUriRejectsNull() {
         assertThatThrownBy(() -> source.inputFile((String) null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("uri must not be null");
+                .hasMessage("uri must not be null");
     }
 
     @Test
     void inputFilesInBucketRejectsNullBucket() {
         assertThatThrownBy(() -> source.inputFilesInBucket(null, "key1"))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("bucket must not be null");
+                .hasMessage("bucket must not be null");
     }
 
     @Test
     void inputFilesInBucketRejectsNullKey() {
         assertThatThrownBy(() -> source.inputFilesInBucket("bucket", "key1", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("key must not be null");
+                .hasMessage("key must not be null");
     }
 
     @Test
     void inputFilesRejectsNullUri() {
         assertThatThrownBy(() -> source.inputFiles("s3://bucket/key", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("uri must not be null");
+                .hasMessage("uri must not be null");
     }
 }

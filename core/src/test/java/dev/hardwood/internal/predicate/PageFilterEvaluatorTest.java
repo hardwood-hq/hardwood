@@ -430,7 +430,7 @@ class PageFilterEvaluatorTest {
             org.assertj.core.api.Assertions.assertThatThrownBy(
                     () -> FilterPredicateResolver.resolve(filter, schema))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("not found");
+                    .hasMessage("Column 'nonexistent' not found in schema");
         }
         finally {
             inputFile.close();

@@ -60,7 +60,7 @@ class LogicalTypeConverterTest {
     void int96ToInstantRejectsWrongLength() {
         assertThatThrownBy(() -> LogicalTypeConverter.int96ToInstant(new byte[11]))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("12 bytes");
+                .hasMessage("INT96 requires exactly 12 bytes, got 11");
     }
 
     static Stream<Arguments> bsonPayloads() {
@@ -83,8 +83,8 @@ class LogicalTypeConverterTest {
     void bsonRejectsNonByteArrayPhysicalType() {
         assertThatThrownBy(() -> LogicalTypeConverter.convertToBson(new byte[0], PhysicalType.FIXED_LEN_BYTE_ARRAY))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("BSON")
-                .hasMessageContaining("BYTE_ARRAY");
+                .hasMessage("BSON logical type requires BYTE_ARRAY physical type, got FIXED_LEN_BYTE_ARRAY")
+                ;
     }
 
     @Test

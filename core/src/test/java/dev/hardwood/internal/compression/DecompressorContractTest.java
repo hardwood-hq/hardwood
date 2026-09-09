@@ -53,7 +53,7 @@ class DecompressorContractTest {
         assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(compressed), body.length + 1024))
                 .as("the stream decoded; what disagrees is the length, and that is what to report")
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("size mismatch");
+                .hasMessage("Brotli decompression size mismatch: expected 1536, got 512");
     }
 
     @ParameterizedTest

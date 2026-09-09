@@ -265,8 +265,9 @@ class RowGroupFilterTest {
                     .tail(50)
                     .build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("tail")
-                    .hasMessageContaining("row-group filter");
+                    .hasMessage("tail cannot be combined with a row-group filter: tail mode requires a "
+                             + "known total row count, which row-group filtering invalidates")
+                    ;
         }
     }
 

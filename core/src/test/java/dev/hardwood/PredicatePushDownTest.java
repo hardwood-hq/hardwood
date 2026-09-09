@@ -565,7 +565,8 @@ class PredicatePushDownTest {
 
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("repeated");
+                    .hasMessage("Filter predicates do not support repeated columns. Column 'scores' is "
+                             + "repeated.");
         }
     }
 
@@ -583,7 +584,8 @@ class PredicatePushDownTest {
             assertThatThrownBy(() -> reader.buildColumnReaders(ColumnProjection.columns("id"))
                     .filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("repeated");
+                    .hasMessage("Filter predicates do not support repeated columns. Column "
+                             + "'people.key_value.value.age' is repeated.");
         }
     }
 
@@ -597,7 +599,8 @@ class PredicatePushDownTest {
 
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("repeated");
+                    .hasMessage("Filter predicates do not support repeated columns. Column 'people' is "
+                             + "repeated.");
         }
     }
 
@@ -611,7 +614,8 @@ class PredicatePushDownTest {
 
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("repeated");
+                    .hasMessage("Filter predicates do not support repeated columns. Column "
+                             + "'people.key_value.value' is repeated.");
         }
     }
 
@@ -693,7 +697,7 @@ class PredicatePushDownTest {
 
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("group");
+                    .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.");
         }
     }
 

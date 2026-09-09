@@ -53,7 +53,8 @@ class ColumnIndexTest {
 
         assertThatThrownBy(() -> index.definitionLevelHistogram(0))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("definition-level histogram holds 5 entries for 2 pages");
+                .hasMessage("Malformed Parquet metadata: definition-level histogram holds 5 entries for 2 "
+                         + "pages, which is not a whole number of entries per page");
     }
 
     @Test

@@ -72,7 +72,8 @@ class PageRecordCounterTest {
         assertThatThrownBy(() ->
                 PageRecordCounter.countTopLevelRecords(new byte[]{0}, 0, 1, 1, 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("flat column");
+                .hasMessage("countTopLevelRecords called on a flat column (maxRepetitionLevel=0); use "
+                         + "header.num_values directly");
     }
 
     /// Honours an `offset` into the supplied byte array — the caller may pass a

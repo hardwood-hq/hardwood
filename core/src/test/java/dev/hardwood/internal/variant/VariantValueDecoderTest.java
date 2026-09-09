@@ -315,9 +315,10 @@ class VariantValueDecoderTest {
         byte[] buf = { 0x7E, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> VariantValueDecoder.parseObject(buf, 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("object element")
-                .hasMessageContaining("858993459")
-                .hasMessageContaining(String.valueOf(buf.length));
+                .hasMessage("Variant object element (858993459) does not fit within its 5-byte buffer "
+                         + "(needs 6871947681 bytes)")
+                
+                ;
     }
 
     @Test
@@ -327,9 +328,10 @@ class VariantValueDecoderTest {
         byte[] buf = { 0x1F, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> VariantValueDecoder.parseArray(buf, 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("array element")
-                .hasMessageContaining("858993459")
-                .hasMessageContaining(String.valueOf(buf.length));
+                .hasMessage("Variant array element (858993459) does not fit within its 5-byte buffer "
+                         + "(needs 3435973845 bytes)")
+                
+                ;
     }
 
     @Test

@@ -158,7 +158,8 @@ class WriterAnnotationRangeTest {
         for (long rejected : new long[] { min - 1, max + 1 }) {
             assertThatThrownBy(() -> writeBatch(schema, batch -> fill(batch, type, rejected)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("out of range for a " + annotation + " column");
+                    .hasMessage("Column 0 (v) has value " + rejected + " at row 0, out of range for a "
+                            + annotation + " column");
         }
     }
 
@@ -171,7 +172,8 @@ class WriterAnnotationRangeTest {
         for (long rejected : new long[] { min - 1, max + 1 }) {
             assertThatThrownBy(() -> writeRow(schema, row -> set(row, type, rejected)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("out of range for a " + annotation + " column");
+                    .hasMessage("Field v: " + rejected + " is out of range for a " + annotation
+                            + " column");
         }
     }
 
@@ -194,7 +196,7 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 0, 1, 300 })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Column 0 (v) has value 300 at row 2");
+                .hasMessage("Column 0 (v) has value 300 at row 2, out of range for a UINT_8 column");
     }
 
     /// A `TIME` is the elapsed time after midnight, so a full day is already the next day's zero
@@ -206,10 +208,11 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 86_400_000 })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("out of range for a TIME(MILLIS, UTC) column");
+                .hasMessage("Column 0 (v) has value 86400000 at row 0, out of range for a TIME(MILLIS, "
+                         + "UTC) column");
         assertThatThrownBy(() -> writeRow(schema, row -> row.setInt("v", 86_400_000)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("out of range for a TIME(MILLIS, UTC) column");
+                .hasMessage("Field v: 86400000 is out of range for a TIME(MILLIS, UTC) column");
     }
 
     /// The values at null rows are ignored by the writer, so they are not range-checked either:
@@ -245,13 +248,16 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(variable, batch -> batch.bytes(0, new byte[][] { tooLarge })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(4, 0) can hold");
+                .hasMessage("Column 0 (v) has a value at row 0 that is not an unscaled value the column's "
+                         + "DECIMAL(4, 0) can hold");
         assertThatThrownBy(() -> writeBatch(fixed, batch -> batch.fixed(0, new byte[][] { tooLarge })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(4, 0) can hold");
+                .hasMessage("Column 0 (v) has a value at row 0 that is not an unscaled value the column's "
+                         + "DECIMAL(4, 0) can hold");
         assertThatThrownBy(() -> writeRow(fixed, row -> row.setBinary("v", tooLarge)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(4, 0) can hold");
+                .hasMessage("Field v: the value is not an unscaled value the column's DECIMAL(4, 0) can "
+                         + "hold");
     }
 
     /// The largest unscaled value the precision holds is writable, negatives included: the bound
@@ -294,7 +300,8 @@ class WriterAnnotationRangeTest {
         }
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.bytes(0, new byte[][] { tooLarge })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(20, 2) can hold");
+                .hasMessage("Column 0 (v) has a value at row 0 that is not an unscaled value the column's "
+                         + "DECIMAL(20, 2) can hold");
     }
 
     /// A `REQUIRED` leaf under an absent ancestor has no null bit to set, so its unreachable slot
@@ -332,10 +339,12 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.bytes(0, new byte[][] { new byte[0] })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(4, 0) can hold");
+                .hasMessage("Column 0 (v) has a value at row 0 that is not an unscaled value the column's "
+                         + "DECIMAL(4, 0) can hold");
         assertThatThrownBy(() -> writeRow(schema, row -> row.setBinary("v", new byte[0])))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not an unscaled value the column's DECIMAL(4, 0) can hold");
+                .hasMessage("Field v: the value is not an unscaled value the column's DECIMAL(4, 0) can "
+                         + "hold");
     }
 
     /// `UNKNOWN` is the annotation whose declared range is empty: it says the column holds only
@@ -349,14 +358,17 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 7 })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("annotated UNKNOWN, which holds only nulls");
+                .hasMessage("Column 0 (v) is annotated UNKNOWN, which holds only nulls; set it through a "
+                         + "setter taking a null mask");
         assertThatThrownBy(() -> writeBatch(schema,
                 batch -> batch.ints(0, new int[] { 0, 7 }, new boolean[] { true, false })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("row 1 is not null");
+                .hasMessage("Column 0 (v) is annotated UNKNOWN, which holds only nulls, but row 1 is not "
+                         + "null");
         assertThatThrownBy(() -> writeRow(schema, row -> row.setInt("v", 7)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("annotated UNKNOWN, which holds only nulls");
+                .hasMessage("Field v is annotated UNKNOWN, which holds only nulls; setInt cannot set a "
+                         + "value on it");
     }
 
     /// The all-null column the annotation does describe stays writable through both APIs.
@@ -459,7 +471,8 @@ class WriterAnnotationRangeTest {
             }
         })
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("annotated UNKNOWN, which holds only nulls");
+                .hasMessage("Field v.list.element is annotated UNKNOWN, which holds only nulls; setInt "
+                         + "cannot set a value on it");
     }
 
     /// A bounded annotation on a leaf whose ancestor can be absent: the row layer writes the
@@ -514,7 +527,8 @@ class WriterAnnotationRangeTest {
                 .ints("s.req", new int[] { 300, 255 })
                 .ints("s.opt", new int[] { 0, 7 }, absentThenPresent)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("out of range for a UINT_8 column");
+                .hasMessage("Column 1 (req) has value 300 at row 0, out of range for a UINT_8"
+                        + " column");
     }
 
     private static FileSchema nestedUnsignedByte() {
@@ -536,7 +550,7 @@ class WriterAnnotationRangeTest {
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.longs(0, new long[] { 300L })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Column 0 (v) is INT32, not INT64");
+                .hasMessage("Column 0 (v) is INT32, not INT64");
     }
 
     // ==================== Helpers ====================

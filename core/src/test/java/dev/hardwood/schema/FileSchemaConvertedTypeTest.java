@@ -107,7 +107,7 @@ class FileSchemaConvertedTypeTest {
     void decimalWithoutPrecisionIsRejected() {
         assertThatThrownBy(() -> resolveColumn(PhysicalType.INT32, ConvertedType.DECIMAL, 2, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("precision");
+                .hasMessage("DECIMAL converted type requires a precision: col");
     }
 
     @Test

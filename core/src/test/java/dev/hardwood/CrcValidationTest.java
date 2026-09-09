@@ -74,7 +74,7 @@ class CrcValidationTest {
                 }
             }
         }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessageContaining("CRC mismatch");
+          .rootCause().hasMessage("CRC mismatch for column id: expected 2bcb8d87 but computed 6c9620a");
     }
 
     @Test
@@ -122,7 +122,8 @@ class CrcValidationTest {
                 }
             }
         }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessageContaining("CRC mismatch");
+          .rootCause().hasMessage("CRC mismatch for column category: expected 609e7e3 but computed "
+                               + "2b0b086e");
     }
 
     @Test

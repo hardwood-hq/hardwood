@@ -70,7 +70,7 @@ class MappedInputFileLargeFileTest {
             // when the per-region mapping is touched.
             assertThatThrownBy(() -> inputFile.readRange(fileSize, 16))
                     .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessageContaining("large.bin");
+                    .hasMessage("[large.bin] readRange(2147487760, 16) out of bounds (2147487760 bytes)");
             assertThatThrownBy(() -> inputFile.readRange(fileSize - 4, 16))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }

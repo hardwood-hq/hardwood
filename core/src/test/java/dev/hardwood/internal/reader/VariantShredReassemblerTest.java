@@ -55,7 +55,8 @@ class VariantShredReassemblerTest {
 
         assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("dup");
+                .hasMessage("Malformed shredded Variant: field 'dup' appears in both the shredded "
+                         + "typed_value and the unshredded value object");
     }
 
     // ==================== Helpers ====================

@@ -241,7 +241,7 @@ class ColumnWorkerTest {
 
             assertThatThrownBy(exchange::checkError)
                     .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("Simulated pipeline error");
+                    .hasMessage("Simulated pipeline error");
         }
     }
 

@@ -110,7 +110,7 @@ class IntervalLogicalTypeTest {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.convertToInterval(0L, PhysicalType.INT64))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY");
+                .hasMessage("INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got INT64");
     }
 
     @Test
@@ -118,7 +118,7 @@ class IntervalLogicalTypeTest {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.convertToInterval(new byte[8], PhysicalType.FIXED_LEN_BYTE_ARRAY))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("12 bytes");
+                .hasMessage("INTERVAL requires exactly 12 bytes, got 8");
     }
 
     /// Files written by older parquet-mr / Spark / Hive set only the legacy

@@ -120,7 +120,8 @@ class PageEncodingStatsReaderTest {
                 0x80, 0x80, 0x80, 0x80, 0x08,
                 STOP)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("2147483648 elements");
+                .hasMessage("Malformed Parquet metadata: collection declares 2147483648 elements but only "
+                         + "1 bytes remain");
     }
 
     @Test

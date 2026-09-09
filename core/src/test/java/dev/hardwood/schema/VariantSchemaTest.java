@@ -64,7 +64,8 @@ class VariantSchemaTest {
 
         assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(root, variant, metadata)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Variant group");
+                .hasMessage("Variant group 'v' must have 2 or 3 children (metadata, value[, typed_value]), "
+                         + "found: 1");
     }
 
     @Test
@@ -76,7 +77,7 @@ class VariantSchemaTest {
 
         assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(root, variant, metadata, misnamed)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Variant group");
+                .hasMessage("Variant group 'v' expected child 'value', found: payload");
     }
 
     @Test
@@ -88,7 +89,7 @@ class VariantSchemaTest {
 
         assertThatThrownBy(() -> FileSchema.fromSchemaElements(List.of(root, variant, metadata, wrongType)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("BYTE_ARRAY");
+                .hasMessage("Variant group 'v' child 'value' must be a BYTE_ARRAY primitive");
     }
 
     @Test

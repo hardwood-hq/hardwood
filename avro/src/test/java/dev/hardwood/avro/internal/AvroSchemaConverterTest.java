@@ -116,11 +116,11 @@ class AvroSchemaConverterTest {
         assertThatThrownBy(() -> convert(canonicalRootSchema("interval", new LogicalType.IntervalType(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 12)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("interval");
+                .hasMessage("Root named 'interval' conflicts with canonical fixed type 'interval'");
         assertThatThrownBy(() -> convert(canonicalRootSchema("float16", new LogicalType.Float16Type(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 2)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("float16");
+                .hasMessage("Root named 'float16' conflicts with canonical fixed type 'float16'");
     }
 
     /// The conflict is decided from the complete unprojected schema, so a file either
@@ -135,7 +135,7 @@ class AvroSchemaConverterTest {
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("other")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("interval");
+                .hasMessage("Root named 'interval' conflicts with canonical fixed type 'interval'");
     }
 
     /// The converter emits five kinds of named type: ordinary records, Variant records,
@@ -196,7 +196,7 @@ class AvroSchemaConverterTest {
         assertThat(projected.getFields()).extracting(Schema.Field::name).containsExactly("acme_address");
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("acme_address.city")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Column not found");
+                .hasMessage("Column not found: acme_address.city");
     }
 
     @Test
@@ -277,8 +277,9 @@ class AvroSchemaConverterTest {
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("legacy")
-                .hasMessageContaining("MAP_KEY_VALUE");
+                .hasMessage("Group 'legacy' carries an annotation Avro conversion does not recognise: "
+                         + "converted type MAP_KEY_VALUE")
+                ;
     }
 
     @Test
@@ -352,7 +353,7 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsUuidMapKey() {
         assertRejectsMap(mapKeyedBy(convertedPrimitive("key", PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                null, new LogicalType.UuidType())), "m", "UUID");
+                null, new LogicalType.UuidType())), "m", "FIXED_LEN_BYTE_ARRAY (UUID)");
     }
 
     /// The Parquet spec requires a primitive map key; a group in the key position has
@@ -388,7 +389,8 @@ class AvroSchemaConverterTest {
 
     @Test
     void rejectsFixedBackedDecimalMapKey() {
-        assertRejectsMap(mapKeyedBy(fixed("key", 8, new LogicalType.DecimalType(2, 4))), "m", "DECIMAL");
+        assertRejectsMap(mapKeyedBy(fixed("key", 8, new LogicalType.DecimalType(2, 4))), "m",
+                "FIXED_LEN_BYTE_ARRAY (DECIMAL(4, 2))");
     }
 
     private static void assertMapConverts(FileSchema schema) {
@@ -402,8 +404,8 @@ class AvroSchemaConverterTest {
     private static void assertRejectsMap(FileSchema schema, String mapPath, String keyType) {
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Map '" + mapPath + "'")
-                .hasMessageContaining(keyType);
+                .hasMessage("Map '" + mapPath + "' key must be a BYTE_ARRAY annotated as STRING,"
+                        + " ENUM or JSON \u2014 Avro map keys are strings \u2014 but is " + keyType);
     }
 
     private static List<SchemaElement> intKeyedMap(String name) {
@@ -478,8 +480,8 @@ class AvroSchemaConverterTest {
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("items")
-                .hasMessageContaining("element");
+                .hasMessage("LIST group 'items' has no element")
+                ;
     }
 
     @Test
@@ -510,8 +512,9 @@ class AvroSchemaConverterTest {
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("attributes")
-                .hasMessageContaining("INT32");
+                .hasMessage("Map 'attributes' key must be a BYTE_ARRAY annotated as STRING, ENUM or JSON "
+                         + "\u2014 Avro map keys are strings \u2014 but is INT32")
+                ;
     }
 
     /// Container rejections name the dotted path, so two same-named lists under different
@@ -525,7 +528,7 @@ class AvroSchemaConverterTest {
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("holder.items");
+                .hasMessage("LIST group 'holder.items' has no element");
     }
 
     /// `list<null>` with an OPTIONAL element must produce `array<null>`, not

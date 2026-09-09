@@ -86,7 +86,7 @@ public class PqRowApiTest {
             // now fail early instead (#781).
             assertThatThrownBy(rowReader::next)
                     .isInstanceOf(NoSuchElementException.class)
-                    .hasMessageContaining("Call hasNext() first");
+                    .hasMessage("No row available. Call hasNext() first.");
         }
     }
 
@@ -103,7 +103,7 @@ public class PqRowApiTest {
 
             assertThatThrownBy(rowReader::next)
                     .isInstanceOf(NoSuchElementException.class)
-                    .hasMessageContaining("Call hasNext() first");
+                    .hasMessage("No row available. Call hasNext() first.");
         }
     }
 

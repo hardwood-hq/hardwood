@@ -47,8 +47,11 @@ class RowWriterConversionTest {
         assertThatThrownBy(() -> write(schema,
                 row -> row.setTimestamp("v", Instant.ofEpochSecond(1, 500_000))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("finer precision")
-                .hasMessageContaining("TIMESTAMP(MILLIS)");
+                .hasMessage("Field v: value has finer precision than the column's TIMESTAMP(MILLIS) unit. "
+                         + "Truncate it at the call site (for example "
+                         + "Instant.truncatedTo(ChronoUnit.MILLIS)), declare the column at a finer unit, "
+                         + "or configure WriterConfig.precisionLossPolicy(TRUNCATE)")
+                ;
     }
 
     @Test
@@ -57,7 +60,10 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setTime("v", LocalTime.of(1, 2, 3, 4_000))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("TIME(MILLIS)");
+                .hasMessage("Field v: value has finer precision than the column's TIME(MILLIS) unit. "
+                         + "Truncate it at the call site (for example "
+                         + "Instant.truncatedTo(ChronoUnit.MILLIS)), declare the column at a finer unit, "
+                         + "or configure WriterConfig.precisionLossPolicy(TRUNCATE)");
     }
 
     @Test
@@ -67,10 +73,12 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(utc, row -> row.setLocalTimestamp("v", LocalDateTime.of(2026, 1, 1, 0, 0))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("isAdjustedToUTC=false");
+                .hasMessage("Field v is INT64 annotated TIMESTAMP(MILLIS, UTC); setLocalTimestamp requires "
+                         + "an INT64 column annotated TIMESTAMP with isAdjustedToUTC=false");
         assertThatThrownBy(() -> write(local, row -> row.setTimestamp("v", Instant.EPOCH)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("isAdjustedToUTC=true");
+                .hasMessage("Field v is INT64 annotated TIMESTAMP(MILLIS, local); setTimestamp requires an "
+                         + "INT64 column annotated TIMESTAMP with isAdjustedToUTC=true");
     }
 
     @Test
@@ -79,7 +87,10 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setDecimal("v", new BigDecimal("1.005"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("without dropping digits");
+                .hasMessage("Field v: 1.005 cannot be rescaled to the column's DECIMAL(18, 2) without "
+                         + "dropping digits. Rescale it at the call site (for example "
+                         + "BigDecimal.setScale(2, RoundingMode.HALF_UP)), declare a finer scale, or "
+                         + "configure WriterConfig.precisionLossPolicy(TRUNCATE)");
     }
 
     @Test
@@ -88,7 +99,7 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setDecimal("v", new BigDecimal("12345.67"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("precision");
+                .hasMessage("Field v: 12345.67 has precision 7, exceeding the column's DECIMAL(5, 2)");
     }
 
     @Test
@@ -97,7 +108,7 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setInt("v", 200)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("out of range");
+                .hasMessage("Field v: 200 is out of range for a INT_8 column");
     }
 
     @Test
@@ -108,7 +119,7 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setBinary("v", new byte[] { 1, 2, 3 })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY(4)");
+                .hasMessage("Field v: value is 3 bytes but the column is FIXED_LEN_BYTE_ARRAY(4)");
     }
 
     @Test
@@ -120,7 +131,8 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(schema, row -> row.setInterval("v", new PqInterval(-1, 0, 0))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("months");
+                .hasMessage("Field v: INTERVAL months is -1, outside the unsigned 32-bit range the format "
+                         + "stores");
     }
 
     // ==================== TRUNCATE ====================
@@ -192,13 +204,13 @@ class RowWriterConversionTest {
 
         assertThatThrownBy(() -> write(decimal, truncating(), row -> row.setDecimal("v", new BigDecimal("12345.67"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("precision");
+                .hasMessage("Field v: 12345.67 has precision 7, exceeding the column's DECIMAL(5, 2)");
         assertThatThrownBy(() -> write(narrowInt, truncating(), row -> row.setInt("v", 200)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("out of range");
+                .hasMessage("Field v: 200 is out of range for a INT_8 column");
         assertThatThrownBy(() -> write(fixed, truncating(), row -> row.setBinary("v", new byte[] { 1, 2, 3 })))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY(4)");
+                .hasMessage("Field v: value is 3 bytes but the column is FIXED_LEN_BYTE_ARRAY(4)");
     }
 
     /// A `TIMESTAMP(NANOS)` column spans only about 1677 to 2262: an instant outside that is
@@ -213,19 +225,22 @@ class RowWriterConversionTest {
         for (WriterConfig config : List.of(WriterConfig.defaults(), truncating())) {
             assertThatThrownBy(() -> write(nanos, config, row -> row.setTimestamp("v", beyondNanos)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Field v")
-                    .hasMessageContaining("outside the range a TIMESTAMP(NANOS) column can represent");
+                    .hasMessage("Field v: 2263-01-01T00:00:00Z is outside the range a TIMESTAMP(NANOS) "
+                             + "column can represent")
+                    ;
             assertThatThrownBy(() -> write(localNanos, config,
                     row -> row.setLocalTimestamp("v", LocalDateTime.of(2263, 1, 1, 0, 0))))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("outside the range a TIMESTAMP(NANOS) column can represent");
+                    .hasMessage("Field v: 2263-01-01T00:00 is outside the range a TIMESTAMP(NANOS) column "
+                             + "can represent");
             // Instant.MAX carries sub-millisecond digits too; the magnitude is reported first,
             // so the same value fails the same way whatever the policy says about precision.
             assertThatThrownBy(() -> write(single(PhysicalType.INT64,
                     new LogicalType.TimestampType(true, TimeUnit.MILLIS)), config,
                     row -> row.setTimestamp("v", Instant.MAX)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("outside the range a TIMESTAMP(MILLIS) column can represent");
+                    .hasMessage("Field v: +1000000000-12-31T23:59:59.999999999Z is outside the range a "
+                             + "TIMESTAMP(MILLIS) column can represent");
         }
     }
 
@@ -256,8 +271,11 @@ class RowWriterConversionTest {
         FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> write(schema, row -> row.setTimestamp("v", Instant.ofEpochSecond(1, 500_000))))
-                .hasMessageContaining("truncatedTo")
-                .hasMessageContaining("precisionLossPolicy");
+                .hasMessage("Field v: value has finer precision than the column's TIMESTAMP(MILLIS) unit. "
+                         + "Truncate it at the call site (for example "
+                         + "Instant.truncatedTo(ChronoUnit.MILLIS)), declare the column at a finer unit, "
+                         + "or configure WriterConfig.precisionLossPolicy(TRUNCATE)")
+                ;
     }
 
     // ==================== Accepted conversions ====================
@@ -305,7 +323,7 @@ class RowWriterConversionTest {
         for (int rejected : new int[] { 256, 300, -1 }) {
             assertThatThrownBy(() -> write(schema, row -> row.setInt("v", rejected)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("out of range for a UINT_8 column");
+                    .hasMessage("Field v: " + rejected + " is out of range for a UINT_8 column");
         }
     }
 

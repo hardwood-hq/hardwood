@@ -269,7 +269,7 @@ class MultiFileRowReaderTest {
     void testCreateRejectsNullContext() {
         assertThatThrownBy(() -> Hardwood.create(null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("context");
+                .hasMessage("context must not be null");
     }
 
     @Test
@@ -375,7 +375,7 @@ class MultiFileRowReaderTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> hardwood.openAll(InputFile.ofPaths(List.of())))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("At least one file");
+                    .hasMessage("At least one file must be provided");
         }
     }
 
@@ -685,7 +685,7 @@ class MultiFileRowReaderTest {
     void testOfPathsVarargsRejectsNullFirst() {
         assertThatThrownBy(() -> InputFile.ofPaths((Path) null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("first path must not be null");
+                .hasMessage("first path must not be null");
     }
 
     @Test
@@ -693,7 +693,7 @@ class MultiFileRowReaderTest {
         assertThatThrownBy(() -> InputFile.ofPaths(
                 Paths.get("src/test/resources/plain_uncompressed.parquet"), (Path) null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("path must not be null");
+                .hasMessage("path must not be null");
     }
 
     @Test
@@ -720,7 +720,7 @@ class MultiFileRowReaderTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> hardwood.openAll(List.of()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("At least one file must be provided");
+                    .hasMessage("At least one file must be provided");
         }
     }
 }

@@ -76,8 +76,9 @@ class VariantMetadataTest {
         byte[] bytes = { (byte) 0xC1, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> new VariantMetadata(bytes))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("metadata dictionary")
-                .hasMessageContaining("858993459");
+                .hasMessage("Variant metadata dictionary (858993459) does not fit within its 5-byte buffer "
+                         + "(needs 3435973845 bytes)")
+                ;
     }
 
     @Test
@@ -85,7 +86,7 @@ class VariantMetadataTest {
         byte[] bytes = { 0x01 }; // header only, no dictionary size bytes
         assertThatThrownBy(() -> new VariantMetadata(bytes))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("truncated");
+                .hasMessage("Variant metadata buffer truncated before dictionary_size");
     }
 
     @Test

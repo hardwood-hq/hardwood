@@ -183,8 +183,9 @@ class ThriftCompactReaderTest {
 
         assertThatThrownBy(reader::readListHeader)
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("declares 100 elements")
-                .hasMessageContaining("2 bytes remain");
+                .hasMessage("Malformed Parquet metadata: collection declares 100 elements but only 2 bytes "
+                         + "remain")
+                ;
     }
 
     /// A count past the `int` range would wrap to a negative capacity, which surfaces as an
@@ -198,7 +199,8 @@ class ThriftCompactReaderTest {
 
         assertThatThrownBy(reader::readListHeader)
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("2147483648 elements");
+                .hasMessage("Malformed Parquet metadata: collection declares 2147483648 elements but only "
+                         + "1 bytes remain");
     }
 
     /// The one success case among these tests: the others all assert a rejection, so a bound that
@@ -235,7 +237,7 @@ class ThriftCompactReaderTest {
 
         assertThatThrownBy(reader::readVarint)
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("varint");
+                .hasMessage("Malformed varint: more than 10 bytes");
     }
 
     /// The widest varint the format can carry is still read in full.
@@ -258,7 +260,7 @@ class ThriftCompactReaderTest {
 
         assertThatThrownBy(reader::readFieldHeader)
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("65537");
+                .hasMessage("Malformed Parquet metadata: field id 65537 is outside the Thrift i16 range");
     }
 
     /// The same bound applies when the id is reached by delta: a header may add up to 15 to the
@@ -274,7 +276,7 @@ class ThriftCompactReaderTest {
             reader.readFieldHeader();
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("32768");
+                .hasMessage("Malformed Parquet metadata: field id 32768 is outside the Thrift i16 range");
     }
 
     /// A `bool` is the one type encoded differently as a collection element than as a struct

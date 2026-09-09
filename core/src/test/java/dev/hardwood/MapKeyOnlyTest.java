@@ -118,7 +118,7 @@ class MapKeyOnlyTest {
             // that carries a value column whose entries all happen to be null.
             assertThatThrownBy(() -> reader.columnReader("tags.key_value.value"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Column not found");
+                    .hasMessage("Column not found: tags.key_value.value");
         }
     }
 }

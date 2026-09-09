@@ -61,7 +61,7 @@ class MalformedMetadataValidationTest {
                 reader(NEXT_I32, 0x00, NEXT_I32, 0x14,
                         NEXT_I32, 0x01, STOP)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("compressed_page_size");
+                .hasMessage("PageHeader.compressed_page_size \u2014 must be non-negative but was -1");
     }
 
     @Test
@@ -70,7 +70,7 @@ class MalformedMetadataValidationTest {
         assertThatThrownBy(() -> PageHeaderReader.read(
                 reader(NEXT_I32, 0x00, NEXT_I32, 0x01, STOP)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("uncompressed_page_size");
+                .hasMessage("PageHeader.uncompressed_page_size \u2014 must be non-negative but was -1");
     }
 
     @Test
@@ -79,7 +79,7 @@ class MalformedMetadataValidationTest {
         assertThatThrownBy(() -> ColumnMetaDataReader.read(
                 reader(fieldHeader(9, FieldType.I64), 0x01, STOP)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("data_page_offset");
+                .hasMessage("ColumnMetaData.data_page_offset \u2014 must be non-negative but was -1");
     }
 
     @Test
@@ -90,7 +90,7 @@ class MalformedMetadataValidationTest {
                 reader(NEXT_I32, 0x08, NEXT_I32, 0x14,
                         NEXT_I32, 0x10, STOP)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("unknown page type: 4");
+                .hasMessage("PageHeader has unknown page type: 4");
     }
 
     @Test
@@ -102,7 +102,7 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("ColumnChunk.offset_index_length");
+                .hasMessage("ColumnChunk.offset_index_length \u2014 must be non-negative but was -1");
     }
 
     @Test
@@ -115,7 +115,8 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> SchemaElementReader.read(reader(element)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("4294967298");
+                .hasMessage("Malformed Parquet metadata: binary value declares 4294967298 bytes but only 1 "
+                         + "remain");
     }
 
     @Test
@@ -128,7 +129,8 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> SchemaElementReader.read(reader(element)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("8388608");
+                .hasMessage("Malformed Parquet metadata: binary value declares 8388608 bytes but only 1 "
+                         + "remain");
     }
 
     @Test
@@ -144,8 +146,9 @@ class MalformedMetadataValidationTest {
         assertThat(columnChunk.filePath()).isEqualTo("data-2.parquet");
         assertThatThrownBy(columnChunk::requireSameFile)
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("data-2.parquet")
-                .hasMessageContaining("separate file");
+                .hasMessage("Column chunk stores its data in a separate file ('data-2.parquet'); the "
+                         + "split-file layout is not supported")
+                ;
     }
 
     @Test
@@ -181,7 +184,7 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> FileMetaDataReader.read(reader(footer)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("FileMetaData.schema");
+                .hasMessage("FileMetaData.schema \u2014 wrong Thrift element type 0x5 (expected 0xc)");
     }
 
     @Test
@@ -207,7 +210,8 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> ColumnMetaDataReader.read(reader(metaData)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("4294967298");
+                .hasMessage("Malformed Parquet metadata: collection declares 4294967298 elements but only "
+                         + "1 bytes remain");
     }
 
     @Test
@@ -222,8 +226,9 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> ColumnIndexReader.read(reader(index)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("ColumnIndex.null_counts")
-                .hasMessageContaining("2 pages");
+                .hasMessage("Malformed Parquet metadata: ColumnIndex.null_counts has length 1 but the "
+                         + "index describes 2 pages")
+                ;
     }
 
     @Test
@@ -266,7 +271,7 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> LogicalTypeReader.read(reader(logicalType)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("TimeUnit");
+                .hasMessage("TimeUnit has no variant set");
     }
 
     @Test
@@ -288,8 +293,8 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> LogicalTypeReader.read(reader(logicalType)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("TimeUnit")
-                .hasMessageContaining("more than one variant");
+                .hasMessage("TimeUnit has more than one variant set")
+                ;
     }
 
     @Test
@@ -350,8 +355,9 @@ class MalformedMetadataValidationTest {
                 .stop().build();
         assertThatThrownBy(() -> ColumnIndexReader.read(reader(index)))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessageContaining("ColumnIndex.repetition_level_histograms")
-                .hasMessageContaining("not a whole number of entries per page");
+                .hasMessage("Malformed Parquet metadata: ColumnIndex.repetition_level_histograms has "
+                         + "length 5 for 2 pages, which is not a whole number of entries per page")
+                ;
     }
 
     @Test

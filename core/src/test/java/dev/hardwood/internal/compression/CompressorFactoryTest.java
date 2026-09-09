@@ -117,11 +117,14 @@ class CompressorFactoryTest {
         // increment, and LZ4's points at the codec that replaced it.
         assertThatThrownBy(() -> compressors.getCompressor(CompressionCodec.LZ4))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("deprecated")
-                .hasMessageContaining("LZ4_RAW");
+                .hasMessage("LZ4 uses the Hadoop framing the Parquet format has deprecated, so it is not "
+                         + "written; use LZ4_RAW instead. Files already written with LZ4 are still read.")
+                ;
         assertThatThrownBy(() -> compressors.getCompressor(CompressionCodec.LZO))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("no maintained JVM implementation");
+                .hasMessage("LZO compression is not supported: there is no maintained JVM implementation "
+                         + "under a licence this project can depend on. The read path refuses it for the "
+                         + "same reason.");
     }
 
     @Test

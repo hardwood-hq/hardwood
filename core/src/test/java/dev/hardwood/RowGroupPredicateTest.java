@@ -47,13 +47,13 @@ class RowGroupPredicateTest {
     void andRejectsEmptyChildren() {
         assertThatThrownBy(RowGroupPredicate::and)
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("at least one child");
+                .hasMessage("AND predicate requires at least one child");
     }
 
     @Test
     void andRejectsNullChildren() {
         assertThatThrownBy(() -> RowGroupPredicate.and((RowGroupPredicate[]) null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("at least one child");
+                .hasMessage("AND predicate requires at least one child");
     }
 }

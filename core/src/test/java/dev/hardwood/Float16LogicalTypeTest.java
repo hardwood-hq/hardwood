@@ -115,7 +115,7 @@ class Float16LogicalTypeTest {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.convertToFloat16(0L, PhysicalType.INT64))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY");
+                .hasMessage("FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got INT64");
     }
 
     @Test
@@ -123,7 +123,7 @@ class Float16LogicalTypeTest {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.convertToFloat16(new byte[4], PhysicalType.FIXED_LEN_BYTE_ARRAY))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("2 bytes");
+                .hasMessage("FLOAT16 requires exactly 2 bytes, got 4");
     }
 
     /// `getFloat` on a non-FLOAT column whose physical type is FLBA but is not

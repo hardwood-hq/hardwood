@@ -54,7 +54,7 @@ class AvroNamesTest {
 
         assertThatThrownBy(() -> AvroNames.forSchema(schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("dup");
+                .hasMessage("Duplicate schema name 'dup' in value path 'root'");
     }
 
     @Test
@@ -108,8 +108,8 @@ class AvroNamesTest {
 
         assertThatThrownBy(() -> AvroNames.forSchema(schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("holder")
-                .hasMessageContaining("dup");
+                .hasMessage("Duplicate schema name 'dup' in value path 'schema.holder'")
+                ;
     }
 
     private static List<String> locals(AvroNames names, List<SchemaNode> nodes) {

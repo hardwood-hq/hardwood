@@ -32,8 +32,8 @@ class S3SourceTempDirValidationTest {
                 .tempDir(missing)
                 .build())
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("tempDir does not exist")
-                .hasMessageContaining(missing.toString());
+                .hasMessage("tempDir does not exist or is not a directory: " + missing
+                        + " (required by RangeBacking.SPARSE_TEMPFILE)");
     }
 
     @Test

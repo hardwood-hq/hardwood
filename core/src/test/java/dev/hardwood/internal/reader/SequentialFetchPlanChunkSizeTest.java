@@ -128,8 +128,8 @@ class SequentialFetchPlanChunkSizeTest {
         try {
             assertThatThrownBy(SequentialFetchPlanChunkSizeTest::chunkSizeWithoutRowLimit)
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining(CHUNK_SIZE_PROPERTY)
-                    .hasMessageContaining("128k");
+                    
+                    .hasMessage(CHUNK_SIZE_PROPERTY + " must be a byte count, but was: 128k");
         }
         finally {
             System.clearProperty(CHUNK_SIZE_PROPERTY);

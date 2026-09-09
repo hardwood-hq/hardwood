@@ -76,7 +76,7 @@ class WriterBatchContractTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessageContaining("[0, 1)");
+                    .hasMessage("Column index 1 is out of range [0, 1)");
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(-1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }
@@ -270,8 +270,9 @@ class WriterBatchContractTest {
                     .list("s.phones", new int[] { 0, 2, 3 })
                     .ints("s.phones.list.element", new int[] { 10, 20, 30 })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("s")
-                    .hasMessageContaining("s.phones");
+                    .hasMessage("Struct s is null at index 0 but s.phones's offsets span 2 entries there; "
+                             + "an absent struct encloses none")
+                    ;
         }
     }
 
@@ -291,7 +292,8 @@ class WriterBatchContractTest {
                     .ints("s.props.key_value.key", new int[] { 1, 2 })
                     .ints("s.props.key_value.value", new int[] { 10, 20 })))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("s.props");
+                    .hasMessage("Struct s is null at index 0 but s.props's offsets span 1 entries there; "
+                             + "an absent struct encloses none");
         }
     }
 

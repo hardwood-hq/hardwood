@@ -386,7 +386,7 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("nonexistent", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not found");
+                .hasMessage("Column 'nonexistent' not found in schema");
     }
 
     @Test
@@ -674,7 +674,7 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", UUID.randomUUID()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("UuidType");
+                .hasMessage("Column 'col' is not a UuidType column (logical type: null)");
     }
 
     @Test
@@ -888,7 +888,7 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("nonexistent", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not found");
+                .hasMessage("Column 'nonexistent' not found in schema");
     }
 
     // ==================== Operator.invert() ====================

@@ -139,7 +139,8 @@ class BuilderCombinationTest {
                         b -> b.filter(FilterPredicate.gt("id", 150L)).head(50)),
                 Combo.rejected("filterFP + tail",
                         b -> b.filter(FilterPredicate.gt("id", 150L)).tail(50),
-                        "tail cannot be combined with a filter"),
+                        "tail cannot be combined with a filter: the set of matching rows is"
+                                + " not known from row-group statistics alone"),
                 Combo.builds("filterFP + skip",
                         b -> b.filter(FilterPredicate.gt("id", 150L)).skip(50)),
 
@@ -149,7 +150,8 @@ class BuilderCombinationTest {
                         "head must cap the byte-range-kept set, not the whole file — oracle-pending"),
                 Combo.rejected("filterRGP + tail",
                         b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).tail(50),
-                        "row-group filter"),
+                        "tail cannot be combined with a row-group filter: tail mode requires"
+                                + " a known total row count, which row-group filtering invalidates"),
                 Combo.builds("filterRGP + skip",
                         b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).skip(50)),
 
@@ -180,7 +182,7 @@ class BuilderCombinationTest {
             if (c.expect() == Disposition.REJECTED) {
                 assertThatThrownBy(builder::build)
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessageContaining(c.rejectMessage());
+                        .hasMessage(c.rejectMessage());
                 return;
             }
 

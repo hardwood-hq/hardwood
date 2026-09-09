@@ -96,7 +96,7 @@ class LogicalTypeWriterTest {
 
         assertThatThrownBy(() -> LogicalTypeWriter.write(new ThriftCompactWriter(), geography))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("edge interpolation");
+                .hasMessage("No Thrift value for edge interpolation algorithm: UNKNOWN");
     }
 
     /// parquet.thrift reserves union field 9 for INTERVAL without defining the member struct,
@@ -105,7 +105,8 @@ class LogicalTypeWriterTest {
     void intervalHasNoUnionMember() {
         assertThatThrownBy(() -> LogicalTypeWriter.write(new ThriftCompactWriter(), new LogicalType.IntervalType()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("INTERVAL");
+                .hasMessage("INTERVAL has no LogicalType union member and is written as the legacy "
+                         + "converted_type only");
     }
 
     /// The union must terminate exactly at its own STOP marker: a member struct that leaked a

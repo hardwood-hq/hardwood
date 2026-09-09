@@ -43,8 +43,8 @@ class PqVariantInvalidInputTest {
         PqVariantObject obj = load("object_primitive").asObject();
         assertThatThrownBy(() -> obj.getInt("no_such_field"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Field not found")
-                .hasMessageContaining("no_such_field");
+                .hasMessage("Field not found: no_such_field")
+                ;
     }
 
     @Test
@@ -52,7 +52,7 @@ class PqVariantInvalidInputTest {
         PqVariantObject obj = load("object_primitive").asObject();
         assertThatThrownBy(() -> obj.isNull("no_such_field"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Field not found");
+                .hasMessage("Field not found: no_such_field");
     }
 
     @Test
@@ -60,7 +60,7 @@ class PqVariantInvalidInputTest {
         PqVariantArray arr = load("array_primitive").asArray();
         assertThatThrownBy(() -> arr.get(-1))
                 .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessageContaining("-1");
+                .hasMessage("Index -1 out of bounds for size 4");
     }
 
     @Test
@@ -69,7 +69,7 @@ class PqVariantInvalidInputTest {
         int size = arr.size();
         assertThatThrownBy(() -> arr.get(size))
                 .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessageContaining(String.valueOf(size));
+                .hasMessage("Index " + size + " out of bounds for size " + size);
     }
 
     @Test
@@ -78,7 +78,7 @@ class PqVariantInvalidInputTest {
                 readResource("/variant/object_primitive.metadata"));
         assertThatThrownBy(() -> metadata.getField(metadata.size()))
                 .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessageContaining("out of range");
+                .hasMessage("Field id out of range: 7 (size=7)");
         assertThatThrownBy(() -> metadata.getField(-1))
                 .isInstanceOf(IndexOutOfBoundsException.class);
     }
@@ -91,7 +91,7 @@ class PqVariantInvalidInputTest {
         byte[] bytes = { 0x02 };
         assertThatThrownBy(() -> new VariantMetadata(bytes))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unsupported Variant metadata version");
+                .hasMessage("Unsupported Variant metadata version: 2");
     }
 
     @Test
@@ -100,7 +100,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x3C, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("string/binary length");
+                .hasMessage("Variant string/binary length (2147483647) does not fit within its 5-byte "
+                         + "buffer (needs 2147483652 bytes)");
     }
 
     @Test
@@ -109,7 +110,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x29 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("short string length");
+                .hasMessage("Variant short string length (10) does not fit within its 1-byte buffer (needs "
+                         + "11 bytes)");
     }
 
     @Test
@@ -118,7 +120,7 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x40, 0x05, 0x00 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("truncated");
+                .hasMessage("Variant value buffer truncated: need 4 bytes at offset 1, buffer length 3");
     }
 
     @Test
@@ -127,7 +129,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x3C, 0x00, 0x00, 0x00, (byte) 0x80 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asBinary())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("string/binary length");
+                .hasMessage("Variant string/binary length (2147483648) does not fit within its 5-byte "
+                         + "buffer (needs 2147483653 bytes)");
     }
 
     @Test
@@ -145,7 +148,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x40, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asString())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("string/binary length");
+                .hasMessage("Variant string/binary length (2147483647) does not fit within its 5-byte "
+                         + "buffer (needs 2147483652 bytes)");
     }
 
     @Test
@@ -155,7 +159,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x0E, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("object/array value");
+                .hasMessage("Variant object/array value (2147483647) does not fit within its 6-byte buffer "
+                         + "(needs 2147483653 bytes)");
     }
 
     @Test
@@ -165,7 +170,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x0F, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("object/array value");
+                .hasMessage("Variant object/array value (2147483647) does not fit within its 6-byte buffer "
+                         + "(needs 2147483653 bytes)");
     }
 
     @Test
@@ -174,7 +180,8 @@ class PqVariantInvalidInputTest {
         byte[] value = { 0x18, 0x01, 0x02 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("primitive value");
+                .hasMessage("Variant primitive value (9) does not fit within its 3-byte buffer (needs 9 "
+                         + "bytes)");
     }
 
     @Test
@@ -184,8 +191,8 @@ class PqVariantInvalidInputTest {
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
         assertThatThrownBy(() -> descendArrayToLeaf(root))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("nesting")
-                .hasMessageContaining(String.valueOf(VariantValueDecoder.MAX_NESTING_DEPTH));
+                .hasMessage("Variant value nesting exceeds the maximum depth of 500")
+                ;
     }
 
     @Test
@@ -201,7 +208,7 @@ class PqVariantInvalidInputTest {
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 1));
         assertThatThrownBy(() -> descendArrayToLeaf(root))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("nesting");
+                .hasMessage("Variant value nesting exceeds the maximum depth of 500");
     }
 
     @Test
@@ -211,8 +218,8 @@ class PqVariantInvalidInputTest {
         PqVariant root = new PqVariantImpl(SINGLE_FIELD_METADATA, nestInObjects(levels));
         assertThatThrownBy(() -> descendObject(root.asObject(), levels))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("nesting")
-                .hasMessageContaining(String.valueOf(VariantValueDecoder.MAX_NESTING_DEPTH));
+                .hasMessage("Variant value nesting exceeds the maximum depth of 500")
+                ;
     }
 
     @Test
@@ -234,7 +241,7 @@ class PqVariantInvalidInputTest {
         PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
         assertThatThrownBy(() -> descendArrayByIteration(root))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("nesting");
+                .hasMessage("Variant value nesting exceeds the maximum depth of 500");
     }
 
     /// Descend through array-of-array values via [PqVariantArray#get(int)] until a

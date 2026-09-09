@@ -106,23 +106,25 @@ class BitPackerTest {
         // their group sizes; the guard is what stops a future one truncating silently.
         assertThatThrownBy(() -> BitPacker.pack(new int[5], 0, 5, 3, new byte[8], 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("whole number of bytes");
+                .hasMessage("Packing 5 values at 3 bits does not fill a whole number of bytes; this packer "
+                         + "writes whole bytes only");
         assertThatThrownBy(() -> BitPacker.pack(new long[5], 0, 5, 3, new byte[8], 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("whole number of bytes");
+                .hasMessage("Packing 5 values at 3 bits does not fill a whole number of bytes; this packer "
+                         + "writes whole bytes only");
     }
 
     @Test
     void refusesAWidthItsValueTypeCannotHold() {
         assertThatThrownBy(() -> BitPacker.pack(new int[8], 0, 8, 33, new byte[64], 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("bitWidth");
+                .hasMessage("bitWidth must be between 0 and 32 but was 33");
         assertThatThrownBy(() -> BitPacker.pack(new long[8], 0, 8, 65, new byte[128], 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("bitWidth");
+                .hasMessage("bitWidth must be between 0 and 64 but was 65");
         assertThatThrownBy(() -> BitPacker.pack(new long[8], 0, 8, -1, new byte[8], 0))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("bitWidth");
+                .hasMessage("bitWidth must be between 0 and 64 but was -1");
     }
 
     @Test

@@ -85,6 +85,7 @@ class PageHeaderPeekGrowthTest {
 
         assertThatThrownBy(() -> reader(bytes).readBinary())
                 .isInstanceOf(ThriftTruncatedException.class)
-                .hasMessageContaining("2000");
+                .hasMessage("Malformed Parquet metadata: binary value declares 2000 bytes but only 10 "
+                         + "remain");
     }
 }

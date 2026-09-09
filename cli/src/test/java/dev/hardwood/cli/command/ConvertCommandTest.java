@@ -163,8 +163,9 @@ class ConvertCommandTest implements ConvertCommandContract {
         assertThatThrownBy(() -> ConvertCommand.flattenValues("not a struct", account, "account",
                 ColumnProjection.all(), values, ""))
                         .isInstanceOf(IllegalStateException.class)
-                        .hasMessageContaining("Field 'account' is a struct in the schema")
-                        .hasMessageContaining("java.lang.String");
+                        .hasMessage("Field 'account' is a struct in the schema, but the reader returned a "
+                                 + "java.lang.String")
+                        ;
         assertThat(values).isEmpty();
     }
 

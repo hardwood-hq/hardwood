@@ -94,17 +94,17 @@ class SchemaElementFactoryTest {
     void everyNonRootFactoryRejectsANullRepetition() {
         assertThatThrownBy(() -> group("g", null, 1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("g")
-                .hasMessageContaining("requires a repetition level");
+                .hasMessage("Element g requires a repetition level; only the root element may omit it")
+                ;
         assertThatThrownBy(() -> group("g", null, 1, new LogicalType.ListType()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requires a repetition level");
+                .hasMessage("Element g requires a repetition level; only the root element may omit it");
         assertThatThrownBy(() -> primitive("p", PhysicalType.INT32, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requires a repetition level");
+                .hasMessage("Element p requires a repetition level; only the root element may omit it");
         assertThatThrownBy(() -> fixedLengthPrimitive("f", 4, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("requires a repetition level");
+                .hasMessage("Element f requires a repetition level; only the root element may omit it");
     }
 
     @Test
@@ -136,23 +136,24 @@ class SchemaElementFactoryTest {
     void primitiveRejectsANullType() {
         assertThatThrownBy(() -> primitive("value", null, RepetitionType.OPTIONAL))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("value")
-                .hasMessageContaining("null type denotes a group");
+                .hasMessage("Primitive element value requires a physical type; a null type denotes a group")
+                ;
     }
 
     @Test
     void primitiveRejectsFixedLenByteArray() {
         assertThatThrownBy(() -> primitive("token", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("token")
-                .hasMessageContaining("fixedLengthPrimitive");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column token requires a positive type length; use "
+                         + "fixedLengthPrimitive instead")
+                ;
     }
 
     @Test
     void groupRejectsANegativeChildCount() {
         assertThatThrownBy(() -> group("address", RepetitionType.OPTIONAL, -1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("address");
+                .hasMessage("Group address requires a child count of zero or more, not -1");
     }
 
     @Test
@@ -164,10 +165,10 @@ class SchemaElementFactoryTest {
     void fixedLengthPrimitiveRejectsANonPositiveWidth() {
         assertThatThrownBy(() -> fixedLengthPrimitive("token", 0, RepetitionType.OPTIONAL))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("token");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column token requires a positive type length, not 0");
         assertThatThrownBy(() -> fixedLengthPrimitive("token", -4, RepetitionType.OPTIONAL))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("token");
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column token requires a positive type length, not -4");
     }
 
     /// Record equality proves the factories match the constructor. The round trip also

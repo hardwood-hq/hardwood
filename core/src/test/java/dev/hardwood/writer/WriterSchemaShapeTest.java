@@ -59,7 +59,7 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("INT96");
+                .hasMessage("Writer does not support INT96 columns yet; column v is INT96");
     }
 
     /// A `REPEATED` leaf with no annotated parent has no layer, and the columnar API has no
@@ -75,8 +75,10 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("nums")
-                .hasMessageContaining("REPEATED leaf");
+                .hasMessage("Field nums is a REPEATED leaf outside a LIST or MAP group; the annotation is "
+                         + "what gives a repeated field a layer to be addressed through, so the writer "
+                         + "cannot produce it")
+                ;
     }
 
     /// The same shape nested inside a struct, so the rejection is known to walk the schema
@@ -90,7 +92,9 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("outer.nums");
+                .hasMessage("Field outer.nums is a REPEATED leaf outside a LIST or MAP group; the "
+                         + "annotation is what gives a repeated field a layer to be addressed through, so "
+                         + "the writer cannot produce it");
     }
 
     /// A `REPEATED` group carrying no `LIST` or `MAP` annotation is the two-level shape one
@@ -104,8 +108,9 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("g")
-                .hasMessageContaining("no LIST or MAP annotation");
+                .hasMessage("Group g is REPEATED but carries no LIST or MAP annotation, and is not the "
+                         + "entry group of one; the writer cannot produce it")
+                ;
     }
 
     /// The `key_value` group of a `MAP` and the `list` group of a `LIST` are `REPEATED` and
@@ -154,8 +159,10 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("items")
-                .hasMessageContaining("is itself REPEATED");
+                .hasMessage("Group items is annotated LIST and is itself REPEATED; the annotation accounts "
+                         + "for the repetition of its entry only, so nothing supplies the group's own "
+                         + "entry offsets")
+                ;
     }
 
     /// The same rule one level in, where the annotated group stands in the entry position of
@@ -172,8 +179,10 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("items.inner")
-                .hasMessageContaining("is itself REPEATED");
+                .hasMessage("Group items.inner is annotated LIST and is itself REPEATED; the annotation "
+                         + "accounts for the repetition of its entry only, so nothing supplies the "
+                         + "group's own entry offsets")
+                ;
     }
 
     /// An annotation over an entry that does not repeat carries no repetition at all, so the
@@ -188,8 +197,10 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("items")
-                .hasMessageContaining("rather than REPEATED");
+                .hasMessage("Group items is annotated LIST but its entry element is OPTIONAL rather than "
+                         + "REPEATED; the annotation then carries no repetition and the group's entry "
+                         + "offsets have nowhere to go")
+                ;
     }
 
     /// A sibling beside the entry would take the annotated group's repetition layer without
@@ -204,8 +215,9 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("items")
-                .hasMessageContaining("holds 2 fields");
+                .hasMessage("Group items is annotated LIST but holds 2 fields where the layout requires "
+                         + "exactly one, its REPEATED entry")
+                ;
     }
 
     /// A `MAP`'s entry is a key/value pair, so a leaf there is not the legacy two-level form a
@@ -220,8 +232,9 @@ class WriterSchemaShapeTest {
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("props")
-                .hasMessageContaining("requires a repeated group of key and value");
+                .hasMessage("Group props is annotated MAP but its entry key is a leaf where the layout "
+                         + "requires a repeated group of key and value")
+                ;
     }
 
     /// The legacy two-level list, whose entry is the element itself. The annotation supplies

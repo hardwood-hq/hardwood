@@ -104,14 +104,14 @@ class ByteBufferInputFileTest {
     void testOfBuffersVarargsRejectsNullFirst() {
         assertThatThrownBy(() -> InputFile.ofBuffers((ByteBuffer) null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("first buffer must not be null");
+                .hasMessage("first buffer must not be null");
     }
 
     @Test
     void testOfBuffersVarargsRejectsNullElement() {
         assertThatThrownBy(() -> InputFile.ofBuffers(ByteBuffer.wrap(new byte[]{1}), (ByteBuffer) null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("buffer must not be null");
+                .hasMessage("buffer must not be null");
     }
 
     @Test

@@ -60,7 +60,7 @@ class EncodingThriftMappingTest {
     void unknownHasNoThriftValue() {
         assertThatThrownBy(() -> ThriftEnumLookup.thriftValue(Encoding.UNKNOWN))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("UNKNOWN");
+                .hasMessage("No Thrift value for encoding: UNKNOWN");
     }
 
     /// Thrift value 1 is `GROUP_VAR_INT`, withdrawn by the format and never written. The table
