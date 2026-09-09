@@ -19,9 +19,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -402,96 +400,59 @@ final class PqMapImpl implements PqMap {
     ///
     /// A map whose values are a group has no such leaf, and every one of those
     /// accessors would otherwise read the group's first leaf column and decode
-    /// whatever it holds. The cast is what stops that, so it runs even where the
-    /// leaf itself is not needed.
+    /// whatever it holds. The cast is what stops that.
     private SchemaNode.PrimitiveNode requirePrimitiveValue() {
         return (SchemaNode.PrimitiveNode) valueSchema;
     }
 
+    /// `valueIdx` if the value at that position is present, -1 if it is null.
+    private int valueIndexOrNull(int valueIdx) {
+        return batch.isElementNull(mapDesc.valueProjCol(), valueIdx) ? -1 : valueIdx;
+    }
+
     private LocalDate readDateValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        requirePrimitiveValue();
-        return LogicalTypeConverter.intToDate(((int[]) batch.valueArrays[valueProjCol])[valueIdx]);
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readDate(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private LocalTime readTimeValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode leaf = requirePrimitiveValue();
-        long rawValue = leaf.type() == PhysicalType.INT32
-                ? ((int[]) batch.valueArrays[valueProjCol])[valueIdx]
-                : ((long[]) batch.valueArrays[valueProjCol])[valueIdx];
-        return LogicalTypeConverter.longToTime(rawValue,
-                ((LogicalType.TimeType) leaf.logicalType()).unit());
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readTime(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     /// The [Instant] a UTC-adjusted `TIMESTAMP` value holds, or the one a legacy
     /// `INT96` value holds by convention. The caller has already established through
     /// [TimestampAccessorKind] that the value column is the UTC-adjusted kind.
     private Instant readTimestampValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode leaf = requirePrimitiveValue();
-        if (leaf.logicalType() == null && leaf.type() == PhysicalType.INT96) {
-            return LogicalTypeConverter.int96ToInstant(batch.getBinary(valueProjCol, valueIdx));
-        }
-        return LogicalTypeConverter.longToTimestamp(
-                ((long[]) batch.valueArrays[valueProjCol])[valueIdx],
-                ((LogicalType.TimestampType) leaf.logicalType()).unit());
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private LocalDateTime readLocalTimestampValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        return LogicalTypeConverter.longToLocalTimestamp(
-                ((long[]) batch.valueArrays[valueProjCol])[valueIdx],
-                ((LogicalType.TimestampType) requirePrimitiveValue().logicalType()).unit());
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readLocalTimestamp(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private BigDecimal readDecimalValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode leaf = requirePrimitiveValue();
-        int scale = ((LogicalType.DecimalType) leaf.logicalType()).scale();
-        return switch (leaf.type()) {
-            case INT32 -> LogicalTypeConverter.longToDecimal(
-                    ((int[]) batch.valueArrays[valueProjCol])[valueIdx], scale);
-            case INT64 -> LogicalTypeConverter.longToDecimal(
-                    ((long[]) batch.valueArrays[valueProjCol])[valueIdx], scale);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                    ((BinaryBatchValues) batch.valueArrays[valueProjCol]).decimalAt(valueIdx, scale);
-            default -> throw new IllegalArgumentException(
-                    "Unexpected physical type for DECIMAL: " + leaf.type());
-        };
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readDecimal(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private UUID readUuidValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        requirePrimitiveValue();
-        return ((BinaryBatchValues) batch.valueArrays[valueProjCol]).uuidAt(valueIdx);
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readUuid(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private PqInterval readIntervalValue(int valueIdx) {
-        int valueProjCol = mapDesc.valueProjCol();
-        if (batch.isElementNull(valueProjCol, valueIdx)) {
-            return null;
-        }
-        requirePrimitiveValue();
-        return ((BinaryBatchValues) batch.valueArrays[valueProjCol]).intervalAt(valueIdx);
+        int idx = valueIndexOrNull(valueIdx);
+        return idx < 0 ? null : NestedLeafDecoder.readInterval(
+                batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     /// Translates an entry index (expressed as a position in the key column's leaf
@@ -626,8 +587,8 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            if (valueSchema instanceof SchemaNode.PrimitiveNode primitive
-                    && primitive.type() != PhysicalType.FLOAT) {
+            SchemaNode.PrimitiveNode primitive = requirePrimitiveValue();
+            if (primitive.type() != PhysicalType.FLOAT) {
                 // Ruling out FLOAT first lets the shared guard name a value that is
                 // neither, rather than leaving it to the cast below.
                 batch.requireFloatAccess(primitive);

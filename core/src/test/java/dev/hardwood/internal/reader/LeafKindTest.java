@@ -76,7 +76,18 @@ class LeafKindTest {
         SchemaNode group = new SchemaNode.GroupNode(
                 "s", RepetitionType.REQUIRED, null, null, List.of(), 0, 0);
 
-        assertThat(LeafKind.of(group)).isNull();
+        assertThat(LeafKind.of(group)).isEqualTo(LeafKind.GROUP);
+    }
+
+    /// The physical-type overload classifies a column, which is a leaf by
+    /// construction — only the `SchemaNode` overload can answer [LeafKind#GROUP].
+    @Test
+    void classifyingATypeAndAnnotationNeverAnswersGroup() {
+        for (PhysicalType type : PhysicalType.values()) {
+            assertThat(LeafKind.of(type, null)).as("%s", type).isNotEqualTo(LeafKind.GROUP);
+            assertThat(LeafKind.of(type, new LogicalType.DateType())).as("%s", type)
+                    .isNotEqualTo(LeafKind.GROUP);
+        }
     }
 
     @Test

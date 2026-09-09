@@ -470,17 +470,20 @@ public class PqRowApiTest {
     }
 
     @Test
-    void pqListWrongElementTypeFailsOnElementDecode() throws Exception {
+    void pqListWrongElementTypeFailsWhenTheViewIsAskedFor() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/typed_accessors_issue_445.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // `intervals` is a List<INTERVAL>; iterating it as dates fails on the
-            // first element decode rather than at iterator construction.
+            // `intervals` is a List<INTERVAL>; asking it for dates is rejected when the
+            // view is built, naming the element and what it actually is, rather than
+            // waiting for an element decode to fail.
             PqList intervals = rowReader.getList("intervals");
-            assertThatThrownBy(() -> intervals.dates().get(0))
-                    .isInstanceOf(ClassCastException.class);
+            assertThatThrownBy(intervals::dates)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[typed_accessors_issue_445.parquet] Column 'element' is"
+                            + " FIXED_LEN_BYTE_ARRAY annotated INTERVAL, which cannot be read as a date");
         }
     }
 

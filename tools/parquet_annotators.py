@@ -575,6 +575,19 @@ def annotate_element_at_path_as_float16(path: str, name_path) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def annotate_element_at_path_as_uuid(path: str, name_path) -> None:
+    """Annotate the SchemaElement at `name_path` as UUID (FLBA(16) payload).
+
+    PyArrow writes its own `uuid()` extension type as plain `FIXED_LEN_BYTE_ARRAY(16)`
+    with no Parquet annotation, so the underlying column must be written as
+    `pa.binary(16)` and post-annotated here.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(UUID=_parquet.UUIDType())
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def annotate_element_at_path_as_decimal(path: str, name_path, *,
                                         precision: int, scale: int) -> None:
     """Annotate the SchemaElement at `name_path` as DECIMAL(precision, scale)."""

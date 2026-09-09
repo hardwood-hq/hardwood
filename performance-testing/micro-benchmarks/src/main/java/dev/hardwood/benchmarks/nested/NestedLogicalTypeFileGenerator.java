@@ -12,6 +12,7 @@ import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
@@ -140,7 +141,7 @@ public final class NestedLogicalTypeFileGenerator {
         byte sign = (byte) (unscaled < 0 ? 0xFF : 0x00);
         int copyFrom = Math.max(0, minimal.length - DECIMAL_BYTES);
         int copyLen = minimal.length - copyFrom;
-        java.util.Arrays.fill(padded, 0, DECIMAL_BYTES - copyLen, sign);
+        Arrays.fill(padded, 0, DECIMAL_BYTES - copyLen, sign);
         System.arraycopy(minimal, copyFrom, padded, DECIMAL_BYTES - copyLen, copyLen);
         return padded;
     }

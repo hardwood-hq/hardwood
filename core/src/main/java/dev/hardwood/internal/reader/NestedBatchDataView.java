@@ -15,11 +15,9 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -28,7 +26,6 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.SchemaNode;
 
 /// Batch data view for nested schemas.
 ///
@@ -509,8 +506,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return LogicalTypeConverter.intToDate(
-                    ((int[]) batchIndex.valueArrays[p.projectedCol()])[valueIdx]);
+            return NestedLeafDecoder.readDate(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -522,14 +518,8 @@ public final class NestedBatchDataView {
         if (valueIdx < 0) {
             return null;
         }
-        int projCol = p.projectedCol();
-        SchemaNode.PrimitiveNode schema = p.schema();
         try {
-            long rawValue = schema.type() == PhysicalType.INT32
-                    ? ((int[]) batchIndex.valueArrays[projCol])[valueIdx]
-                    : ((long[]) batchIndex.valueArrays[projCol])[valueIdx];
-            return LogicalTypeConverter.longToTime(rawValue,
-                    ((LogicalType.TimeType) schema.logicalType()).unit());
+            return NestedLeafDecoder.readTime(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -544,15 +534,8 @@ public final class NestedBatchDataView {
         if (valueIdx < 0) {
             return null;
         }
-        int projCol = p.projectedCol();
-        SchemaNode.PrimitiveNode schema = p.schema();
         try {
-            if (schema.logicalType() == null && schema.type() == PhysicalType.INT96) {
-                return LogicalTypeConverter.int96ToInstant(batchIndex.getBinary(projCol, valueIdx));
-            }
-            return LogicalTypeConverter.longToTimestamp(
-                    ((long[]) batchIndex.valueArrays[projCol])[valueIdx],
-                    ((LogicalType.TimestampType) schema.logicalType()).unit());
+            return NestedLeafDecoder.readTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -565,9 +548,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return LogicalTypeConverter.longToLocalTimestamp(
-                    ((long[]) batchIndex.valueArrays[p.projectedCol()])[valueIdx],
-                    ((LogicalType.TimestampType) p.schema().logicalType()).unit());
+            return NestedLeafDecoder.readLocalTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -579,21 +560,8 @@ public final class NestedBatchDataView {
         if (valueIdx < 0) {
             return null;
         }
-        int projCol = p.projectedCol();
-        SchemaNode.PrimitiveNode schema = p.schema();
-        int scale = ((LogicalType.DecimalType) schema.logicalType()).scale();
         try {
-            return switch (schema.type()) {
-                case INT32 -> LogicalTypeConverter.longToDecimal(
-                        ((int[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
-                case INT64 -> LogicalTypeConverter.longToDecimal(
-                        ((long[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                        ((BinaryBatchValues) batchIndex.valueArrays[projCol])
-                                .decimalAt(valueIdx, scale);
-                default -> throw new IllegalArgumentException(prefix()
-                        + "Unexpected physical type for DECIMAL: " + schema.type());
-            };
+            return NestedLeafDecoder.readDecimal(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -606,7 +574,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return ((BinaryBatchValues) batchIndex.valueArrays[p.projectedCol()]).uuidAt(valueIdx);
+            return NestedLeafDecoder.readUuid(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -619,7 +587,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return ((BinaryBatchValues) batchIndex.valueArrays[p.projectedCol()]).intervalAt(valueIdx);
+            return NestedLeafDecoder.readInterval(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

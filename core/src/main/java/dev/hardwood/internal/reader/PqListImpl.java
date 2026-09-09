@@ -18,7 +18,6 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
@@ -195,14 +194,14 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<Float> floats() {
-        // FLOAT16 (FLBA(2) + Float16Type) decodes per element via the typed converter;
-        // plain FLOAT is a direct cast. Ruling out FLOAT first lets the shared guard name
-        // an element that is neither, rather than leaving it to the cast below — and it
-        // decides once per view, as the element's annotation is decided once.
+        // FLOAT16 (FLBA(2) + Float16Type) is read two bytes at a time out of the binary
+        // slot; plain FLOAT comes straight off a float[]. Ruling out FLOAT first lets the
+        // shared guard name an element that is neither, rather than leaving it to the cast
+        // below — and it decides once per view, as the element's annotation is decided once.
         int projCol = listDesc.firstLeafProjCol();
-        if (elementSchema instanceof SchemaNode.PrimitiveNode prim
-                && prim.type() != PhysicalType.FLOAT) {
-            batch.requireFloatAccess(prim);
+        SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        if (leaf.type() != PhysicalType.FLOAT) {
+            batch.requireFloatAccess(leaf);
             return new LeafList<>(pos ->
                     ((BinaryBatchValues) batch.valueArrays[projCol]).float16At(pos));
         }
@@ -237,22 +236,17 @@ final class PqListImpl implements PqList {
     @Override
     public List<LocalDate> dates() {
         int projCol = listDesc.firstLeafProjCol();
-        requirePrimitiveElement();
-        return new LeafList<>(pos -> LogicalTypeConverter.intToDate(
-                ((int[]) batch.valueArrays[projCol])[pos]));
+        LogicalAccessorKind.requireDate(batch.fileName, requirePrimitiveElement());
+        return new LeafList<>(pos -> NestedLeafDecoder.dateAt(batch, projCol, pos));
     }
 
     @Override
     public List<LocalTime> times() {
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimeType) leaf.logicalType()).unit();
-        if (leaf.type() == PhysicalType.INT32) {
-            return new LeafList<>(pos -> LogicalTypeConverter.longToTime(
-                    ((int[]) batch.valueArrays[projCol])[pos], unit));
-        }
-        return new LeafList<>(pos -> LogicalTypeConverter.longToTime(
-                ((long[]) batch.valueArrays[projCol])[pos], unit));
+        return new LeafList<>(pos -> NestedLeafDecoder.timeAt(batch, projCol, pos, type, unit));
     }
 
     @Override
@@ -260,13 +254,11 @@ final class PqListImpl implements PqList {
         TimestampAccessorKind.require(elementSchema, true);
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
-        if (leaf.logicalType() == null && leaf.type() == PhysicalType.INT96) {
-            return new LeafList<>(pos -> LogicalTypeConverter.int96ToInstant(
-                    batch.getBinary(projCol, pos)));
+        if (NestedLeafDecoder.isInt96Timestamp(leaf)) {
+            return new LeafList<>(pos -> NestedLeafDecoder.int96TimestampAt(batch, projCol, pos));
         }
         LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
-        return new LeafList<>(pos -> LogicalTypeConverter.longToTimestamp(
-                ((long[]) batch.valueArrays[projCol])[pos], unit));
+        return new LeafList<>(pos -> NestedLeafDecoder.timestampAt(batch, projCol, pos, unit));
     }
 
     @Override
@@ -275,41 +267,30 @@ final class PqListImpl implements PqList {
         int projCol = listDesc.firstLeafProjCol();
         LogicalType.TimeUnit unit =
                 ((LogicalType.TimestampType) requirePrimitiveElement().logicalType()).unit();
-        return new LeafList<>(pos -> LogicalTypeConverter.longToLocalTimestamp(
-                ((long[]) batch.valueArrays[projCol])[pos], unit));
+        return new LeafList<>(pos -> NestedLeafDecoder.localTimestampAt(batch, projCol, pos, unit));
     }
 
     @Override
     public List<BigDecimal> decimals() {
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        PhysicalType type = leaf.type();
         int scale = ((LogicalType.DecimalType) leaf.logicalType()).scale();
-        return switch (leaf.type()) {
-            case INT32 -> new LeafList<>(pos -> LogicalTypeConverter.longToDecimal(
-                    ((int[]) batch.valueArrays[projCol])[pos], scale));
-            case INT64 -> new LeafList<>(pos -> LogicalTypeConverter.longToDecimal(
-                    ((long[]) batch.valueArrays[projCol])[pos], scale));
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> new LeafList<>(pos ->
-                    ((BinaryBatchValues) batch.valueArrays[projCol]).decimalAt(pos, scale));
-            default -> throw new IllegalArgumentException(
-                    "Unexpected physical type for DECIMAL: " + leaf.type());
-        };
+        return new LeafList<>(pos -> NestedLeafDecoder.decimalAt(batch, projCol, pos, type, scale));
     }
 
     @Override
     public List<UUID> uuids() {
         int projCol = listDesc.firstLeafProjCol();
-        requirePrimitiveElement();
-        return new LeafList<>(pos ->
-                ((BinaryBatchValues) batch.valueArrays[projCol]).uuidAt(pos));
+        LogicalAccessorKind.requireUuid(batch.fileName, requirePrimitiveElement());
+        return new LeafList<>(pos -> NestedLeafDecoder.uuidAt(batch, projCol, pos));
     }
 
     @Override
     public List<PqInterval> intervals() {
         int projCol = listDesc.firstLeafProjCol();
-        requirePrimitiveElement();
-        return new LeafList<>(pos ->
-                ((BinaryBatchValues) batch.valueArrays[projCol]).intervalAt(pos));
+        LogicalAccessorKind.requireInterval(batch.fileName, requirePrimitiveElement());
+        return new LeafList<>(pos -> NestedLeafDecoder.intervalAt(batch, projCol, pos));
     }
 
     // ==================== Nested Type Accessors ====================
@@ -583,21 +564,17 @@ final class PqListImpl implements PqList {
         }
     }
 
-    // ==================== Internal: Lazy List Views ====================
-
-    /// Lazy [List] view over the list's leaf-column values. `size()` is the
-    /// list length; `get(int)` decodes one element on demand via `converter`,
-    /// short-circuiting nulls before the converter runs.
     /// The element column's leaf schema, for the accessors that decode a logical
     /// type from it.
     ///
     /// A list whose elements are a group has no such leaf, and every one of those
     /// accessors would otherwise read the group's first leaf column and decode
-    /// whatever it holds. The cast is what stops that, so it runs even where the
-    /// leaf itself is not needed.
+    /// whatever it holds. The cast is what stops that.
     private SchemaNode.PrimitiveNode requirePrimitiveElement() {
         return (SchemaNode.PrimitiveNode) elementSchema;
     }
+
+    // ==================== Internal: Lazy List Views ====================
 
     /// Lazy [List] view over a leaf column's elements. `reader` is handed the
     /// element's position in the leaf column and reads it out of the column array

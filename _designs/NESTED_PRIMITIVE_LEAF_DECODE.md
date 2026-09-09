@@ -51,17 +51,33 @@ place does not depend on the decision going the right way.
 
 ## Type mismatches
 
-Asking an accessor for a type the column does not hold surfaces as whatever the
-storage array's cast raises, which is what
-[EXCEPTION_MODEL.md](EXCEPTION_MODEL.md) states for this case; #971 covers
-giving that failure a message that names the column, across both paths at once.
+A mismatch in the *physical* type surfaces as whatever the storage array's cast
+raises, which is what [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md) states for this
+case; #971 covers giving that failure a message that names the column, across
+both paths at once.
 
-An explicit guard runs only where the cast cannot detect the mismatch: `FLOAT`
-against `FLOAT16` and the two `TIMESTAMP` kinds, which share their array type
-(`NestedBatchIndex.requireFloatAccess`, `TimestampAccessorKind`); and a group
-element against a leaf, where `PqListImpl.requirePrimitiveElement` and
-`PqMapImpl.requirePrimitiveValue` stop an accessor reading the group's first
-leaf column and decoding whatever it holds.
+Most accessors that decode an annotation cast it to the one they expect —
+`((LogicalType.TimeType) leaf.logicalType()).unit()` — so a column carrying
+another annotation, or none, fails there. Those are #971's population too, and
+nothing checks ahead of them.
+
+`getDate`, `getUuid` and `getInterval` read nothing off the annotation, so no
+cast on their way to the value can fail: a `DATE` and a bare `INT32` are one
+`int[]`, and any `FIXED_LEN_BYTE_ARRAY` of the right width is one
+`BinaryBatchValues`. Those three ask `LogicalAccessorKind` first, which rejects
+the column by name and by what it actually is. `FLOAT` against `FLOAT16` and the
+two `TIMESTAMP` kinds are the same shape of check and keep their own guards
+(`NestedBatchIndex.requireFloatAccess`, `TimestampAccessorKind`).
+
+A group element against a leaf is guarded separately, by
+`PqListImpl.requirePrimitiveElement` and `PqMapImpl.requirePrimitiveValue`:
+without them an accessor reads the group's first leaf column and decodes
+whatever it holds.
+
+A typed accessor over a whole column of elements — `PqList.dates()` and its
+siblings — resolves the annotation once when the view is built rather than once
+per element, so whichever of the two rejects the column does so when the view is
+asked for, before any element is read.
 
 ## Scope
 

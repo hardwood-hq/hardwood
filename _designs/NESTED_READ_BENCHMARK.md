@@ -84,9 +84,13 @@ generator and correctness gate, over a small set of shared helpers at the root:
 - `dev.hardwood.benchmarks` (shared) — `Elem` (the element-type enum), `NestedReads`
   (the column/row folds), `BenchmarkWriter` (the parquet-java writer plumbing), and
   `BenchmarkData` (corpus directory and fixture sizes).
-- `dev.hardwood.benchmarks.nested` (#750, #751) — `NestedListReadBenchmark` (the
+- `dev.hardwood.benchmarks.nested` (#750, #751, #1164) — `NestedListReadBenchmark` (the
   `LIST<primitive>` path, parameterized by element type and null density),
-  `NestedListFileGenerator`, and `NestedListGate`.
+  `NestedMultiListReadBenchmark` (several list columns read together),
+  `NestedLogicalTypeReadBenchmark` (the `LIST<annotated>` path, where the accessor
+  decodes an annotation rather than handing back the stored primitive), their
+  generators `NestedListFileGenerator` and `NestedLogicalTypeFileGenerator`, and the
+  gates `NestedListGate` and `NestedLogicalTypeGate`.
 - `dev.hardwood.benchmarks.mixed` (#732) — `MixedSchemaReadBenchmark` (the mixed
   scalar+list schema, the struct path, and the no-regression guards: repeated-heavy
   and the `> 1` repetition-layer depth shapes), `MixedSchemaFileGenerator`, and

@@ -598,6 +598,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
+        ColumnSchema col = columnSchemas[columnIndex];
+        LogicalAccessorKind.requireDate(currentFileName, col.name(), col.type(), col.logicalType());
         return LogicalTypeConverter.intToDate(((int[]) flatValueArrays[columnIndex])[rowIndex]);
     }
 
@@ -710,6 +712,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
+        ColumnSchema col = columnSchemas[columnIndex];
+        LogicalAccessorKind.requireUuid(currentFileName, col.name(), col.type(), col.logicalType());
         try {
             return ((BinaryBatchValues) flatValueArrays[columnIndex]).uuidAt(rowIndex);
         }
@@ -733,6 +737,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
+        ColumnSchema col = columnSchemas[columnIndex];
+        LogicalAccessorKind.requireInterval(currentFileName, col.name(), col.type(), col.logicalType());
         try {
             return ((BinaryBatchValues) flatValueArrays[columnIndex]).intervalAt(rowIndex);
         }
@@ -761,6 +767,10 @@ public final class FlatRowReader implements FileAwareRowReader {
             case CONVERT -> LogicalTypeConverter.convert(
                     rawValueUnchecked(columnIndex), physicalTypes[columnIndex],
                     columnSchemas[columnIndex].logicalType());
+            // A flat column is a leaf by construction: kinds[] is filled from the
+            // physical-type overload, which never answers GROUP.
+            case GROUP -> throw new IllegalStateException(prefix()
+                    + "Column '" + columnSchemas[columnIndex].name() + "' is not a leaf");
         };
     }
 

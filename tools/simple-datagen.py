@@ -29,6 +29,7 @@ from parquet_annotators import (
     annotate_element_at_path_as_time,
     annotate_element_at_path_as_decimal,
     annotate_element_at_path_as_enum,
+    annotate_element_at_path_as_uuid,
     annotate_columns_as_legacy_converted_type,
     annotate_map_as_legacy_key_value,
     collapse_list_to_unannotated_repeated,
@@ -3523,6 +3524,106 @@ print("\nGenerated typed_accessors_issue_445.parquet:")
 print("  - Fixture for hardwood#445: INTERVAL list, INTERVAL-value map,")
 print("    TIME-keyed map, DECIMAL-keyed map, JSON-value map, FLOAT16-value map,")
 print("    struct{ts, JSON, INT_8}.")
+
+# hardwood-hq/hardwood#1164: the typed accessors that decode an annotation, in a
+# list element and a map value. Each column is one (accessor, physical type) pair —
+# the axes are the accessor, and the representation its decode starts from. The
+# INT32- and INT64-backed DECIMALs and the UUIDs are written as their physical type
+# and annotated afterwards, neither being something PyArrow emits directly.
+nested_logical_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('times_ms', pa.list_(pa.time32('ms'))),
+    ('times_us', pa.list_(pa.time64('us'))),
+    ('dates', pa.list_(pa.date32())),
+    ('dec_i32', pa.list_(pa.int32())),
+    ('dec_i64', pa.list_(pa.int64())),
+    ('dec_flba', pa.list_(pa.decimal128(20, 4))),
+    ('uuids', pa.list_(pa.binary(16))),
+    ('bools', pa.list_(pa.bool_())),
+    ('bins', pa.list_(pa.binary())),
+    # Unannotated INT32 elements: the shape a typed accessor must reject rather
+    # than decode, since it shares its int[] with a DATE column.
+    ('plain_ints', pa.list_(pa.int32())),
+    ('date_map', pa.map_(pa.string(), pa.date32())),
+    ('time_map', pa.map_(pa.string(), pa.time32('ms'))),
+    ('dec_map', pa.map_(pa.string(), pa.decimal128(20, 4))),
+    ('uuid_map', pa.map_(pa.string(), pa.binary(16))),
+])
+
+_uuid_a = uuid.UUID('00112233-4455-6677-8899-aabbccddeeff').bytes
+_uuid_b = uuid.UUID('ffeeddcc-bbaa-9988-7766-554433221100').bytes
+
+nested_logical_table = pa.table({
+    'id': [1, 2, 3],
+    # 12:30:45.500 and 00:00:00.001, then a null element inside a non-null list.
+    'times_ms': [
+        [time(12, 30, 45, 500000), time(0, 0, 0, 1000)],
+        [time(23, 59, 59, 999000)],
+        [None],
+    ],
+    'times_us': [
+        [time(1, 2, 3, 456789)],
+        [time(0, 0, 0), time(12, 0, 0, 1)],
+        [],
+    ],
+    'dates': [
+        [date(2026, 1, 15), date(1970, 1, 1)],
+        [date(1969, 12, 31)],
+        [None],
+    ],
+    'dec_i32': [[12345, -678], [0], []],
+    'dec_i64': [[123456789012, -1], [7], []],
+    'dec_flba': [
+        [Decimal('123.4567'), Decimal('-0.0001')],
+        [Decimal('0.0000')],
+        [None],
+    ],
+    'uuids': [[_uuid_a, _uuid_b], [_uuid_a], [None]],
+    'bools': [[True, False], [False], [None]],
+    'bins': [[b'\x00\x01', b''], [b'\xff'], [None]],
+    'plain_ints': [[7, 8], [9], []],
+    'date_map': [
+        [('a', date(2026, 1, 15))],
+        [('b', date(1970, 1, 2)), ('c', None)],
+        [],
+    ],
+    'time_map': [
+        [('a', time(12, 30, 45, 500000))],
+        [('b', time(0, 0, 0, 1000))],
+        [],
+    ],
+    'dec_map': [
+        [('a', Decimal('123.4567'))],
+        [('b', Decimal('-0.0001'))],
+        [],
+    ],
+    'uuid_map': [[('a', _uuid_a)], [('b', _uuid_b)], []],
+}, schema=nested_logical_schema)
+
+pq.write_table(
+    nested_logical_table,
+    'core/src/test/resources/nested_logical_accessors.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+annotate_element_at_path_as_decimal(
+    'core/src/test/resources/nested_logical_accessors.parquet',
+    ['dec_i32', 'list', 'element'], precision=9, scale=2)
+annotate_element_at_path_as_decimal(
+    'core/src/test/resources/nested_logical_accessors.parquet',
+    ['dec_i64', 'list', 'element'], precision=18, scale=4)
+annotate_element_at_path_as_uuid(
+    'core/src/test/resources/nested_logical_accessors.parquet',
+    ['uuids', 'list', 'element'])
+annotate_element_at_path_as_uuid(
+    'core/src/test/resources/nested_logical_accessors.parquet',
+    ['uuid_map', 'key_value', 'value'])
+
+print("\nGenerated nested_logical_accessors.parquet:")
+print("  - Fixture for hardwood#1164: TIME / DATE / DECIMAL / UUID / BOOLEAN /")
+print("    BYTE_ARRAY list elements and DATE / TIME / DECIMAL / UUID map values,")
+print("    plus an unannotated INT32 list for the mismatch case.")
 
 # enum_nested_test.parquet
 # Regression fixture for hardwood-hq/hardwood#847. PyArrow does not emit ENUM,

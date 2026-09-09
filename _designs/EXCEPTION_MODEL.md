@@ -20,8 +20,16 @@ whether to fix their code or stop trusting the file.
 
 The caller's side is stated except for one case: asking an accessor for a type the column
 does not hold, where validating cost 4% per accessor and 7–8% end-to-end, above the 3% bar,
-so the call surfaces as whatever the storage array's cast raises. #971 covers putting a
-better error back if it can be made free.
+so the call surfaces as whatever cast the decode makes raises. #971 covers putting a better
+error back if it can be made free, which the exception path is: it runs only once the call
+has already failed.
+
+`getDate`, `getUuid` and `getInterval` are outside that, because no cast on their way to the
+value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
+`FIXED_LEN_BYTE_ARRAY` of the right width is one `BinaryBatchValues` — an `INT96` included,
+which is 12 bytes and so reads as an `INTERVAL`. Each of the three checks the annotation
+first (`LogicalAccessorKind`), since what it buys is not a better exception but the only one
+there is.
 
 ## Propagating IO issues
 

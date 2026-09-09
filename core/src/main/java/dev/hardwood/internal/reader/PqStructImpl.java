@@ -14,17 +14,14 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
-import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
 ///
@@ -378,92 +375,48 @@ final class PqStructImpl implements PqStruct {
         return batch.getBinary(projCol, idx);
     }
 
-    private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
+    /// The value index of `child` in the current record, or -1 when the field is null.
+    private int valueIndexOrNull(TopLevelFieldMap.FieldDesc.Primitive child) {
         int projCol = child.projectedCol();
         int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return LogicalTypeConverter.intToDate(((int[]) batch.valueArrays[projCol])[idx]);
+        return batch.isElementNull(projCol, idx) ? -1 : idx;
+    }
+
+    private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readDate(batch, child.projectedCol(), idx, child.schema());
     }
 
     private LocalTime readTime(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode schema = child.schema();
-        long rawValue = schema.type() == PhysicalType.INT32
-                ? ((int[]) batch.valueArrays[projCol])[idx]
-                : ((long[]) batch.valueArrays[projCol])[idx];
-        return LogicalTypeConverter.longToTime(rawValue,
-                ((LogicalType.TimeType) schema.logicalType()).unit());
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readTime(batch, child.projectedCol(), idx, child.schema());
     }
 
-    /// The [Instant] a UTC-adjusted `TIMESTAMP` field holds, or the one a legacy
-    /// `INT96` field holds by convention. The caller has already established through
-    /// [TimestampAccessorKind] that the field is the UTC-adjusted kind.
     private Instant readTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode schema = child.schema();
-        if (schema.logicalType() == null && schema.type() == PhysicalType.INT96) {
-            return LogicalTypeConverter.int96ToInstant(batch.getBinary(projCol, idx));
-        }
-        return LogicalTypeConverter.longToTimestamp(((long[]) batch.valueArrays[projCol])[idx],
-                ((LogicalType.TimestampType) schema.logicalType()).unit());
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(batch, child.projectedCol(), idx, child.schema());
     }
 
     private LocalDateTime readLocalTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return LogicalTypeConverter.longToLocalTimestamp(((long[]) batch.valueArrays[projCol])[idx],
-                ((LogicalType.TimestampType) child.schema().logicalType()).unit());
+        int idx = valueIndexOrNull(child);
+        return idx < 0
+                ? null
+                : NestedLeafDecoder.readLocalTimestamp(batch, child.projectedCol(), idx, child.schema());
     }
 
     private BigDecimal readDecimal(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        SchemaNode.PrimitiveNode schema = child.schema();
-        int scale = ((LogicalType.DecimalType) schema.logicalType()).scale();
-        return switch (schema.type()) {
-            case INT32 -> LogicalTypeConverter.longToDecimal(
-                    ((int[]) batch.valueArrays[projCol])[idx], scale);
-            case INT64 -> LogicalTypeConverter.longToDecimal(
-                    ((long[]) batch.valueArrays[projCol])[idx], scale);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                    ((BinaryBatchValues) batch.valueArrays[projCol]).decimalAt(idx, scale);
-            default -> throw new IllegalArgumentException(
-                    "Unexpected physical type for DECIMAL: " + schema.type());
-        };
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readDecimal(batch, child.projectedCol(), idx, child.schema());
     }
 
     private UUID readUuid(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return ((BinaryBatchValues) batch.valueArrays[projCol]).uuidAt(idx);
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readUuid(batch, child.projectedCol(), idx, child.schema());
     }
 
     private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return ((BinaryBatchValues) batch.valueArrays[projCol]).intervalAt(idx);
+        int idx = valueIndexOrNull(child);
+        return idx < 0 ? null : NestedLeafDecoder.readInterval(batch, child.projectedCol(), idx, child.schema());
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {

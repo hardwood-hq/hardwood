@@ -42,7 +42,12 @@ enum LeafKind {
     RAW,
 
     /// An annotated leaf, decoded through `LogicalTypeConverter`.
-    CONVERT;
+    CONVERT,
+
+    /// Not a leaf at all: a struct, list or map node, whose value the flyweights build
+    /// themselves. Named rather than left as a `null` return so a caller switching on
+    /// the classification stays exhaustive.
+    GROUP;
 
     /// How a leaf of this physical type and annotation decodes.
     static LeafKind of(PhysicalType type, LogicalType logicalType) {
@@ -58,11 +63,11 @@ enum LeafKind {
         return CONVERT;
     }
 
-    /// How the leaf `schema` describes decodes, or `null` where `schema` is a group
+    /// How the leaf `schema` describes decodes, or [#GROUP] where `schema` is a group
     /// and so carries no leaf decode at all.
     static LeafKind of(SchemaNode schema) {
         return schema instanceof SchemaNode.PrimitiveNode primitive
                 ? of(primitive.type(), primitive.logicalType())
-                : null;
+                : GROUP;
     }
 }
