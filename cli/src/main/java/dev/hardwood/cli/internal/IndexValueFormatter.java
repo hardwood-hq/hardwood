@@ -7,14 +7,8 @@
  */
 package dev.hardwood.cli.internal;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.HexFormat;
-import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
@@ -64,34 +58,23 @@ public final class IndexValueFormatter {
         LogicalType lt = useLogicalType ? col.logicalType() : null;
 
         if (lt instanceof LogicalType.DecimalType dt) {
-            BigInteger unscaled = switch (col.type()) {
-                case INT32 -> BigInteger.valueOf(StatisticsDecoder.decodeInt(bytes));
-                case INT64 -> BigInteger.valueOf(StatisticsDecoder.decodeLong(bytes));
-                default -> new BigInteger(bytes);
-            };
-            return new BigDecimal(unscaled, dt.scale()).toPlainString();
+            return (switch (col.type()) {
+                case INT32 -> LogicalTypeConverter.longToDecimal(StatisticsDecoder.decodeInt(bytes), dt.scale());
+                case INT64 -> LogicalTypeConverter.longToDecimal(StatisticsDecoder.decodeLong(bytes), dt.scale());
+                default -> LogicalTypeConverter.bytesToDecimal(bytes, dt.scale());
+            }).toPlainString();
         }
         if (lt instanceof LogicalType.TimestampType ts) {
-            long raw = col.type() == PhysicalType.INT32
-                    ? StatisticsDecoder.decodeInt(bytes)
-                    : StatisticsDecoder.decodeLong(bytes);
+            long raw = decodeIntegral(bytes, col);
             return (ts.isAdjustedToUTC()
-                    ? LogicalTypeConverter.convertToTimestamp(raw, PhysicalType.INT64, ts)
-                    : LogicalTypeConverter.convertToLocalTimestamp(raw, PhysicalType.INT64, ts)).toString();
+                    ? LogicalTypeConverter.longToTimestamp(raw, ts.unit())
+                    : LogicalTypeConverter.longToLocalTimestamp(raw, ts.unit())).toString();
         }
         if (lt instanceof LogicalType.DateType) {
-            return LocalDate.ofEpochDay(StatisticsDecoder.decodeInt(bytes)).toString();
+            return LogicalTypeConverter.intToDate(StatisticsDecoder.decodeInt(bytes)).toString();
         }
         if (lt instanceof LogicalType.TimeType t) {
-            long raw = col.type() == PhysicalType.INT32
-                    ? StatisticsDecoder.decodeInt(bytes)
-                    : StatisticsDecoder.decodeLong(bytes);
-            long nanosOfDay = switch (t.unit()) {
-                case MILLIS -> raw * 1_000_000L;
-                case MICROS -> raw * 1_000L;
-                case NANOS -> raw;
-            };
-            return LocalTime.ofNanoOfDay(nanosOfDay).toString();
+            return LogicalTypeConverter.longToTime(decodeIntegral(bytes, col), t.unit()).toString();
         }
 
         return switch (col.type()) {
@@ -151,6 +134,14 @@ public final class IndexValueFormatter {
         return format(value, col);
     }
 
+    /// A statistic on an `INT32` or `INT64` column, widened to the `long` the
+    /// converters take. The date, time and timestamp annotations all read one.
+    private static long decodeIntegral(byte[] bytes, ColumnSchema col) {
+        return col.type() == PhysicalType.INT32
+                ? StatisticsDecoder.decodeInt(bytes)
+                : StatisticsDecoder.decodeLong(bytes);
+    }
+
     private static String formatInt32(byte[] bytes, LogicalType lt) {
         return formatInt32Value(StatisticsDecoder.decodeInt(bytes), lt);
     }
@@ -183,15 +174,13 @@ public final class IndexValueFormatter {
             return formatString(bytes);
         }
         if (lt instanceof LogicalType.UuidType && bytes.length == 16) {
-            ByteBuffer bb = ByteBuffer.wrap(bytes);
-            return new UUID(bb.getLong(), bb.getLong()).toString();
+            return LogicalTypeConverter.bytesToUuid(bytes).toString();
         }
         if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
             return RowValueFormatter.formatIntervalBytes(bytes);
         }
         if (lt instanceof LogicalType.Float16Type && bytes.length == 2) {
-            return Float.toString(
-                    LogicalTypeConverter.convertToFloat16(bytes, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+            return Float.toString(LogicalTypeConverter.bytesToFloat16(bytes));
         }
         return BinaryValues.render(bytes, maxChars);
     }

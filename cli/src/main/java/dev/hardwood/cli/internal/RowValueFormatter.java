@@ -8,18 +8,12 @@
 package dev.hardwood.cli.internal;
 
 import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -384,11 +378,11 @@ public final class RowValueFormatter {
     private static String formatInt(int raw, LogicalType lt) {
         return switch (lt) {
             case null -> Integer.toString(raw);
-            case LogicalType.DateType d -> LocalDate.ofEpochDay(raw).toString();
+            case LogicalType.DateType d -> LogicalTypeConverter.intToDate(raw).toString();
             case LogicalType.TimeType t -> formatTime(raw, t.unit());
             case LogicalType.IntType it when !it.isSigned() -> Long.toString(Integer.toUnsignedLong(raw));
             case LogicalType.IntType it -> Integer.toString(raw);
-            case LogicalType.DecimalType d -> new BigDecimal(BigInteger.valueOf(raw), d.scale()).toPlainString();
+            case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
             default -> throw notBackedBy(lt, "INT32");
         };
     }
@@ -400,12 +394,12 @@ public final class RowValueFormatter {
         return switch (lt) {
             case null -> Long.toString(raw);
             case LogicalType.TimestampType ts -> (ts.isAdjustedToUTC()
-                    ? LogicalTypeConverter.convertToTimestamp(raw, PhysicalType.INT64, ts)
-                    : LogicalTypeConverter.convertToLocalTimestamp(raw, PhysicalType.INT64, ts)).toString();
+                    ? LogicalTypeConverter.longToTimestamp(raw, ts.unit())
+                    : LogicalTypeConverter.longToLocalTimestamp(raw, ts.unit())).toString();
             case LogicalType.TimeType t -> formatTime(raw, t.unit());
             case LogicalType.IntType it when !it.isSigned() -> Long.toUnsignedString(raw);
             case LogicalType.IntType it -> Long.toString(raw);
-            case LogicalType.DecimalType d -> new BigDecimal(BigInteger.valueOf(raw), d.scale()).toPlainString();
+            case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
             default -> throw notBackedBy(lt, "INT64");
         };
     }
@@ -417,20 +411,17 @@ public final class RowValueFormatter {
     private static String formatBytes(byte[] raw, LogicalType lt, int maxChars) {
         return switch (lt) {
             case null -> formatRawBytes(raw, maxChars);
-            case LogicalType.StringType s -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.EnumType e -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.JsonType j -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.BsonType b -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.DecimalType d -> new BigDecimal(new BigInteger(raw), d.scale()).toPlainString();
-            case LogicalType.UuidType u when raw.length == 16 -> {
-                ByteBuffer bb = ByteBuffer.wrap(raw);
-                yield new UUID(bb.getLong(), bb.getLong()).toString();
-            }
+            case LogicalType.StringType s -> LogicalTypeConverter.bytesToString(raw);
+            case LogicalType.EnumType e -> LogicalTypeConverter.bytesToString(raw);
+            case LogicalType.JsonType j -> LogicalTypeConverter.bytesToString(raw);
+            case LogicalType.BsonType b -> LogicalTypeConverter.bytesToString(raw);
+            case LogicalType.DecimalType d -> LogicalTypeConverter.bytesToDecimal(raw, d.scale()).toPlainString();
+            case LogicalType.UuidType u when raw.length == 16 -> LogicalTypeConverter.bytesToUuid(raw).toString();
             case LogicalType.UuidType u -> formatRawBytes(raw, maxChars);
             case LogicalType.IntervalType i when raw.length == 12 -> formatIntervalBytes(raw);
             case LogicalType.IntervalType i -> formatRawBytes(raw, maxChars);
             case LogicalType.Float16Type f when raw.length == 2 ->
-                    Float.toString(LogicalTypeConverter.convertToFloat16(raw, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+                    Float.toString(LogicalTypeConverter.bytesToFloat16(raw));
             case LogicalType.Float16Type f -> formatRawBytes(raw, maxChars);
             case LogicalType.GeometryType g -> formatRawBytes(raw, maxChars);
             case LogicalType.GeographyType g -> formatRawBytes(raw, maxChars);
@@ -447,7 +438,7 @@ public final class RowValueFormatter {
     /// Decode a 12-byte FIXED_LEN_BYTE_ARRAY INTERVAL payload (as used in
     /// page/dictionary stats) and render it via [#formatInterval(PqInterval)].
     public static String formatIntervalBytes(byte[] bytes) {
-        return formatInterval(LogicalTypeConverter.convertToInterval(bytes, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+        return formatInterval(LogicalTypeConverter.bytesToInterval(bytes));
     }
 
     public static String formatInterval(PqInterval interval) {
@@ -676,11 +667,6 @@ public final class RowValueFormatter {
     }
 
     private static String formatTime(long raw, LogicalType.TimeUnit unit) {
-        long nanosOfDay = switch (unit) {
-            case MILLIS -> raw * 1_000_000L;
-            case MICROS -> raw * 1_000L;
-            case NANOS -> raw;
-        };
-        return LocalTime.ofNanoOfDay(nanosOfDay).toString();
+        return LogicalTypeConverter.longToTime(raw, unit).toString();
     }
 }
