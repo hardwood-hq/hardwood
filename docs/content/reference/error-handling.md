@@ -54,6 +54,6 @@ consumed; Hardwood itself raises `UncheckedIOException` from no public method.
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused compression codec (`LZ4`, `LZO`), one whose library is not on the classpath, or one whose native library will not load; a schema shape the writer cannot produce — repetition no `LIST` or `MAP` annotation accounts for |
 | `IllegalArgumentException` | An unknown column name or path, a setter that does not fit the column's type, a column set twice, a batch that leaves a column unset or whose arrays disagree in length, a null mask on a `REQUIRED` column, list offsets that do not describe the elements given, a value outside the range its annotation declares, or a `REQUIRED` field a record leaves unset |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing after `close()`, using both write APIs on one file, or using a `ColumnBatch` or nested builder after its scope has ended |
+| `IllegalStateException` | Writing after `close()`, using both write APIs on one file, using a `ColumnBatch` or nested builder after its scope has ended, or taking `BufferOutputFile.buffer()` before the writer has closed |
 
 For what each of these means in context, see the [Writer Reference](writer.md#what-the-writer-rejects).
