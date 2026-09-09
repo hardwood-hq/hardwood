@@ -237,20 +237,14 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<Instant> timestamps() {
-        requireElementTimestampKind(true);
+        TimestampAccessorKind.require(elementSchema, true);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
     }
 
     @Override
     public List<LocalDateTime> localTimestamps() {
-        requireElementTimestampKind(false);
+        TimestampAccessorKind.require(elementSchema, false);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDateTime.class));
-    }
-
-    private void requireElementTimestampKind(boolean wantUtcAdjusted) {
-        if (elementSchema instanceof SchemaNode.PrimitiveNode prim) {
-            TimestampAccessorKind.require(elementSchema.name(), prim.logicalType(), wantUtcAdjusted);
-        }
     }
 
     @Override

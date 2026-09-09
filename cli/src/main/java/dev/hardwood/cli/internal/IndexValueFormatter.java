@@ -65,10 +65,7 @@ public final class IndexValueFormatter {
             }).toPlainString();
         }
         if (lt instanceof LogicalType.TimestampType ts) {
-            long raw = decodeIntegral(bytes, col);
-            return (ts.isAdjustedToUTC()
-                    ? LogicalTypeConverter.longToTimestamp(raw, ts.unit())
-                    : LogicalTypeConverter.longToLocalTimestamp(raw, ts.unit())).toString();
+            return LogicalTypeConverter.longToTemporal(decodeIntegral(bytes, col), ts).toString();
         }
         if (lt instanceof LogicalType.DateType) {
             return LogicalTypeConverter.intToDate(StatisticsDecoder.decodeInt(bytes)).toString();

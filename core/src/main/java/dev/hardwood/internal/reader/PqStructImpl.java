@@ -161,28 +161,28 @@ final class PqStructImpl implements PqStruct {
     @Override
     public Instant getTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
+        TimestampAccessorKind.require(child.schema(), true);
         return readLogicalType(child, Instant.class);
     }
 
     @Override
     public Instant getTimestamp(int fieldIndex) {
         TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
+        TimestampAccessorKind.require(child.schema(), true);
         return readLogicalType(child, Instant.class);
     }
 
     @Override
     public LocalDateTime getLocalTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
+        TimestampAccessorKind.require(child.schema(), false);
         return readLogicalType(child, LocalDateTime.class);
     }
 
     @Override
     public LocalDateTime getLocalTimestamp(int fieldIndex) {
         TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
+        TimestampAccessorKind.require(child.schema(), false);
         return readLogicalType(child, LocalDateTime.class);
     }
 

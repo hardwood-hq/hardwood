@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.schema.SchemaNode;
 
 /// Shared dispatch guards for the TIMESTAMP accessor pair (#568).
 ///
@@ -21,6 +22,15 @@ import dev.hardwood.metadata.LogicalType;
 final class TimestampAccessorKind {
 
     private TimestampAccessorKind() {
+    }
+
+    /// Verify that a leaf is the right TIMESTAMP kind for the accessor being called, for
+    /// a caller holding the leaf's schema node. A group node is not a timestamp leaf and
+    /// passes through, as a non-TIMESTAMP annotation does.
+    static void require(SchemaNode schema, boolean wantUtcAdjusted) {
+        if (schema instanceof SchemaNode.PrimitiveNode primitive) {
+            require(schema.name(), primitive.logicalType(), wantUtcAdjusted);
+        }
     }
 
     /// Verify that a column is the right TIMESTAMP kind for the accessor being

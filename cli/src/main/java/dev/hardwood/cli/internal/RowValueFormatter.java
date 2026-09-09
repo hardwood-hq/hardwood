@@ -393,9 +393,7 @@ public final class RowValueFormatter {
     private static String formatLong(long raw, LogicalType lt) {
         return switch (lt) {
             case null -> Long.toString(raw);
-            case LogicalType.TimestampType ts -> (ts.isAdjustedToUTC()
-                    ? LogicalTypeConverter.longToTimestamp(raw, ts.unit())
-                    : LogicalTypeConverter.longToLocalTimestamp(raw, ts.unit())).toString();
+            case LogicalType.TimestampType ts -> LogicalTypeConverter.longToTemporal(raw, ts).toString();
             case LogicalType.TimeType t -> formatTime(raw, t.unit());
             case LogicalType.IntType it when !it.isSigned() -> Long.toUnsignedString(raw);
             case LogicalType.IntType it -> Long.toString(raw);

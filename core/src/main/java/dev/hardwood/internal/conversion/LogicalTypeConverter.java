@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.time.temporal.Temporal;
 import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
@@ -141,9 +142,7 @@ public final class LogicalTypeConverter {
         return switch (logicalType) {
             case LogicalType.StringType t -> bytesToString((byte[]) physicalValue);
             case LogicalType.DateType t -> intToDate((Integer) physicalValue);
-            case LogicalType.TimestampType tt -> tt.isAdjustedToUTC()
-                    ? longToTimestamp((Long) physicalValue, tt.unit())
-                    : longToLocalTimestamp((Long) physicalValue, tt.unit());
+            case LogicalType.TimestampType tt -> longToTemporal((Long) physicalValue, tt);
             // TIME, DECIMAL and INT are the arms whose unboxing depends on the physical
             // type, so they keep a helper that takes it; the rest decode from one
             // representation and go straight to the primitive entry point.
@@ -216,6 +215,21 @@ public final class LogicalTypeConverter {
             case MICROS -> Instant.ofEpochSecond(rawValue / 1_000_000, (rawValue % 1_000_000) * 1000);
             case NANOS -> Instant.ofEpochSecond(rawValue / 1_000_000_000, rawValue % 1_000_000_000);
         };
+    }
+
+    /// The value a `TIMESTAMP` column's offset stands for, as the annotation's own
+    /// `isAdjustedToUTC` flag decides it: an [Instant] for a UTC-adjusted column, a
+    /// [LocalDateTime] for a local one.
+    ///
+    /// The one statement of that routing, for a caller decoding whatever the column holds
+    /// rather than asking for one kind. A caller that has asked — a typed accessor — names
+    /// the kind it wants in its return type and calls [#longToTimestamp] or
+    /// [#longToLocalTimestamp] directly, having checked the column is that kind through
+    /// `TimestampAccessorKind`.
+    public static Temporal longToTemporal(long rawValue, LogicalType.TimestampType type) {
+        return type.isAdjustedToUTC()
+                ? longToTimestamp(rawValue, type.unit())
+                : longToLocalTimestamp(rawValue, type.unit());
     }
 
     /// The wall-clock date and time a local `TIMESTAMP` column's offset in `unit` stands

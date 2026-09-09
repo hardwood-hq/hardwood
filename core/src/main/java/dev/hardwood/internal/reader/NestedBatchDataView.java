@@ -318,13 +318,13 @@ public final class NestedBatchDataView {
 
     public Instant getTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
+        TimestampAccessorKind.require(p.schema(), true);
         return readLogicalType(p, Instant.class);
     }
 
     public LocalDateTime getLocalTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
-        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
+        TimestampAccessorKind.require(p.schema(), false);
         return readLogicalType(p, LocalDateTime.class);
     }
 
@@ -370,13 +370,13 @@ public final class NestedBatchDataView {
 
     public Instant getTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
+        TimestampAccessorKind.require(p.schema(), true);
         return readLogicalType(p, Instant.class);
     }
 
     public LocalDateTime getLocalTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
+        TimestampAccessorKind.require(p.schema(), false);
         return readLogicalType(p, LocalDateTime.class);
     }
 

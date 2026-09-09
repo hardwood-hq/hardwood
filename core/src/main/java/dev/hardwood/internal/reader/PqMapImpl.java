@@ -587,22 +587,16 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Instant getTimestampValue() {
-            requireValueTimestampKind(true);
+            TimestampAccessorKind.require(valueSchema, true);
             Object raw = readValueAt(valueIdx);
             return ValueConverter.convertLogicalType(raw, valueSchema, Instant.class);
         }
 
         @Override
         public LocalDateTime getLocalTimestampValue() {
-            requireValueTimestampKind(false);
+            TimestampAccessorKind.require(valueSchema, false);
             Object raw = readValueAt(valueIdx);
             return ValueConverter.convertLogicalType(raw, valueSchema, LocalDateTime.class);
-        }
-
-        private void requireValueTimestampKind(boolean wantUtcAdjusted) {
-            if (valueSchema instanceof SchemaNode.PrimitiveNode primitive) {
-                TimestampAccessorKind.require(valueSchema.name(), primitive.logicalType(), wantUtcAdjusted);
-            }
         }
 
         @Override
