@@ -207,7 +207,7 @@ public final class LogicalTypeConverter {
     /// The instant a UTC-adjusted `TIMESTAMP` column's offset in `unit` stands for.
     ///
     /// Which of the two timestamp kinds an accessor accepts is stated once, in
-    /// `TimestampAccessorKind`, which names the column and the accessor that fits it.
+    /// `TimestampAccessorKind`, which names the column and the kind it turned out to be.
     /// This decodes whatever unit it is handed.
     public static Instant longToTimestamp(long rawValue, LogicalType.TimeUnit unit) {
         return switch (unit) {

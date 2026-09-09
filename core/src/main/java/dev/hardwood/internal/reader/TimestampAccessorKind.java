@@ -33,47 +33,31 @@ final class TimestampAccessorKind {
         }
     }
 
-    /// Verify that a column is the right TIMESTAMP kind for the accessor being
-    /// called. A `null` logical type means a legacy INT96 column (no
-    /// `isAdjustedToUTC` field); the convention is to treat it as UTC-adjusted,
-    /// so it is accepted by [#requireUtcAdjusted] and rejected by [#requireLocal].
-    /// Non-TIMESTAMP logical types pass through without action — the caller's
-    /// subsequent typed read will fail with its own type-mismatch exception.
+    /// Verify that a column is the kind of TIMESTAMP the accessor being called reads.
     ///
-    /// @throws IllegalStateException if the column's kind doesn't match the request
+    /// A `null` annotation is a legacy INT96 column, which carries no `isAdjustedToUTC`
+    /// field and is conventionally UTC-adjusted. A non-TIMESTAMP annotation passes through
+    /// without action: the caller's subsequent typed read fails with its own type-mismatch
+    /// exception.
+    ///
+    /// @throws IllegalStateException if the column is the other kind
     static void require(String columnName, LogicalType lt, boolean wantUtcAdjusted) {
-        if (lt == null) {
-            // INT96: only the UTC-adjusted accessor accepts it.
-            if (!wantUtcAdjusted) {
-                throw new IllegalStateException("Column '" + columnName
-                        + "' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field); "
-                        + "use getTimestamp instead");
-            }
+        if (lt != null && !(lt instanceof LogicalType.TimestampType)) {
             return;
         }
-        if (lt instanceof LogicalType.TimestampType tt) {
-            if (wantUtcAdjusted) {
-                requireUtcAdjusted(columnName, tt);
-            }
-            else {
-                requireLocal(columnName, tt);
-            }
+        boolean utcAdjusted = lt == null || ((LogicalType.TimestampType) lt).isAdjustedToUTC();
+        if (utcAdjusted != wantUtcAdjusted) {
+            throw new IllegalStateException(
+                    "Column '" + columnName + "' is " + describe(lt, utcAdjusted));
         }
     }
 
-    private static void requireUtcAdjusted(String columnName, LogicalType.TimestampType tt) {
-        if (!tt.isAdjustedToUTC()) {
-            throw new IllegalStateException("Column '" + columnName
-                    + "' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false); "
-                    + "use getLocalTimestamp instead");
+    private static String describe(LogicalType lt, boolean utcAdjusted) {
+        if (lt == null) {
+            return "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)";
         }
-    }
-
-    private static void requireLocal(String columnName, LogicalType.TimestampType tt) {
-        if (tt.isAdjustedToUTC()) {
-            throw new IllegalStateException("Column '" + columnName
-                    + "' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true); "
-                    + "use getTimestamp instead");
-        }
+        return utcAdjusted
+                ? "a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true)"
+                : "a local-wall-clock TIMESTAMP (isAdjustedToUTC=false)";
     }
 }

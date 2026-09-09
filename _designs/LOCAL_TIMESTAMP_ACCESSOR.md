@@ -51,10 +51,10 @@ LocalDateTime asLocalTimestamp();   // TIMESTAMP_NTZ / TIMESTAMP_NTZ_NANOS tags
 
 ## Errors
 
-`IllegalStateException` thrown by the accessor with a message of the form:
+`IllegalStateException` thrown by the accessor, naming the column and the kind it turned out to be:
 
 ```
-Column 'tpep_pickup_datetime' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false); use getLocalTimestamp instead
+Column 'tpep_pickup_datetime' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false)
 ```
 
 The exception type, message shape, and the column-name + flag-value content are part of the documented contract — `docs/content/how-to/row-reader.md` directs callers to inspect `LogicalType.TimestampType.isAdjustedToUTC()` ahead of time when the kind isn't statically known.
