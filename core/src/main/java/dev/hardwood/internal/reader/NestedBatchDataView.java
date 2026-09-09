@@ -15,7 +15,6 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
@@ -213,14 +212,9 @@ public final class NestedBatchDataView {
         if (p.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) batchIndex.valueArrays[projCol])[valueIdx];
         }
-        // FLOAT16 path: primitive convertToFloat16 keeps the value unboxed;
-        // readLogicalType isn't reused because LogicalTypeConverter.convert
-        // returns Object and would box.
         batchIndex.requireFloatAccess(p.schema());
         try {
-            return LogicalTypeConverter.convertToFloat16(
-                    ((BinaryBatchValues) batchIndex.valueArrays[projCol]).byteArrayAt(valueIdx),
-                    p.schema().type());
+            return ((BinaryBatchValues) batchIndex.valueArrays[projCol]).float16At(valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -279,9 +273,7 @@ public final class NestedBatchDataView {
         }
         batchIndex.requireFloatAccess(p.schema());
         try {
-            return LogicalTypeConverter.convertToFloat16(
-                    ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx),
-                    p.schema().type());
+            return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).float16At(valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

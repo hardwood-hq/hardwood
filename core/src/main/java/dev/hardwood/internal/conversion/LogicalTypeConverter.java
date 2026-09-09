@@ -284,12 +284,18 @@ public final class LogicalTypeConverter {
 
     /// The single-precision value a 2-byte `FLOAT16` payload stands for.
     public static float bytesToFloat16(byte[] bytes) {
-        if (bytes.length != FLOAT16_BYTES) {
+        return bytesToFloat16(bytes, 0, bytes.length);
+    }
+
+    /// The single-precision value the 2-byte `FLOAT16` payload at `offset` stands for, for
+    /// a caller holding the payload inside a larger buffer.
+    public static float bytesToFloat16(byte[] bytes, int offset, int length) {
+        if (length != FLOAT16_BYTES) {
             throw new IllegalArgumentException(
-                    "FLOAT16 requires exactly " + FLOAT16_BYTES + " bytes, got " + bytes.length);
+                    "FLOAT16 requires exactly " + FLOAT16_BYTES + " bytes, got " + length);
         }
         // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
-        short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
+        short raw = (short) ((bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8));
         return Float.float16ToFloat(raw);
     }
 

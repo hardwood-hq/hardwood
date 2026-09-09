@@ -10,6 +10,8 @@ package dev.hardwood.internal.reader;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
 /// / `INT96`).
 ///
@@ -60,6 +62,16 @@ public final class BinaryBatchValues {
         byte[] result = new byte[len];
         System.arraycopy(bytes, start, result, 0, len);
         return result;
+    }
+
+    /// Decode value `idx` as the single-precision value its `FLOAT16` payload stands for,
+    /// reading the two bytes where they sit rather than materialising a `byte[]` for them.
+    ///
+    /// The float accessors decode here rather than through the generic value conversion
+    /// because that path returns `Object` and would box the value they promised unboxed.
+    public float float16At(int idx) {
+        int start = offsets[idx];
+        return LogicalTypeConverter.bytesToFloat16(bytes, start, offsets[idx + 1] - start);
     }
 
     /// Materialise value `idx` as a UTF-8 decoded `String`. A dictionary-encoded

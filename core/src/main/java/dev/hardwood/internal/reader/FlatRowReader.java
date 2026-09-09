@@ -538,8 +538,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // column is one the caller has asked for a float it does not hold.
         requireFloatAccess(columnIndex);
         try {
-            return LogicalTypeConverter.bytesToFloat16(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
+            return ((BinaryBatchValues) flatValueArrays[columnIndex]).float16At(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
