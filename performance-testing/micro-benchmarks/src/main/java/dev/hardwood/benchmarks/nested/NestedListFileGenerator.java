@@ -65,6 +65,16 @@ public final class NestedListFileGenerator {
             return token;
         }
 
+        /// Shared with the sibling generators so every list fixture at a given density
+        /// has the same null shape, whatever its element type.
+        double elementNullProbability() {
+            return elementNullProbability;
+        }
+
+        double listNullProbability() {
+            return listNullProbability;
+        }
+
         boolean nullable() {
             return this != NONE;
         }
