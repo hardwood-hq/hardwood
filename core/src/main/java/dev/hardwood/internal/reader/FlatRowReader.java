@@ -538,9 +538,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         // column is one the caller has asked for a float it does not hold.
         requireFloatAccess(columnIndex);
         try {
-            return LogicalTypeConverter.convertToFloat16(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+            return LogicalTypeConverter.bytesToFloat16(
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -625,13 +624,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        int rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
-        try {
-            return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
-        }
-        catch (RuntimeException e) {
-            throw ExceptionContext.addFileContext(currentFileName, e);
-        }
+        return LogicalTypeConverter.intToDate(((int[]) flatValueArrays[columnIndex])[rowIndex]);
     }
 
     @Override
@@ -645,16 +638,11 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         ColumnSchema col = columnSchemas[columnIndex];
-        Object rawValue;
-        if (col.type() == PhysicalType.INT32) {
-            rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
-        }
-        else {
-            rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-        }
+        long rawValue = col.type() == PhysicalType.INT32
+                ? ((int[]) flatValueArrays[columnIndex])[rowIndex]
+                : ((long[]) flatValueArrays[columnIndex])[rowIndex];
         try {
-            return LogicalTypeConverter.convertToTime(rawValue, col.type(),
-                    (LogicalType.TimeType) col.logicalType());
+            return LogicalTypeConverter.longToTime(rawValue, ((LogicalType.TimeType) col.logicalType()).unit());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -679,8 +667,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             }
             TimestampAccessorKind.require(col.name(), col.logicalType(), true);
             long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
-                    (LogicalType.TimestampType) col.logicalType());
+            return LogicalTypeConverter.longToTimestamp(rawValue,
+                    ((LogicalType.TimestampType) col.logicalType()).unit());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -701,8 +689,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         try {
             TimestampAccessorKind.require(col.name(), col.logicalType(), false);
             long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.convertToLocalTimestamp(rawValue, col.type(),
-                    (LogicalType.TimestampType) col.logicalType());
+            return LogicalTypeConverter.longToLocalTimestamp(rawValue,
+                    ((LogicalType.TimestampType) col.logicalType()).unit());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -720,17 +708,18 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         ColumnSchema col = columnSchemas[columnIndex];
-        Object rawValue = switch (col.type()) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
-            default -> throw new IllegalArgumentException(prefix()
-                    + "Unexpected physical type for DECIMAL: " + col.type());
-        };
+        int scale = ((LogicalType.DecimalType) col.logicalType()).scale();
         try {
-            return LogicalTypeConverter.convertToDecimal(rawValue, col.type(),
-                    (LogicalType.DecimalType) col.logicalType());
+            return switch (col.type()) {
+                case INT32 -> LogicalTypeConverter.longToDecimal(
+                        ((int[]) flatValueArrays[columnIndex])[rowIndex], scale);
+                case INT64 -> LogicalTypeConverter.longToDecimal(
+                        ((long[]) flatValueArrays[columnIndex])[rowIndex], scale);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
+                        ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex), scale);
+                default -> throw new IllegalArgumentException(prefix()
+                        + "Unexpected physical type for DECIMAL: " + col.type());
+            };
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -748,9 +737,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         try {
-            return LogicalTypeConverter.convertToUuid(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+            return LogicalTypeConverter.bytesToUuid(
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -773,9 +761,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         try {
-            return LogicalTypeConverter.convertToInterval(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+            return LogicalTypeConverter.bytesToInterval(
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

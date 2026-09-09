@@ -26,6 +26,16 @@ import dev.hardwood.row.PqInterval;
 /// Converts physical values to their logical type representations.
 public final class LogicalTypeConverter {
 
+    /// Bytes of the `FIXED_LEN_BYTE_ARRAY` payloads whose width the format fixes, and of
+    /// the legacy `INT96` timestamp.
+    private static final int UUID_BYTES = 16;
+    private static final int INTERVAL_BYTES = 12;
+    private static final int FLOAT16_BYTES = 2;
+    private static final int INT96_BYTES = 12;
+
+    /// Julian day number of the Unix epoch (1970-01-01).
+    private static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
+
     private LogicalTypeConverter() {
     }
 
@@ -129,22 +139,27 @@ public final class LogicalTypeConverter {
         }
 
         return switch (logicalType) {
-            case LogicalType.StringType t -> convertToString(physicalValue, physicalType);
-            case LogicalType.DateType t -> convertToDate(physicalValue, physicalType);
+            case LogicalType.StringType t -> bytesToString((byte[]) physicalValue);
+            case LogicalType.DateType t -> intToDate((Integer) physicalValue);
             case LogicalType.TimestampType tt -> tt.isAdjustedToUTC()
-                    ? convertToTimestamp(physicalValue, physicalType, tt)
-                    : convertToLocalTimestamp(physicalValue, physicalType, tt);
+                    ? longToTimestamp((Long) physicalValue, tt.unit())
+                    : longToLocalTimestamp((Long) physicalValue, tt.unit());
+            // TIME, DECIMAL and INT are the arms whose unboxing depends on the physical
+            // type, so they keep a helper that takes it; the rest decode from one
+            // representation and go straight to the primitive entry point.
             case LogicalType.TimeType tt -> convertToTime(physicalValue, physicalType, tt);
             case LogicalType.DecimalType dt -> convertToDecimal(physicalValue, physicalType, dt);
             case LogicalType.IntType it -> convertToInt(physicalValue, physicalType, it);
-            case LogicalType.UuidType t -> convertToUuid(physicalValue, physicalType);
-            case LogicalType.JsonType t -> convertToString(physicalValue, physicalType);
-            case LogicalType.BsonType t -> convertToBson(physicalValue, physicalType);
-            case LogicalType.IntervalType t -> convertToInterval(physicalValue, physicalType);
-            case LogicalType.Float16Type t -> convertToFloat16(physicalValue, physicalType);
+            case LogicalType.UuidType t -> bytesToUuid((byte[]) physicalValue);
+            case LogicalType.JsonType t -> bytesToString((byte[]) physicalValue);
+            // BSON is a binary format; expose the raw bytes rather than attempting a
+            // UTF-8 decode.
+            case LogicalType.BsonType t -> physicalValue;
+            case LogicalType.IntervalType t -> bytesToInterval((byte[]) physicalValue);
+            case LogicalType.Float16Type t -> bytesToFloat16((byte[]) physicalValue);
             // Enum stores a UTF-8 payload and the spec tells readers without a
             // native enum type to interpret it as a string, so it decodes like UTF8.
-            case LogicalType.EnumType e -> convertToString(physicalValue, physicalType);
+            case LogicalType.EnumType e -> bytesToString((byte[]) physicalValue);
             // Geometry / Geography carry opaque WKB / WKT binary payloads with no
             // decoder yet — pass each through unchanged.
             case LogicalType.GeometryType g -> physicalValue;
@@ -169,59 +184,48 @@ public final class LogicalTypeConverter {
                         + " reached primitive-value conversion");
     }
 
-    private static String convertToString(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.BYTE_ARRAY) {
-            throw new IllegalArgumentException("STRING logical type requires BYTE_ARRAY physical type, got " + physicalType);
-        }
-        return new String((byte[]) value, StandardCharsets.UTF_8);
-    }
+    // ==================== Primitive entry points ====================
+    //
+    // A caller that has already resolved the column's physical type reads its value
+    // straight out of the storage array and decodes it here, with no box and no second
+    // dispatch on a type it knows. `convert` above is the one path that starts from an
+    // `Object` and has to dispatch.
 
-    /// BSON is a binary format; expose the raw bytes rather than attempting a UTF-8 decode.
-    public static byte[] convertToBson(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.BYTE_ARRAY) {
-            throw new IllegalArgumentException("BSON logical type requires BYTE_ARRAY physical type, got " + physicalType);
-        }
-        return (byte[]) value;
-    }
-
-    public static LocalDate convertToDate(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.INT32) {
-            throw new IllegalArgumentException("DATE logical type requires INT32 physical type, got " + physicalType);
-        }
-        // DATE is days since Unix epoch
-        int daysSinceEpoch = (Integer) value;
+    /// The [LocalDate] a `DATE` column's day count stands for.
+    public static LocalDate intToDate(int daysSinceEpoch) {
         return LocalDate.ofEpochDay(daysSinceEpoch);
     }
 
-    /// Decodes a UTC-adjusted `TIMESTAMP`. Which of the two timestamp kinds an accessor
-    /// accepts is stated once, in `TimestampAccessorKind`, which names the column and the
-    /// accessor that fits it; this method decodes whatever unit it is handed.
-    public static Instant convertToTimestamp(Object value, PhysicalType physicalType,
-                                             LogicalType.TimestampType timestampType) {
-        if (physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
-        }
-        long rawValue = (Long) value;
-        return switch (timestampType.unit()) {
+    /// The time of day a `TIME` column's value in `unit` stands for.
+    public static LocalTime longToTime(long rawValue, LogicalType.TimeUnit unit) {
+        return LocalTime.ofNanoOfDay(switch (unit) {
+            case MILLIS -> rawValue * 1_000_000L;
+            case MICROS -> rawValue * 1_000L;
+            case NANOS -> rawValue;
+        });
+    }
+
+    /// The instant a UTC-adjusted `TIMESTAMP` column's offset in `unit` stands for.
+    ///
+    /// Which of the two timestamp kinds an accessor accepts is stated once, in
+    /// `TimestampAccessorKind`, which names the column and the accessor that fits it.
+    /// This decodes whatever unit it is handed.
+    public static Instant longToTimestamp(long rawValue, LogicalType.TimeUnit unit) {
+        return switch (unit) {
             case MILLIS -> Instant.ofEpochMilli(rawValue);
             case MICROS -> Instant.ofEpochSecond(rawValue / 1_000_000, (rawValue % 1_000_000) * 1000);
             case NANOS -> Instant.ofEpochSecond(rawValue / 1_000_000_000, rawValue % 1_000_000_000);
         };
     }
 
-    /// Decodes a local-wall-clock `TIMESTAMP`. See [#convertToTimestamp] on where the
-    /// kind itself is checked.
-    public static LocalDateTime convertToLocalTimestamp(Object value, PhysicalType physicalType,
-                                                        LogicalType.TimestampType timestampType) {
-        if (physicalType != PhysicalType.INT64) {
-            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
-        }
-        // For a local-wall-clock TIMESTAMP the stored int64 is the offset from the
-        // epoch *of the wall clock itself*, so the same epoch arithmetic that
-        // produces an Instant gives the right LocalDateTime when read at UTC —
-        // the bits never change, only the type label.
-        long rawValue = (Long) value;
-        return switch (timestampType.unit()) {
+    /// The wall-clock date and time a local `TIMESTAMP` column's offset in `unit` stands
+    /// for. The stored int64 is the offset from the epoch *of the wall clock itself*, so
+    /// the same epoch arithmetic that produces an [Instant] gives the right
+    /// [LocalDateTime] when read at UTC — the bits never change, only the type label.
+    ///
+    /// See [#longToTimestamp] on where the kind itself is checked.
+    public static LocalDateTime longToLocalTimestamp(long rawValue, LogicalType.TimeUnit unit) {
+        return switch (unit) {
             case MILLIS -> LocalDateTime.ofEpochSecond(
                     Math.floorDiv(rawValue, 1_000L),
                     (int) (Math.floorMod(rawValue, 1_000L) * 1_000_000L),
@@ -237,49 +241,63 @@ public final class LogicalTypeConverter {
         };
     }
 
-    public static PqInterval convertToInterval(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            throw new IllegalArgumentException(
-                    "INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
-        }
+    /// The decimal an `INT32` or `INT64` `DECIMAL` column's unscaled value stands for.
+    public static BigDecimal longToDecimal(long unscaled, int scale) {
+        return BigDecimal.valueOf(unscaled, scale);
+    }
 
-        byte[] bytes = (byte[]) value;
-        if (bytes.length != 12) {
+    /// The decimal a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column's payload
+    /// stands for. Parquet stores it big-endian two's complement.
+    public static BigDecimal bytesToDecimal(byte[] bytes, int scale) {
+        return new BigDecimal(new BigInteger(bytes), scale);
+    }
+
+    /// The UTF-8 text of a `STRING`, `ENUM` or `JSON` payload.
+    public static String bytesToString(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /// The [UUID] a 16-byte `UUID` payload stands for, most significant half first.
+    public static UUID bytesToUuid(byte[] bytes) {
+        if (bytes.length != UUID_BYTES) {
+            throw new IllegalArgumentException("UUID requires exactly " + UUID_BYTES + " bytes, got " + bytes.length);
+        }
+        ByteBuffer bb = ByteBuffer.wrap(bytes);
+        long mostSigBits = bb.getLong();
+        long leastSigBits = bb.getLong();
+        return new UUID(mostSigBits, leastSigBits);
+    }
+
+    /// The [PqInterval] a 12-byte `INTERVAL` payload stands for: months, days and millis
+    /// as little-endian unsigned 4-byte fields.
+    public static PqInterval bytesToInterval(byte[] bytes) {
+        if (bytes.length != INTERVAL_BYTES) {
             throw new IllegalArgumentException(
-                    "INTERVAL requires exactly 12 bytes, got " + bytes.length);
+                    "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + bytes.length);
         }
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long months = Integer.toUnsignedLong(buffer.getInt(0));
         long days = Integer.toUnsignedLong(buffer.getInt(4));
         long millis = Integer.toUnsignedLong(buffer.getInt(8));
-
         return new PqInterval(months, days, millis);
     }
 
-    public static float convertToFloat16(Object value, PhysicalType physicalType) {
-        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+    /// The single-precision value a 2-byte `FLOAT16` payload stands for.
+    public static float bytesToFloat16(byte[] bytes) {
+        if (bytes.length != FLOAT16_BYTES) {
             throw new IllegalArgumentException(
-                    "FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
-        }
-
-        byte[] bytes = (byte[]) value;
-        if (bytes.length != 2) {
-            throw new IllegalArgumentException(
-                    "FLOAT16 requires exactly 2 bytes, got " + bytes.length);
+                    "FLOAT16 requires exactly " + FLOAT16_BYTES + " bytes, got " + bytes.length);
         }
         // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
         short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
         return Float.float16ToFloat(raw);
     }
 
-    /// Julian day number of the Unix epoch (1970-01-01).
-    private static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
-
     /// Convert a legacy INT96 timestamp (12 bytes, little-endian: 8 bytes nanos-of-day,
     /// 4 bytes Julian day) to an [Instant]. Used by Apache Spark and Hive.
     public static Instant int96ToInstant(byte[] bytes) {
-        if (bytes.length != 12) {
-            throw new IllegalArgumentException("INT96 requires exactly 12 bytes, got " + bytes.length);
+        if (bytes.length != INT96_BYTES) {
+            throw new IllegalArgumentException("INT96 requires exactly " + INT96_BYTES + " bytes, got " + bytes.length);
         }
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long nanosOfDay = bb.getLong(0);
@@ -290,41 +308,70 @@ public final class LogicalTypeConverter {
         return Instant.ofEpochSecond(epochSecond, nanoAdjustment);
     }
 
+    // ==================== Boxed forms ====================
+
+    public static LocalDate convertToDate(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.INT32) {
+            throw new IllegalArgumentException("DATE logical type requires INT32 physical type, got " + physicalType);
+        }
+        return intToDate((Integer) value);
+    }
+
+    public static Instant convertToTimestamp(Object value, PhysicalType physicalType,
+                                             LogicalType.TimestampType timestampType) {
+        if (physicalType != PhysicalType.INT64) {
+            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
+        }
+        return longToTimestamp((Long) value, timestampType.unit());
+    }
+
+    public static LocalDateTime convertToLocalTimestamp(Object value, PhysicalType physicalType,
+                                                        LogicalType.TimestampType timestampType) {
+        if (physicalType != PhysicalType.INT64) {
+            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
+        }
+        return longToLocalTimestamp((Long) value, timestampType.unit());
+    }
+
+    public static PqInterval convertToInterval(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            throw new IllegalArgumentException(
+                    "INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
+        }
+        return bytesToInterval((byte[]) value);
+    }
+
+    public static float convertToFloat16(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            throw new IllegalArgumentException(
+                    "FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
+        }
+        return bytesToFloat16((byte[]) value);
+    }
+
     public static LocalTime convertToTime(Object value, PhysicalType physicalType,
                                           LogicalType.TimeType timeType) {
         if (physicalType != PhysicalType.INT32 && physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException(
                     "TIME logical type requires INT32 or INT64 physical type, got " + physicalType);
         }
-
         long rawValue = physicalType == PhysicalType.INT32 ? (Integer) value : (Long) value;
-
-        return switch (timeType.unit()) {
-            case MILLIS -> LocalTime.ofNanoOfDay(rawValue * 1_000_000);
-            case MICROS -> LocalTime.ofNanoOfDay(rawValue * 1000);
-            case NANOS -> LocalTime.ofNanoOfDay(rawValue);
-        };
+        return longToTime(rawValue, timeType.unit());
     }
 
     public static BigDecimal convertToDecimal(Object value, PhysicalType physicalType,
                                               LogicalType.DecimalType decimalType) {
-        BigInteger unscaled = switch (physicalType) {
-            case INT32 -> BigInteger.valueOf((Integer) value);
-            case INT64 -> BigInteger.valueOf((Long) value);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> {
-                byte[] bytes = (byte[]) value;
-                // Parquet uses big-endian two's complement for decimal
-                yield new BigInteger(bytes);
-            }
+        return switch (physicalType) {
+            case INT32 -> longToDecimal((Integer) value, decimalType.scale());
+            case INT64 -> longToDecimal((Long) value, decimalType.scale());
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> bytesToDecimal((byte[]) value, decimalType.scale());
             default -> throw new IllegalArgumentException(
                     "DECIMAL requires INT32, INT64, BYTE_ARRAY, or FIXED_LEN_BYTE_ARRAY, got " + physicalType);
         };
-
-        return new BigDecimal(unscaled, decimalType.scale());
     }
 
     private static Object convertToInt(Object value, PhysicalType physicalType,
-                                      LogicalType.IntType intType) {
+                                       LogicalType.IntType intType) {
         if (physicalType != PhysicalType.INT32 && physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException("INT logical type requires INT32 or INT64 physical type, got " + physicalType);
         }
@@ -348,15 +395,6 @@ public final class LogicalTypeConverter {
         if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             throw new IllegalArgumentException("UUID logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
         }
-
-        byte[] bytes = (byte[]) value;
-        if (bytes.length != 16) {
-            throw new IllegalArgumentException("UUID requires exactly 16 bytes, got " + bytes.length);
-        }
-
-        ByteBuffer bb = ByteBuffer.wrap(bytes);
-        long mostSigBits = bb.getLong();
-        long leastSigBits = bb.getLong();
-        return new UUID(mostSigBits, leastSigBits);
+        return bytesToUuid((byte[]) value);
     }
 }

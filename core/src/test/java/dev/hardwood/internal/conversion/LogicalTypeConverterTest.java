@@ -80,14 +80,6 @@ class LogicalTypeConverterTest {
     }
 
     @Test
-    void bsonRejectsNonByteArrayPhysicalType() {
-        assertThatThrownBy(() -> LogicalTypeConverter.convertToBson(new byte[0], PhysicalType.FIXED_LEN_BYTE_ARRAY))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("BSON logical type requires BYTE_ARRAY physical type, got FIXED_LEN_BYTE_ARRAY")
-                ;
-    }
-
-    @Test
     void jsonDispatchesToString() {
         byte[] jsonBytes = "{\"k\":1}".getBytes(StandardCharsets.UTF_8);
 
