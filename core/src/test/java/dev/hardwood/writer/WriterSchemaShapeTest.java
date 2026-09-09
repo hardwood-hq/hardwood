@@ -21,9 +21,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -67,7 +67,7 @@ class WriterSchemaShapeTest {
             schema = reader.getFileSchema();
         }
         assertThat(schema.getColumnCount()).isZero();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -86,7 +86,7 @@ class WriterSchemaShapeTest {
                 .addColumn("v", PhysicalType.INT96, RepetitionType.REQUIRED)
                 .build();
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Writer does not support INT96 columns yet; column v is INT96");
     }
@@ -102,7 +102,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.root("schema", 1),
                 SchemaElement.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Field nums is a REPEATED leaf outside a LIST or MAP group; the annotation is "
                          + "what gives a repeated field a layer to be addressed through, so the writer "
@@ -120,7 +120,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("nothing", PhysicalType.INT32, RepetitionType.REQUIRED,
                         LogicalType.nullType())));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("UNKNOWN annotates a column holding only nulls, so it cannot be REQUIRED "
                         + "(column nothing)");
@@ -135,7 +135,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("area", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                         LogicalType.geography(null, LogicalType.EdgeInterpolationAlgorithm.UNKNOWN))));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("GEOGRAPHY's edge interpolation algorithm is one this release does not know, "
                         + "which has no value to write (column area)");
@@ -151,7 +151,7 @@ class WriterSchemaShapeTest {
                 new SchemaElement("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength, RepetitionType.REQUIRED,
                         null, null, null, null, null, null)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("FIXED_LEN_BYTE_ARRAY column raw requires a positive type length");
     }
@@ -165,7 +165,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("outer", RepetitionType.REQUIRED, 1),
                 SchemaElement.primitive("nums", PhysicalType.INT32, RepetitionType.REPEATED)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Field outer.nums is a REPEATED leaf outside a LIST or MAP group; the "
                          + "annotation is what gives a repeated field a layer to be addressed through, so "
@@ -181,7 +181,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("g", RepetitionType.REPEATED, 1),
                 SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group g is REPEATED but carries no LIST or MAP annotation, and is not the "
                          + "entry group of one; the writer cannot produce it")
@@ -200,7 +200,7 @@ class WriterSchemaShapeTest {
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
         }
     }
@@ -215,7 +215,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("key_value", RepetitionType.REPEATED, 1),
                 SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
         }
     }
@@ -232,7 +232,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("list", RepetitionType.REPEATED, 1),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group items is annotated LIST and is itself REPEATED; the annotation accounts "
                          + "for the repetition of its entry only, so nothing supplies the group's own "
@@ -252,7 +252,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("inner", RepetitionType.REPEATED, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group items.inner is annotated LIST and is itself REPEATED; the annotation "
                          + "accounts for the repetition of its entry only, so nothing supplies the "
@@ -270,7 +270,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group items is annotated LIST but its entry element is OPTIONAL rather than "
                          + "REPEATED; the annotation then carries no repetition and the group's entry "
@@ -288,7 +288,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group items is annotated LIST but holds 2 fields where the layout requires "
                          + "exactly one, its REPEATED entry")
@@ -305,7 +305,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
                 SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REPEATED)));
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Group props is annotated MAP but its entry key is a leaf where the layout "
                          + "requires a repeated group of key and value")
@@ -323,7 +323,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("items", new int[] { 0, 2, 2, 5 })
@@ -345,7 +345,7 @@ class WriterSchemaShapeTest {
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("items", new int[] { 0, 2, 3 })
@@ -369,7 +369,7 @@ class WriterSchemaShapeTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(fixture));
                 ParquetFileWriter writer =
-                        ParquetFileWriter.create(new ByteBufferOutputFile(), reader.getFileSchema())) {
+                        ParquetFileWriter.create(OutputFile.inMemory(), reader.getFileSchema())) {
             assertThat(writer).isNotNull();
         }
     }
@@ -388,7 +388,7 @@ class WriterSchemaShapeTest {
                                 element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
         }
     }
@@ -403,7 +403,7 @@ class WriterSchemaShapeTest {
                                 inner -> inner.addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThat(writer).isNotNull();
         }
     }
@@ -421,7 +421,7 @@ class WriterSchemaShapeTest {
             path.add("s" + i);
         }
         path.add("v");
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
 
         assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
                 .isInstanceOf(UnsupportedOperationException.class)
@@ -442,14 +442,14 @@ class WriterSchemaShapeTest {
     void writesAColumnNestedExactlyToTheLevelLimit() throws Exception {
         FileSchema schema = optionalLeafUnderOptionalStructs(254);
         assertThat(schema.getColumn(0).maxDefinitionLevel()).isEqualTo(255);
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints(0, new int[] { 7, 0 }, new boolean[] { false, true }));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(0)) {
             assertThat(column.nextBatch()).isTrue();
             assertThat(column.getRecordCount()).isEqualTo(2);
@@ -512,19 +512,19 @@ class WriterSchemaShapeTest {
 
     /// Reads a list column back as one list of values per record, so what the writer emitted
     /// can be compared against the lists that went in rather than against a level stream.
-    private static List<List<Integer>> listOfInts(ByteBufferOutputFile out) throws IOException {
+    private static List<List<Integer>> listOfInts(InMemoryOutputFile out) throws IOException {
         return listOfInts(out, 0);
     }
 
-    private static List<List<Integer>> listOfInts(ByteBufferOutputFile out, String column) throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+    private static List<List<Integer>> listOfInts(InMemoryOutputFile out, String column) throws IOException {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             return listOfInts(out, reader.getFileSchema().getColumn(column).columnIndex());
         }
     }
 
-    private static List<List<Integer>> listOfInts(ByteBufferOutputFile out, int columnIndex) throws IOException {
+    private static List<List<Integer>> listOfInts(InMemoryOutputFile out, int columnIndex) throws IOException {
         List<List<Integer>> records = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(columnIndex)) {
             while (column.nextBatch()) {
                 int[] offsets = column.getLayerOffsets(0);

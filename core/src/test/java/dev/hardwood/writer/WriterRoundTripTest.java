@@ -14,10 +14,10 @@ import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -44,12 +44,12 @@ class WriterRoundTripTest {
         int[] a = { 1, 2, 3, 4, 5 };
         int[] b = { 10, 20, 30, 40, 50 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, twoColumns())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, a).ints(1, b));
         }
 
-        ByteBuffer bytes = ByteBuffer.wrap(out.toByteArray());
+        ByteBuffer bytes = out.buffer();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(bytes))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
             assertThat(reader.getFileMetaData().createdBy()).isEqualTo(ParquetFileWriter.DEFAULT_CREATED_BY);
@@ -66,13 +66,13 @@ class WriterRoundTripTest {
         int[] a = { 1, 2, 3 };
         int[] b = { 4, 5, 6 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, twoColumns())) {
             // Names may be given in any order; they resolve to the schema's columns.
             writer.columnWriter().writeBatch(batch -> batch.ints("b", b).ints("a", a));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(readInts(reader, 0)).containsExactly(a);
             assertThat(readInts(reader, 1)).containsExactly(b);
         }
@@ -95,14 +95,14 @@ class WriterRoundTripTest {
 
     @Test
     void multipleBatchesAccumulateIntoOneRowGroup() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1, 2 }));
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 3, 4 }));
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 5 }));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
             // Default 128 MiB target: the three small batches stay in one row group.
             assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
@@ -112,12 +112,12 @@ class WriterRoundTripTest {
 
     @Test
     void emptyBatchProducesEmptyFile() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[0]));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(0);
             assertThat(reader.getFileMetaData().rowGroups()).isEmpty();
         }
@@ -129,12 +129,12 @@ class WriterRoundTripTest {
         int[] values = { 7, 0, -3, 0, Integer.MIN_VALUE, 0, Integer.MAX_VALUE };
         boolean[] nulls = { false, true, false, true, false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(readNullable(reader, 0)).containsExactly(7, null, -3, null, Integer.MIN_VALUE, null, Integer.MAX_VALUE);
         }
     }
@@ -145,12 +145,12 @@ class WriterRoundTripTest {
         // so the def levels collapse to a single RLE run and the reader reports no nulls.
         int[] values = { 1, 2, 3, 4, 5 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(0)) {
             assertThat(column.nextBatch()).isTrue();
             assertThat(column.getLeafValidity().hasNulls()).isFalse();
@@ -163,12 +163,12 @@ class WriterRoundTripTest {
         boolean[] nulls = { true, true, true, true };
         int[] values = new int[nulls.length];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(4);
             assertThat(readNullable(reader, 0)).containsExactly(null, null, null, null);
         }
@@ -187,12 +187,12 @@ class WriterRoundTripTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(256).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
         }
     }
@@ -206,7 +206,7 @@ class WriterRoundTripTest {
         Path source = Path.of("src/test/resources/nullable_primitives_test.parquet");
 
         Integer[] original;
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
             int col = reader.getFileSchema().getColumn("nullable_int").columnIndex();
             assertThat(reader.getFileSchema().getColumn(col).type()).isEqualTo(PhysicalType.INT32);
@@ -230,7 +230,7 @@ class WriterRoundTripTest {
             }
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(readNullable(reader, 0)).containsExactly(original);
         }
     }
@@ -246,12 +246,12 @@ class WriterRoundTripTest {
         }
 
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(4096).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
             assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
         }
@@ -264,12 +264,12 @@ class WriterRoundTripTest {
         int[] values = { 10, 20, 30 };
         Validity nulls = Validity.of(new long[] { 0b101 });
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(readNullable(reader, 0)).containsExactly(10, null, 30);
         }
     }
@@ -278,12 +278,12 @@ class WriterRoundTripTest {
     void optionalColumnViaNoNullsValidityReadsBackWithoutNulls() throws Exception {
         int[] values = { 1, 2, 3 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, Validity.NO_NULLS));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(0)) {
             assertThat(column.nextBatch()).isTrue();
             assertThat(column.getLeafValidity().hasNulls()).isFalse();

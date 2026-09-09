@@ -11,8 +11,10 @@ import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -126,7 +128,7 @@ class RowWriterEquivalenceTest {
         int records = 2_500;
         int batchSize = 1_024;
 
-        ByteBufferOutputFile columnarOut = new ByteBufferOutputFile();
+        InMemoryOutputFile columnarOut = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(columnarOut, schema)) {
             for (int from = 0; from < records; from += batchSize) {
                 int size = Math.min(batchSize, records - from);
@@ -151,7 +153,7 @@ class RowWriterEquivalenceTest {
             }
         });
 
-        assertThat(rowOriented).isEqualTo(columnarOut.toByteArray());
+        assertThat(rowOriented).isEqualTo(InMemoryFiles.toByteArray(columnarOut));
     }
 
     private static FileSchema nestedSchema() {
@@ -178,19 +180,19 @@ class RowWriterEquivalenceTest {
     }
 
     private static byte[] writeColumnar(FileSchema schema, ColumnarWrite filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(filler::accept);
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static byte[] writeRows(FileSchema schema, RowWrite filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             filler.accept(writer.rowWriter());
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static byte[] bytes(String value) {

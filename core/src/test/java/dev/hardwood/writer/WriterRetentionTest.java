@@ -8,7 +8,6 @@
 package dev.hardwood.writer;
 
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -17,8 +16,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import com.sun.management.ThreadMXBean;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -105,7 +105,7 @@ class WriterRetentionTest {
         int batches = (int) (ROW_GROUP_TARGET / Integer.BYTES / VALUES_PER_BATCH) - 1;
         int[] values = new int[VALUES_PER_BATCH];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         long retained;
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             ColumnWriter columns = writer.columnWriter();
@@ -120,7 +120,7 @@ class WriterRetentionTest {
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups())
                     .as("the run stayed inside one row group, so the sample was its peak")
                     .hasSize(1);
@@ -163,7 +163,7 @@ class WriterRetentionTest {
         int batches = (int) (ROW_GROUP_TARGET / Integer.BYTES / VALUES_PER_BATCH) - 1;
         int[] values = new int[VALUES_PER_BATCH];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             ColumnWriter columns = writer.columnWriter();
             long baseline = usedHeap();
@@ -220,10 +220,10 @@ class WriterRetentionTest {
 
         // Once through first: the classes a writer loads on its way up allocate too, and they
         // load once per JVM rather than once per writer.
-        ParquetFileWriter.create(new ByteBufferOutputFile(), built, config).close();
+        ParquetFileWriter.create(OutputFile.inMemory(), built, config).close();
 
         long baseline = allocatedBytes();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(),
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(),
                 built, config)) {
             long allocated = allocatedBytes() - baseline;
             assertThat(allocated / WIDE_SCHEMA_COLUMNS)

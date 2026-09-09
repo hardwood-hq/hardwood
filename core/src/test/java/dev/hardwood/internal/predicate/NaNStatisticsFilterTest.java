@@ -19,9 +19,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.CountingInputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
@@ -352,7 +353,7 @@ class NaNStatisticsFilterTest {
         double[] mixed = {1.0, 2.0, Double.NaN, 3.0};
         double[] collapsed = {1.0, 1.0, Double.NaN, 1.0};
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.doubles(0, mixed).doubles(1, collapsed));
         }
@@ -378,14 +379,14 @@ class NaNStatisticsFilterTest {
                 .build();
         double[] finite = {1.0, 2.0, 3.0};
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.doubles(0, finite));
         }
 
         Statistics statistics;
         try (ParquetFileReader reader =
-                     ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                     ParquetFileReader.open(InputFile.of(out.buffer()))) {
             statistics = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData().statistics();
         }
 
@@ -407,11 +408,11 @@ class NaNStatisticsFilterTest {
     /// none of it, and a pruned one reads nothing.
     @Test
     void writerNaNCountsLetTheReaderProveFullMatchesAndAllNaNRowGroups() throws Exception {
-        ByteBufferOutputFile out = threeRowGroupsWithAnAllNaNOne();
+        InMemoryOutputFile out = threeRowGroupsWithAnAllNaNOne();
 
         // LT fails a NaN row: the first row group matches in full on its recorded zero count,
         // and the all-NaN one cannot match.
-        CountingInputFile ltFile = new CountingInputFile(ByteBuffer.wrap(out.toByteArray()));
+        CountingInputFile ltFile = new CountingInputFile(out.buffer());
         assertThat(readIds(ltFile, FilterPredicate.lt("price", 1000.0)))
                 .containsExactlyElementsOf(ids(0, 150));
         assertThat(chunkRead(ltFile, "price", 0)).as("price read in row group 0").isFalse();
@@ -420,7 +421,7 @@ class NaNStatisticsFilterTest {
 
         // GT is satisfied by a NaN row: the all-NaN row group matches in full, and the first,
         // proven NaN-free, cannot match.
-        CountingInputFile gtFile = new CountingInputFile(ByteBuffer.wrap(out.toByteArray()));
+        CountingInputFile gtFile = new CountingInputFile(out.buffer());
         assertThat(readIds(gtFile, FilterPredicate.gt("price", 1000.0)))
                 .containsExactlyElementsOf(ids(151, 300));
         assertThat(chunkRead(gtFile, "id", 0)).as("id read in row group 0").isFalse();
@@ -431,13 +432,13 @@ class NaNStatisticsFilterTest {
 
     private static final int ROWS_PER_GROUP = 100;
 
-    private static ByteBufferOutputFile threeRowGroupsWithAnAllNaNOne() throws Exception {
+    private static InMemoryOutputFile threeRowGroupsWithAnAllNaNOne() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("price", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(ROWS_PER_GROUP).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             for (int i = 0; i < 3 * ROWS_PER_GROUP; i++) {
                 final long id = i;
@@ -493,10 +494,10 @@ class NaNStatisticsFilterTest {
                 .anyMatch(r -> r.offset() < end && r.end() > start && !r.reason().contains("pruning"));
     }
 
-    private static List<Double> readMatching(ByteBufferOutputFile out, String column,
+    private static List<Double> readMatching(InMemoryOutputFile out, String column,
             FilterPredicate filter) throws Exception {
         try (ParquetFileReader reader =
-                     ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                     ParquetFileReader.open(InputFile.of(out.buffer()));
              ColumnReader values = reader.buildColumnReader(column).filter(filter).build()) {
             List<Double> matched = new ArrayList<>();
             while (values.nextBatch()) {

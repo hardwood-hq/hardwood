@@ -13,7 +13,7 @@ import org.apache.parquet.io.OutputFile;
 import org.apache.parquet.io.PositionOutputStream;
 
 /// parquet-java [OutputFile] backed by a growable in-memory buffer, the counterpart of
-/// Hardwood's `ByteBufferOutputFile`.
+/// Hardwood's `InMemoryOutputFile`.
 ///
 /// Write benchmarks measure encode throughput, so both sides write to memory: filesystem
 /// noise would otherwise swamp the differences being measured. parquet-java ships no

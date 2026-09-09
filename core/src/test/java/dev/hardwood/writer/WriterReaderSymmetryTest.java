@@ -8,7 +8,6 @@
 package dev.hardwood.writer;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -19,8 +18,9 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -58,7 +58,7 @@ class WriterReaderSymmetryTest {
                 .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false))
                 .build();
 
-        ByteBufferOutputFile out = write(schema, batch -> batch
+        InMemoryOutputFile out = write(schema, batch -> batch
                 .ints("i", new int[] { (int) 4_000_000_000L })
                 .longs("l", new long[] { -1L }));
 
@@ -154,7 +154,7 @@ class WriterReaderSymmetryTest {
         FileSchema schema = single(PhysicalType.BYTE_ARRAY, LogicalType.string());
         String astral = "🪵";
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setString("v", ""));
@@ -174,7 +174,7 @@ class WriterReaderSymmetryTest {
     private static void assertIntExtremes(LogicalType.IntType annotation, int min, int max) throws Exception {
         FileSchema schema = single(PhysicalType.INT32, annotation);
 
-        ByteBufferOutputFile out = write(schema, batch -> batch.ints(0, new int[] { min, max }));
+        InMemoryOutputFile out = write(schema, batch -> batch.ints(0, new int[] { min, max }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -189,7 +189,7 @@ class WriterReaderSymmetryTest {
     private static void assertDate(int epochDay) throws Exception {
         FileSchema schema = single(PhysicalType.INT32, LogicalType.date());
 
-        ByteBufferOutputFile out = write(schema, batch -> batch.ints(0, new int[] { epochDay }));
+        InMemoryOutputFile out = write(schema, batch -> batch.ints(0, new int[] { epochDay }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -201,7 +201,7 @@ class WriterReaderSymmetryTest {
     private static void assertTimestamp(TimeUnit unit, long stored) throws Exception {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, unit));
 
-        ByteBufferOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
+        InMemoryOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -214,7 +214,7 @@ class WriterReaderSymmetryTest {
     private static void assertLocalTimestamp(TimeUnit unit, long stored) throws Exception {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(false, unit));
 
-        ByteBufferOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
+        InMemoryOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -228,7 +228,7 @@ class WriterReaderSymmetryTest {
             throws Exception {
         FileSchema schema = single(type, LogicalType.time(true, unit));
 
-        ByteBufferOutputFile out = write(schema, batch -> {
+        InMemoryOutputFile out = write(schema, batch -> {
             if (type == PhysicalType.INT32) {
                 batch.ints(0, new int[] { Math.toIntExact(stored) });
             }
@@ -245,7 +245,7 @@ class WriterReaderSymmetryTest {
 
     private static void assertDecimal(FileSchema schema, Consumer<ColumnBatch> filler, BigDecimal min,
             BigDecimal max) throws Exception {
-        ByteBufferOutputFile out = write(schema, filler);
+        InMemoryOutputFile out = write(schema, filler);
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -267,15 +267,15 @@ class WriterReaderSymmetryTest {
                 .build();
     }
 
-    private static ByteBufferOutputFile write(FileSchema schema, Consumer<ColumnBatch> filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+    private static InMemoryOutputFile write(FileSchema schema, Consumer<ColumnBatch> filler) throws Exception {
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(filler);
         }
         return out;
     }
 
-    private static ParquetFileReader open(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader open(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 }

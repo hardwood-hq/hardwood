@@ -26,8 +26,9 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
@@ -199,7 +200,7 @@ public class WriteEncodingBenchmark {
 
     @Benchmark
     public long hardwoodColumnar() throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         write(out, config);
         return out.position();
     }
@@ -207,7 +208,7 @@ public class WriteEncodingBenchmark {
     /// Hands each batch's column arrays to the writer as they are, exactly as
     /// [FlatWriteBenchmark]'s columnar contender does, so the only thing this benchmark varies
     /// is the configuration it writes under.
-    private void write(ByteBufferOutputFile out, WriterConfig writerConfig) throws IOException {
+    private void write(InMemoryOutputFile out, WriterConfig writerConfig) throws IOException {
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, writerConfig)) {
             ColumnWriter columns = writer.columnWriter();
             for (int b = 0; b < fixture.batchCount(); b++) {
@@ -227,11 +228,11 @@ public class WriteEncodingBenchmark {
     /// every column carries the encoding this case asked for, and prints its size — so a time is
     /// never read without the size it bought, nor under a case name it did not honour.
     private void reportProducedFile(Case encodingCase) throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         write(out, config);
-        byte[] file = out.toByteArray();
+        ByteBuffer file = out.buffer();
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             long rows = reader.getFileMetaData().numRows();
             if (rows != fixture.rows()) {
                 throw new IllegalStateException(
@@ -241,9 +242,9 @@ public class WriteEncodingBenchmark {
             int rowGroups = reader.getFileMetaData().rowGroups().size();
             System.out.printf("%nWriteEncodingBenchmark: %,d rows, encoding %s, codec %s%n",
                     fixture.rows(), encoding, codec);
-            System.out.printf("  %,15d bytes, %d row groups%n", file.length, rowGroups);
+            System.out.printf("  %,15d bytes, %d row groups%n", file.remaining(), rowGroups);
             if (encodingCase == Case.PLAIN_ON_DISTINCT) {
-                checkMatchesAuto(file.length, rowGroups);
+                checkMatchesAuto(file.remaining(), rowGroups);
             }
         }
     }
@@ -295,9 +296,9 @@ public class WriteEncodingBenchmark {
     /// dictionary for a column this case declares all-distinct, and the case has stopped
     /// measuring what it claims to.
     private void checkMatchesAuto(int size, int rowGroups) throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         write(out, configFor(Case.AUTO));
-        int autoSize = out.toByteArray().length;
+        int autoSize = out.buffer().remaining();
         // Every chunk of a policied column loses a distinct_count, a Thrift i64 behind its field
         // header. Budgeting 64 bytes per chunk of the whole schema is far above what those fields
         // can cost and far below the smallest difference an encoding change would make.

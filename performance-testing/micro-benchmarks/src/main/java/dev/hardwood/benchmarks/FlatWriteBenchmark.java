@@ -37,9 +37,9 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -78,9 +78,9 @@ import dev.hardwood.writer.WriterConfig;
 ///   and the pointer chase are inside it.
 /// - parquet-java writes a column index and an offset index per column chunk, which Hardwood
 ///   does not produce yet, so its files carry a little metadata Hardwood's do not.
-/// - The Hardwood contenders write into `ByteBufferOutputFile` and parquet-java into
+/// - The Hardwood contenders write into `InMemoryOutputFile` and parquet-java into
 ///   [MemoryOutputFile], which are not the same sink. Both accumulate into a
-///   `ByteArrayOutputStream`; `ByteBufferOutputFile` takes a [ByteBuffer] and appends the
+///   `ByteArrayOutputStream`; `InMemoryOutputFile` takes a [ByteBuffer] and appends the
 ///   array behind it, so neither side copies the payload twice on the way to the buffer.
 ///
 /// Everything a caller can match is matched: page target, row-group target, codec, dictionary
@@ -252,7 +252,7 @@ public class FlatWriteBenchmark {
     /// produced.
     private long writeHardwood(String fileName, HardwoodWrite write) throws IOException {
         if (dir == null) {
-            ByteBufferOutputFile out = new ByteBufferOutputFile();
+            InMemoryOutputFile out = OutputFile.inMemory();
             write.writeTo(out);
             return out.position();
         }
@@ -430,57 +430,57 @@ public class FlatWriteBenchmark {
     /// file holds the records the fixture has, and prints the three sizes so the times are
     /// never read without them.
     private void reportProducedFiles() throws IOException {
-        ByteBufferOutputFile columnar = new ByteBufferOutputFile();
+        InMemoryOutputFile columnar = OutputFile.inMemory();
         writeColumnar(columnar);
-        ByteBufferOutputFile row = new ByteBufferOutputFile();
+        InMemoryOutputFile row = OutputFile.inMemory();
         writeRows(row);
-        ByteBufferOutputFile rowIndexed = new ByteBufferOutputFile();
+        InMemoryOutputFile rowIndexed = OutputFile.inMemory();
         writeRowsByIndex(rowIndexed);
-        ByteBufferOutputFile rowRaw = new ByteBufferOutputFile();
+        InMemoryOutputFile rowRaw = OutputFile.inMemory();
         writeRowsRaw(rowRaw);
         MemoryOutputFile groups = new MemoryOutputFile();
         writeGroups(ExampleParquetWriter.builder(groups));
 
-        byte[] columnarFile = columnar.toByteArray();
-        byte[] rowFile = row.toByteArray();
+        ByteBuffer columnarFile = columnar.buffer();
+        ByteBuffer rowFile = row.buffer();
         // The two Hardwood APIs write the same bytes for the same records, which the writer's
         // equivalence tests hold them to. A divergence here is a writer defect that would
         // otherwise be read as one contender producing a leaner file than the other.
-        if (columnarFile.length != rowFile.length) {
+        if (columnarFile.remaining() != rowFile.remaining()) {
             throw new IllegalStateException("The two Hardwood APIs produced files of different size: "
-                    + columnarFile.length + " bytes columnar against " + rowFile.length + " bytes row");
+                    + columnarFile.remaining() + " bytes columnar against " + rowFile.remaining() + " bytes row");
         }
 
         // The row variants differ from `writeRows` only in how the same values are handed over —
         // by index rather than by name, and already encoded rather than as `String` and `Instant`.
         // Byte equality is what says so: a variant that wrote a different file would be measuring
         // different work, and the comparison it exists for would be worthless.
-        requireSameBytes("by-index", rowFile, rowIndexed.toByteArray());
-        requireSameBytes("by-index-raw", rowFile, rowRaw.toByteArray());
+        requireSameBytes("by-index", rowFile, rowIndexed.buffer());
+        requireSameBytes("by-index-raw", rowFile, rowRaw.buffer());
 
         System.out.printf("%nFlatWriteBenchmark: %,d rows, codec %s, %,d-row batches%n",
                 fixture.rows(), codec, BATCH_ROWS);
         report("HARDWOOD_COLUMNAR", columnarFile);
         report("HARDWOOD_ROW", rowFile);
-        report("PARQUET_JAVA_GROUP", groups.toByteArray());
+        report("PARQUET_JAVA_GROUP", ByteBuffer.wrap(groups.toByteArray()));
     }
 
-    private static void requireSameBytes(String variant, byte[] expected, byte[] actual) {
-        if (!java.util.Arrays.equals(expected, actual)) {
+    private static void requireSameBytes(String variant, ByteBuffer expected, ByteBuffer actual) {
+        if (!expected.equals(actual)) {
             throw new IllegalStateException("The " + variant + " row variant produced a different file: "
-                    + actual.length + " bytes against " + expected.length
+                    + actual.remaining() + " bytes against " + expected.remaining()
                     + ", so it is not writing the same records as hardwoodRow");
         }
     }
 
-    private void report(String contender, byte[] file) throws IOException {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+    private void report(String contender, ByteBuffer file) throws IOException {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             long rows = reader.getFileMetaData().numRows();
             if (rows != fixture.rows()) {
                 throw new IllegalStateException(contender + " wrote " + rows + " rows, expected " + fixture.rows());
             }
             System.out.printf("  %-20s %,15d bytes, %,d rows, %d row groups%n",
-                    contender, file.length, rows, reader.getFileMetaData().rowGroups().size());
+                    contender, file.remaining(), rows, reader.getFileMetaData().rowGroups().size());
         }
     }
 }

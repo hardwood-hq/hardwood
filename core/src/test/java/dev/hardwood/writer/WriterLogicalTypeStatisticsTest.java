@@ -14,9 +14,10 @@ import java.util.HexFormat;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
@@ -116,7 +117,7 @@ class WriterLogicalTypeStatisticsTest {
                         LogicalType.geometry("EPSG:4326"))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.bytes(0, new byte[][] { hex("01"), hex("02"), hex("03") },
                     Validity.ofNulls(new boolean[] { false, true, false })));
@@ -231,7 +232,7 @@ class WriterLogicalTypeStatisticsTest {
                         LogicalType.float16())
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, values,
                     Validity.ofNulls(new boolean[] { false, false, true, false, false, true })));
@@ -257,7 +258,7 @@ class WriterLogicalTypeStatisticsTest {
                                 LogicalType.string()))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints(0, new int[] { 1 })
@@ -293,7 +294,7 @@ class WriterLogicalTypeStatisticsTest {
             builder.addColumn("v", type, RepetitionType.REQUIRED, typeLength, logicalType);
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, builder.build(), config)) {
             writer.columnWriter().writeBatch(filler::fill);
         }
@@ -324,8 +325,8 @@ class WriterLogicalTypeStatisticsTest {
         return ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN).getLong();
     }
 
-    private static ParquetFileReader openReader(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader openReader(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 
     private static ColumnMetaData columnMeta(ParquetFileReader reader, int columnIndex) {

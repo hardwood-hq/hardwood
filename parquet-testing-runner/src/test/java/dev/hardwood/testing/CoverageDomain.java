@@ -17,7 +17,7 @@ import java.util.TreeSet;
 
 import org.apache.parquet.column.Encoding;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.writer.EncodingSupport;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.metadata.CompressionCodec;
@@ -375,7 +375,7 @@ final class CoverageDomain {
             return e;
         }
         try {
-            ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config).close();
+            ParquetFileWriter.create(OutputFile.inMemory(), schema, config).close();
             return null;
         }
         catch (IllegalArgumentException | UnsupportedOperationException e) {

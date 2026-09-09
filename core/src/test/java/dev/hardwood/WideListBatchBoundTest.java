@@ -11,7 +11,6 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -80,12 +79,12 @@ class WideListBatchBoundTest {
             elements[i] = i;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("v", offsets)
                     .ints(LEAF, elements));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 }

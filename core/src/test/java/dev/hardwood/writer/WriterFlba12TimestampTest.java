@@ -21,8 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -54,7 +55,7 @@ class WriterFlba12TimestampTest {
         List<Instant> values = List.of(Instant.MIN, YEAR_1, BEFORE_EPOCH, Instant.EPOCH, YEAR_9999, Instant.MAX);
         FileSchema schema = fixed(LogicalType.timestamp(true, TimeUnit.NANOS));
 
-        ByteBufferOutputFile out = writeRows(schema, values.stream()
+        InMemoryOutputFile out = writeRows(schema, values.stream()
                 .<Consumer<StructBuilder>>map(value -> row -> row.setTimestamp("v", value)).toList());
 
         List<Instant> read = new ArrayList<>();
@@ -78,7 +79,7 @@ class WriterFlba12TimestampTest {
             case NANOS -> 1;
         });
 
-        ByteBufferOutputFile out = writeRows(schema, List.of(
+        InMemoryOutputFile out = writeRows(schema, List.of(
                 row -> row.setLocalTimestamp("v", oneUnitBeforeEpoch),
                 row -> row.setLocalTimestamp("v", LocalDateTime.parse("1970-01-01T00:00:01"))));
 
@@ -103,7 +104,7 @@ class WriterFlba12TimestampTest {
     void theFooterCarriesNoConvertedType() throws Exception {
         FileSchema schema = fixed(LogicalType.timestamp(true, TimeUnit.MILLIS));
 
-        ByteBufferOutputFile out = writeRows(schema, List.of(row -> row.setTimestamp("v", Instant.EPOCH)));
+        InMemoryOutputFile out = writeRows(schema, List.of(row -> row.setTimestamp("v", Instant.EPOCH)));
 
         try (ParquetFileReader reader = open(out)) {
             SchemaElement element = reader.getFileMetaData().schema().get(1);
@@ -121,7 +122,7 @@ class WriterFlba12TimestampTest {
     void boundsFollowTheSignedValue() throws Exception {
         FileSchema schema = fixed(LogicalType.timestamp(true, TimeUnit.NANOS));
 
-        ByteBufferOutputFile out = writeRows(schema, List.of(
+        InMemoryOutputFile out = writeRows(schema, List.of(
                 row -> row.setTimestamp("v", BEFORE_EPOCH),
                 row -> row.setTimestamp("v", YEAR_9999),
                 row -> row.setTimestamp("v", YEAR_1),
@@ -157,7 +158,7 @@ class WriterFlba12TimestampTest {
                         + "WriterConfig.precisionLossPolicy(TRUNCATE)");
 
         WriterConfig truncating = WriterConfig.builder().precisionLossPolicy(PrecisionLossPolicy.TRUNCATE).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, truncating)) {
             writer.rowWriter().writeRow(row -> row.setTimestamp("v", finer));
         }
@@ -184,7 +185,7 @@ class WriterFlba12TimestampTest {
                         RepetitionType.OPTIONAL, 12, LogicalType.timestamp(true, TimeUnit.NANOS)))
                 .build();
 
-        ByteBufferOutputFile out = writeRows(schema, List.of(
+        InMemoryOutputFile out = writeRows(schema, List.of(
                 row -> row.setList("v", list -> list.addTimestamp(YEAR_1).addTimestamp(null).addTimestamp(YEAR_9999))));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -201,7 +202,7 @@ class WriterFlba12TimestampTest {
         FileSchema schema = fixed(LogicalType.timestamp(true, TimeUnit.NANOS));
         byte[] pastInstant = HEX.parseHex("ffffffffffffffffffffff7f");
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, new byte[][] { pastInstant }));
         }
@@ -236,9 +237,9 @@ class WriterFlba12TimestampTest {
                 .build();
     }
 
-    private static ByteBufferOutputFile writeRows(FileSchema schema, List<Consumer<StructBuilder>> rows)
+    private static InMemoryOutputFile writeRows(FileSchema schema, List<Consumer<StructBuilder>> rows)
             throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rowWriter = writer.rowWriter();
             for (Consumer<StructBuilder> row : rows) {
@@ -248,7 +249,7 @@ class WriterFlba12TimestampTest {
         return out;
     }
 
-    private static ParquetFileReader open(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader open(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 }

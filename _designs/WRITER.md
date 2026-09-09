@@ -63,7 +63,9 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 | Backend | Where | Behaviour |
 |---|---|---|
 | Local file | `internal.writer.ChannelOutputFile`, from `OutputFile.of(Path)` | Streams to a temporary sibling (`<name>.hardwood-tmp`) through a coalescing buffer, and atomically renames it onto the target on `close()`; `discard()`, or a `close()` whose final flush or rename fails, deletes the sibling. A reader never observes a half-written file at the target path. |
-| In memory | `internal.writer.ByteBufferOutputFile` | A growable buffer, the write-side counterpart to `ByteBufferInputFile`; its bytes are available after `close()`. Internal, used by tests and benchmarks. |
+| In memory | `InMemoryOutputFile`, from `OutputFile.inMemory()` | A growable heap buffer, the write-side counterpart to `ByteBufferInputFile`. It is public, final, `@Experimental` and constructed only by the factory; its `buffer()` method, after `close()`, returns a buffer spanning exactly the file, so it passes to `InputFile.of(ByteBuffer)` unchanged. A file is capped at the largest array the JVM allocates; a write past it throws `IOException`. |
+
+`buffer()` promises the file's contents and a position and limit per call, not a view of the storage: callers must not modify the buffer. Storage is therefore free to change from one growable array to a list of chunks, which is what a file past 2 GB needs. A single `ByteBuffer` is `int`-indexed, so `buffer()` stays capped at 2 GB under any storage, and a larger file would leave through an accessor that has no such cap: a transfer to a `WritableByteChannel`, or an `InputFile` over the chunks (`InputFile.readRange` takes a `long` offset). Neither exists. A `MemorySegment` accessor is unavailable while the baseline is Java 21, where it is a preview API.
 
 There is no object-store backend; `S3_STORAGE.md` covers read access only.
 
@@ -80,7 +82,7 @@ There is no object-store backend; `S3_STORAGE.md` covers read access only.
 
 `keyValueMetadata` and `createdBy` stay callable on a failed writer until `close()`; they change nothing, since no footer is written. How the exception types divide between caller error, destination and writer is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md); the user-facing account is [write-failures.md](../docs/content/how-to/write-failures.md).
 
-Tests: `WriterFailureTest`, `WriterCodecFailureTest`, `ChannelOutputFileTest`, `WriterSchemaShapeTest`.
+Tests: `WriterFailureTest`, `WriterCodecFailureTest`, `ChannelOutputFileTest`, `InMemoryOutputFileTest`, `WriterSchemaShapeTest`.
 
 ## Components
 
@@ -89,9 +91,9 @@ Writer components live in `core`, in packages parallel to the reader, so encoder
 | Layer | Package | Components |
 |---|---|---|
 | Public API | `dev.hardwood.writer` | `ParquetFileWriter` (lifecycle, footer), `ColumnWriter` / `ColumnBatch` (columnar), `RowWriter` / `StructBuilder` / `ListBuilder` / `MapBuilder` (row layer), `WriterConfig`, `ColumnEncoding`, `PrecisionLossPolicy`, `ParquetWriteException` |
-| Public API | `dev.hardwood` | `OutputFile`, `Validity` (shared with the reader) |
+| Public API | `dev.hardwood` | `OutputFile`, `InMemoryOutputFile`, `Validity` (shared with the reader) |
 | Public API | `dev.hardwood.schema` | `FileSchema.Builder`, producing the reader's immutable `FileSchema` |
-| Orchestration | `dev.hardwood.internal.writer` | `RowGroupBuffer` (one row group), `ColumnChunkBuffer` (one column chunk: levels, indices, page cuts, framing), `RecordShredder` (levels from validity and offsets), `ValueEncoder` and its per-type subclasses (value store, dictionary, statistics), `ColumnSource` and its per-type sources (the value-input seam), the per-type statistics collectors, `RowPlan` and its nodes (row-layer staging), `WriterSchemaShape`, `LogicalTypeValueRange`, the `OutputFile` backends |
+| Orchestration | `dev.hardwood.internal.writer` | `RowGroupBuffer` (one row group), `ColumnChunkBuffer` (one column chunk: levels, indices, page cuts, framing), `RecordShredder` (levels from validity and offsets), `ValueEncoder` and its per-type subclasses (value store, dictionary, statistics), `ColumnSource` and its per-type sources (the value-input seam), the per-type statistics collectors, `RowPlan` and its nodes (row-layer staging), `WriterSchemaShape`, `LogicalTypeValueRange`, `ChannelOutputFile` (the local-file `OutputFile` backend) |
 | Value encoding | `dev.hardwood.internal.encoding` | `PlainEncoder`, `RleBitPackingHybridEncoder`, `LevelEncoder`, `DictionaryEncoder` / `LongDictionaryEncoder` / `BinaryDictionaryEncoder`, the delta and byte-stream-split encoders |
 | Compression | `dev.hardwood.internal.compression` | `Compressor` / `CompressorFactory`, beside `Decompressor` |
 | Metadata serialization | `dev.hardwood.internal.thrift` | `ThriftCompactWriter` and the `*Writer` struct serializers (`FileMetaDataWriter`, `SchemaElementWriter`, `LogicalTypeWriter`, `RowGroupWriter`, `ColumnChunkWriter`, `ColumnMetaDataWriter`, `StatisticsWriter`, `PageHeaderWriter`, `KeyValueMetadataWriter`, …), the inverses of the `*Reader`s |
@@ -225,7 +227,6 @@ The architecture leaves parallelism open without a public-API change. Within a r
 
 ## Boundaries
 
-- The only public `OutputFile` factory is `OutputFile.of(Path)`; an in-memory destination exists only as the internal `ByteBufferOutputFile` (#1147).
 - No object-store `OutputFile` backend, and no parallel column encoding or row-group pipelining (#1291).
 - Row groups are cut only by the two targets and the structural caps; a caller cannot end a row group at a boundary of its own (#985).
 - The row layer costs measurably more than the columnar one for the same file, in time and in staging allocation (#1045).

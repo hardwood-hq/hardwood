@@ -9,8 +9,8 @@ package dev.hardwood.writer;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
@@ -54,7 +54,7 @@ class WriterCodecFailureTest {
     @Test
     void writeBatchReportsACodecFailureAsParquetWriteException() throws Exception {
         ParquetFileWriter writer = ParquetFileWriter.create(
-                new ByteBufferOutputFile(), oneColumn(), flushPerRecord(), FAILING);
+                OutputFile.inMemory(), oneColumn(), flushPerRecord(), FAILING);
 
         assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] {1, 2})))
                 .isInstanceOf(ParquetWriteException.class)
@@ -64,7 +64,7 @@ class WriterCodecFailureTest {
     @Test
     void writeRowReportsACodecFailureAsParquetWriteException() throws Exception {
         ParquetFileWriter writer = ParquetFileWriter.create(
-                new ByteBufferOutputFile(), oneColumn(), flushPerRecord(), FAILING);
+                OutputFile.inMemory(), oneColumn(), flushPerRecord(), FAILING);
         RowWriter rows = writer.rowWriter();
 
         assertThatThrownBy(() -> {
@@ -82,7 +82,7 @@ class WriterCodecFailureTest {
     @Test
     void closeReportsACodecFailureAsParquetWriteException() throws Exception {
         // No row-group target reached while writing, so the only flush is the one close does.
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn(),
+        ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn(),
                 WriterConfig.builder().codec(CompressionCodec.GZIP).build(), FAILING);
         writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] {1, 2, 3}));
 

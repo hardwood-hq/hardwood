@@ -9,7 +9,6 @@ package dev.hardwood.writer;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -19,8 +18,9 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import com.sun.management.ThreadMXBean;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -104,7 +104,7 @@ class WriterSizingMatrixTest {
                 .rowGroupTargetRows(Long.MAX_VALUE)
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         long peak;
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, testCase.schema(), config)) {
             ColumnWriter columns = writer.columnWriter();
@@ -131,9 +131,9 @@ class WriterSizingMatrixTest {
         assertRoundTrips(out, testCase);
     }
 
-    private static void assertRoundTrips(ByteBufferOutputFile out, Case testCase) throws IOException {
+    private static void assertRoundTrips(InMemoryOutputFile out, Case testCase) throws IOException {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows())
                     .as("every record reached the file")
                     .isEqualTo(testCase.rows());
@@ -186,7 +186,7 @@ class WriterSizingMatrixTest {
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(target).build();
 
         long before = allocatedBytes();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             long allocated = allocatedBytes() - before;
             assertThat(allocated)

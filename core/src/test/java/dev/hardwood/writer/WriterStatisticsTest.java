@@ -7,15 +7,15 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -41,12 +41,12 @@ class WriterStatisticsTest {
         // type-defined (signed) ColumnOrder.
         int[] values = { 42, -100_000, 7, Integer.MAX_VALUE, Integer.MIN_VALUE, 0 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             Statistics stats = columnMeta(reader, 0).statistics();
             assertThat(stats).as("statistics written").isNotNull();
             assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(Integer.MIN_VALUE);
@@ -63,12 +63,12 @@ class WriterStatisticsTest {
         int[] values = { 7, 0, -3, 0, 50, 0, 20 };
         boolean[] nulls = { false, true, false, true, false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             Statistics stats = columnMeta(reader, 0).statistics();
             assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(-3);
             assertThat(StatisticsDecoder.decodeInt(stats.maxValue())).isEqualTo(50);
@@ -82,12 +82,12 @@ class WriterStatisticsTest {
         boolean[] nulls = { true, true, true, true };
         int[] values = new int[nulls.length];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             Statistics stats = columnMeta(reader, 0).statistics();
             assertThat(stats).isNotNull();
             assertThat(stats.minValue()).isNull();
@@ -108,12 +108,12 @@ class WriterStatisticsTest {
         }
 
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(1024).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             List<RowGroup> groups = reader.getFileMetaData().rowGroups();
             assertThat(groups.size()).isGreaterThan(1);
             Statistics first = groups.get(0).columns().get(0).metaData().statistics();
@@ -139,14 +139,14 @@ class WriterStatisticsTest {
         int[] elements = { 1, 2, 3, 0, 5 };
         boolean[] elementNulls = { false, false, false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("phones", offsets, listNulls)
                     .ints("phones.list.element", elements, elementNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int leaf = reader.getFileSchema().getColumn("phones.list.element").columnIndex();
             Statistics stats = columnMeta(reader, leaf).statistics();
             assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(1);

@@ -7,7 +7,6 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -15,9 +14,10 @@ import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.BuildInfo;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
 
@@ -115,7 +115,7 @@ class WriterFooterMetadataTest {
     /// A value known only once the data is written can still be stated.
     @Test
     void metadataCanBeSetAfterWriting() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[]{ 1, 2, 3 }));
             writer.keyValueMetadata("row.count", "3");
@@ -126,7 +126,7 @@ class WriterFooterMetadataTest {
 
     @Test
     void rejectsMetadataAfterClose() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn());
         writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[]{ 1 }));
         writer.close();
@@ -139,7 +139,7 @@ class WriterFooterMetadataTest {
 
     @Test
     void rejectsANullKey() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[]{ 1 }));
 
@@ -183,7 +183,7 @@ class WriterFooterMetadataTest {
 
     @Test
     void rejectsANullCreatedBy() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[]{ 1 }));
 
@@ -210,7 +210,7 @@ class WriterFooterMetadataTest {
     /// Writes a three-row file, applying `footer` to the writer before it is closed, and
     /// returns the metadata a reader sees in the result.
     private static FileMetaData write(FooterSetter footer) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             footer.apply(writer);
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[]{ 1, 2, 3 }));
@@ -218,8 +218,8 @@ class WriterFooterMetadataTest {
         return readFooter(out);
     }
 
-    private static FileMetaData readFooter(ByteBufferOutputFile out) throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+    private static FileMetaData readFooter(InMemoryOutputFile out) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             return reader.getFileMetaData();
         }
     }

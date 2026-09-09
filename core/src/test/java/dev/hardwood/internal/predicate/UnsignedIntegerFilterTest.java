@@ -14,9 +14,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -221,7 +222,7 @@ class UnsignedIntegerFilterTest {
                                 new LogicalType.IntType(32, false)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, nested)) {
             for (int value : VALUES) {
                 final int v = value;
@@ -229,7 +230,7 @@ class UnsignedIntegerFilterTest {
             }
         }
         try (ParquetFileReader reader = ParquetFileReader.open(
-                    InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                    InputFile.of(out.buffer()));
                 RowReader rows = reader.buildRowReader()
                         .filter(FilterPredicate.gt("s.v", SEVEN)).build()) {
             List<Integer> matched = new ArrayList<>();
@@ -253,7 +254,7 @@ class UnsignedIntegerFilterTest {
                         LogicalType.string())
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, mixed)) {
             for (int value : VALUES) {
                 final int v = value;
@@ -265,7 +266,7 @@ class UnsignedIntegerFilterTest {
                 FilterPredicate.and(FilterPredicate.gt("v", SEVEN), FilterPredicate.eq("name", "never")));
         assertTakesRecordPath(filter, mixed);
         try (ParquetFileReader reader = ParquetFileReader.open(
-                    InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                    InputFile.of(out.buffer()));
                 RowReader rows = reader.buildRowReader().filter(filter).build()) {
             List<Integer> matched = new ArrayList<>();
             while (rows.hasNext()) {
@@ -300,7 +301,7 @@ class UnsignedIntegerFilterTest {
     }
 
     private static List<Long> filteredLongs(FilterPredicate predicate) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, longSchema())) {
             for (long value : LONG_VALUES) {
                 final long v = value;
@@ -308,7 +309,7 @@ class UnsignedIntegerFilterTest {
             }
         }
         try (ParquetFileReader reader = ParquetFileReader.open(
-                    InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                    InputFile.of(out.buffer()));
                 RowReader rows = reader.buildRowReader().filter(predicate).build()) {
             List<Long> matched = new ArrayList<>();
             while (rows.hasNext()) {
@@ -330,7 +331,7 @@ class UnsignedIntegerFilterTest {
     }
 
     private static List<Integer> filteredInts(FilterPredicate predicate) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             for (int value : VALUES) {
                 final int v = value;
@@ -338,7 +339,7 @@ class UnsignedIntegerFilterTest {
             }
         }
         try (ParquetFileReader reader = ParquetFileReader.open(
-                    InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                    InputFile.of(out.buffer()));
                 RowReader rows = reader.buildRowReader().filter(predicate).build()) {
             List<Integer> matched = new ArrayList<>();
             while (rows.hasNext()) {

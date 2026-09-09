@@ -14,12 +14,14 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
@@ -59,12 +61,12 @@ class WriterDictionaryTest {
             values[i] = palette[i % palette.length];
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
@@ -91,12 +93,12 @@ class WriterDictionaryTest {
         }
 
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(4L << 20).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.dictionaryPageOffset()).as("no dictionary page").isNull();
@@ -153,12 +155,12 @@ class WriterDictionaryTest {
             values[i] = i * 31 + 5;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
@@ -180,12 +182,12 @@ class WriterDictionaryTest {
             values[i] = i % 8;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.dictionaryPageOffset()).isNotNull();
@@ -203,12 +205,12 @@ class WriterDictionaryTest {
         int[] values = new int[500];
         Arrays.fill(values, -99);
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
@@ -227,12 +229,12 @@ class WriterDictionaryTest {
         int[] values = { 5, 0, 5, 0, 9, 0, 5, 9 };
         boolean[] nulls = { false, true, false, true, false, true, false, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
             assertThat(readNullable(reader, 0)).containsExactly(5, null, 5, null, 9, null, 5, 9);
         }
@@ -244,12 +246,12 @@ class WriterDictionaryTest {
         boolean[] nulls = { true, true, true, true };
         int[] values = new int[nulls.length];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.dictionaryPageOffset()).isNull();
             assertThat(meta.encodings()).doesNotContain(Encoding.RLE_DICTIONARY);
@@ -267,12 +269,12 @@ class WriterDictionaryTest {
         }
 
         WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.PLAIN).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.dictionaryPageOffset()).isNull();
             assertThat(meta.encodings()).containsExactly(Encoding.PLAIN);
@@ -293,14 +295,14 @@ class WriterDictionaryTest {
         int[] elements = { 8, 8, 8, 0, 3 };
         boolean[] elementNulls = { false, false, false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("v", offsets, listNulls)
                     .ints("v.list.element", elements, elementNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
             assertThat(columnMeta(reader, leaf).dictionaryPageOffset()).isNotNull();
             assertThat(readListOfInts(reader, leaf))
@@ -319,12 +321,12 @@ class WriterDictionaryTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(64).rowGroupBufferTargetBytes(512).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
             assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
@@ -351,12 +353,12 @@ class WriterDictionaryTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(64).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
@@ -384,14 +386,14 @@ class WriterDictionaryTest {
         int[] v = { 7, 0, 0, 7, 3 };
         boolean[] vNulls = { false, false, true, false, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", structNulls)
                     .ints("s.v", v, vNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int leaf = reader.getFileSchema().getColumn("s.v").columnIndex();
             assertThat(columnMeta(reader, leaf).dictionaryPageOffset()).isNotNull();
             assertThat(readNullable(reader, leaf)).containsExactly(7, null, null, 7, 3);
@@ -413,7 +415,7 @@ class WriterDictionaryTest {
         int[] values = { 5, 0, 5, 9 };
         boolean[] valueNulls = { false, true, false, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .map("props", offsets, mapNulls)
@@ -421,7 +423,7 @@ class WriterDictionaryTest {
                     .ints("props.key_value.value", values, valueNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
             int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
             assertThat(columnMeta(reader, valIdx).dictionaryPageOffset()).isNotNull();
@@ -435,22 +437,22 @@ class WriterDictionaryTest {
     }
 
     private static Long booleanDistinctCount(FileSchema schema, boolean[] values) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.booleans(0, values));
         }
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             return columnMeta(reader, 0).statistics().distinctCount();
         }
     }
 
     /// The `distinct_count` a one-column file's only chunk carries, or null where it carries none.
     private static Long distinctCountOf(int[] values, WriterConfig config) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
             return columnMeta(reader, 0).statistics().distinctCount();
         }

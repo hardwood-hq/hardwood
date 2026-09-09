@@ -14,9 +14,11 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.FetchReason;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -85,7 +87,7 @@ class SequentialNextRowGroupPrefetchTest {
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .rowGroupTargetRows(ROWS_PER_ROW_GROUP)
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schemaBuilder.build(), config)) {
             RowWriter rowWriter = writer.rowWriter();
             for (int i = 0; i < 3 * ROWS_PER_ROW_GROUP; i++) {
@@ -97,7 +99,7 @@ class SequentialNextRowGroupPrefetchTest {
                 });
             }
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     /// Holds back the data reads of row group 0 until row group 1's prefetch has issued a data

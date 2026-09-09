@@ -18,12 +18,13 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetFileReader;
@@ -55,12 +56,12 @@ class WriterCompressionTest {
             values[i] = palette[i % palette.length];
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(columnMeta(reader, 0).codec()).isEqualTo(CompressionCodec.ZSTD);
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
         }
@@ -77,11 +78,11 @@ class WriterCompressionTest {
         Arrays.fill(values, 42);
 
         WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.PLAIN).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
-        byte[] bytes = out.toByteArray();
+        byte[] bytes = InMemoryFiles.toByteArray(out);
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
@@ -109,12 +110,12 @@ class WriterCompressionTest {
         int[] values = { 1, 2, 3, 4, 5 };
 
         WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.codec()).isEqualTo(CompressionCodec.UNCOMPRESSED);
             assertThat(meta.totalCompressedSize()).isEqualTo(meta.totalUncompressedSize());
@@ -149,12 +150,12 @@ class WriterCompressionTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(256).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(columnMeta(reader, 0).codec()).isEqualTo(CompressionCodec.ZSTD);
             assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
         }
@@ -176,12 +177,12 @@ class WriterCompressionTest {
         }
 
         WriterConfig config = WriterConfig.builder().codec(codec).pageTargetBytes(1024).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(meta.codec()).as("declared codec").isEqualTo(codec);
             if (codec == CompressionCodec.UNCOMPRESSED) {

@@ -19,7 +19,9 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
@@ -212,10 +214,10 @@ class RowGroupBufferStoreCapacityTest {
         private final FileSchema schema;
         private final RecordShredder shredder;
         private final RowGroupBuffer buffer;
-        private final ByteBufferOutputFile out = new ByteBufferOutputFile();
+        private final InMemoryOutputFile out = OutputFile.inMemory();
         private final List<RowGroup> rowGroups = new ArrayList<>();
 
-        Buffered(FileSchema schema, long targetRows, int storeCapacity) {
+        Buffered(FileSchema schema, long targetRows, int storeCapacity) throws IOException {
             this.schema = schema;
             this.shredder = new RecordShredder(schema);
             ColumnEncoding[] encodings = new ColumnEncoding[schema.getColumnCount()];
@@ -293,7 +295,7 @@ class RowGroupBufferStoreCapacityTest {
             out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(footerBytes.length).flip());
             out.write(ByteBuffer.wrap(MAGIC));
             out.close();
-            return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+            return ParquetFileReader.open(InputFile.of(out.buffer()));
         }
     }
 }

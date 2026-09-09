@@ -19,13 +19,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
@@ -64,11 +66,11 @@ class WriterLayoutTest {
             values[i] = i;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
-        byte[] bytes = out.toByteArray();
+        byte[] bytes = InMemoryFiles.toByteArray(out);
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
@@ -99,12 +101,12 @@ class WriterLayoutTest {
         // open-addressing table charges it — which is 24 bytes a record, not the 4 its `PLAIN`
         // width would suggest.
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(4096).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
             // 4096 / 24 ⇒ 170 records fit and the 171st crosses, so 5000 rows are 29 full
             // groups and a 41-row tail. Pinned rather than merely asserting "more than one":
@@ -142,12 +144,12 @@ class WriterLayoutTest {
                 .codec(CompressionCodec.UNCOMPRESSED)   // so a page's bytes are its values
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.bytes("v", values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             // The page is cut before the value that would cross the target, so the target is a
@@ -177,12 +179,12 @@ class WriterLayoutTest {
         }
 
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(perGroup).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups().stream().map(RowGroup::numRows))
                     .containsExactly(4096L, 4096L, 4096L, 4096L, 4096L, 4096L, 424L);
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
@@ -203,12 +205,12 @@ class WriterLayoutTest {
                 .rowGroupBufferTargetBytes(4096)      // 171 all-distinct INT32 records
                 .rowGroupTargetRows(rows)             // would hold the file in one group
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             List<Long> numRows = reader.getFileMetaData().rowGroups().stream()
                     .map(RowGroup::numRows)
                     .toList();
@@ -257,14 +259,14 @@ class WriterLayoutTest {
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             ColumnWriter columns = writer.columnWriter();
             columns.writeBatch(batch -> batch.bytes("v", narrow));
             columns.writeBatch(batch -> batch.bytes("v", wide));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(narrowRecords + wideRecords);
             assertThat(reader.getFileMetaData().rowGroups())
                     .as("every row group, against a %d KiB target", target >> 10)
@@ -295,13 +297,13 @@ class WriterLayoutTest {
         WriterConfig config = WriterConfig.builder()
                 .rowGroupTargetRows(perGroup)
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, first));
             writer.columnWriter().writeBatch(batch -> batch.ints(0, second));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
             assertThat(rowGroups).hasSize(2);
@@ -337,11 +339,11 @@ class WriterLayoutTest {
 
     @Test
     void writesCorrectPageCrc() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3, 4, 5 }));
         }
-        byte[] bytes = out.toByteArray();
+        byte[] bytes = InMemoryFiles.toByteArray(out);
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
@@ -373,12 +375,12 @@ class WriterLayoutTest {
         FileSchema schema = FileSchema.builder("m")
                 .addColumn("b", PhysicalType.BOOLEAN, RepetitionType.REQUIRED).build();
         WriterConfig config = WriterConfig.builder().pageTargetBytes(25).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.booleans(0, values));
         }
 
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
             assertThat(countDataPages(file, meta.dataPageOffset(), meta.numValues()))
@@ -405,12 +407,12 @@ class WriterLayoutTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(64).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.list("v", offsets).ints("v.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             assertThat(meta.numValues()).isEqualTo(n); // the single record's elements span multiple pages
@@ -458,14 +460,14 @@ class WriterLayoutTest {
         }
 
         WriterConfig config = WriterConfig.builder().pageTargetBytes(64).rowGroupBufferTargetBytes(256).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("v", toIntArray(offsets), Validity.ofNulls(toBooleanArray(listNulls)))
                     .ints("v.list.element", toIntArray(elements), toBooleanArray(elementNulls)));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
             int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
             assertThat(readListOfInts(reader, leaf)).isEqualTo(expected);
@@ -526,11 +528,11 @@ class WriterLayoutTest {
                 .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.longs("v", values));
         }
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();

@@ -8,7 +8,6 @@
 package dev.hardwood.writer;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,8 +19,9 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -144,7 +144,7 @@ class RowWriterConversionTest {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
         Instant moment = Instant.ofEpochSecond(1_755_600_000L, 123_456_789);
 
-        ByteBufferOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
+        InMemoryOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -159,7 +159,7 @@ class RowWriterConversionTest {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
         Instant moment = Instant.ofEpochSecond(-1, 499_500_000);
 
-        ByteBufferOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
+        InMemoryOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -171,7 +171,7 @@ class RowWriterConversionTest {
     void truncatePolicyDropsSubUnitTimeOfDayPrecision() throws Exception {
         FileSchema schema = single(PhysicalType.INT32, LogicalType.time(true, TimeUnit.MILLIS));
 
-        ByteBufferOutputFile out = write(schema, truncating(),
+        InMemoryOutputFile out = write(schema, truncating(),
                 row -> row.setTime("v", LocalTime.of(1, 2, 3, 4_999_999)));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -251,7 +251,7 @@ class RowWriterConversionTest {
         Instant max = Instant.ofEpochSecond(Long.MAX_VALUE / 1_000_000_000L,
                 Long.MAX_VALUE % 1_000_000_000L);
 
-        ByteBufferOutputFile out = write(schema, row -> row.setTimestamp("v", max));
+        InMemoryOutputFile out = write(schema, row -> row.setTimestamp("v", max));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -286,7 +286,7 @@ class RowWriterConversionTest {
     void decimalIsRescaledWhenLossless() throws Exception {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.decimal(18, 2));
 
-        ByteBufferOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("1234.5")));
+        InMemoryOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("1234.5")));
 
         assertThat(readDecimal(out)).isEqualTo(new BigDecimal("1234.50"));
     }
@@ -300,7 +300,7 @@ class RowWriterConversionTest {
                         LogicalType.decimal(18, 3))
                 .build();
 
-        ByteBufferOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("-42.125")));
+        InMemoryOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("-42.125")));
 
         assertThat(readDecimal(out)).isEqualTo(new BigDecimal("-42.125"));
     }
@@ -334,7 +334,7 @@ class RowWriterConversionTest {
     void unsignedIntTakesTheRawBits() throws Exception {
         FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(32, false));
 
-        ByteBufferOutputFile out = write(schema, row -> row.setInt("v", (int) 4_000_000_000L));
+        InMemoryOutputFile out = write(schema, row -> row.setInt("v", (int) 4_000_000_000L));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -348,7 +348,7 @@ class RowWriterConversionTest {
     void physicalSetterWritesTheStoredValueOfAnAnnotatedColumn() throws Exception {
         FileSchema schema = single(PhysicalType.INT32, LogicalType.date());
 
-        ByteBufferOutputFile out = write(schema, row -> row.setInt("v", 20_684));
+        InMemoryOutputFile out = write(schema, row -> row.setInt("v", 20_684));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -362,7 +362,7 @@ class RowWriterConversionTest {
         FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.NANOS));
         Instant moment = Instant.ofEpochSecond(1_755_600_000L, 123_456_789);
 
-        ByteBufferOutputFile out = write(schema, row -> row.setTimestamp("v", moment));
+        InMemoryOutputFile out = write(schema, row -> row.setTimestamp("v", moment));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -378,7 +378,7 @@ class RowWriterConversionTest {
                 .build();
         UUID id = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
 
-        ByteBufferOutputFile out = write(schema, row -> row.setUuid("v", id));
+        InMemoryOutputFile out = write(schema, row -> row.setUuid("v", id));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
@@ -397,28 +397,28 @@ class RowWriterConversionTest {
         return WriterConfig.builder().precisionLossPolicy(PrecisionLossPolicy.TRUNCATE).build();
     }
 
-    private static ByteBufferOutputFile write(FileSchema schema, Consumer<StructBuilder> filler)
+    private static InMemoryOutputFile write(FileSchema schema, Consumer<StructBuilder> filler)
             throws Exception {
         return write(schema, WriterConfig.defaults(), filler);
     }
 
-    private static ByteBufferOutputFile write(FileSchema schema, WriterConfig config,
+    private static InMemoryOutputFile write(FileSchema schema, WriterConfig config,
             Consumer<StructBuilder> filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.rowWriter().writeRow(filler);
         }
         return out;
     }
 
-    private static BigDecimal readDecimal(ByteBufferOutputFile out) throws Exception {
+    private static BigDecimal readDecimal(InMemoryOutputFile out) throws Exception {
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             rows.next();
             return rows.getDecimal("v");
         }
     }
 
-    private static ParquetFileReader open(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader open(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 }

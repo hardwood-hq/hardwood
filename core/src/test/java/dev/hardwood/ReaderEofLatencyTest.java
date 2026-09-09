@@ -18,7 +18,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -161,7 +160,7 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
             values[i] = i;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema.build())) {
             writer.columnWriter().writeBatch(batch -> {
                 for (String name : columnNames()) {
@@ -169,6 +168,6 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
                 }
             });
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 }

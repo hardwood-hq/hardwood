@@ -8,7 +8,6 @@
 package dev.hardwood.writer;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -19,9 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -72,13 +71,13 @@ class WriterLargeFileTest {
                 .pageTargetBytes(16 << 10)
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema(), config)) {
             writeRows(writer, ROWS);
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
 
             assertThat(reader.getFileMetaData().numRows()).as("footer row count").isEqualTo(ROWS);
             assertThat(reader.getFileMetaData().rowGroups().size())

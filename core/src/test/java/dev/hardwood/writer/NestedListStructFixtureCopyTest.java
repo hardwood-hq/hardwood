@@ -7,14 +7,14 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
@@ -34,7 +34,7 @@ class NestedListStructFixtureCopyTest {
     void copiesThroughColumnReaderAndColumnBatchAndReadsBackEqual() throws Exception {
         Path source = Paths.get("src/test/resources/nested_list_struct_test.parquet");
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
             FileSchema schema = reader.getFileSchema();
             try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -44,7 +44,7 @@ class NestedListStructFixtureCopyTest {
 
         try (ParquetFileReader originalReader = ParquetFileReader.open(InputFile.of(source));
                 RowReader original = originalReader.rowReader();
-                ParquetFileReader copyReader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ParquetFileReader copyReader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 RowReader copy = copyReader.rowReader()) {
             while (original.hasNext()) {
                 assertThat(copy.hasNext()).isTrue();

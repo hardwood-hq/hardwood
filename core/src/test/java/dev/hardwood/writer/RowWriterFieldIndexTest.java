@@ -19,8 +19,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -364,16 +366,16 @@ class RowWriterFieldIndexTest {
     }
 
     private static byte[] writeRows(FileSchema schema, RowWrite filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             filler.accept(writer.rowWriter());
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     /// A rejection fails the writer, so each body asserts one rejection on a writer of its own.
     private static void withRowWriter(RowWrite body) throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), rulesSchema())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), rulesSchema())) {
             body.accept(writer.rowWriter());
         }
     }

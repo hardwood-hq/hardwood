@@ -7,12 +7,11 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
-
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
@@ -118,9 +117,9 @@ class WriterDictionaryProbeTest {
             values[i] = i * 31 + 5;
         }
 
-        ByteBufferOutputFile out = write(values);
+        InMemoryOutputFile out = write(values);
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
             int[] read = readInts(reader, values.length);
             assertThat(read).containsExactly(values);
         }
@@ -139,7 +138,7 @@ class WriterDictionaryProbeTest {
             repeating[i] = i % 4;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         // A row-group target small enough that each batch lands in a row group of its own.
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(64 * 1024).build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneIntColumn(), config)) {
@@ -148,7 +147,7 @@ class WriterDictionaryProbeTest {
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
             boolean anyDictionary = reader.getFileMetaData().rowGroups().stream()
                     .anyMatch(group -> group.columns().get(0).metaData().encodings()
                             .contains(Encoding.RLE_DICTIONARY));
@@ -166,8 +165,8 @@ class WriterDictionaryProbeTest {
                 .build();
     }
 
-    private static ByteBufferOutputFile write(int[] values) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+    private static InMemoryOutputFile write(int[] values) throws Exception {
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneIntColumn())) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
@@ -175,9 +174,9 @@ class WriterDictionaryProbeTest {
     }
 
     private static ColumnMetaData writeAndRead(int[] values) throws Exception {
-        ByteBufferOutputFile out = write(values);
+        InMemoryOutputFile out = write(values);
         try (ParquetFileReader reader = ParquetFileReader.open(
-                InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+                InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups())
                     .as("one row group, so the chunk under test is the whole column").hasSize(1);
             return reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();

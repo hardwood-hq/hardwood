@@ -15,7 +15,6 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -51,7 +50,7 @@ class RequiredStructPredicateTest {
                 .struct("o", RepetitionType.OPTIONAL, o -> o
                         .addColumn("v", PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             for (int i = 0; i < ROWS; i++) {
                 final long key = i;
@@ -61,7 +60,7 @@ class RequiredStructPredicateTest {
                         .setStruct("o", o -> o.setLong("v", key)));
             }
         }
-        file = out.toByteArray();
+        file = InMemoryFiles.toByteArray(out);
     }
 
     @Test

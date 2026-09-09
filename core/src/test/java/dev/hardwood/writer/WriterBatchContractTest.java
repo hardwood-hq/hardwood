@@ -17,7 +17,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
@@ -42,7 +41,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsDuplicateColumnInBatch() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints(0, new int[] { 4, 5, 6 })))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -53,7 +52,7 @@ class WriterBatchContractTest {
     void rejectsSameColumnByIndexAndName() throws Exception {
         // The schema binding lets the batch see that "id" is column 0, so the collision
         // is caught eagerly rather than at write time.
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints("id", new int[] { 4, 5, 6 })))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -62,7 +61,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsUnknownColumnName() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints("nope", new int[] { 1 })))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -73,14 +72,14 @@ class WriterBatchContractTest {
         // A leaf-column index out of range is an index error, reported the way StructBuilder's
         // field index and the reader's positional accessors report one, so a caller holding both
         // APIs catches one exception type rather than two.
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class)
                     .hasMessage("Column index 1 is out of range [0, 1)");
         }
         // Separate writer: a failed writeBatch fails the writer, so the negative-index
         // check needs its own.
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(-1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }
@@ -88,7 +87,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsRaggedBatch() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), twoColumns())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), twoColumns())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints(1, new int[] { 1, 2 })))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -97,7 +96,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsBatchNotCoveringAllColumns() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), twoColumns())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), twoColumns())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 })))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -105,7 +104,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsNullMaskOnRequiredColumn() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2 }, new boolean[] { false, true })))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -114,7 +113,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsValidityOnRequiredColumn() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2 }, Validity.NO_NULLS)))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -123,7 +122,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsNullMaskLengthMismatch() throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneOptionalColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneOptionalColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(
                     batch -> batch.ints(0, new int[] { 1, 2, 3 }, new boolean[] { false, true })))
                     .isInstanceOf(IllegalArgumentException.class);
@@ -134,7 +133,7 @@ class WriterBatchContractTest {
     void rejectsMutatingBatchAfterWrite() throws Exception {
         // A filler that stashes the batch and mutates it after writeBatch returns must
         // fail loudly rather than silently drop the values.
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn())) {
             ColumnBatch[] escaped = new ColumnBatch[1];
             writer.columnWriter().writeBatch(batch -> {
                 escaped[0] = batch;
@@ -146,7 +145,7 @@ class WriterBatchContractTest {
 
     @Test
     void rejectsUseAfterClose() throws Exception {
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn());
+        ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), oneColumn());
         ColumnWriter columns = writer.columnWriter();
         columns.writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 }));
         writer.close();
@@ -178,7 +177,7 @@ class WriterBatchContractTest {
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.list("props", new int[] { 0, 1 })))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -192,7 +191,7 @@ class WriterBatchContractTest {
                 .list("items", RepetitionType.OPTIONAL,
                         el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.map("items", new int[] { 0, 1 })))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -205,7 +204,7 @@ class WriterBatchContractTest {
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .map("props", new int[] { 0, 1, 2 }, Validity.ofNulls(new boolean[] { true, false }))
                     .ints("props.key_value.key", new int[] { 99, 5 })
@@ -219,7 +218,7 @@ class WriterBatchContractTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .list("v", new int[] { 0, 2, 1 })
                     .ints("v.list.element", new int[] { 7 })))
@@ -232,7 +231,7 @@ class WriterBatchContractTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             // offsets claim 2 elements, but only 3 are supplied.
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .list("v", new int[] { 0, 2 })
@@ -248,7 +247,7 @@ class WriterBatchContractTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             // record 0 is null yet its offsets span one element (99); record 1 is [5].
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .list("v", new int[] { 0, 1, 2 }, Validity.ofNulls(new boolean[] { true, false }))
@@ -267,7 +266,7 @@ class WriterBatchContractTest {
                         .list("phones", RepetitionType.REQUIRED,
                                 el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             // record 0's s is absent yet its offsets span two elements (10, 20); record 1 is [30].
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", Validity.ofNulls(new boolean[] { true, false }))
@@ -289,7 +288,7 @@ class WriterBatchContractTest {
                         .map("props", RepetitionType.REQUIRED, PhysicalType.INT32,
                                 v -> v.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", Validity.ofNulls(new boolean[] { true, false }))
                     .map("s.props", new int[] { 0, 1, 2 })
@@ -307,7 +306,7 @@ class WriterBatchContractTest {
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             // r has 3 records but v's offsets describe only 2.
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch
                     .ints("r", new int[] { 0, 1, 2 })

@@ -11,8 +11,10 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -53,7 +55,7 @@ class ColumnarNestedCopyTest {
         byte[] source = writeSource(schema);
 
         int batches;
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileReader reader = open(source);
                 ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             batches = NestedColumnCopier.copy(reader, schema, writer);
@@ -64,7 +66,7 @@ class ColumnarNestedCopyTest {
         // property of the file. Without this the copier's per-batch reset of already-set
         // groups and offsets restarting at a batch would never be exercised.
         assertThat(batches).isGreaterThan(1);
-        assertThat(out.toByteArray()).isEqualTo(source);
+        assertThat(InMemoryFiles.toByteArray(out)).isEqualTo(source);
     }
 
     /// Enough records that the reader hands the copy more than one batch, cycling the four
@@ -79,7 +81,7 @@ class ColumnarNestedCopyTest {
     private static final int WIDE_TAGS = 250;
 
     private static byte[] writeSource(FileSchema schema) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             for (int i = 0; i < RECORDS; i++) {
@@ -112,7 +114,7 @@ class ColumnarNestedCopyTest {
                 });
             }
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static ParquetFileReader open(byte[] file) throws Exception {

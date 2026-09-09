@@ -7,17 +7,17 @@
  */
 package dev.hardwood.internal.predicate.dictionary;
 
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
@@ -120,14 +120,14 @@ class RowGroupDictionaryFilterSourceTest {
             categories[i] = i % 10;
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints("id", ids)
                     .ints("category", categories));
         }
 
-        InputFile inputFile = InputFile.of(ByteBuffer.wrap(out.toByteArray()));
+        InputFile inputFile = InputFile.of(out.buffer());
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
              HardwoodContextImpl context = HardwoodContextImpl.create()) {
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();

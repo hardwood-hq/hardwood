@@ -16,9 +16,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm;
@@ -77,7 +78,7 @@ class WriterLogicalTypeRoundTripTest {
     @ParameterizedTest
     @MethodSource("annotations")
     void annotationSurvivesTheFile(Annotated annotated) throws Exception {
-        ByteBufferOutputFile out = writeOneRow(annotated);
+        InMemoryOutputFile out = writeOneRow(annotated);
 
         try (ParquetFileReader reader = openReader(out)) {
             assertThat(reader.getFileSchema().getColumn("v").logicalType()).isEqualTo(annotated.logicalType());
@@ -97,7 +98,7 @@ class WriterLogicalTypeRoundTripTest {
                 .build();
 
         Validity present = Validity.ofNulls(new boolean[] { false, false });
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("person", present)
@@ -124,7 +125,7 @@ class WriterLogicalTypeRoundTripTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 5, -3, 9 }));
         }
@@ -142,7 +143,7 @@ class WriterLogicalTypeRoundTripTest {
     @ParameterizedTest
     @MethodSource("unorderedAnnotations")
     void columnsWithoutAWellDefinedOrderWriteNoBounds(Annotated annotated) throws Exception {
-        ByteBufferOutputFile out = writeOneRow(annotated);
+        InMemoryOutputFile out = writeOneRow(annotated);
 
         try (ParquetFileReader reader = openReader(out)) {
             Statistics statistics = columnMeta(reader, 0).statistics();
@@ -168,7 +169,7 @@ class WriterLogicalTypeRoundTripTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 0, 0, 0 },
                     Validity.ofNulls(new boolean[] { true, true, true })));
@@ -191,7 +192,7 @@ class WriterLogicalTypeRoundTripTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.decimal(9, 2))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1234, -99, 5000 }));
         }
@@ -205,7 +206,7 @@ class WriterLogicalTypeRoundTripTest {
 
     /// Writes a single row into the annotated column, enough to exercise the schema
     /// serialization and the chunk statistics.
-    private static ByteBufferOutputFile writeOneRow(Annotated annotated) throws Exception {
+    private static InMemoryOutputFile writeOneRow(Annotated annotated) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (annotated.typeLength() == null) {
             builder.addColumn("v", annotated.type(), RepetitionType.REQUIRED, annotated.logicalType());
@@ -215,7 +216,7 @@ class WriterLogicalTypeRoundTripTest {
                     annotated.logicalType());
         }
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, builder.build())) {
             writer.columnWriter().writeBatch(batch -> writeValue(batch, annotated));
         }
@@ -243,8 +244,8 @@ class WriterLogicalTypeRoundTripTest {
         return value.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static ParquetFileReader openReader(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader openReader(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 
     private static ColumnMetaData columnMeta(ParquetFileReader reader, int columnIndex) {

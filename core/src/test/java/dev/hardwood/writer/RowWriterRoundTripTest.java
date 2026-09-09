@@ -8,7 +8,6 @@
 package dev.hardwood.writer;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -20,8 +19,9 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
@@ -52,7 +52,7 @@ class RowWriterRoundTripTest {
                 .addColumn("fixed", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 3)
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             for (int i = 0; i < 3; i++) {
@@ -95,7 +95,7 @@ class RowWriterRoundTripTest {
                 .addColumn("c", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1)
@@ -147,7 +147,7 @@ class RowWriterRoundTripTest {
         UUID id = UUID.fromString("4b3f8e2a-6c1d-4f5a-9b8e-2d7c6a5f4e31");
         PqInterval span = new PqInterval(14, 3, 7_200_000);
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.rowWriter().writeRow(row -> row
                     .setString("name", "hardwood")
@@ -184,7 +184,7 @@ class RowWriterRoundTripTest {
                                 LogicalType.string()))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1)
@@ -220,7 +220,7 @@ class RowWriterRoundTripTest {
                         .addColumn("bytes", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1));
@@ -246,7 +246,7 @@ class RowWriterRoundTripTest {
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setList("scores", scores -> scores.addInt(7).addInt(9)));
@@ -281,7 +281,7 @@ class RowWriterRoundTripTest {
                                 element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1));
@@ -319,7 +319,7 @@ class RowWriterRoundTripTest {
                                 value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1));
@@ -360,7 +360,7 @@ class RowWriterRoundTripTest {
                                 section -> section.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             // Book 0: chapters = [{sections: [10, 20]}, null (chapter itself absent)].
@@ -394,7 +394,7 @@ class RowWriterRoundTripTest {
                         inner -> inner.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row
@@ -432,7 +432,7 @@ class RowWriterRoundTripTest {
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setMap("props", props -> props
@@ -464,7 +464,7 @@ class RowWriterRoundTripTest {
                 .build();
 
         int records = 2_500;
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             for (int i = 0; i < records; i++) {
@@ -507,7 +507,7 @@ class RowWriterRoundTripTest {
 
         WriterConfig config = WriterConfig.builder().rowGroupBufferTargetBytes(64 * 1024).build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             RowWriter rows = writer.rowWriter();
             for (int i = 0; i < 32; i++) {
@@ -542,7 +542,7 @@ class RowWriterRoundTripTest {
         return blob;
     }
 
-    private static ParquetFileReader open(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader open(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 }

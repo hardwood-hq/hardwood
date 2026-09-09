@@ -14,9 +14,11 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -181,11 +183,11 @@ class ByteStringOrderFilterTest {
     }
 
     private static byte[] writeFloat16(byte[][] values) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, float16Schema())) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, values));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static List<byte[]> filteredFloat16(byte[] file, FilterPredicate predicate)

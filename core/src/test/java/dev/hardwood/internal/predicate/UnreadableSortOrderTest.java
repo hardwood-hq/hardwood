@@ -24,7 +24,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
@@ -32,7 +35,6 @@ import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftStructBuilder;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -467,14 +469,14 @@ class UnreadableSortOrderTest {
     /// `patch`.
     private Path sixteenByteColumnWithValueOrderBounds(LogicalType annotation, String fileName,
             UnaryOperator<byte[]> patch) throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
                 .addColumn("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
                 .build())) {
             writer.columnWriter().writeBatch(batch -> batch.fixed(0, new byte[][] {
                     littleEndian(256), littleEndian(300), littleEndian(513) }));
         }
-        byte[] rewritten = FooterRewriter.rewrite(out.toByteArray(), metaData -> new FileMetaData(
+        byte[] rewritten = FooterRewriter.rewrite(InMemoryFiles.toByteArray(out), metaData -> new FileMetaData(
                 metaData.version(),
                 metaData.schema().stream().map(element -> annotated(element, annotation)).toList(),
                 metaData.numRows(),
@@ -564,7 +566,7 @@ class UnreadableSortOrderTest {
 
     /// Leaves `g`, `v`, holding the single row `g = M, v = 1`.
     private Path geometryThenValue() throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
                 .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
@@ -573,12 +575,12 @@ class UnreadableSortOrderTest {
                     .bytes(0, new byte[][] { bytes("M") })
                     .ints(1, new int[] { 1 }));
         }
-        return asForeignGeometry(out.toByteArray(), "g-then-v.parquet");
+        return asForeignGeometry(InMemoryFiles.toByteArray(out), "g-then-v.parquet");
     }
 
     /// Leaves `v`, `g`, holding the single row `v = 2, g = M`.
     private Path valueThenGeometry() throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("g", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
@@ -587,7 +589,7 @@ class UnreadableSortOrderTest {
                     .ints(0, new int[] { 2 })
                     .bytes(1, new byte[][] { bytes("M") }));
         }
-        return asForeignGeometry(out.toByteArray(), "v-then-g.parquet");
+        return asForeignGeometry(InMemoryFiles.toByteArray(out), "v-then-g.parquet");
     }
 
     /// Rewrites the footer so that the string column `g` is annotated `GEOMETRY` and carries

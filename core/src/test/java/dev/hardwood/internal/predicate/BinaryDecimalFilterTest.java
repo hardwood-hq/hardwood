@@ -16,12 +16,14 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -269,13 +271,13 @@ class BinaryDecimalFilterTest {
     }
 
     private static byte[] write(BigDecimal[] values) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             for (BigDecimal value : values) {
                 writer.rowWriter().writeRow(row -> row.setDecimal("amount", value));
             }
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static List<BigDecimal> filtered(FilterPredicate predicate) throws Exception {
@@ -285,14 +287,14 @@ class BinaryDecimalFilterTest {
     /// `1.27`, a null, `3.00`, a null — so a predicate that would take every value still has to
     /// leave the two nulls behind.
     private static List<BigDecimal> filteredWithNulls(FilterPredicate predicate) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, nullableSchema())) {
             writer.rowWriter().writeRow(row -> row.setDecimal("amount", new BigDecimal("1.27")));
             writer.rowWriter().writeRow(row -> row.setNull("amount"));
             writer.rowWriter().writeRow(row -> row.setDecimal("amount", new BigDecimal("3.00")));
             writer.rowWriter().writeRow(row -> row.setNull("amount"));
         }
-        return filtered(out.toByteArray(), predicate);
+        return filtered(InMemoryFiles.toByteArray(out), predicate);
     }
 
     private static List<BigDecimal> filtered(byte[] file, FilterPredicate predicate) throws Exception {
@@ -334,11 +336,11 @@ class BinaryDecimalFilterTest {
     /// Writes the given unscaled encodings verbatim, bypassing the decimal conversion, so the
     /// column can hold a value in a longer form than the minimal one.
     private static byte[] writeRawBinaryDecimals(byte[][] unscaled) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             writer.columnWriter().writeBatch(batch -> batch.bytes(0, unscaled));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static List<BigDecimal> collect(RowReader rows) throws IOException {

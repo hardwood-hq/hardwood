@@ -20,9 +20,11 @@ import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.thrift.FooterRewriter;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.ColumnOrder;
@@ -69,12 +71,12 @@ class MixedColumnOrderPruningTest {
 
     /// A single required `FLOAT` column `f` holding `values`, its footer passed through `patch`.
     private Path floats(String fileName, float[] values, UnaryOperator<FileMetaData> patch) throws IOException {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out,
                 FileSchema.builder("s").addColumn("f", PhysicalType.FLOAT, RepetitionType.REQUIRED).build())) {
             writer.columnWriter().writeBatch(batch -> batch.floats(0, values));
         }
-        byte[] rewritten = FooterRewriter.rewrite(out.toByteArray(), patch);
+        byte[] rewritten = FooterRewriter.rewrite(InMemoryFiles.toByteArray(out), patch);
         Path path = tempDir.resolve(fileName);
         Files.write(path, rewritten);
         return path;

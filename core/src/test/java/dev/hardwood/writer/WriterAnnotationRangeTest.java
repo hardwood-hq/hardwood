@@ -7,7 +7,6 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -16,9 +15,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
@@ -111,7 +111,7 @@ class WriterAnnotationRangeTest {
             throws Exception {
         FileSchema schema = single(type, annotation);
 
-        ByteBufferOutputFile out = writeBatch(schema, batch -> fill(batch, type, min, max));
+        InMemoryOutputFile out = writeBatch(schema, batch -> fill(batch, type, min, max));
 
         assertThat(readIntegers(out, type)).containsExactly(min, max);
     }
@@ -150,7 +150,7 @@ class WriterAnnotationRangeTest {
             long value) throws Exception {
         FileSchema schema = single(type, annotation);
 
-        ByteBufferOutputFile out = writeBatch(schema, batch -> fill(batch, type, value));
+        InMemoryOutputFile out = writeBatch(schema, batch -> fill(batch, type, value));
 
         assertThat(readIntegers(out, type)).containsExactly(value);
     }
@@ -191,7 +191,7 @@ class WriterAnnotationRangeTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.intType(8, false))
                 .build();
 
-        ByteBufferOutputFile out = writeBatch(schema, batch -> batch.ints(0, new int[] { 300, 5 },
+        InMemoryOutputFile out = writeBatch(schema, batch -> batch.ints(0, new int[] { 300, 5 },
                 Validity.ofNulls(new boolean[] { true, false })));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -235,7 +235,7 @@ class WriterAnnotationRangeTest {
         byte[] largest = { 0x27, 0x0f };            // 9999
         byte[] smallest = { (byte) 0xd8, (byte) 0xf1 };  // -9999
 
-        ByteBufferOutputFile out = writeBatch(schema,
+        InMemoryOutputFile out = writeBatch(schema,
                 batch -> batch.bytes(0, new byte[][] { largest, smallest }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -256,7 +256,7 @@ class WriterAnnotationRangeTest {
         byte[] eightBytes = { 0x7f, -1, -1, -1, -1, -1, -1, -1 };             // 2^63 - 1
         byte[] tooLarge = { 0x7f, -1, -1, -1, -1, -1, -1, -1, -1 };           // 2^71 - 1, 22 digits
 
-        ByteBufferOutputFile out = writeBatch(schema,
+        InMemoryOutputFile out = writeBatch(schema,
                 batch -> batch.bytes(0, new byte[][] { shortValue, eightBytes }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -282,7 +282,7 @@ class WriterAnnotationRangeTest {
                                 LogicalType.decimal(1, 0)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setNull("s"));
@@ -345,7 +345,7 @@ class WriterAnnotationRangeTest {
                 .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
                 .build();
 
-        ByteBufferOutputFile out = writeBatch(schema,
+        InMemoryOutputFile out = writeBatch(schema,
                 batch -> batch.ints(0, new int[2], new boolean[] { true, true }));
 
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
@@ -368,7 +368,7 @@ class WriterAnnotationRangeTest {
                         .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setNull("s"));
@@ -393,7 +393,7 @@ class WriterAnnotationRangeTest {
                         .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setNull("s"));
@@ -417,7 +417,7 @@ class WriterAnnotationRangeTest {
                         PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setList("v", v -> v.addNull().addNull()));
@@ -432,7 +432,7 @@ class WriterAnnotationRangeTest {
         }
 
         assertThatThrownBy(() -> {
-            ByteBufferOutputFile rejected = new ByteBufferOutputFile();
+            InMemoryOutputFile rejected = OutputFile.inMemory();
             try (ParquetFileWriter writer = ParquetFileWriter.create(rejected, schema)) {
                 writer.rowWriter().writeRow(row -> row.setList("v", v -> v.addInt(7)));
             }
@@ -449,7 +449,7 @@ class WriterAnnotationRangeTest {
     void aBoundedAnnotationUnderAnAbsentStructIsWritable() throws Exception {
         FileSchema schema = nestedUnsignedByte();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setNull("s"));
@@ -475,7 +475,7 @@ class WriterAnnotationRangeTest {
         FileSchema schema = nestedUnsignedByte();
         Validity absentThenPresent = Validity.ofNulls(new boolean[] { true, false });
 
-        ByteBufferOutputFile out = writeBatch(schema, batch -> batch
+        InMemoryOutputFile out = writeBatch(schema, batch -> batch
                 .ints("id", new int[] { 1, 2 })
                 .struct("s", absentThenPresent)
                 .ints("s.req", new int[] { 0, 255 })
@@ -585,7 +585,7 @@ class WriterAnnotationRangeTest {
         }
     }
 
-    private static long[] readIntegers(ByteBufferOutputFile out, PhysicalType type) throws Exception {
+    private static long[] readIntegers(InMemoryOutputFile out, PhysicalType type) throws Exception {
         try (ParquetFileReader reader = open(out); RowReader rows = reader.rowReader()) {
             long[] values = new long[Math.toIntExact(reader.getFileMetaData().numRows())];
             for (int i = 0; i < values.length; i++) {
@@ -596,25 +596,25 @@ class WriterAnnotationRangeTest {
         }
     }
 
-    private static ByteBufferOutputFile writeBatch(FileSchema schema, Consumer<ColumnBatch> filler)
+    private static InMemoryOutputFile writeBatch(FileSchema schema, Consumer<ColumnBatch> filler)
             throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(filler);
         }
         return out;
     }
 
-    private static ByteBufferOutputFile writeRow(FileSchema schema, Consumer<StructBuilder> filler)
+    private static InMemoryOutputFile writeRow(FileSchema schema, Consumer<StructBuilder> filler)
             throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.rowWriter().writeRow(filler);
         }
         return out;
     }
 
-    private static ParquetFileReader open(ByteBufferOutputFile out) throws Exception {
-        return ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+    private static ParquetFileReader open(InMemoryOutputFile out) throws Exception {
+        return ParquetFileReader.open(InputFile.of(out.buffer()));
     }
 }

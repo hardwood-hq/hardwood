@@ -20,9 +20,11 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.thrift.FooterRewriter;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -157,14 +159,14 @@ class FixedWidthSchemaValidationTest {
         byte[][] digests = { bytes("aaaa"), bytes("bbbb"), bytes("cccc") };
         byte[][] prices = { unscaled(100), unscaled(250), unscaled(375) };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints(0, new int[] { 1, 2, 3 })
                     .fixed(1, digests)
                     .fixed(2, prices));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private Path fileWithDigestWidth(Integer width, String fileName) throws IOException {

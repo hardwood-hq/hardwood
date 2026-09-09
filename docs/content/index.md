@@ -86,9 +86,9 @@ The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) reposi
 ## Status and Limitations
 
 The read path is stable and suitable for production use; `ColumnReader`, with its `Validity` and `LayerKind` types, is annotated `@Experimental`, so its shape may still change.
-The write path ships both APIs described under [Choosing a Writer](how-to/index.md#choosing-a-writer); the row-oriented `RowWriter` and its builders, and the `ColumnBatch` setters for nested and nullable columns, are annotated `@Experimental`, so their shape may still change.
+The write path ships both APIs described under [Choosing a Writer](how-to/index.md#choosing-a-writer); the row-oriented `RowWriter` and its builders, the `ColumnBatch` setters for nested and nullable columns, and the in-memory destination `InMemoryOutputFile` are annotated `@Experimental`, so their shape may still change.
 
-Writing targets local files through `OutputFile.of(Path)`.
+Writing targets local files through `OutputFile.of(Path)` and the heap through `OutputFile.inMemory()`.
 Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [2 GB column-chunk limit](concepts/parquet-layout.md#column-chunk).
 
 ## Roadmap

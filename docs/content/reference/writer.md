@@ -11,7 +11,36 @@
 -->
 # Writer Reference
 
-How a schema is declared, the configuration options, the encodings and codecs the writer produces, the setters each column type accepts, and what the writer rejects. For task-oriented instructions see [Write Row by Row](../how-to/write-row-by-row.md) and [Write Column by Column](../how-to/write-column-by-column.md).
+Where a file can be written, how a schema is declared, the configuration options, the encodings and codecs the writer produces, the setters each column type accepts, and what the writer rejects. For task-oriented instructions see [Write Row by Row](../how-to/write-row-by-row.md) and [Write Column by Column](../how-to/write-column-by-column.md).
+
+## Destination
+
+The `OutputFile` a writer is created with decides where the file is written.
+
+| Factory | Destination |
+|---|---|
+| `OutputFile.of(Path)` | A local file. The bytes are streamed to a temporary sibling of the target path and renamed onto it when the writer closes, so a write that fails or is abandoned leaves nothing at the path |
+| `OutputFile.inMemory()` | The heap, up to `Integer.MAX_VALUE - 8` bytes. Returns an `InMemoryOutputFile`, whose `buffer()` returns the finished file |
+
+An in-memory file can be written and read back without a filesystem: `buffer()` returns the whole file as a `ByteBuffer` positioned at its first byte, which is what `InputFile.of(ByteBuffer)` expects.
+
+```java
+InMemoryOutputFile out = OutputFile.inMemory();
+try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+    RowWriter rows = writer.rowWriter();
+    rows.writeRow(row -> row.setLong("id", 1L));
+}
+
+try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
+    // ...
+}
+```
+
+The buffer grows with the file, so no size has to be given up front; the length of a Parquet file is only known once it has been written. The whole file is held on the heap, which costs the size of the finished file in addition to the memory the writer uses for the open row group. Each call to `buffer()` returns a buffer with its own position and limit, so reading the file back leaves it intact. The buffer's contents must not be modified; whether a change shows in the buffers other calls return is unspecified.
+
+The file is complete only after the writer is closed, and `buffer()` throws `IllegalStateException` before that, or if the destination was discarded.
+
+To write anywhere else (an object store, a network connection), implement `OutputFile`.
 
 ## Schema
 
@@ -316,8 +345,8 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned |
-| `IOException` | The destination cannot be created, written, or finalized |
+| `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
+| `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
 | `ParquetWriteException` | The file could not be produced for a reason that is neither the caller's input nor the destination: a compression codec that rejects a page body. Unchecked |
 
 ### Schema Shapes

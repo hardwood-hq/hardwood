@@ -78,4 +78,18 @@ public interface OutputFile extends Closeable {
     static OutputFile of(Path path) {
         return new ChannelOutputFile(path);
     }
+
+    /// Creates an uncreated [OutputFile] that keeps the file in memory. The finished file is
+    /// retrieved from [InMemoryOutputFile#buffer()] after the writer is closed.
+    ///
+    /// The buffer grows with the file, so no size has to be given up front; the length of a
+    /// Parquet file is only known once it has been written.
+    ///
+    /// **This API is [Experimental]:** the shape may change in future releases.
+    ///
+    /// @return a new uncreated in-memory OutputFile
+    @Experimental
+    static InMemoryOutputFile inMemory() {
+        return new InMemoryOutputFile();
+    }
 }

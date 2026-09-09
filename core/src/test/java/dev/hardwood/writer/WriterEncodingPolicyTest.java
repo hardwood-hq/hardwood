@@ -21,10 +21,11 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
@@ -188,11 +189,11 @@ class WriterEncodingPolicyTest {
         }
         int leaves = offsets[lists];
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> fill(batch.list("v", offsets), type, "v.list.element", leaves, null));
         }
-        byte[] file = out.toByteArray();
+        byte[] file = InMemoryFiles.toByteArray(out);
 
         try (ParquetFileReader reader = open(file)) {
             assertThat(meta(reader, 0).encodings()).as("the leaf's declared encodings")
@@ -400,14 +401,14 @@ class WriterEncodingPolicyTest {
             values[i * 2] = i;
             values[i * 2 + 1] = i + 1;
         }
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("readings", offsets)
                     .longs("readings.list.element", values));
         }
 
-        try (ParquetFileReader reader = open(out.toByteArray())) {
+        try (ParquetFileReader reader = open(InMemoryFiles.toByteArray(out))) {
             assertThat(meta(reader, 0).encodings()).contains(Encoding.DELTA_BINARY_PACKED);
         }
     }
@@ -441,7 +442,7 @@ class WriterEncodingPolicyTest {
                 .encoding("typo", ColumnEncoding.PLAIN)
                 .build();
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Encoding configured for column 'typo', which the schema does not have. Its "
                          + "leaf columns are: [v]")
@@ -457,7 +458,7 @@ class WriterEncodingPolicyTest {
                 .encoding("v", ColumnEncoding.DELTA_BINARY_PACKED)
                 .build();
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Encoding DELTA_BINARY_PACKED cannot be written for column 'v', which is "
                          + "BYTE_ARRAY. Choose an encoding that column's type can carry.")
@@ -475,7 +476,7 @@ class WriterEncodingPolicyTest {
                 .build();
         WriterConfig config = WriterConfig.builder().encoding(ColumnEncoding.BYTE_STREAM_SPLIT).build();
 
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema, config))
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema, config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Encoding BYTE_STREAM_SPLIT cannot be written for column 's', which is "
                          + "BYTE_ARRAY. It is the file-wide default; set a per-column encoding instead.")
@@ -591,11 +592,11 @@ class WriterEncodingPolicyTest {
         }
         FileSchema schema = builder.build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> fill(batch, type, rows, nulls));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static void fill(ColumnBatch batch, PhysicalType type, int rows, boolean[] nulls) {
@@ -771,21 +772,21 @@ class WriterEncodingPolicyTest {
                 .encoding(encoding)
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.longs("v", values));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static byte[] writeDoubles(FileSchema schema, double[] values, ColumnEncoding encoding,
             CompressionCodec codec) throws Exception {
         WriterConfig config = WriterConfig.builder().encoding(encoding).codec(codec).build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.doubles("v", values));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static byte[] writeTwoIntColumns(FileSchema schema, WriterConfig config) throws Exception {
@@ -793,11 +794,11 @@ class WriterEncodingPolicyTest {
         for (int r = 0; r < ROWS; r++) {
             values[r] = r % 50;
         }
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints("a", values).ints("b", values));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     /// Declares a list's element of this type, with the fixed width where one is needed.

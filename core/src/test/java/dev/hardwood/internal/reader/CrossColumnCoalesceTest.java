@@ -15,8 +15,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -170,7 +172,7 @@ class CrossColumnCoalesceTest {
                 .encoding("b", ColumnEncoding.PLAIN)
                 .rowGroupTargetRows(rows)
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             RowWriter rowWriter = writer.rowWriter();
             for (int i = 0; i < rows; i++) {
@@ -178,7 +180,7 @@ class CrossColumnCoalesceTest {
                 rowWriter.writeRow(row -> row.setBoolean("a", value % 3 == 0).setLong("b", value).setBoolean("c", value % 5 == 0));
             }
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     @Test

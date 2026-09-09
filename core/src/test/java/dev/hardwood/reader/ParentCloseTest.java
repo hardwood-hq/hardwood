@@ -26,10 +26,12 @@ import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.ColumnWorker;
 import dev.hardwood.internal.reader.PrefetchTasks;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnProjection;
@@ -363,10 +365,10 @@ class ParentCloseTest {
         WriterConfig config = WriterConfig.builder()
                 .rowGroupTargetRows(FIXED_ROW_GROUP_ROWS)
                 .build();
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> batch.fixed("v", values));
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 }

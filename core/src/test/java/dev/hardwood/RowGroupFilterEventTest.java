@@ -17,7 +17,6 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -227,11 +226,11 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
     }
 
     private static byte[] writeRows(FileSchema schema, RowWrite filler) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             filler.accept(writer.rowWriter());
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     @FunctionalInterface

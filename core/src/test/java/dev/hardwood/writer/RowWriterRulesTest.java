@@ -13,8 +13,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.writer.RowPlan;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -87,12 +89,12 @@ class RowWriterRulesTest {
                 .hasMessage("Field tags is REQUIRED; it must be set to a non-null value in every "
                          + "record"));
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.rowWriter().writeRow(row -> row.setStruct("address", address -> { }).setList("tags", tags -> { }));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
         }
     }
@@ -186,7 +188,7 @@ class RowWriterRulesTest {
     /// so the next record can still be written and `close()` publishes the two that staged.
     @Test
     void failedRecordLeavesTheStagedBatchUntouched() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("id", 1).setString("name", "first")
@@ -206,7 +208,7 @@ class RowWriterRulesTest {
                     .setList("tags", tags -> tags.addBinary(new byte[] { 3 })));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(2);
             try (RowReader rows = reader.rowReader()) {
                 rows.next();
@@ -223,7 +225,7 @@ class RowWriterRulesTest {
 
     @Test
     void aFileIsWrittenThroughOneApiOrTheOther() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             writer.rowWriter().writeRow(row -> row.setInt("id", 1));
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(0, new int[] { 1 })))
@@ -232,7 +234,7 @@ class RowWriterRulesTest {
                              + "through one of the two, not both");
         }
 
-        ByteBufferOutputFile other = new ByteBufferOutputFile();
+        InMemoryOutputFile other = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(other, schema())) {
             writer.columnWriter().writeBatch(batch -> batch
                     .ints(0, new int[] { 1 })
@@ -249,7 +251,7 @@ class RowWriterRulesTest {
 
     @Test
     void theSameRowWriterIsReturnedEveryTime() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             assertThat(writer.rowWriter()).isSameAs(writer.rowWriter());
             writer.rowWriter().writeRow(row -> row.setInt("id", 1));
@@ -258,7 +260,7 @@ class RowWriterRulesTest {
 
     @Test
     void theSameColumnWriterIsReturnedEveryTime() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             assertThat(writer.columnWriter()).isSameAs(writer.columnWriter());
             writer.columnWriter().writeBatch(batch -> batch
@@ -272,7 +274,7 @@ class RowWriterRulesTest {
 
     @Test
     void writingAfterCloseIsRejected() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         ParquetFileWriter writer = ParquetFileWriter.create(out, schema());
         RowWriter rows = writer.rowWriter();
         rows.writeRow(row -> row.setInt("id", 1));
@@ -324,7 +326,7 @@ class RowWriterRulesTest {
                         person -> person.addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)))
                 .build();
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             RowWriter rows = writer.rowWriter();
             assertThatThrownBy(() -> rows.writeRow(row -> row.setList("people", people -> people
@@ -360,7 +362,7 @@ class RowWriterRulesTest {
                 SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("Group items is annotated LIST or MAP and its entry element is a leaf (a "
@@ -370,7 +372,7 @@ class RowWriterRulesTest {
                     
                     ;
         }
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("items", new int[] { 0, 2 })
                     .ints("items.element", new int[] { 1, 2 }));
@@ -388,7 +390,7 @@ class RowWriterRulesTest {
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("Group items.element holds 2 fields and is therefore the list's element "
@@ -411,7 +413,7 @@ class RowWriterRulesTest {
                 .addColumn("id", PhysicalType.INT64, RepetitionType.OPTIONAL)
                 .build();
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("Schema has two fields named 'id' under the record")
@@ -427,7 +429,7 @@ class RowWriterRulesTest {
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL))
                 .build();
 
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             assertThatThrownBy(writer::rowWriter)
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("Schema has two fields named 'city' under struct address")
@@ -442,18 +444,18 @@ class RowWriterRulesTest {
     }
 
     private static void withRowWriter(FileSchema schema, RowWriterBody body) throws Exception {
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), schema)) {
             body.accept(writer.rowWriter());
         }
     }
 
     /// Writes the records staged in `plan` as one batch, the way [RowWriter] submits them.
     private static byte[] writeStaged(RowPlan plan) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
             writer.writeStagedBatch(plan::fill);
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private interface RowWriterBody {

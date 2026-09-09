@@ -7,7 +7,6 @@
  */
 package dev.hardwood.writer;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -16,9 +15,10 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -55,7 +55,7 @@ class WriterNestedRoundTripTest {
         int[] zip = { 0, 0, 200, 300 };
         boolean[] zipNulls = { false, true, false, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("address", addressNulls)
@@ -63,7 +63,7 @@ class WriterNestedRoundTripTest {
                     .ints("address.zip", zip, zipNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int streetIdx = reader.getFileSchema().getColumn("address.street").columnIndex();
             int zipIdx = reader.getFileSchema().getColumn("address.zip").columnIndex();
 
@@ -97,12 +97,12 @@ class WriterNestedRoundTripTest {
         int[] b = { 0, 0, 42 };
         boolean[] bNulls = { false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.struct("a", aNulls).ints("a.b", b, bNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int bIdx = reader.getFileSchema().getColumn("a.b").columnIndex();
             assertThat(reader.getFileSchema().getColumn(bIdx).maxDefinitionLevel()).isEqualTo(2);
             assertThat(readNullable(reader, bIdx)).containsExactly(null, null, 42);
@@ -129,12 +129,12 @@ class WriterNestedRoundTripTest {
         int[] x = { 1, 0, 3 };
         boolean[] xNulls = { false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.ints("g.x", x, xNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int xIdx = reader.getFileSchema().getColumn("g.x").columnIndex();
             assertThat(readNullable(reader, xIdx)).containsExactly(1, null, 3);
         }
@@ -153,14 +153,14 @@ class WriterNestedRoundTripTest {
         int[] elements = { 1, 2, 3, 0, 5 };
         boolean[] elementNulls = { false, false, false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("phones", offsets, listNulls)
                     .ints("phones.list.element", elements, elementNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int leaf = reader.getFileSchema().getColumn("phones.list.element").columnIndex();
             assertThat(readListOfInts(reader, leaf))
                     .containsExactly(List.of(1, 2), List.of(), null, Arrays.asList(3, null, 5));
@@ -182,7 +182,7 @@ class WriterNestedRoundTripTest {
         Validity innerNulls = Validity.ofNulls(new boolean[] { false, false, false, true });
         int[] elements = { 1, 2, 3 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("m", outerOffsets, outerNulls)
@@ -190,7 +190,7 @@ class WriterNestedRoundTripTest {
                     .ints("m.list.element.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(
                         reader.getFileSchema().getColumn("m.list.element.list.element").columnIndex())) {
             assertThat(column.nextBatch()).isTrue();
@@ -246,7 +246,7 @@ class WriterNestedRoundTripTest {
         int[] y = { 10, 0, 30 };
         boolean[] yNulls = { false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("people", offsets)
@@ -254,7 +254,7 @@ class WriterNestedRoundTripTest {
                     .ints("people.list.element.y", y, yNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int xIdx = reader.getFileSchema().getColumn("people.list.element.x").columnIndex();
             int yIdx = reader.getFileSchema().getColumn("people.list.element.y").columnIndex();
             try (ColumnReader xr = reader.columnReader(xIdx); ColumnReader yr = reader.columnReader(yIdx)) {
@@ -282,12 +282,12 @@ class WriterNestedRoundTripTest {
         int[] offsets = { 0, 2, 2, 3 }; // record 0: [1,2]; record 1: []; record 2: [3]
         int[] elements = { 1, 2, 3 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch.list("v", offsets).ints("v.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
             assertThat(readListOfInts(reader, leaf)).containsExactly(List.of(1, 2), List.of(), List.of(3));
         }
@@ -306,7 +306,7 @@ class WriterNestedRoundTripTest {
         Validity structNulls = Validity.ofNulls(new boolean[] { false, true, false });
         int[] x = { 1, 0, 3 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("people", offsets)
@@ -314,7 +314,7 @@ class WriterNestedRoundTripTest {
                     .ints("people.list.element.x", x));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(
                         reader.getFileSchema().getColumn("people.list.element.x").columnIndex())) {
             assertThat(column.nextBatch()).isTrue();
@@ -350,7 +350,7 @@ class WriterNestedRoundTripTest {
         int[] values = { 10, 0, 30 };
         boolean[] valueNulls = { false, true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .map("props", offsets, mapNulls)
@@ -358,7 +358,7 @@ class WriterNestedRoundTripTest {
                     .ints("props.key_value.value", values, valueNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
             int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
             assertThat(reader.getFileSchema().getColumn(valIdx).maxDefinitionLevel()).isEqualTo(3);
@@ -387,7 +387,7 @@ class WriterNestedRoundTripTest {
         int[] keys = { 1, 2, 3 };
         int[] values = { 10, 20, 30 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .map("props", offsets)
@@ -395,7 +395,7 @@ class WriterNestedRoundTripTest {
                     .ints("props.key_value.value", values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
             int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
             try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader vr = reader.columnReader(valIdx)) {
@@ -423,7 +423,7 @@ class WriterNestedRoundTripTest {
         int[] listOffsets = { 0, 2, 3 };
         int[] elements = { 10, 20, 30 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .map("props", mapOffsets, mapNulls)
@@ -432,7 +432,7 @@ class WriterNestedRoundTripTest {
                     .ints("props.key_value.value.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
             int elemIdx = reader.getFileSchema().getColumn("props.key_value.value.list.element").columnIndex();
             try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader er = reader.columnReader(elemIdx)) {
@@ -483,7 +483,7 @@ class WriterNestedRoundTripTest {
         int[] elements = { 0, 42 };
         boolean[] elementNulls = { true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", sNulls)
@@ -491,7 +491,7 @@ class WriterNestedRoundTripTest {
                     .ints("s.phones.list.element", elements, elementNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(
                         reader.getFileSchema().getColumn("s.phones.list.element").columnIndex())) {
             assertThat(reader.getFileSchema().getColumn("s.phones.list.element").maxDefinitionLevel()).isEqualTo(4);
@@ -540,7 +540,7 @@ class WriterNestedRoundTripTest {
         int[] offsets = { 0, 0, 0, 2 };
         int[] elements = { 7, 8 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", sNulls)
@@ -548,7 +548,7 @@ class WriterNestedRoundTripTest {
                     .ints("s.phones.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(
                         reader.getFileSchema().getColumn("s.phones.list.element").columnIndex())) {
             assertThat(reader.getFileSchema().getColumn("s.phones.list.element").maxDefinitionLevel()).isEqualTo(2);
@@ -597,7 +597,7 @@ class WriterNestedRoundTripTest {
         Validity sectionsNulls = Validity.ofNulls(new boolean[] { false, true });
         int[] elements = { 10, 20 };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .list("chapters", chapterOffsets, chaptersNulls)
@@ -606,7 +606,7 @@ class WriterNestedRoundTripTest {
                     .ints("chapters.list.element.sections.list.element", elements));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader column = reader.columnReader(reader.getFileSchema()
                         .getColumn("chapters.list.element.sections.list.element").columnIndex())) {
             assertThat(column.nextBatch()).isTrue();
@@ -664,7 +664,7 @@ class WriterNestedRoundTripTest {
         int[] values = { 0, 99 };
         boolean[] valueNulls = { true, false };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .struct("s", sNulls)
@@ -673,7 +673,7 @@ class WriterNestedRoundTripTest {
                     .ints("s.props.key_value.value", values, valueNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
                 ColumnReader keyCol = reader.columnReader(
                         reader.getFileSchema().getColumn("s.props.key_value.key").columnIndex());
                 ColumnReader valCol = reader.columnReader(
@@ -731,7 +731,7 @@ class WriterNestedRoundTripTest {
         int[] b = { 20, 0, 0 };
         boolean[] bNulls = { false, false, true };
 
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
             writer.columnWriter().writeBatch(batch -> batch
                     .map("props", offsets, mapNulls)
@@ -741,7 +741,7 @@ class WriterNestedRoundTripTest {
                     .ints("props.key_value.value.b", b, bNulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
             int aIdx = reader.getFileSchema().getColumn("props.key_value.value.a").columnIndex();
             int bIdx = reader.getFileSchema().getColumn("props.key_value.value.b").columnIndex();
