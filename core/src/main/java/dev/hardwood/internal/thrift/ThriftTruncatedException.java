@@ -34,4 +34,15 @@ public class ThriftTruncatedException extends ParquetReadException {
     public ThriftTruncatedException(String message) {
         super(message);
     }
+
+    /// The same, keeping `cause`.
+    ///
+    /// Needed by [dev.hardwood.internal.ExceptionContext#addReadContext], which restates a
+    /// failure with the file and chunk in front of its message and reconstructs it through
+    /// this constructor. Without one the type it hands back is a plain [RuntimeException],
+    /// and a caller that catches [ParquetReadException] to report a broken file cleanly
+    /// stops seeing it.
+    public ThriftTruncatedException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

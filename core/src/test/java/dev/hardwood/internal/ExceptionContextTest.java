@@ -9,6 +9,9 @@ package dev.hardwood.internal;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.thrift.ThriftTruncatedException;
+import dev.hardwood.reader.ParquetReadException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Unit tests for [ExceptionContext].
@@ -145,9 +148,46 @@ class ExceptionContextTest {
         assertThat(wrapped.getCause()).isSameAs(original);
     }
 
+    /// A truncation carries the file's name like any other failure and stays a
+    /// [ThriftTruncatedException] doing it. The page-header peek widens its guess on
+    /// this type and gives up on any other, so a restated one that came back as
+    /// something else would turn a header with long statistics into a read error.
+    @Test
+    void preservesThriftTruncatedException() {
+        RuntimeException original = new ThriftTruncatedException("Unexpected EOF while reading varint");
+        RuntimeException wrapped = ExceptionContext.addReadContext("f.parquet", 0, "id", original);
+
+        assertThat(wrapped).isInstanceOf(ThriftTruncatedException.class);
+        assertThat(wrapped.getMessage())
+                .isEqualTo("[f.parquet: row group 0, column 'id'] Unexpected EOF while reading varint");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    /// What callers catch is the base type. A subclass that cannot be reconstructed still
+    /// has to leave as a [ParquetReadException], or restating it takes the failure out of
+    /// every `catch (ParquetReadException)` above and the file stops being reported as
+    /// what is wrong.
+    @Test
+    void keepsAnUnreconstructableReadFailureAReadFailure() {
+        RuntimeException original = new UnreconstructableReadException();
+        RuntimeException wrapped = ExceptionContext.addFileContext("f.parquet", original);
+
+        assertThat(wrapped).isInstanceOf(ParquetReadException.class);
+        assertThat(wrapped.getMessage()).isEqualTo("[f.parquet] cannot be rebuilt");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
     private static class CustomException extends RuntimeException {
         CustomException() {
             super("custom error");
+        }
+    }
+
+    private static class UnreconstructableReadException extends ParquetReadException {
+        private static final long serialVersionUID = 1L;
+
+        UnreconstructableReadException() {
+            super("cannot be rebuilt");
         }
     }
 }

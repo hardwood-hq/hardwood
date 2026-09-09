@@ -214,6 +214,14 @@ public final class ExceptionContext {
         catch (ReflectiveOperationException ignored) {
             // Type cannot be preserved
         }
+        // A ParquetReadException subclass without that constructor still has to leave as
+        // one. What callers catch is the base type, so degrading it to RuntimeException
+        // silently takes the failure out of every `catch (ParquetReadException)` between
+        // here and the top — the file is still what is wrong, and it stops being reported
+        // that way.
+        if (e instanceof ParquetReadException) {
+            return new ParquetReadException(newMessage, e);
+        }
         return new RuntimeException(newMessage, e);
     }
 
