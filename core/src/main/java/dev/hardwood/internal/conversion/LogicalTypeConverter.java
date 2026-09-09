@@ -190,17 +190,14 @@ public class LogicalTypeConverter {
         return LocalDate.ofEpochDay(daysSinceEpoch);
     }
 
+    /// Decodes a UTC-adjusted `TIMESTAMP`. Which of the two timestamp kinds an accessor
+    /// accepts is stated once, in `TimestampAccessorKind`, which names the column and the
+    /// accessor that fits it; this method decodes whatever unit it is handed.
     public static Instant convertToTimestamp(Object value, PhysicalType physicalType,
                                              LogicalType.TimestampType timestampType) {
         if (physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
         }
-        if (!timestampType.isAdjustedToUTC()) {
-            throw new IllegalStateException(
-                    "TIMESTAMP value is local-wall-clock (isAdjustedToUTC=false); "
-                            + "decode via convertToLocalTimestamp instead");
-        }
-
         long rawValue = (Long) value;
         return switch (timestampType.unit()) {
             case MILLIS -> Instant.ofEpochMilli(rawValue);
@@ -209,17 +206,13 @@ public class LogicalTypeConverter {
         };
     }
 
+    /// Decodes a local-wall-clock `TIMESTAMP`. See [#convertToTimestamp] on where the
+    /// kind itself is checked.
     public static LocalDateTime convertToLocalTimestamp(Object value, PhysicalType physicalType,
                                                         LogicalType.TimestampType timestampType) {
         if (physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
         }
-        if (timestampType.isAdjustedToUTC()) {
-            throw new IllegalStateException(
-                    "TIMESTAMP value is UTC-adjusted (isAdjustedToUTC=true); "
-                            + "decode via convertToTimestamp instead");
-        }
-
         // For a local-wall-clock TIMESTAMP the stored int64 is the offset from the
         // epoch *of the wall clock itself*, so the same epoch arithmetic that
         // produces an Instant gives the right LocalDateTime when read at UTC —
