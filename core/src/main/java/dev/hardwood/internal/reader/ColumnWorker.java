@@ -304,87 +304,127 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private int totalPagesSubmitted;
     private int throttleWakes;
 
+    /// Sequence number of the next page submitted for decoding, and the decoder the
+    /// pages are submitted with. Both outlive a work item — the sequence is the drain's
+    /// order over the whole column, and the decoder is rebuilt only when a file's column
+    /// metadata differs — so they are held here rather than in [#retrievePagesOf].
+    private int nextSeq;
+    private PageDecoder pageDecoder;
+
+    /// Reads this column's pages, one work item at a time, and submits each for decoding.
+    ///
+    /// The column is this worker's for the whole of it; the file and row group move
+    /// underneath, so a failure is placed by the scopes entered here rather than by
+    /// anything it is handed.
     private void runRetriever() {
-        try {
-            LOG.log(System.Logger.Level.DEBUG,
-                    "[{0}] ColumnWorker started, maxOutstanding={1}, batchCapacity={2}",
-                    column.name(), MAX_INFLIGHT_PAGES, batchCapacity);
+        try (ReadScope.Scope columnScope = ReadScope.column(column.fieldPath())) {
+            try {
+                LOG.log(System.Logger.Level.DEBUG,
+                        "[{0}] ColumnWorker started, maxOutstanding={1}, batchCapacity={2}",
+                        column.name(), MAX_INFLIGHT_PAGES, batchCapacity);
 
-            PageDecoder pageDecoder = null;
-            int nextSeq = 0;
-
-            long t0;
-            PageInfo pageInfo;
-            while (!done) {
-                // Pull next page from source
-                t0 = System.nanoTime();
-                pageInfo = pageSource.next();
-                sourceNanos += System.nanoTime() - t0;
-                if (pageInfo == null) {
-                    break;
+                RowGroupIterator.WorkItem workItem;
+                while (!done) {
+                    long t0 = System.nanoTime();
+                    workItem = pageSource.nextWorkItem();
+                    sourceNanos += System.nanoTime() - t0;
+                    if (workItem == null) {
+                        break;
+                    }
+                    retrievePagesOf(workItem);
                 }
 
-                // Create/update PageDecoder when column metadata changes (file transitions)
-                if (pageDecoder == null || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData())) {
-                    pageDecoder = new PageDecoder(
-                            pageInfo.columnMetaData(),
-                            pageInfo.columnSchema(),
-                            decompressorFactory,
-                            fixedListFastPathEnabled);
-                }
-
-                // Throttle: park while too many pages are in flight
-                t0 = System.nanoTime();
-                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
-                    throttleWakes++;
-                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
-                }
-                throttleNanos += System.nanoTime() - t0;
-                if (done) {
-                    break;
-                }
-
-                // Submit decode task to executor (reuses pooled threads, no VThread per page)
-                int seq = nextSeq++;
-                totalPagesSubmitted++;
-                int slot = seq % MAX_INFLIGHT_PAGES;
-                placeBuffer[slot] = pageAt(pageInfo);
-                filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
-                PageInfo pi = pageInfo;
-                PageDecoder rdr = pageDecoder;
-                CompletableFuture<Void> f = CompletableFuture.runAsync(
-                        () -> decode(slot, pi, rdr), decodeExecutor);
-                inFlightDecodes.add(f);
-                f.whenComplete((v, t) -> inFlightDecodes.remove(f));
-            }
-
-            if (!done) {
-                // The sentinel needs a free slot. If all MAX_INFLIGHT_PAGES slots
-                // are occupied (pages submitted but not yet drained), wait for
-                // the drain to advance before writing.
-                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
-                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
-                }
                 if (!done) {
-                    int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
-                    reorderBuffer.set(sentinelSlot, EMPTY_SENTINEL);
-                    LockSupport.unpark(drainThread);
+                    // The sentinel needs a free slot. If all MAX_INFLIGHT_PAGES slots
+                    // are occupied (pages submitted but not yet drained), wait for
+                    // the drain to advance before writing.
+                    while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                        LockSupport.parkNanos(WAKE_CHECK_NANOS);
+                    }
+                    if (!done) {
+                        int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
+                        reorderBuffer.set(sentinelSlot, EMPTY_SENTINEL);
+                        LockSupport.unpark(drainThread);
+                    }
+                }
+
+                LOG.log(System.Logger.Level.DEBUG,
+                        "[{0}] Retriever finished: {1} pages submitted. "
+                        + "source={2,number,0.0}ms, throttle={3,number,0.0}ms ({4} wakes)",
+                        column.name(), totalPagesSubmitted,
+                        sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleWakes);
+            }
+            catch (Throwable t) {
+                // Between work items, so the column is all there is to name: planning the
+                // next one reads a file this worker has not entered yet, and says so from
+                // inside itself.
+                report(t, () -> asReadFailure(t));
+            }
+        }
+    }
+
+    /// Submits every page of one work item for decoding.
+    ///
+    /// Failures are reported from in here rather than from [#runRetriever], because the
+    /// scope naming which file and row group they happened in is this method's and closes
+    /// with it. [#signalError] stops the loop above.
+    private void retrievePagesOf(RowGroupIterator.WorkItem workItem) {
+        try (ReadScope.Scope itemScope = ReadScope.file(workItem.inputFile().name())
+                .rowGroup(workItem.rowGroupIndex())) {
+            try {
+                long t0;
+                PageInfo pageInfo;
+                while (!done) {
+                    // Pull next page from source
+                    t0 = System.nanoTime();
+                    pageInfo = pageSource.nextPage();
+                    sourceNanos += System.nanoTime() - t0;
+                    if (pageInfo == null) {
+                        return;
+                    }
+
+                    // Create/update PageDecoder when column metadata changes (file transitions)
+                    if (pageDecoder == null
+                            || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData())) {
+                        pageDecoder = new PageDecoder(
+                                pageInfo.columnMetaData(),
+                                pageInfo.columnSchema(),
+                                decompressorFactory,
+                                fixedListFastPathEnabled);
+                    }
+
+                    // Throttle: park while too many pages are in flight
+                    t0 = System.nanoTime();
+                    while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                        throttleWakes++;
+                        LockSupport.parkNanos(WAKE_CHECK_NANOS);
+                    }
+                    throttleNanos += System.nanoTime() - t0;
+                    if (done) {
+                        return;
+                    }
+
+                    // Submit decode task to executor (reuses pooled threads, no VThread per page)
+                    int seq = nextSeq++;
+                    totalPagesSubmitted++;
+                    int slot = seq % MAX_INFLIGHT_PAGES;
+                    placeBuffer[slot] = pageAt(pageInfo);
+                    filterAlwaysMatchesBuffer[slot] = workItem.filterAlwaysMatches();
+                    PageInfo pi = pageInfo;
+                    PageDecoder rdr = pageDecoder;
+                    CompletableFuture<Void> f = CompletableFuture.runAsync(
+                            () -> decode(slot, pi, rdr), decodeExecutor);
+                    inFlightDecodes.add(f);
+                    f.whenComplete((v, t) -> inFlightDecodes.remove(f));
                 }
             }
-
-            LOG.log(System.Logger.Level.DEBUG,
-                    "[{0}] Retriever finished: {1} pages submitted. "
-                    + "source={2,number,0.0}ms, throttle={3,number,0.0}ms ({4} wakes)",
-                    column.name(), totalPagesSubmitted,
-                    sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleWakes);
-        }
-        catch (Throwable t) {
-            // No region: the retriever runs every step of getting a page — the
-            // plan, the filters, the index, the fetch — and whichever one this
-            // was has already said so from inside itself. Naming one here named
-            // the wrong one for everything but a fetch.
-            report(t, () -> placedAt(columnPlace(pageSource.getCurrentFileName(),
-                    pageSource.getCurrentRowGroupIndex()), t));
+            catch (Throwable t) {
+                // No region: getting a page is every step of the read — the plan, the
+                // filters, the index, the fetch — and whichever one this was has already
+                // said so from inside itself. Naming one here named the wrong one for
+                // everything but a fetch.
+                report(t, () -> asReadFailure(t));
+            }
         }
     }
 
@@ -593,16 +633,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// the only Thrift-encoded thing in a page is the header at its front, so a
     /// parse position added to this lands inside that header and never in the
     /// values, which have no file offset a decoder could report.
-    private ReadScope.Place pageAt(PageInfo pageInfo) {
+    private static ReadScope.Place pageAt(PageInfo pageInfo) {
         OptionalLong offset = pageInfo.fileOffset();
-        return new ReadScope.Place(pageSource.getCurrentFileName(),
-                pageSource.getCurrentRowGroupIndex(), String.valueOf(column.fieldPath()), null,
-                offset.isPresent() ? offset.getAsLong() : ReadContext.UNKNOWN_OFFSET);
+        ReadScope.Place here = ReadScope.current();
+        return offset.isPresent() ? here.at(offset.getAsLong()) : here;
     }
 
-    /// This worker's column in one file's row group, with no region and no
-    /// byte: what a frame knows once the step that failed has finished
-    /// unwinding past it.
+    /// This worker's column in one file's row group, with no region and no byte.
+    ///
+    /// For the drain, which runs on its own thread and so enters no scope: it is handed
+    /// pages rather than reading them, and what it knows of where they came from it
+    /// keeps in the two fields below.
     private ReadScope.Place columnPlace(String fileName, int rowGroup) {
         return new ReadScope.Place(fileName, rowGroup, String.valueOf(column.fieldPath()), null,
                 ReadContext.UNKNOWN_OFFSET);

@@ -222,7 +222,7 @@ public final class ReadScope {
         }
 
         /// The same place, at a byte inside the region rather than at its first.
-        Place at(long offset) {
+        public Place at(long offset) {
             return new Place(fileName, rowGroup, column, region, offset);
         }
     }
