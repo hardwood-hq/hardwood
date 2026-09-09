@@ -290,7 +290,7 @@ final class PqListImpl implements PqList {
             case INT64 -> new LeafList<>(pos -> LogicalTypeConverter.longToDecimal(
                     ((long[]) batch.valueArrays[projCol])[pos], scale));
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> new LeafList<>(pos ->
-                    LogicalTypeConverter.bytesToDecimal(batch.getBinary(projCol, pos), scale));
+                    ((BinaryBatchValues) batch.valueArrays[projCol]).decimalAt(pos, scale));
             default -> throw new IllegalArgumentException(
                     "Unexpected physical type for DECIMAL: " + leaf.type());
         };
@@ -300,16 +300,16 @@ final class PqListImpl implements PqList {
     public List<UUID> uuids() {
         int projCol = listDesc.firstLeafProjCol();
         requirePrimitiveElement();
-        return new LeafList<>(pos -> LogicalTypeConverter.bytesToUuid(
-                batch.getBinary(projCol, pos)));
+        return new LeafList<>(pos ->
+                ((BinaryBatchValues) batch.valueArrays[projCol]).uuidAt(pos));
     }
 
     @Override
     public List<PqInterval> intervals() {
         int projCol = listDesc.firstLeafProjCol();
         requirePrimitiveElement();
-        return new LeafList<>(pos -> LogicalTypeConverter.bytesToInterval(
-                batch.getBinary(projCol, pos)));
+        return new LeafList<>(pos ->
+                ((BinaryBatchValues) batch.valueArrays[projCol]).intervalAt(pos));
     }
 
     // ==================== Nested Type Accessors ====================

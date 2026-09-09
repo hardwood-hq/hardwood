@@ -441,8 +441,8 @@ final class PqStructImpl implements PqStruct {
                     ((int[]) batch.valueArrays[projCol])[idx], scale);
             case INT64 -> LogicalTypeConverter.longToDecimal(
                     ((long[]) batch.valueArrays[projCol])[idx], scale);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
-                    batch.getBinary(projCol, idx), scale);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                    ((BinaryBatchValues) batch.valueArrays[projCol]).decimalAt(idx, scale);
             default -> throw new IllegalArgumentException(
                     "Unexpected physical type for DECIMAL: " + schema.type());
         };
@@ -454,7 +454,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return LogicalTypeConverter.bytesToUuid(batch.getBinary(projCol, idx));
+        return ((BinaryBatchValues) batch.valueArrays[projCol]).uuidAt(idx);
     }
 
     private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive child) {
@@ -463,7 +463,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return LogicalTypeConverter.bytesToInterval(batch.getBinary(projCol, idx));
+        return ((BinaryBatchValues) batch.valueArrays[projCol]).intervalAt(idx);
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {

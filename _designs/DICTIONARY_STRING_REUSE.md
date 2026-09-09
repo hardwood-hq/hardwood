@@ -98,8 +98,10 @@ second chunk's dictionary.
 
 ## Notes
 
-- **Generic-path interning** routes string leaves through `getString` *before* `convertValue`,
-  because `convertValue` decodes a raw `byte[]` and cannot accept an already-interned `String`.
+- **Generic-path interning** routes string leaves through `getString` *before*
+  `NestedLeafDecoder.decode`, because that decodes a raw `byte[]` and cannot accept an
+  already-interned `String`. Both sides ask `LeafKind` which leaves are strings — see
+  [NESTED_PRIMITIVE_LEAF_DECODE.md](NESTED_PRIMITIVE_LEAF_DECODE.md).
 - **Column-reader interning ([#724](https://github.com/hardwood-hq/hardwood/issues/724)).**
   `ColumnReader` shares `FlatColumnWorker` / `NestedColumnWorker`, so a `UTF8` / `JSON` column
   records `dictIndices` and runs `ensureDictionary` every batch (`internStrings` gates by column

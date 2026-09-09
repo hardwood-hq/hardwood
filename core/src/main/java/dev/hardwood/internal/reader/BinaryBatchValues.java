@@ -7,10 +7,13 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.row.PqInterval;
 
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
 /// / `INT96`).
@@ -72,6 +75,31 @@ public final class BinaryBatchValues {
     public float float16At(int idx) {
         int start = offsets[idx];
         return LogicalTypeConverter.bytesToFloat16(bytes, start, offsets[idx + 1] - start);
+    }
+
+    /// Decode value `idx` as the decimal its `DECIMAL` payload stands for, reading the
+    /// bytes where they sit rather than materialising a `byte[]` for them.
+    ///
+    /// The copy `byteArrayAt` makes is dropped again as soon as [BigInteger] has read
+    /// it, and whether it survives that is left to escape analysis; reading in place
+    /// does not depend on the decision going the right way.
+    public BigDecimal decimalAt(int idx, int scale) {
+        int start = offsets[idx];
+        return LogicalTypeConverter.bytesToDecimal(bytes, start, offsets[idx + 1] - start, scale);
+    }
+
+    /// Decode value `idx` as the [UUID] its payload stands for, reading the bytes
+    /// where they sit rather than materialising a `byte[]` for them.
+    public UUID uuidAt(int idx) {
+        int start = offsets[idx];
+        return LogicalTypeConverter.bytesToUuid(bytes, start, offsets[idx + 1] - start);
+    }
+
+    /// Decode value `idx` as the [PqInterval] its payload stands for, reading the bytes
+    /// where they sit rather than materialising a `byte[]` for them.
+    public PqInterval intervalAt(int idx) {
+        int start = offsets[idx];
+        return LogicalTypeConverter.bytesToInterval(bytes, start, offsets[idx + 1] - start);
     }
 
     /// Materialise value `idx` as a UTF-8 decoded `String`. A dictionary-encoded

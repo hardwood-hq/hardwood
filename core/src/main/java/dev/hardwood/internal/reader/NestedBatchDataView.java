@@ -588,8 +588,9 @@ public final class NestedBatchDataView {
                         ((int[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
                 case INT64 -> LogicalTypeConverter.longToDecimal(
                         ((long[]) batchIndex.valueArrays[projCol])[valueIdx], scale);
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
-                        batchIndex.getBinary(projCol, valueIdx), scale);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                        ((BinaryBatchValues) batchIndex.valueArrays[projCol])
+                                .decimalAt(valueIdx, scale);
                 default -> throw new IllegalArgumentException(prefix()
                         + "Unexpected physical type for DECIMAL: " + schema.type());
             };
@@ -605,7 +606,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return LogicalTypeConverter.bytesToUuid(batchIndex.getBinary(p.projectedCol(), valueIdx));
+            return ((BinaryBatchValues) batchIndex.valueArrays[p.projectedCol()]).uuidAt(valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -618,7 +619,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return LogicalTypeConverter.bytesToInterval(batchIndex.getBinary(p.projectedCol(), valueIdx));
+            return ((BinaryBatchValues) batchIndex.valueArrays[p.projectedCol()]).intervalAt(valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

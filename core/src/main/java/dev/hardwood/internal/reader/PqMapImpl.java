@@ -469,8 +469,8 @@ final class PqMapImpl implements PqMap {
                     ((int[]) batch.valueArrays[valueProjCol])[valueIdx], scale);
             case INT64 -> LogicalTypeConverter.longToDecimal(
                     ((long[]) batch.valueArrays[valueProjCol])[valueIdx], scale);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
-                    batch.getBinary(valueProjCol, valueIdx), scale);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                    ((BinaryBatchValues) batch.valueArrays[valueProjCol]).decimalAt(valueIdx, scale);
             default -> throw new IllegalArgumentException(
                     "Unexpected physical type for DECIMAL: " + leaf.type());
         };
@@ -482,7 +482,7 @@ final class PqMapImpl implements PqMap {
             return null;
         }
         requirePrimitiveValue();
-        return LogicalTypeConverter.bytesToUuid(batch.getBinary(valueProjCol, valueIdx));
+        return ((BinaryBatchValues) batch.valueArrays[valueProjCol]).uuidAt(valueIdx);
     }
 
     private PqInterval readIntervalValue(int valueIdx) {
@@ -491,7 +491,7 @@ final class PqMapImpl implements PqMap {
             return null;
         }
         requirePrimitiveValue();
-        return LogicalTypeConverter.bytesToInterval(batch.getBinary(valueProjCol, valueIdx));
+        return ((BinaryBatchValues) batch.valueArrays[valueProjCol]).intervalAt(valueIdx);
     }
 
     /// Translates an entry index (expressed as a position in the key column's leaf

@@ -78,7 +78,7 @@ LocalDateTime longToLocalTimestamp(long rawValue, LogicalType.TimeUnit unit);
 
 Neither checks the kind — a primitive signature carries no annotation to check it against. `TimestampAccessorKind` is the single statement of that rule and runs at the accessor site, where the rejection can name the column.
 
-`longToTemporal(long, LogicalType.TimestampType)` states the routing between the two, for a caller that decodes whatever the column holds rather than asking for one kind. The generic `LogicalTypeConverter.convert` switch dispatches the `TimestampType` arm through it, so `ValueConverter.convertValue` (which backs `getValue` and the `PqList.values()` / `PqMap.Entry.getValue()` fallback path) returns the right Java type.
+`longToTemporal(long, LogicalType.TimestampType)` states the routing between the two, for a caller that decodes whatever the column holds rather than asking for one kind. The generic `LogicalTypeConverter.convert` switch dispatches the `TimestampType` arm through it, so `NestedLeafDecoder.decode` (which backs `getValue` and the `PqList.values()` / `PqMap.Entry.getValue()` fallback path) returns the right Java type. The typed accessors call the two split entry points directly, reading the stored int64 without boxing it — see [NESTED_PRIMITIVE_LEAF_DECODE.md](NESTED_PRIMITIVE_LEAF_DECODE.md).
 
 `VariantValueDecoder` splits along the same line:
 

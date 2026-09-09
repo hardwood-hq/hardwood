@@ -1,152 +1,70 @@
-# Design: primitive leaf decode on the nested read path
+# Design: leaf decode on the read path
 
 **Status: Implemented.** Tracking issue: #1164.
 
-## Goal
+How a row-reader accessor turns a stored leaf value into the Java value it
+returns. The flat and nested paths do this the same way.
 
-The flat and nested read paths store leaf values in the same primitive
-arrays. Both decode them the same way: read the primitive out of the
-array and hand it to a `LogicalTypeConverter` entry point that takes
-that primitive. Neither path creates an intermediate box on an accessor
-whose result is already a reference type, and the two rules that
-classify a leaf are stated once for both.
+## Two routes
 
-## Storage
+A **typed** accessor names the type it returns, so it reads the stored
+primitive out of the column array and calls the `LogicalTypeConverter` entry
+point for that type. Nothing is boxed on the way: `getDate` reaches
+`intToDate(int)` from an `int[]`, never through an `Integer`.
 
-`NestedBatchIndex` holds one array per projected column, in the same
-representations `FlatRowReader` uses: `int[]`, `long[]`, `float[]`,
-`double[]`, `boolean[]`, and `BinaryBatchValues` for the two byte-array
-physical types.
+A **generic** accessor — `getValue`, `PqList.values()`, `PqMap.Entry.getValue()`
+— returns whatever the column holds, so it starts from an `Object` and
+dispatches. Those go through `NestedLeafDecoder.decode`, which adds the
+`SchemaNode` unwrap and returns a group node untouched, since struct, list and
+map values are built by the flyweights and carry no leaf decode.
 
-A flyweight reads a stored value by indexing that array through the
-column's representation, which is what the primitive accessors do
-today: `PqStructImpl.readInt` is
-`((int[]) batch.valueArrays[projCol])[idx]`. The logical-type accessors
-read the same way.
-
-`NestedBatchIndex.getValue` boxes, and remains for the paths whose
-result is an `Object` regardless: `PqList.values()`, which returns
-`List<Object>`, and `NestedBatchIndex.decodeLeaf`, which serves the
-generic accessors. A box on those paths is the return type, not an
-artifact.
-
-## Typed accessors
-
-A typed accessor names the type it returns, so it reads the primitive
-and calls the decode for that type directly:
-
-```java
-private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
-    int projCol = child.projectedCol();
-    int idx = resolveValueIndex(projCol);
-    if (batch.isElementNull(projCol, idx)) {
-        return null;
-    }
-    return LogicalTypeConverter.intToDate(
-            ((int[]) batch.valueArrays[projCol])[idx]);
-}
-```
-
-`PqStructImpl`, `NestedBatchDataView` and `PqMapImpl` each carry one
-such helper per logical type rather than a single `Class`-keyed helper,
-so the logical accessors sit alongside `readInt`, `readLong` and
-`readFloat` in the same shape.
-
-`PqListImpl.LeafList<T>` takes an `IntFunction<T>` over the element
-position, so each accessor supplies a lambda that reads and decodes in
-one step:
-
-```java
-public List<LocalDate> dates() {
-    int projCol = listDesc.firstLeafProjCol();
-    requirePrimitiveElement();
-    return new LeafList<>(pos -> LogicalTypeConverter.intToDate(
-            ((int[]) batch.valueArrays[projCol])[pos]));
-}
-```
-
-`PqListImpl.requirePrimitiveElement` and `PqMapImpl.requirePrimitiveValue`
-cast the element or value schema to a leaf. A list of groups has no leaf to
-decode, and without the cast each of these accessors would read the group's
-first leaf column and decode whatever it holds — a difference the array cast
-cannot see, so the cast runs even where the leaf itself is not needed.
-
-The lambda resolves the array per element rather than capturing it, so
-the read is as lazy as it is today and a view does not pin the batch it
-was created from.
-
-The interned-`String` case is one such lambda, so `LeafList` carries no
-flag selecting between a raw read and an interned one.
+The box on the generic route is the return type, not an artifact, and stays.
 
 ## Leaf classification
 
-Two rules decide how a leaf decodes, and both paths ask the same
-question: whether the leaf is a string, and whether it is an
-unannotated `INT96`, which the format leaves unannotated and readers
-conventionally treat as a timestamp.
+Two rules decide how a leaf decodes: whether it is a string, and whether it is
+an unannotated `INT96`, which the format leaves unannotated and readers
+conventionally treat as a timestamp. The `INT96` rule keys on the annotation's
+absence — one that survives into the schema is one no physical type is imposed
+on, `FileSchema` having dropped any that `INT96` cannot carry.
 
-`LeafKind` states both. It is a package-level enum in
-`dev.hardwood.internal.reader` with a factory over the pair that decides
-them:
+`LeafKind` is the single statement of both. `FlatRowReader` classifies once per
+column at construction, `NestedLeafDecoder` per leaf, and the string-interning
+gate on the recording side (`BatchExchange`) asks it the same question the
+consumer side does, so the side that records dictionary indices and the side
+that reads them back cannot disagree.
 
-```java
-enum LeafKind {
-    STRING, INT96_TIMESTAMP, RAW, CONVERT;
+## Byte-array payloads
 
-    static LeafKind of(PhysicalType type, LogicalType logicalType) { ... }
+`DECIMAL`, `UUID` and `INTERVAL` over a byte-array column never carried a box —
+the stored value is already a `byte[]`. They carried a copy:
+`BinaryBatchValues.byteArrayAt` materialises an array that the decode reads its
+9, 16 or 12 bytes out of and drops.
 
-    /// null where `schema` is a group, which carries no leaf decode.
-    static LeafKind of(SchemaNode schema) { ... }
-}
-```
-
-`FlatRowReader` classifies each column once at construction and switches
-on the result in `getValue`. `NestedLeafDecoder.decode` switches on it per
-leaf. `BatchExchange`'s string-interning gate asks
-`LeafKind.of(...) == STRING`, which is the same question the consumer
-side asks, so the side that records dictionary indices and the side that
-reads them back cannot disagree.
-
-## NestedLeafDecoder
-
-What the nested flyweights need beyond the decode table is the
-`SchemaNode` unwrap: a group node is returned untouched, because struct,
-list and map values are built by the flyweights and never carry a leaf
-decode. `NestedLeafDecoder.decode` holds that, over `LeafKind` and
-`LogicalTypeConverter`. It serves the generic accessors — `getValue`,
-`PqList.values()`, `NestedBatchIndex.decodeLeaf` — while the typed ones
-read primitives directly and do not go through it.
-
-## Scope
-
-`NestedBatchIndex.valueArrays` stays package-visible. Giving it typed
-accessors so the field can go private is a worthwhile encapsulation and
-is not part of this design: the field is read directly in roughly 45
-places across eight classes, and the read helpers here use the idiom
-those places already use.
+`BinaryBatchValues.decimalAt`, `uuidAt` and `intervalAt` read the payload where
+it sits, each backed by an offset-taking overload on `LogicalTypeConverter`, in
+the shape `float16At` already had. Whether the discarded copy survives is
+otherwise left to escape analysis, and that decision is not reliable: on a list
+of `FIXED_LEN_BYTE_ARRAY` decimals it was eliminated before this change and not
+after, costing more than reading the primitive directly had saved. Reading in
+place does not depend on the decision going the right way.
 
 ## Type mismatches
 
-A caller asking an accessor for a type the column does not hold surfaces
-as whatever the storage array's cast raises, which is what
-[EXCEPTION_MODEL.md](EXCEPTION_MODEL.md) states for this case and what
-the flat path already does. #971 covers giving that failure a message
-that names the column, across both paths at once.
+Asking an accessor for a type the column does not hold surfaces as whatever the
+storage array's cast raises, which is what
+[EXCEPTION_MODEL.md](EXCEPTION_MODEL.md) states for this case; #971 covers
+giving that failure a message that names the column, across both paths at once.
 
-An explicit guard runs only where the cast cannot detect the mismatch:
-`FLOAT` against `FLOAT16`, which share no array distinction, and the two
-`TIMESTAMP` kinds, which are both `long[]`. Those keep the guards they
-have — `NestedBatchIndex.requireFloatAccess` and
-`TimestampAccessorKind.require`.
+An explicit guard runs only where the cast cannot detect the mismatch: `FLOAT`
+against `FLOAT16` and the two `TIMESTAMP` kinds, which share their array type
+(`NestedBatchIndex.requireFloatAccess`, `TimestampAccessorKind`); and a group
+element against a leaf, where `PqListImpl.requirePrimitiveElement` and
+`PqMapImpl.requirePrimitiveValue` stop an accessor reading the group's first
+leaf column and decoding whatever it holds.
 
-## Testing
+## Scope
 
-`ValueConverterTest` follows the class to `NestedLeafDecoderTest`.
-`LeafKind.of` is covered directly over the physical/logical pairs that
-select each kind, including an `INT96` leaf with and without a
-surviving annotation.
-
-Each logical-type accessor on `PqStruct`, `PqList` and `PqMap` is
-covered for the type it returns, over both a nullable and an all-present
-column, and for the `FLOAT16` and `TIMESTAMP`-kind guards. The existing
-nested accessor suites carry this.
+`NestedBatchIndex.valueArrays` stays package-visible and is read directly by the
+flyweights. Giving it typed accessors so the field can go private is a separate
+encapsulation: it is read in roughly 45 places across eight classes.

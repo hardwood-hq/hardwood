@@ -266,6 +266,13 @@ public final class LogicalTypeConverter {
         return new BigDecimal(new BigInteger(bytes), scale);
     }
 
+    /// The decimal the `DECIMAL` payload at `offset` stands for, for a caller holding
+    /// the payload inside a larger buffer. Parquet stores it big-endian two's
+    /// complement, which is the layout [BigInteger] reads.
+    public static BigDecimal bytesToDecimal(byte[] bytes, int offset, int length, int scale) {
+        return new BigDecimal(new BigInteger(bytes, offset, length), scale);
+    }
+
     /// The UTF-8 text of a `STRING`, `ENUM` or `JSON` payload.
     public static String bytesToString(byte[] bytes) {
         return new String(bytes, StandardCharsets.UTF_8);
@@ -282,6 +289,25 @@ public final class LogicalTypeConverter {
         return new UUID(mostSigBits, leastSigBits);
     }
 
+    /// The [UUID] the 16-byte `UUID` payload at `offset` stands for, for a caller
+    /// holding the payload inside a larger buffer.
+    public static UUID bytesToUuid(byte[] bytes, int offset, int length) {
+        if (length != UUID_BYTES) {
+            throw new IllegalArgumentException("UUID requires exactly " + UUID_BYTES + " bytes, got " + length);
+        }
+        return new UUID(longAt(bytes, offset), longAt(bytes, offset + 8));
+    }
+
+    /// The big-endian `long` at `offset`. `& 0xFF` blocks sign extension on each
+    /// byte's promotion to `long`.
+    private static long longAt(byte[] bytes, int offset) {
+        long value = 0;
+        for (int i = 0; i < 8; i++) {
+            value = (value << 8) | (bytes[offset + i] & 0xFFL);
+        }
+        return value;
+    }
+
     /// The [PqInterval] a 12-byte `INTERVAL` payload stands for: months, days and millis
     /// as little-endian unsigned 4-byte fields.
     public static PqInterval bytesToInterval(byte[] bytes) {
@@ -294,6 +320,28 @@ public final class LogicalTypeConverter {
         long days = Integer.toUnsignedLong(buffer.getInt(4));
         long millis = Integer.toUnsignedLong(buffer.getInt(8));
         return new PqInterval(months, days, millis);
+    }
+
+    /// The [PqInterval] the 12-byte `INTERVAL` payload at `offset` stands for, for a
+    /// caller holding the payload inside a larger buffer.
+    public static PqInterval bytesToInterval(byte[] bytes, int offset, int length) {
+        if (length != INTERVAL_BYTES) {
+            throw new IllegalArgumentException(
+                    "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + length);
+        }
+        return new PqInterval(
+                Integer.toUnsignedLong(intAt(bytes, offset)),
+                Integer.toUnsignedLong(intAt(bytes, offset + 4)),
+                Integer.toUnsignedLong(intAt(bytes, offset + 8)));
+    }
+
+    /// The little-endian `int` at `offset`, the byte order `INTERVAL` fields are
+    /// stored in. `& 0xFF` blocks sign extension on each byte's promotion.
+    private static int intAt(byte[] bytes, int offset) {
+        return (bytes[offset] & 0xFF)
+                | ((bytes[offset + 1] & 0xFF) << 8)
+                | ((bytes[offset + 2] & 0xFF) << 16)
+                | ((bytes[offset + 3] & 0xFF) << 24);
     }
 
     /// The single-precision value a 2-byte `FLOAT16` payload stands for.

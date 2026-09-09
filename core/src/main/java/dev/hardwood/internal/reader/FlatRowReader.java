@@ -689,8 +689,8 @@ public final class FlatRowReader implements FileAwareRowReader {
                         ((int[]) flatValueArrays[columnIndex])[rowIndex], scale);
                 case INT64 -> LogicalTypeConverter.longToDecimal(
                         ((long[]) flatValueArrays[columnIndex])[rowIndex], scale);
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> LogicalTypeConverter.bytesToDecimal(
-                        ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex), scale);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                        ((BinaryBatchValues) flatValueArrays[columnIndex]).decimalAt(rowIndex, scale);
                 default -> throw new IllegalArgumentException(prefix()
                         + "Unexpected physical type for DECIMAL: " + col.type());
             };
@@ -711,8 +711,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         try {
-            return LogicalTypeConverter.bytesToUuid(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
+            return ((BinaryBatchValues) flatValueArrays[columnIndex]).uuidAt(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -735,8 +734,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         try {
-            return LogicalTypeConverter.bytesToInterval(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex));
+            return ((BinaryBatchValues) flatValueArrays[columnIndex]).intervalAt(rowIndex);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
