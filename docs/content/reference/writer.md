@@ -35,13 +35,40 @@ The writer requires at least one column: `build()` rejects a schema with no fiel
 ```java
 FileSchema schema = FileSchema.builder("event")
         .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                new LogicalType.UuidType())
+                LogicalType.uuid())
         .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 8,
-                new LogicalType.DecimalType(2, 18))   // DecimalType takes (scale, precision)
+                LogicalType.decimal(18, 2))
         .build();
 ```
 
 Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, typeLength][, logicalType])`, `struct`, `list` and `map` carry no name, the surrounding layout supplying it.
+
+### Logical Type Factories
+
+An annotation is built with the `LogicalType` static factory of the same name. The parameterless factories return a shared instance.
+
+| Factory | Annotation |
+|---|---|
+| `LogicalType.string()` | `STRING` — UTF-8 encoded string |
+| `LogicalType.enumType()` | `ENUM` — enum stored as a UTF-8 string |
+| `LogicalType.uuid()` | `UUID` — 16-byte fixed-length byte array |
+| `LogicalType.date()` | `DATE` — days since the Unix epoch |
+| `LogicalType.json()` | `JSON` — JSON document stored as a UTF-8 string |
+| `LogicalType.bson()` | `BSON` — BSON document stored as a byte array |
+| `LogicalType.interval()` | `INTERVAL` — 12-byte fixed-length byte array (months, days, millis) |
+| `LogicalType.float16()` | `FLOAT16` — IEEE 754 half-precision, 2-byte fixed-length byte array |
+| `LogicalType.nullType()` | `NULL` — every value in the column is null |
+| `LogicalType.list()` | `LIST` |
+| `LogicalType.map()` | `MAP` |
+| `LogicalType.intType(bitWidth, isSigned)` | `INT_8` … `UINT_64` — `bitWidth` is 8, 16, 32 or 64 |
+| `LogicalType.decimal(precision, scale)` | `DECIMAL(precision, scale)` |
+| `LogicalType.time(isAdjustedToUTC, unit)` | `TIME` — `unit` is `TimeUnit.MILLIS`, `MICROS` or `NANOS` |
+| `LogicalType.timestamp(isAdjustedToUTC, unit)` | `TIMESTAMP` — same units |
+| `LogicalType.variant(specVersion)` | `VARIANT` — `specVersion` is `1`; the writer rejects a column carrying it |
+| `LogicalType.geometry(crs)` | `GEOMETRY` — `crs` defaults to `OGC:CRS84` when `null` |
+| `LogicalType.geography(crs, edgeInterpolation)` | `GEOGRAPHY` — `edgeInterpolation` is an `EdgeInterpolationAlgorithm` |
+
+Which Java value each annotation accepts is listed under [Logical Types and Row Setters](#logical-types-and-row-setters); a pairing of annotation and physical type the format does not define is rejected when the schema is built.
 
 ## Writer Options
 

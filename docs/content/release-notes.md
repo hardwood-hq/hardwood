@@ -20,6 +20,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - A multi-file read opens each file as it reaches it, rather than opening every file when the reader is built, so the time to the first row no longer grows with the number of files ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).
     - A later file's I/O errors, and any `SchemaIncompatibleException` its schema raises, now surface from the reading loop rather than from `ParquetFileReader.openAll(...)` or `build()` — always before any row of that file is returned. Code that catches those around reader construction alone should catch them around iteration too.
 
+- Every `LogicalType` member has a static factory, and those are the documented way to construct one — `LogicalType.string()`, `LogicalType.decimal(18, 2)`, `LogicalType.timestamp(true, TimeUnit.MICROS)` ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). The parameterless ones return a shared instance, which the reader now hands back instead of allocating a record per column while it decodes a footer. The record constructors still work.
+
 **Breaking Changes:**
 
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).
@@ -43,6 +45,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
     - A column chunk stored in a separate file (the legacy split-file layout) and a file over 2 GB opened with the mmap-backed range cache now raise `UnsupportedOperationException` rather than `IOException`. Both files are correct; it is Hardwood that will not read them. **Silent.**
     - The writer raises the new unchecked `ParquetWriteException` when a compression codec rejects a page body, where it used to raise `IOException`. Nothing you passed was wrong and the destination is not involved, so retrying cannot help. **Silent.**
     - A corrupt value inside the metadata — a malformed bloom filter header, a geospatial bounding box missing a required field, a decimal scale or precision that cannot be, an unknown physical type, repetition type, codec or time unit — now raises `ParquetReadException` rather than `IllegalArgumentException` or `IllegalStateException`. These are the file being wrong, not your call being wrong. **Silent.** Both types keep their meaning for calls that really are mistakes, such as asking for a column outside the projection.
+
+- `LogicalType.DecimalType` takes its precision before its scale, where it used to take scale first ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). Every other decimal API takes them in that order — SQL's `DECIMAL(p, s)`, Arrow, Avro, Iceberg, parquet-cpp — and it is the order the annotation renders in. Only `parquet.thrift`'s field declaration and the APIs that mirror it read the other way. **This one is silent**, because a swapped call still compiles: `LogicalType.decimal(...)` rejects a scale above the precision, which catches a transposed pair at the call site, but a column whose scale equals its precision passes either way.
 
 ## 1.1.0.Beta1 (2026-08-31)
 

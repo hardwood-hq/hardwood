@@ -41,8 +41,8 @@ import static dev.hardwood.metadata.SchemaElement.root;
 List<SchemaElement> elements = List.of(
         root("schema", 3),
         primitive("id", PhysicalType.INT64, RepetitionType.REQUIRED),
-        primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType()),
-        fixedLengthPrimitive("uuid", 16, RepetitionType.REQUIRED, new LogicalType.UuidType()));
+        primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()),
+        fixedLengthPrimitive("uuid", 16, RepetitionType.REQUIRED, LogicalType.uuid()));
 
 FileSchema schema = FileSchema.fromSchemaElements(elements);
 ```

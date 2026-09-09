@@ -105,13 +105,13 @@ carries no annotation.
 
 ```java
 FileSchema schema = FileSchema.builder("schema")
-        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
-        .addColumn("birthday", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.DateType())
+        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+        .addColumn("birthday", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
         .addColumn("balance", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                new LogicalType.DecimalType(2, 18))
+                LogicalType.decimal(18, 2))
         .addColumn("created", PhysicalType.INT64, RepetitionType.REQUIRED,
-                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS))
-        .map("counts", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS))
+        .map("counts", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
                 value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
         .build();
 ```

@@ -29,7 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 FileSchema schema = FileSchema.builder("measurement")
-        .addColumn("station", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+        .addColumn("station", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
         .addColumn("temperature", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
         .build();
 
