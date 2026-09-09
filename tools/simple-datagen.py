@@ -4571,6 +4571,37 @@ pq.write_table(
 print("\nGenerated int96_timestamp_test.parquet (#568):")
 print("  - 1 row, single INT96 TIMESTAMP column")
 
+# Nested INT96: the same legacy timestamp inside a struct, a list and a map
+# (#1151). The flyweights reach the value through the SchemaNode-aware shim
+# rather than the flat reader's per-column dispatch, so a nested INT96 leaf
+# exercises a decode path the flat fixture above never reaches.
+# `at` is a top-level leaf in a file whose schema is nested, which is the one
+# combination that reaches NestedBatchDataView rather than the flat reader or a
+# flyweight.
+nested_int96_schema = pa.schema([
+    ('at', pa.timestamp('us', tz='UTC'), True),
+    ('event', pa.struct([('at', pa.timestamp('us', tz='UTC'))]), True),
+    ('samples', pa.list_(pa.timestamp('us', tz='UTC')), True),
+    ('marks', pa.map_(pa.string(), pa.timestamp('us', tz='UTC')), True),
+])
+nested_int96_table = pa.table({
+    'at': [datetime(2026, 3, 5, 9, 30, 0, 123456)],
+    'event': [{'at': datetime(2026, 3, 5, 9, 30, 0, 123456)}],
+    'samples': [[datetime(2026, 3, 5, 9, 30, 0, 123456),
+                 datetime(2026, 3, 5, 17, 45, 30)]],
+    'marks': [[('start', datetime(2026, 3, 5, 9, 30, 0, 123456))]],
+}, schema=nested_int96_schema)
+pq.write_table(
+    nested_int96_table,
+    'core/src/test/resources/nested_int96_timestamp_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    use_deprecated_int96_timestamps=True,
+    data_page_version='1.0',
+)
+print("\nGenerated nested_int96_timestamp_test.parquet (#1151):")
+print("  - 1 row, INT96 TIMESTAMP at the top level and inside a struct, a list and a map")
+
 # =====================================================================
 # Dive screenshots fixture (docs/content/assets/cli/*.svg)
 # Not a test corpus file: this realistic, wide, nested/list/map dataset

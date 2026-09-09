@@ -110,7 +110,9 @@ level and in every nested position. `getBinary` still yields the undecoded bytes
 
 Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated
 INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96
-automatically and decodes it to an `Instant`; no caller-side handling is required.
+automatically and decodes it to an `Instant`; no caller-side handling is required. The generic
+`getValue` accessor and the `PqList` / `PqStruct` / `PqMap` flyweights return the same `Instant`, at
+the top level and in every nested position.
 
 ## Legacy converted-type annotations
 

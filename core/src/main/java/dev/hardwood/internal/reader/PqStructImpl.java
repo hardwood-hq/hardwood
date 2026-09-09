@@ -23,7 +23,6 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
-import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
 ///
@@ -388,13 +387,8 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        Object rawValue = batch.getValue(projCol, idx);
-        if (resultClass.isInstance(rawValue)) {
-            return resultClass.cast(rawValue);
-        }
-        SchemaNode.PrimitiveNode prim = child.schema();
-        Object converted = LogicalTypeConverter.convert(rawValue, prim.type(), prim.logicalType());
-        return resultClass.cast(converted);
+        return ValueConverter.convertLogicalType(
+                batch.getValue(projCol, idx), child.schema(), resultClass);
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {

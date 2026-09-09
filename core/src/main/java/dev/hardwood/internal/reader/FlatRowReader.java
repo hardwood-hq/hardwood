@@ -200,8 +200,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (ValueConverter.isStringLeaf(pt, lt)) {
             return LeafKind.STRING;
         }
-        if (pt == PhysicalType.INT96) {
-            // INT96 has no LogicalType but is conventionally a TIMESTAMP.
+        if (lt == null && pt == PhysicalType.INT96) {
+            // INT96 has no LogicalType but is conventionally a TIMESTAMP. Keyed on the
+            // annotation's absence, as ValueConverter keys it: one that survived
+            // FileSchema is one no physical type is imposed on, and it decides the
+            // decode here as it does on any other column.
             return LeafKind.INT96_TIMESTAMP;
         }
         return lt == null ? LeafKind.RAW : LeafKind.CONVERT;
@@ -670,7 +673,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         }
         ColumnSchema col = columnSchemas[columnIndex];
         try {
-            if (col.type() == PhysicalType.INT96) {
+            if (col.logicalType() == null && col.type() == PhysicalType.INT96) {
                 byte[] rawValue = ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
                 return LogicalTypeConverter.int96ToInstant(rawValue);
             }

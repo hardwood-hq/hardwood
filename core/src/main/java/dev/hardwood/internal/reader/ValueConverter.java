@@ -176,24 +176,34 @@ public final class ValueConverter {
             return rawValue;
         }
 
-        SchemaNode.PrimitiveNode primitive = (SchemaNode.PrimitiveNode) schema;
-        LogicalType logicalType = primitive.logicalType();
-
-        if (logicalType == null && primitive.type() == PhysicalType.INT96) {
-            // INT96 carries no logical type but is conventionally a TIMESTAMP.
-            return LogicalTypeConverter.int96ToInstant((byte[]) rawValue);
-        }
-
-        return LogicalTypeConverter.convert(rawValue, primitive.type(), logicalType);
+        return convertPrimitive(rawValue, (SchemaNode.PrimitiveNode) schema);
     }
 
+    /// The typed form of [#convertValue]: same decode, cast to what the accessor
+    /// promised its caller.
     static <T> T convertLogicalType(Object rawValue, SchemaNode schema, Class<T> expectedClass) {
+        if (rawValue == null) {
+            return null;
+        }
         // If already converted (e.g., by RecordAssembler for nested structures), return as-is
         if (expectedClass.isInstance(rawValue)) {
             return expectedClass.cast(rawValue);
         }
-        SchemaNode.PrimitiveNode primitive = (SchemaNode.PrimitiveNode) schema;
-        Object converted = LogicalTypeConverter.convert(rawValue, primitive.type(), primitive.logicalType());
-        return expectedClass.cast(converted);
+        return expectedClass.cast(convertPrimitive(rawValue, (SchemaNode.PrimitiveNode) schema));
+    }
+
+    /// The one decode a leaf goes through, so a struct field, a list element and a
+    /// map value all read the same leaf the same way.
+    private static Object convertPrimitive(Object rawValue, SchemaNode.PrimitiveNode primitive) {
+        LogicalType logicalType = primitive.logicalType();
+        if (logicalType == null && primitive.type() == PhysicalType.INT96) {
+            // INT96 carries no logical type but is conventionally a TIMESTAMP. An
+            // annotation still standing here is one no physical type is imposed on, since
+            // FileSchema has already dropped any that INT96 cannot carry, so it decides
+            // the decode as it does on any other column. FlatRowReader.classifyLeaf keys
+            // its INT96 leaf kind the same way.
+            return LogicalTypeConverter.int96ToInstant((byte[]) rawValue);
+        }
+        return LogicalTypeConverter.convert(rawValue, primitive.type(), logicalType);
     }
 }
