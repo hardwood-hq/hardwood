@@ -581,27 +581,27 @@ final class PqMapImpl implements PqMap {
         @Override
         public LocalDate getDateValue() {
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToDate(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, LocalDate.class);
         }
 
         @Override
         public LocalTime getTimeValue() {
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToTime(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, LocalTime.class);
         }
 
         @Override
         public Instant getTimestampValue() {
             requireValueTimestampKind(true);
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToTimestamp(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, Instant.class);
         }
 
         @Override
         public LocalDateTime getLocalTimestampValue() {
             requireValueTimestampKind(false);
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToLocalTimestamp(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, LocalDateTime.class);
         }
 
         private void requireValueTimestampKind(boolean wantUtcAdjusted) {
@@ -613,19 +613,19 @@ final class PqMapImpl implements PqMap {
         @Override
         public BigDecimal getDecimalValue() {
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToDecimal(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, BigDecimal.class);
         }
 
         @Override
         public UUID getUuidValue() {
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToUuid(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, UUID.class);
         }
 
         @Override
         public PqInterval getIntervalValue() {
             Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToInterval(raw, valueSchema);
+            return ValueConverter.convertLogicalType(raw, valueSchema, PqInterval.class);
         }
 
         @Override

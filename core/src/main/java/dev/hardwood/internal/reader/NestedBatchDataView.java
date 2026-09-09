@@ -19,7 +19,6 @@ import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -318,35 +317,35 @@ public final class NestedBatchDataView {
     }
 
     public LocalDate getDate(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.DateType.class, LocalDate.class);
+        return readLogicalType(lookupPrimitive(name), LocalDate.class);
     }
 
     public LocalTime getTime(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.TimeType.class, LocalTime.class);
+        return readLogicalType(lookupPrimitive(name), LocalTime.class);
     }
 
     public Instant getTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
-        return readLogicalType(p, LogicalType.TimestampType.class, Instant.class);
+        return readLogicalType(p, Instant.class);
     }
 
     public LocalDateTime getLocalTimestamp(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
-        return readLogicalType(p, LogicalType.TimestampType.class, LocalDateTime.class);
+        return readLogicalType(p, LocalDateTime.class);
     }
 
     public BigDecimal getDecimal(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.DecimalType.class, BigDecimal.class);
+        return readLogicalType(lookupPrimitive(name), BigDecimal.class);
     }
 
     public UUID getUuid(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.UuidType.class, UUID.class);
+        return readLogicalType(lookupPrimitive(name), UUID.class);
     }
 
     public PqInterval getInterval(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.IntervalType.class, PqInterval.class);
+        return readLogicalType(lookupPrimitive(name), PqInterval.class);
     }
 
     // ==================== Object Type Accessors (by index) ====================
@@ -370,35 +369,35 @@ public final class NestedBatchDataView {
     }
 
     public LocalDate getDate(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.DateType.class, LocalDate.class);
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LocalDate.class);
     }
 
     public LocalTime getTime(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.TimeType.class, LocalTime.class);
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LocalTime.class);
     }
 
     public Instant getTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
         TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
-        return readLogicalType(p, LogicalType.TimestampType.class, Instant.class);
+        return readLogicalType(p, Instant.class);
     }
 
     public LocalDateTime getLocalTimestamp(int projectedIndex) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
         TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
-        return readLogicalType(p, LogicalType.TimestampType.class, LocalDateTime.class);
+        return readLogicalType(p, LocalDateTime.class);
     }
 
     public BigDecimal getDecimal(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.DecimalType.class, BigDecimal.class);
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), BigDecimal.class);
     }
 
     public UUID getUuid(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.UuidType.class, UUID.class);
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), UUID.class);
     }
 
     public PqInterval getInterval(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.IntervalType.class, PqInterval.class);
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), PqInterval.class);
     }
 
     // ==================== Nested Type Accessors (by name) ====================
@@ -502,24 +501,15 @@ public final class NestedBatchDataView {
         return batchIndex.getBinary(projCol, valueIdx);
     }
 
-    private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive p,
-                                  Class<? extends LogicalType> expectedLogicalType,
-                                  Class<T> resultClass) {
+    private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive p, Class<T> resultClass) {
         int projCol = p.projectedCol();
         int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        Object rawValue = batchIndex.getValue(projCol, valueIdx);
-        if (resultClass.isInstance(rawValue)) {
-            return resultClass.cast(rawValue);
-        }
         try {
-            if (resultClass == Instant.class && p.schema().type() == PhysicalType.INT96) {
-                return resultClass.cast(LogicalTypeConverter.int96ToInstant((byte[]) rawValue));
-            }
-            Object converted = LogicalTypeConverter.convert(rawValue, p.schema().type(), p.schema().logicalType());
-            return resultClass.cast(converted);
+            return ValueConverter.convertLogicalType(
+                    batchIndex.getValue(projCol, valueIdx), p.schema(), resultClass);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
