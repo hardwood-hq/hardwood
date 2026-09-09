@@ -5636,3 +5636,18 @@ _multi_rg_index_writer.close()
 print("\nGenerated multi_row_group_page_index.parquet:")
 print("  - 3 row groups of 1000 rows, id ascending across the file")
 print("  - column index and offset index per chunk, ~10 pages each")
+
+# ---------------------------------------------------------------------------
+# A schema that declares no columns (hardwood-hq/hardwood#1146).
+# Nothing in parquet.thrift requires a leaf, and Arrow writes such a file
+# without complaint, so one exists in the wild even though Hardwood's writer
+# refuses to produce one. The footer carries a childless root, no row group
+# column chunks and no rows, which is the only route by which a FileSchema
+# with zero columns reaches the reader or the writer.
+pq.write_table(
+    pa.table({}),
+    'core/src/test/resources/no_columns.parquet',
+    compression=None
+)
+print("\nGenerated no_columns.parquet:")
+print("  - Childless root schema: no columns, no rows")

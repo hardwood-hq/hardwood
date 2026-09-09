@@ -28,6 +28,8 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` group with a `REQUIRED` key of `keyType` and a value `value` declares |
 | `build()` | the `FileSchema` |
 
+The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
+
 `repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is required and positive for `FIXED_LEN_BYTE_ARRAY` and rejected for every other type — so a `UUID`, `INTERVAL`, `FLOAT16` or fixed-width `DECIMAL` column is declared through a `typeLength` overload:
 
 ```java
@@ -236,7 +238,7 @@ hardwood version <version> (build <commit>)
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`) or one whose library is missing; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned |
 | `IOException` | The destination cannot be created, written, or finalized |

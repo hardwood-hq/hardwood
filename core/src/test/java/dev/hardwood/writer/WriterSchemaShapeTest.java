@@ -50,6 +50,31 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// pinned as accepted here are the ones checked against PyArrow.
 class WriterSchemaShapeTest {
 
+    private static final Path NO_COLUMNS = Path.of("src/test/resources/no_columns.parquet");
+
+    /// A schema with no columns leaves the writer nothing to write. `FileSchema.Builder`
+    /// refuses to build one, so the schema here comes the other way: read from
+    /// `no_columns.parquet`, an Arrow-written file whose root has no children. That is the
+    /// route such a schema actually arrives by, and it makes the case a real one rather than
+    /// a hand-assembled root.
+    @Test
+    void rejectsSchemaWithNoColumns() throws IOException {
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NO_COLUMNS))) {
+            schema = reader.getFileSchema();
+        }
+        assertThat(schema.getColumnCount()).isZero();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Schema schema has no columns; the writer requires at least one column");
+
+        // Refused before the destination was opened, so there is nothing at it to clean up.
+        assertThatThrownBy(out::position)
+                .isInstanceOf(IllegalStateException.class);
+    }
+
     @Test
     void rejectsUnsupportedPhysicalType() {
         // INT96 is deprecated and never produced.

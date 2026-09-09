@@ -150,6 +150,7 @@ public final class ParquetFileWriter implements Closeable {
     /// @param schema the schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
+    /// @throws IllegalArgumentException if the schema declares no columns
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
     ///         physical type, or a shape the writer cannot produce
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
@@ -166,8 +167,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
     ///         physical type, a shape the writer cannot produce, or the configured codec cannot
     ///         be written
-    /// @throws IllegalArgumentException if an encoding policy names a column the schema does not
-    ///         have, or one its physical type cannot carry
+    /// @throws IllegalArgumentException if the schema declares no columns, or an encoding policy
+    ///         names a column the schema does not have, or one its physical type cannot carry
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         return create(out, schema, config, () -> new CompressorFactory().getCompressor(config.codec()));
