@@ -360,9 +360,8 @@ public class BatchExchange<B> {
     /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
     /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves
-    /// through [ValueConverter#isStringLeaf(PhysicalType, LogicalType)] so the
-    /// recording gate matches the consumer gate exactly.
+    /// through [LeafKind] so the recording gate matches the consumer gate exactly.
     private static boolean isStringColumn(ColumnSchema column) {
-        return ValueConverter.isStringLeaf(column.type(), column.logicalType());
+        return LeafKind.of(column.type(), column.logicalType()) == LeafKind.STRING;
     }
 }

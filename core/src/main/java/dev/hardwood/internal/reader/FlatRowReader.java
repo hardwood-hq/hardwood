@@ -161,7 +161,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             nameToIndex.put(col.name(), i);
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
-            kinds[i] = classifyLeaf(col.type(), col.logicalType());
+            kinds[i] = LeafKind.of(col.type(), col.logicalType());
         }
     }
 
@@ -183,31 +183,6 @@ public final class FlatRowReader implements FileAwareRowReader {
                 + physicalTypes[columnIndex]
                 + (logicalType == null ? "" : " annotated " + logicalType)
                 + ", which cannot be read as a float");
-    }
-
-    /// Decode strategy for [#getValue(int)], selected by a column's physical and
-    /// logical type. Matches the original branch order: a `UTF8` / `JSON` leaf is
-    /// served interned, an `INT96` leaf is the conventional timestamp, an
-    /// unannotated leaf returns its raw boxed value, and everything else converts.
-    private enum LeafKind {
-        STRING,
-        INT96_TIMESTAMP,
-        RAW,
-        CONVERT
-    }
-
-    private static LeafKind classifyLeaf(PhysicalType pt, LogicalType lt) {
-        if (ValueConverter.isStringLeaf(pt, lt)) {
-            return LeafKind.STRING;
-        }
-        if (lt == null && pt == PhysicalType.INT96) {
-            // INT96 has no LogicalType but is conventionally a TIMESTAMP. Keyed on the
-            // annotation's absence, as ValueConverter keys it: one that survived
-            // FileSchema is one no physical type is imposed on, and it decides the
-            // decode here as it does on any other column.
-            return LeafKind.INT96_TIMESTAMP;
-        }
-        return lt == null ? LeafKind.RAW : LeafKind.CONVERT;
     }
 
     /// Eagerly loads the first batch. Must be called after construction.

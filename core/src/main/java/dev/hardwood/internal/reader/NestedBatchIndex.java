@@ -179,9 +179,9 @@ final class NestedBatchIndex {
     /// interned `String` for a `UTF8` / `JSON` leaf, otherwise the converted raw
     /// value. The element must be known non-null.
     Object decodeLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
-        return ValueConverter.isStringLeaf(schema)
+        return LeafKind.of(schema) == LeafKind.STRING
                 ? getString(projectedCol, valueIndex)
-                : ValueConverter.convertValue(getValue(projectedCol, valueIndex), schema);
+                : NestedLeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
     }
 
     // ==================== Index Navigation ====================
