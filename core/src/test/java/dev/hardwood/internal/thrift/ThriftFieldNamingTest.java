@@ -11,7 +11,6 @@ import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.bloomfilter.UnsupportedBloomFilterException;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -256,9 +255,9 @@ class ThriftFieldNamingTest {
     /// cannot evaluate rather than an invalid one — the same file, read by a version
     /// that defines the variant, is correct — so it fails as unsupported rather than
     /// as unparseable, still named against the union rather than as an out-of-range
-    /// argument. The type is [UnsupportedBloomFilterException] rather than a plain
-    /// [UnsupportedOperationException] so that only this refuses to prune instead of
-    /// failing the read.
+    /// argument. The type is [UnsupportedOperationException] itself: a caller acts no
+    /// differently for this than for any other file this version cannot read, and the
+    /// message already names the variant.
     @Test
     void rejectsAVariantIdTheUnionDoesNotDefine() {
         // BloomFilterHeader.algorithm holding a union whose variant is id 2.
@@ -266,7 +265,7 @@ class ThriftFieldNamingTest {
 
         assertThatThrownBy(() -> BloomFilterHeaderReader.read(
                 new ThriftCompactReader(ByteBuffer.wrap(bytes))))
-                .isInstanceOf(UnsupportedBloomFilterException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("BloomFilterAlgorithm field 2 is not a bloom filter algorithm "
                         + "this version implements");
     }

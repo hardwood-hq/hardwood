@@ -10,7 +10,6 @@ package dev.hardwood.internal.thrift;
 import java.util.Arrays;
 
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
-import dev.hardwood.internal.bloomfilter.UnsupportedBloomFilterException;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 
 public class BloomFilterHeaderReader {
@@ -109,9 +108,9 @@ public class BloomFilterHeaderReader {
         };
     }
 
-    private static UnsupportedBloomFilterException unsupportedVariantOf(ThriftStruct union,
+    private static UnsupportedOperationException unsupportedVariantOf(ThriftStruct union,
             short variant, String what) {
-        return new UnsupportedBloomFilterException(
+        return new UnsupportedOperationException(
                 union.describe(variant) + " is not a " + what + " this version implements");
     }
 

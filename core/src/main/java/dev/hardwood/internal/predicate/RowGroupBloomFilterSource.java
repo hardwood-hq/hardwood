@@ -14,7 +14,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
-import dev.hardwood.internal.bloomfilter.UnsupportedBloomFilterException;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -93,13 +92,15 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         try {
             return readFilter(offset, metaData.bloomFilterLength());
         }
-        catch (UnsupportedBloomFilterException e) {
+        catch (UnsupportedOperationException e) {
             // The header names an algorithm, hash or compression this version of Hardwood does
             // not implement — a correct file it cannot evaluate, not a corrupt one. The filter
             // is unusable but the row group is still readable, so decline to prune rather than
-            // fail the whole read, and warn so the reduced pruning is visible. Caught by its own
-            // type: every other unsupported condition this read can meet is about the file rather
-            // than the filter, and keeps failing the read.
+            // fail the whole read, and warn so the reduced pruning is visible.
+            //
+            // Reading a filter raises this for no other reason, so the catch is as narrow as the
+            // condition. Anything unsupported added under here later would be swallowed by it:
+            // raise that from the frame that knows what to do with it instead.
             LOG.log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
                     + "Cannot evaluate the bloom filter: " + e.getMessage()
                     + "; keeping the row group (statistics still apply)");

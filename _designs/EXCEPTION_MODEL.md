@@ -23,6 +23,23 @@ does not hold, where validating cost 4% per accessor and 7–8% end-to-end, abov
 so the call surfaces as whatever the storage array's cast raises. #971 covers putting a
 better error back if it can be made free.
 
+## The table above is the whole list
+
+An exception that reaches a caller is one of the types named there, or a JDK type. It is
+never one declared under `dev.hardwood.internal`, which a caller could only catch by
+importing from an internal package.
+
+An internal type may still carry a condition between two frames, as long as a boundary
+catches it and reissues one of the above. `EncryptedFileException` carries "this footer is
+encrypted" up to `ParquetMetadataReader`, which raises the `UnsupportedOperationException`
+the caller sees. The single catch site is what makes that safe: a type thrown where no frame
+is guaranteed to catch it will reach a caller eventually.
+
+A new public type earns its place only where a caller would act on it. Where the response is
+the same — retry, give up, report — the distinction belongs in the message every one of these
+already carries. An unrecognized bloom filter variant raises `UnsupportedOperationException`
+naming the variant, rather than a type of its own.
+
 ## Propagating IO issues
 
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding
