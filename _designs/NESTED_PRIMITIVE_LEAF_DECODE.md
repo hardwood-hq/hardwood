@@ -1,6 +1,6 @@
 # Design: primitive leaf decode on the nested read path
 
-**Status: Planned.** Tracking issue: #1164.
+**Status: Implemented.** Tracking issue: #1164.
 
 ## Goal
 
@@ -36,7 +36,7 @@ A typed accessor names the type it returns, so it reads the primitive
 and calls the decode for that type directly:
 
 ```java
-private LocalDate readDate(FieldDesc.Primitive child) {
+private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
     int projCol = child.projectedCol();
     int idx = resolveValueIndex(projCol);
     if (batch.isElementNull(projCol, idx)) {
@@ -59,10 +59,17 @@ one step:
 ```java
 public List<LocalDate> dates() {
     int projCol = listDesc.firstLeafProjCol();
+    requirePrimitiveElement();
     return new LeafList<>(pos -> LogicalTypeConverter.intToDate(
             ((int[]) batch.valueArrays[projCol])[pos]));
 }
 ```
+
+`PqListImpl.requirePrimitiveElement` and `PqMapImpl.requirePrimitiveValue`
+cast the element or value schema to a leaf. A list of groups has no leaf to
+decode, and without the cast each of these accessors would read the group's
+first leaf column and decode whatever it holds — a difference the array cast
+cannot see, so the cast runs even where the leaf itself is not needed.
 
 The lambda resolves the array per element rather than capturing it, so
 the read is as lazy as it is today and a view does not pin the batch it
@@ -87,11 +94,14 @@ enum LeafKind {
     STRING, INT96_TIMESTAMP, RAW, CONVERT;
 
     static LeafKind of(PhysicalType type, LogicalType logicalType) { ... }
+
+    /// null where `schema` is a group, which carries no leaf decode.
+    static LeafKind of(SchemaNode schema) { ... }
 }
 ```
 
 `FlatRowReader` classifies each column once at construction and switches
-on the result in `getValue`. `NestedLeafDecoder` switches on it per
+on the result in `getValue`. `NestedLeafDecoder.decode` switches on it per
 leaf. `BatchExchange`'s string-interning gate asks
 `LeafKind.of(...) == STRING`, which is the same question the consumer
 side asks, so the side that records dictionary indices and the side that
@@ -102,8 +112,9 @@ reads them back cannot disagree.
 What the nested flyweights need beyond the decode table is the
 `SchemaNode` unwrap: a group node is returned untouched, because struct,
 list and map values are built by the flyweights and never carry a leaf
-decode. `NestedLeafDecoder` holds that, over `LeafKind` and
-`LogicalTypeConverter`. It serves the generic accessors; the typed ones
+decode. `NestedLeafDecoder.decode` holds that, over `LeafKind` and
+`LogicalTypeConverter`. It serves the generic accessors — `getValue`,
+`PqList.values()`, `NestedBatchIndex.decodeLeaf` — while the typed ones
 read primitives directly and do not go through it.
 
 ## Scope
