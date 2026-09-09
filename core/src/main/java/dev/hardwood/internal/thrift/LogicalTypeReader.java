@@ -17,6 +17,9 @@ import dev.hardwood.reader.ParquetReadException;
 /// LogicalType is a union with different variants for each type.
 public class LogicalTypeReader {
 
+    private static final System.Logger LOG =
+            System.getLogger(LogicalTypeReader.class.getName());
+
     public static LogicalType read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.LOGICAL_TYPE);
         try {
@@ -90,7 +93,16 @@ public class LogicalTypeReader {
                     case 16 -> readVariantType(reader);
                     case 17 -> readGeometryType(reader);
                     case 18 -> readGeographyType(reader);
+                    // An arm this version does not know. The format treats a new logical
+                    // type as forward-compatible: read the physical values and lose the
+                    // semantics, rather than refuse a file a newer writer produced.
                     default -> {
+                        LOG.log(System.Logger.Level.WARNING,
+                                "Ignoring unrecognized LogicalType union field {0};"
+                                + " the column will be read as its physical type."
+                                + " The file may have been written against a newer"
+                                + " version of the format.",
+                                ThriftCompactReader.fieldId(header));
                         reader.skipField(ThriftCompactReader.fieldType(header));
                         yield null;
                     }

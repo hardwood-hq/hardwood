@@ -17,7 +17,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -29,13 +28,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// `int32_with_uuid_logical_type.parquet` fixture from apache/parquet-testing: a `UUID`, which
 /// the format defines over `FIXED_LEN_BYTE_ARRAY(16)`, annotating an `INT32`.
 ///
-/// The annotation is not a value: the column's data is ten `INT32`s and reads back as such. So
-/// the file opens, the footer is reported as it stands — annotation included, because dropping it
-/// would misreport what the file says — and the physical values are readable.
+/// The annotation is not a value: the column's data is ten `INT32`s and reads back as such. The
+/// "Unsupported Logical Types" section of `LogicalTypes.md` — adopted in parquet-format PR 606 —
+/// has readers "ignore both the logical type annotation and column order for that column. Only
+/// the physical type information should be used to process the column's data", so the file opens
+/// and the column is reported and read as the plain `INT32` it physically is.
 ///
 /// [ParquetComparisonTest] skips the fixture: parquet-java rejects the pairing while parsing the
 /// footer ("UUID can only annotate FIXED_LEN_BYTE_ARRAY(16)") and so never opens the file, which
-/// leaves no reference reader to compare against. This test is the coverage that replaces it.
+/// leaves no reference reader to compare against. Its PR 3711 implements the same drop, so once
+/// that ships the comparison can be turned back on and this test becomes the narrower coverage.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class IncompatibleLogicalTypeReadTest {
 
@@ -58,10 +60,13 @@ class IncompatibleLogicalTypeReadTest {
         }
     }
 
+    /// The annotation is dropped rather than reported, so nothing downstream of the schema has
+    /// to know it was ever there — and a caller reading `logicalType()` is not told the column
+    /// holds UUIDs when it holds `INT32`s.
     @Test
-    void theSchemaIsReportedAsTheFooterStatesIt() {
+    void theUnreadableAnnotationIsDropped() {
         assertThat(schema.getColumn(COLUMN).type()).isEqualTo(PhysicalType.INT32);
-        assertThat(schema.getColumn(COLUMN).logicalType()).isInstanceOf(LogicalType.UuidType.class);
+        assertThat(schema.getColumn(COLUMN).logicalType()).isNull();
     }
 
     @Test

@@ -340,6 +340,7 @@ final class PqStructImpl implements PqStruct {
         // FLOAT16 path: convertToFloat16 returns primitive float so the value
         // flows through without per-row autoboxing. readLogicalType isn't reused
         // here because its `LogicalTypeConverter.convert` step boxes via Object.
+        batch.requireFloatAccess(child.schema());
         return LogicalTypeConverter.convertToFloat16(
                 ((BinaryBatchValues) batch.valueArrays[projCol]).byteArrayAt(idx),
                 child.schema().type());

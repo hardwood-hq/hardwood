@@ -21,7 +21,6 @@ import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -530,10 +529,12 @@ final class PqMapImpl implements PqMap {
                 throw new NullPointerException("Value is null");
             }
             if (valueSchema instanceof SchemaNode.PrimitiveNode primitive
-                    && primitive.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                    && primitive.logicalType() instanceof LogicalType.Float16Type) {
-                // FLOAT16 path: FLBA(2) payload decoded to a single-precision
-                // float, matching PqStructImpl.getFloat and FlatRowReader.getFloat.
+                    && primitive.type() != PhysicalType.FLOAT) {
+                // FLOAT16 path: FLBA(2) payload decoded to a single-precision float,
+                // matching PqStructImpl.readFloat and FlatRowReader.getFloat. Ruling out
+                // FLOAT first lets the shared guard name a value that is neither, rather
+                // than leaving it to the cast below.
+                batch.requireFloatAccess(primitive);
                 return LogicalTypeConverter.convertToFloat16(
                         ((BinaryBatchValues) batch.valueArrays[valueProjCol]).byteArrayAt(valueIdx),
                         primitive.type());

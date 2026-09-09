@@ -217,6 +217,7 @@ public final class NestedBatchDataView {
         // FLOAT16 path: primitive convertToFloat16 keeps the value unboxed;
         // readLogicalType isn't reused because LogicalTypeConverter.convert
         // returns Object and would box.
+        batchIndex.requireFloatAccess(p.schema());
         try {
             return LogicalTypeConverter.convertToFloat16(
                     ((BinaryBatchValues) batchIndex.valueArrays[projCol]).byteArrayAt(valueIdx),
@@ -277,6 +278,7 @@ public final class NestedBatchDataView {
         if (p.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) fieldValueArrays[projectedIndex])[valueIdx];
         }
+        batchIndex.requireFloatAccess(p.schema());
         try {
             return LogicalTypeConverter.convertToFloat16(
                     ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx),

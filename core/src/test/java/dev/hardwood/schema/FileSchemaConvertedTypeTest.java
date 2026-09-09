@@ -32,6 +32,16 @@ class FileSchemaConvertedTypeTest {
 
     /// Build a one-column schema whose single leaf carries only the given
     /// `convertedType` (no modern logical type), and return the resolved column.
+    /// A legacy `converted_type` is promoted to its modern annotation first, so the same
+    /// rule drops it when the column's physical type cannot carry it — a writer that put
+    /// `UTF8` on an `INT32` produced a file no version of the format defines, whichever of
+    /// the two annotations it used to say so.
+    @Test
+    void aPromotedConvertedTypeItsPhysicalTypeCannotCarryIsDropped() {
+        assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.UTF8).logicalType()).isNull();
+        assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.DATE).logicalType()).isNull();
+    }
+
     private static ColumnSchema resolveColumn(PhysicalType type, ConvertedType convertedType) {
         return resolveColumn(type, convertedType, null, null);
     }

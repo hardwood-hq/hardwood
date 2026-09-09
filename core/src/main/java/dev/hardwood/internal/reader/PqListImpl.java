@@ -21,7 +21,6 @@ import java.util.function.IntFunction;
 
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -192,11 +191,13 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<Float> floats() {
-        // FLOAT16 (FLBA(2) + Float16Type) decodes per element via the typed
-        // converter; plain FLOAT is a direct cast.
+        // FLOAT16 (FLBA(2) + Float16Type) decodes per element via the typed converter;
+        // plain FLOAT is a direct cast. Ruling out FLOAT first lets the shared guard name
+        // an element that is neither, rather than leaving it to the cast below — and it
+        // decides once per view, as the element's annotation is decided once.
         if (elementSchema instanceof SchemaNode.PrimitiveNode prim
-                && prim.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                && prim.logicalType() instanceof LogicalType.Float16Type) {
+                && prim.type() != PhysicalType.FLOAT) {
+            batch.requireFloatAccess(prim);
             return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
         }
         return new LeafList<>(raw -> (Float) raw);

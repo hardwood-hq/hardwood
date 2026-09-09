@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -35,12 +37,16 @@ final class NestedBatchIndex {
     final int[][][] multiOffsets;
     final long[][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
+    /// The file these batches came from, for the failures that name one. Batches never
+    /// straddle files.
+    final String fileName;
 
     private NestedBatchIndex(Object[] valueArrays, int[][] defLevels,
                              ColumnSchema[] columnSchemas, int[] valueCounts,
                              int[] recordCounts, int[][] offsets,
                              int[][][] multiOffsets,
-                             long[][] elementValidity, ProjectedSchema projectedSchema) {
+                             long[][] elementValidity, ProjectedSchema projectedSchema,
+                             String fileName) {
         this.valueArrays = valueArrays;
         this.defLevels = defLevels;
         this.columnSchemas = columnSchemas;
@@ -50,6 +56,26 @@ final class NestedBatchIndex {
         this.multiOffsets = multiOffsets;
         this.elementValidity = elementValidity;
         this.projectedSchema = projectedSchema;
+        this.fileName = fileName;
+    }
+
+    /// Fails when the caller has asked a column for a float it does not hold.
+    ///
+    /// Reached only once the `FLOAT` fast path has been ruled out, so a column that holds
+    /// floats never arrives here. Shared by every nested accessor that reads a `FLOAT16`,
+    /// so all of them answer a caller the same way. The column is named by its leaf name,
+    /// as every other message this reader composes names it. A column whose annotation its
+    /// width cannot carry arrives unannotated, so it reaches here as what it physically is
+    /// rather than as a broken `FLOAT16`.
+    void requireFloatAccess(SchemaNode.PrimitiveNode column) {
+        LogicalType logicalType = column.logicalType();
+        if (logicalType instanceof LogicalType.Float16Type) {
+            return;
+        }
+        throw new IllegalArgumentException(ExceptionContext.filePrefix(fileName)
+                + "Column '" + column.name() + "' is " + column.type()
+                + (logicalType == null ? "" : " annotated " + logicalType)
+                + ", which cannot be read as a float");
     }
 
     /// Build the batch index from [NestedBatch] objects whose index fields
@@ -79,7 +105,8 @@ final class NestedBatchIndex {
 
         return new NestedBatchIndex(valueArrays, defLevels, columnSchemas,
                 valueCounts, recordCounts, offsets, multiOffsets,
-                elementValidity, projectedSchema);
+                elementValidity, projectedSchema,
+                colCount > 0 ? batches[0].fileName : null);
     }
 
     /// Compact a layer-indexed offsets array (length `layerCount`, with

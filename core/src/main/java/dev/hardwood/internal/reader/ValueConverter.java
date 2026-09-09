@@ -43,20 +43,6 @@ public final class ValueConverter {
         return (Long) rawValue;
     }
 
-    public static Float convertToFloat(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        // FLBA(2) annotated FLOAT16 decodes the half-precision payload to a
-        // single-precision Float so callers don't need to know the on-disk encoding.
-        if (schema instanceof SchemaNode.PrimitiveNode primitive
-                && primitive.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                && primitive.logicalType() instanceof LogicalType.Float16Type) {
-            return convertLogicalType(rawValue, schema, Float.class);
-        }
-        return (Float) rawValue;
-    }
-
     public static Double convertToDouble(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;

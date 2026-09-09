@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.util.StringToIntMap;
@@ -28,6 +29,9 @@ import dev.hardwood.metadata.SchemaElement;
 /// @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public class FileSchema {
+
+    private static final System.Logger LOG =
+            System.getLogger(FileSchema.class.getName());
 
     private final String name;
     private final List<ColumnSchema> columns;
@@ -187,7 +191,16 @@ public class FileSchema {
 
         // Shared read position into the flat element list; start past the root at index 0.
         int[] cursor = { 1 };
-        List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex);
+        // One line per file rather than one per column: a file written against a newer
+        // format version can carry many, and they say the same thing about all of them.
+        List<String> dropped = new ArrayList<>();
+        List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex, dropped);
+        if (!dropped.isEmpty()) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "Ignoring {0} logical type annotation(s) the column''s physical type"
+                    + " cannot carry; those columns are read as their physical type: {1}",
+                    dropped.size(), String.join("; ", dropped));
+        }
 
         SchemaNode.GroupNode rootNode = new SchemaNode.GroupNode(
                 root.name(),
@@ -211,7 +224,8 @@ public class FileSchema {
                                                   int parentRepLevel,
                                                   List<String> parentPath,
                                                   List<ColumnSchema> columns,
-                                                  int[] columnIndex) {
+                                                  int[] columnIndex,
+                                                  List<String> dropped) {
 
         List<SchemaNode> children = new ArrayList<>();
 
@@ -231,7 +245,7 @@ public class FileSchema {
             if (element.isPrimitive()) {
                 // Primitive node - represents an actual column
                 int colIdx = columnIndex[0]++;
-                LogicalType effectiveLogicalType = effectiveLogicalType(element);
+                LogicalType effectiveLogicalType = readableLogicalType(element, currentPath, dropped);
                 columns.add(new ColumnSchema(
                         new FieldPath(List.copyOf(currentPath)),
                         element.type(),
@@ -266,7 +280,8 @@ public class FileSchema {
                         repLevel,
                         currentPath,
                         columns,
-                        columnIndex);
+                        columnIndex,
+                        dropped);
 
                 SchemaNode.GroupNode groupNode = new SchemaNode.GroupNode(
                         element.name(),
@@ -284,6 +299,72 @@ public class FileSchema {
         }
 
         return children;
+    }
+
+    /// The column's annotation, or `null` where its physical type cannot carry it.
+    ///
+    /// `FLOAT16` is defined as a two-byte payload, so a column annotated `FLOAT16` that
+    /// declares twelve bytes is invalid, and no reading of it produces the value the
+    /// annotation promises. The format says to read past the annotation rather than refuse
+    /// the file: see the "Unsupported Logical Types" section of `LogicalTypes.md`, adopted in
+    /// parquet-format PR 606, which has readers "ignore both the logical type annotation and
+    /// column order for that column. Only the physical type information should be used to
+    /// process the column's data."
+    ///
+    /// So the column is reported and read as though the footer had not annotated it. Every
+    /// consequence follows from the annotation's absence rather than from a check: the
+    /// physical accessors work, `getValue` yields the physical value, a logical accessor
+    /// fails exactly as it would on any unannotated column of that type, and the column's
+    /// statistics are compared under its physical type's ordering.
+    ///
+    /// The sibling case — an annotation this version does not recognize at all — is dropped
+    /// where it is parsed, in `LogicalTypeReader`. Both end here as an unannotated column;
+    /// they differ only in what the warning can tell the reader, because one is a file from
+    /// a newer writer and the other is a file from a broken one.
+    ///
+    /// Column order needs no separate handling: the only thing it decides is whether a float
+    /// predicate compares under IEEE 754 total order, and a column that has lost its
+    /// `FLOAT16` annotation is rejected by `FilterPredicateResolver` before that flag is
+    /// consulted.
+    private static LogicalType readableLogicalType(SchemaElement element, List<String> path,
+                                                   List<String> dropped) {
+        LogicalType annotation = effectiveLogicalType(element);
+        if (annotation == null) {
+            return null;
+        }
+        String fault = LogicalTypeConverter.conversionFault(
+                element.type(), element.typeLength(), annotation);
+        if (fault == null) {
+            return annotation;
+        }
+        dropped.add(String.join(".", path) + " (" + fault + ")");
+        return null;
+    }
+
+    /// Guards the read-side leniency against a schema the caller declared.
+    ///
+    /// [#readableLogicalType] drops an annotation the column's physical type cannot carry,
+    /// which is right for a file already on disk and wrong for a schema being declared here:
+    /// the caller would get a file written without the annotation they asked for, and only a
+    /// warning to say so. [LogicalTypeValidator] already refuses every such pairing when the
+    /// leaf is declared, so reaching this means the writer's rule and the reader's have
+    /// drifted apart rather than that the caller did anything wrong.
+    private static void requireNoAnnotationDropped(List<SchemaElement> elements) {
+        for (SchemaElement element : elements) {
+            if (!element.isPrimitive()) {
+                continue;
+            }
+            LogicalType annotation = effectiveLogicalType(element);
+            if (annotation == null) {
+                continue;
+            }
+            String fault = LogicalTypeConverter.conversionFault(
+                    element.type(), element.typeLength(), annotation);
+            if (fault != null) {
+                throw new IllegalStateException("Column '" + element.name() + "': " + fault
+                        + ". A declared schema must not carry an annotation the reader drops.");
+            }
+        }
     }
 
     /// Resolve the effective logical type of a primitive element, falling back
@@ -597,6 +678,7 @@ public class FileSchema {
             List<SchemaElement> elements = new ArrayList<>();
             elements.add(SchemaElement.group(name, RepetitionType.REQUIRED, content.children.size()));
             flatten(content.children, elements);
+            requireNoAnnotationDropped(elements);
             return fromSchemaElements(elements);
         }
     }

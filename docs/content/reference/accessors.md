@@ -65,6 +65,17 @@ normal control flow. If the column type isn't known statically, check it up fron
 `reader.getFileSchema().getColumn(name)` and inspect the returned `ColumnSchema`'s `type()` /
 `logicalType()` — see [Inspect File Metadata](../how-to/metadata.md).
 
+A column whose annotation its physical type cannot carry is not an error. `FLOAT16` is defined as
+a two-byte payload, so a `FLOAT16` column that declares three bytes is invalid. The format tells
+readers to ignore such an annotation rather than reject the file, so Hardwood drops it — and drops
+one it does not recognize at all — logging a warning in each case. The column is then reported and
+read as its physical type.
+
+`getFileSchema()` reports no logical type for it, `getValue` returns the physical value, and the
+physical accessors work. A logical accessor fails as it would on any unannotated column of that
+type. Statistics are compared under the physical type's ordering, and a logical-type predicate on
+the column is rejected at reader creation.
+
 The `getTimestamp` / `getLocalTimestamp` pair is split along the column's `isAdjustedToUTC` flag:
 `getTimestamp` requires `isAdjustedToUTC = true` and returns `Instant`; `getLocalTimestamp`
 requires `isAdjustedToUTC = false` and returns `LocalDateTime`. Calling the wrong one for a column

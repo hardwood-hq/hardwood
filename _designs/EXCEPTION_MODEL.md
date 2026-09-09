@@ -13,6 +13,38 @@ without reading the message.
 > **Trying again will not:** `ParquetReadException`, `ParquetWriteException`,
 > `UnsupportedOperationException`
 
+## The second question: whose fault
+
+Retry-or-stop does not separate a file that is wrong from a call that is wrong, since both
+mean stop. A second question runs across the first: whose fault is it? The answer tells the
+caller whether to change their code or stop trusting the file.
+
+| | Means | Type |
+|---|---|---|
+| **The file's fault** | the bytes, or the footer, are not what they claim | `ParquetReadException` |
+| **The caller's fault** | the reader was asked for something it never held | `IllegalArgumentException`, `NullPointerException`, `NoSuchElementException`, `IllegalStateException` — except wrong-type access, which is unspecified |
+
+Most of the caller's side is stated and can be relied on — a column outside the projection,
+an accessor on a null field, `next()` past the end, a `ColumnReader` used before its first
+batch. One case is not: asking an accessor for a type the column does not hold. Validating
+that cost 4% per accessor and 7–8% end-to-end, above the 3% bar, so the guards were dropped
+and the call surfaces as whatever the storage array's cast raises. Leaving that one type
+unstated keeps the freedom to put a better error back on a path where it turns out to be
+free.
+
+Every message names the file the reader was on. Exceptions raised for an invalid file add
+the read position — the row group and page the read stopped at — because that varies between
+failures and is what someone chasing one needs. Exceptions raised for a mistake in the
+calling code do not, because the fix is the same wherever in the file the reader had got to.
+
+That describes the messages the reader composes. Wrong-type access is the exception: a
+`ClassCastException` raised by the JVM's own cast names neither the file nor the column.
+#971 covers closing that gap.
+
+The file name is worth carrying on both. A process reading many files with a reader each has
+no other way to tell which one a failure came from, and no public accessor to recover it
+from afterwards.
+
 ## The categories
 
 | Category | Means | Type |
@@ -109,6 +141,43 @@ work again on the calling thread and reports to a caller that is waiting. DEBUG
 rather than WARN because that report is coming, and a backend outage would otherwise
 emit one warning per speculative chunk.
 
+## An annotation the reader cannot use is dropped, not raised
+
+A schema can be invalid on its own terms in two ways, and they are handled differently.
+
+A `FIXED_LEN_BYTE_ARRAY` that declares no width cannot be decoded at all — the width sizes
+the buffer and spaces the offsets, so without it there are no value boundaries to find.
+`FixedWidthValidator` refuses it when the reader is built, over the columns the read
+touches, as a `SchemaIncompatibleException`.
+
+An annotation its physical type cannot carry is different. A `FLOAT16` column twelve bytes
+wide is invalid, but its twelve-byte values are readable; only the annotation is unusable.
+The format says to read past it: the
+"Unsupported Logical Types" section of `LogicalTypes.md`, adopted in parquet-format PR 606,
+has readers "ignore both the logical type annotation and column order for that column. Only
+the physical type information should be used to process the column's data."
+
+So `FileSchema` drops the annotation as the schema is built, and the column is reported and
+read as its physical type. No check is needed anywhere downstream: the physical accessors
+work, `getValue` yields the physical value, a logical accessor fails as it does on any
+unannotated column of that type, and the statistics are compared under the physical type's
+ordering. Column order needs no separate handling —
+the only thing it decides is whether a float predicate compares under IEEE 754 total order,
+and a column that has lost its `FLOAT16` annotation is rejected by `FilterPredicateResolver`
+before that flag is consulted.
+
+An annotation this version does not recognize at all is dropped where it is parsed, in
+`LogicalTypeReader`. The handling is the same, but the warnings differ, because the causes
+do: an unrecognized arm means the file was written against a newer format version, while an
+annotation its physical type cannot carry means the writer produced something no version of
+the format defines. Only the second can be shown to be wrong, and so only the second could
+ever be a candidate for refusing the read. Refusing the first would break the forward
+compatibility this rule exists to provide.
+
+A footer that omits `type_length` states no width for the annotation to contradict, so
+there is nothing to show is wrong. The annotation is kept, and the column is refused for the
+missing width instead, by the validator whose message describes that defect.
+
 ## Which failures are which
 
 | | |
@@ -167,7 +236,9 @@ Accessing a column outside the projection, calling a primitive accessor on a nul
 field, calling `next()` past the end, using a `ColumnReader` accessor before
 `nextBatch()`, and the writer's own misuse types — an unknown column, a value
 outside its annotation's range, a `REQUIRED` field left unset. The caller's code is
-wrong and no file is involved. `ThriftEnumLookup.indexOf` is on this side too: it
+wrong, and the message names the file and the column but no read position, since that
+would be the same wherever the reader had got to. `ThriftEnumLookup.indexOf` is on this
+side too: it
 maps an enum to a Thrift value on the write path, where a value with no encoding is
 a mistake in the calling code.
 

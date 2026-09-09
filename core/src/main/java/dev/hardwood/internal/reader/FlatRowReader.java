@@ -165,6 +165,26 @@ public final class FlatRowReader implements FileAwareRowReader {
         }
     }
 
+    /// Fails when the caller has asked a column for a float it does not hold.
+    ///
+    /// Reached only once the `FLOAT` fast path has been ruled out, so the whole question is
+    /// whether the column is the other thing `getFloat` reads. It says what the column
+    /// actually is, rather than the width `FLOAT16` would have needed — which is not what
+    /// the caller asked about when the column is not annotated `FLOAT16` at all. A column
+    /// whose annotation its width cannot carry arrives unannotated, the annotation having
+    /// been dropped where the schema was built, so it is simply not a float column.
+    private void requireFloatAccess(int columnIndex) {
+        LogicalType logicalType = columnSchemas[columnIndex].logicalType();
+        if (logicalType instanceof LogicalType.Float16Type) {
+            return;
+        }
+        throw new IllegalArgumentException(prefix() + "Column '"
+                + columnSchemas[columnIndex].fieldPath() + "' is "
+                + physicalTypes[columnIndex]
+                + (logicalType == null ? "" : " annotated " + logicalType)
+                + ", which cannot be read as a float");
+    }
+
     /// Decode strategy for [#getValue(int)], selected by a column's physical and
     /// logical type. Matches the original branch order: a `UTF8` / `JSON` leaf is
     /// served interned, an `INT96` leaf is the conventional timestamp, an
@@ -511,8 +531,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
             return ((float[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type;
-        // convertToFloat16 owns the physical-type and 2-byte-width validation.
+        // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type; any other
+        // column is one the caller has asked for a float it does not hold.
+        requireFloatAccess(columnIndex);
         try {
             return LogicalTypeConverter.convertToFloat16(
                     ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
