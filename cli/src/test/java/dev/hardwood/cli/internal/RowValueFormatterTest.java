@@ -30,7 +30,7 @@ class RowValueFormatterTest {
     @Test
     void timestampMicrosUtc() {
         ColumnSchema col = column(PhysicalType.INT64,
-                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS));
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
 
         // 2025-01-01T00:00:00.000000Z
         long micros = 1735689600_000_000L;
@@ -42,7 +42,7 @@ class RowValueFormatterTest {
     @Test
     void timestampMicrosNotUtcRendersAsLocalDateTime() {
         ColumnSchema col = column(PhysicalType.INT64,
-                new LogicalType.TimestampType(false, LogicalType.TimeUnit.MICROS));
+                LogicalType.timestamp(false, LogicalType.TimeUnit.MICROS));
         long micros = 1735689600_000_000L;
 
         // Local-wall-clock timestamp: no trailing 'Z', and LocalDateTime.toString
@@ -53,7 +53,7 @@ class RowValueFormatterTest {
 
     @Test
     void dateRendersAsLocalDate() {
-        ColumnSchema col = column(PhysicalType.INT32, new LogicalType.DateType());
+        ColumnSchema col = column(PhysicalType.INT32, LogicalType.date());
         // 2025-04-24 = epoch day 20202
         assertThat(RowValueFormatter.formatDictionaryValue(20202, col))
                 .isEqualTo("2025-04-24");
@@ -62,7 +62,7 @@ class RowValueFormatterTest {
     @Test
     void timeMicrosRendersAsLocalTime() {
         ColumnSchema col = column(PhysicalType.INT64,
-                new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS));
+                LogicalType.time(false, LogicalType.TimeUnit.MICROS));
         long micros = (12L * 3600 + 34 * 60 + 56) * 1_000_000L;
         assertThat(RowValueFormatter.formatDictionaryValue(micros, col))
                 .isEqualTo("12:34:56");
@@ -70,7 +70,7 @@ class RowValueFormatterTest {
 
     @Test
     void stringBytesDecodedAsUtf8() {
-        ColumnSchema col = column(PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        ColumnSchema col = column(PhysicalType.BYTE_ARRAY, LogicalType.string());
         byte[] bytes = "héllo".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         assertThat(RowValueFormatter.formatDictionaryValue(bytes, col)).isEqualTo("héllo");
     }
@@ -79,7 +79,7 @@ class RowValueFormatterTest {
     void float16BytesDecodeToFloat() {
         // Half-precision 1.5 = sign 0 | exponent 01111 (15) | fraction 1000000000
         // = 0x3E00, little-endian → 0x00, 0x3E.
-        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, new LogicalType.Float16Type());
+        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16());
         byte[] fp16 = { 0x00, 0x3E };
         assertThat(RowValueFormatter.formatDictionaryValue(fp16, col)).isEqualTo("1.5");
     }
@@ -92,7 +92,7 @@ class RowValueFormatterTest {
 
     @Test
     void unsignedInt32() {
-        ColumnSchema col = column(PhysicalType.INT32, new LogicalType.IntType(32, false));
+        ColumnSchema col = column(PhysicalType.INT32, LogicalType.intType(32, false));
         assertThat(RowValueFormatter.formatDictionaryValue(-1, col))
                 .isEqualTo("4294967295");
     }
@@ -143,7 +143,7 @@ class RowValueFormatterTest {
 
     @Test
     void intervalDictionaryBytesRenderAsComponents() {
-        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, new LogicalType.IntervalType());
+        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval());
         // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit
         byte[] bytes = new byte[12];
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);

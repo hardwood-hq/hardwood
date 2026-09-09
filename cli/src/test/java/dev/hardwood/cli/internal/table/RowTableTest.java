@@ -91,7 +91,7 @@ class RowTableTest {
     void renderAnnotatedStringAlwaysDecodes() {
         SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
                 "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType(), 0, 0, 0);
+                LogicalType.string(), 0, 0, 0);
         byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
 
         assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");

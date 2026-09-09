@@ -117,7 +117,7 @@ class BinaryDecimalFilterTest {
     void aFixedWidthDecimalStaysByteExact() {
         FileSchema fixed = FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        new LogicalType.DecimalType(2, 18))
+                        LogicalType.decimal(18, 2))
                 .build();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("1.27")), fixed);
@@ -184,14 +184,14 @@ class BinaryDecimalFilterTest {
     private static FileSchema schema() {
         return FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        new LogicalType.DecimalType(2, 18))
+                        LogicalType.decimal(18, 2))
                 .build();
     }
 
     private static FileSchema nullableSchema() {
         return FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        new LogicalType.DecimalType(2, 18))
+                        LogicalType.decimal(18, 2))
                 .build();
     }
 

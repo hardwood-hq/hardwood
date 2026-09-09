@@ -100,7 +100,7 @@ class IndexValueFormatterTest {
     @Test
     void rendersDateLogically() {
         ColumnSchema col = new ColumnSchema(FieldPath.of("d"), PhysicalType.INT32,
-                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.DateType());
+                RepetitionType.OPTIONAL, null, 0, 1, 0, LogicalType.date());
         // epoch day 20202 = 2025-04-24, little-endian INT32
         int day = 20202;
         byte[] bytes = new byte[]{(byte) day, (byte) (day >> 8), (byte) (day >> 16), (byte) (day >> 24)};
@@ -110,7 +110,7 @@ class IndexValueFormatterTest {
     @Test
     void rendersIntervalLogically() {
         ColumnSchema col = new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.IntervalType());
+                RepetitionType.OPTIONAL, null, 0, 1, 0, LogicalType.interval());
         // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit
         byte[] bytes = new byte[12];
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
@@ -123,7 +123,7 @@ class IndexValueFormatterTest {
     @Test
     void intervalPhysicalModeRendersAsHex() {
         ColumnSchema col = new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.IntervalType());
+                RepetitionType.OPTIONAL, null, 0, 1, 0, LogicalType.interval());
         byte[] bytes = new byte[12];
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         bb.putInt(1);
@@ -184,7 +184,7 @@ class IndexValueFormatterTest {
 
     private static ColumnSchema stringColumn() {
         return new ColumnSchema(FieldPath.of("s"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, new LogicalType.StringType());
+                null, 0, 1, 0, LogicalType.string());
     }
 
     private static ColumnSchema intColumn() {
@@ -194,6 +194,6 @@ class IndexValueFormatterTest {
 
     private static ColumnSchema timestampColumn(boolean isUtc, LogicalType.TimeUnit unit) {
         return new ColumnSchema(FieldPath.of("ts"), PhysicalType.INT64, RepetitionType.OPTIONAL,
-                null, 0, 1, 0, new LogicalType.TimestampType(isUtc, unit));
+                null, 0, 1, 0, LogicalType.timestamp(isUtc, unit));
     }
 }

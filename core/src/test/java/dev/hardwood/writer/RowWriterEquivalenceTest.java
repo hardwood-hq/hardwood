@@ -35,7 +35,7 @@ class RowWriterEquivalenceTest {
     void flatColumnsWithNullsMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .addColumn("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
 
@@ -120,7 +120,7 @@ class RowWriterEquivalenceTest {
     void manyRecordsAcrossSeveralStagedBatchesMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .build();
 
         int records = 2_500;
@@ -159,10 +159,10 @@ class RowWriterEquivalenceTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.StringType()))
+                                LogicalType.string()))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType()))
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
     }

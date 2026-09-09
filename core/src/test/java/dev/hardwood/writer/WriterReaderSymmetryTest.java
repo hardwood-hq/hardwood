@@ -43,10 +43,10 @@ class WriterReaderSymmetryTest {
 
     @Test
     void narrowIntegerExtremesMaterializeIdentically() throws Exception {
-        assertIntExtremes(new LogicalType.IntType(8, true), -128, 127);
-        assertIntExtremes(new LogicalType.IntType(8, false), 0, 255);
-        assertIntExtremes(new LogicalType.IntType(16, true), -32_768, 32_767);
-        assertIntExtremes(new LogicalType.IntType(16, false), 0, 65_535);
+        assertIntExtremes(LogicalType.intType(8, true), -128, 127);
+        assertIntExtremes(LogicalType.intType(8, false), 0, 255);
+        assertIntExtremes(LogicalType.intType(16, true), -32_768, 32_767);
+        assertIntExtremes(LogicalType.intType(16, false), 0, 65_535);
     }
 
     /// The full unsigned widths keep the raw two's-complement bits, which is the reader's
@@ -54,8 +54,8 @@ class WriterReaderSymmetryTest {
     @Test
     void fullWidthUnsignedValuesKeepTheirBitPattern() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.IntType(32, false))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, new LogicalType.IntType(64, false))
+                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(32, false))
+                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false))
                 .build();
 
         ByteBufferOutputFile out = write(schema, batch -> batch
@@ -98,13 +98,13 @@ class WriterReaderSymmetryTest {
     /// each storage admits.
     @Test
     void decimalExtremesMaterializeIdentically() throws Exception {
-        assertDecimal(single(PhysicalType.INT32, new LogicalType.DecimalType(2, 9)),
+        assertDecimal(single(PhysicalType.INT32, LogicalType.decimal(9, 2)),
                 batch -> batch.ints(0, new int[] { -999_999_999, 999_999_999 }),
                 new BigDecimal("-9999999.99"), new BigDecimal("9999999.99"));
-        assertDecimal(single(PhysicalType.INT64, new LogicalType.DecimalType(4, 18)),
+        assertDecimal(single(PhysicalType.INT64, LogicalType.decimal(18, 4)),
                 batch -> batch.longs(0, new long[] { -999_999_999_999_999_999L, 999_999_999_999_999_999L }),
                 new BigDecimal("-99999999999999.9999"), new BigDecimal("99999999999999.9999"));
-        assertDecimal(single(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(2, 20)),
+        assertDecimal(single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2)),
                 batch -> batch.bytes(0, new byte[][] {
                         new BigDecimal("-999999999999999999.99").unscaledValue().toByteArray(),
                         new BigDecimal("999999999999999999.99").unscaledValue().toByteArray() }),
@@ -117,7 +117,7 @@ class WriterReaderSymmetryTest {
     void fixedWidthAnnotationExtremesMaterializeIdentically() throws Exception {
         byte[] allOnes16 = new byte[16];
         Arrays.fill(allOnes16, (byte) 0xff);
-        FileSchema uuid = fixed(16, new LogicalType.UuidType());
+        FileSchema uuid = fixed(16, LogicalType.uuid());
 
         try (ParquetFileReader reader = open(write(uuid, batch -> batch.fixed(0, new byte[][] { allOnes16 })));
              RowReader rows = reader.rowReader()) {
@@ -128,7 +128,7 @@ class WriterReaderSymmetryTest {
 
         byte[] allOnes12 = new byte[12];
         Arrays.fill(allOnes12, (byte) 0xff);
-        FileSchema interval = fixed(12, new LogicalType.IntervalType());
+        FileSchema interval = fixed(12, LogicalType.interval());
 
         try (ParquetFileReader reader = open(write(interval, batch -> batch.fixed(0, new byte[][] { allOnes12 })));
              RowReader rows = reader.rowReader()) {
@@ -136,7 +136,7 @@ class WriterReaderSymmetryTest {
             assertThat(rows.getInterval("v")).isEqualTo(new PqInterval(4_294_967_295L, 4_294_967_295L, 4_294_967_295L));
         }
 
-        FileSchema float16 = fixed(2, new LogicalType.Float16Type());
+        FileSchema float16 = fixed(2, LogicalType.float16());
         try (ParquetFileReader reader = open(write(float16,
                 batch -> batch.fixed(0, new byte[][] { { 0x00, 0x3c }, { (byte) 0xff, (byte) 0xff } })));
              RowReader rows = reader.rowReader()) {
@@ -151,7 +151,7 @@ class WriterReaderSymmetryTest {
     /// stress UTF-8: the empty string, and a code point outside the basic plane.
     @Test
     void stringValuesMaterializeIdentically() throws Exception {
-        FileSchema schema = single(PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        FileSchema schema = single(PhysicalType.BYTE_ARRAY, LogicalType.string());
         String astral = "🪵";
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -187,7 +187,7 @@ class WriterReaderSymmetryTest {
     }
 
     private static void assertDate(int epochDay) throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.date());
 
         ByteBufferOutputFile out = write(schema, batch -> batch.ints(0, new int[] { epochDay }));
 
@@ -199,7 +199,7 @@ class WriterReaderSymmetryTest {
     }
 
     private static void assertTimestamp(TimeUnit unit, long stored) throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, unit));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, unit));
 
         ByteBufferOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
 
@@ -212,7 +212,7 @@ class WriterReaderSymmetryTest {
     }
 
     private static void assertLocalTimestamp(TimeUnit unit, long stored) throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(false, unit));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(false, unit));
 
         ByteBufferOutputFile out = write(schema, batch -> batch.longs(0, new long[] { stored }));
 
@@ -226,7 +226,7 @@ class WriterReaderSymmetryTest {
 
     private static void assertTime(TimeUnit unit, PhysicalType type, long stored, LocalTime expected)
             throws Exception {
-        FileSchema schema = single(type, new LogicalType.TimeType(true, unit));
+        FileSchema schema = single(type, LogicalType.time(true, unit));
 
         ByteBufferOutputFile out = write(schema, batch -> {
             if (type == PhysicalType.INT32) {

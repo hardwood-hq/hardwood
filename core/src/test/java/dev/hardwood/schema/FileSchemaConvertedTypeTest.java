@@ -58,49 +58,49 @@ class FileSchemaConvertedTypeTest {
     @Test
     void utf8ResolvesToStringType() {
         assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.UTF8).logicalType())
-                .isEqualTo(new LogicalType.StringType());
+                .isEqualTo(LogicalType.string());
     }
 
     @Test
     void enumResolvesToEnumType() {
         assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.ENUM).logicalType())
-                .isEqualTo(new LogicalType.EnumType());
+                .isEqualTo(LogicalType.enumType());
     }
 
     @Test
     void jsonResolvesToJsonType() {
         assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.JSON).logicalType())
-                .isEqualTo(new LogicalType.JsonType());
+                .isEqualTo(LogicalType.json());
     }
 
     @Test
     void bsonResolvesToBsonType() {
         assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.BSON).logicalType())
-                .isEqualTo(new LogicalType.BsonType());
+                .isEqualTo(LogicalType.bson());
     }
 
     @Test
     void intervalResolvesToIntervalType() {
         assertThat(resolveColumn(PhysicalType.FIXED_LEN_BYTE_ARRAY, ConvertedType.INTERVAL).logicalType())
-                .isEqualTo(new LogicalType.IntervalType());
+                .isEqualTo(LogicalType.interval());
     }
 
     @Test
     void dateResolvesToDateType() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.DATE).logicalType())
-                .isEqualTo(new LogicalType.DateType());
+                .isEqualTo(LogicalType.date());
     }
 
     @Test
     void decimalResolvesToDecimalTypeWithScaleAndPrecision() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.DECIMAL, 2, 18).logicalType())
-                .isEqualTo(new LogicalType.DecimalType(2, 18));
+                .isEqualTo(LogicalType.decimal(18, 2));
     }
 
     @Test
     void decimalDefaultsScaleToZeroWhenAbsent() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.DECIMAL, null, 9).logicalType())
-                .isEqualTo(new LogicalType.DecimalType(0, 9));
+                .isEqualTo(LogicalType.decimal(9, 0));
     }
 
     @Test
@@ -113,80 +113,80 @@ class FileSchemaConvertedTypeTest {
     @Test
     void timeMillisResolvesToUtcAdjustedMillis() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.TIME_MILLIS).logicalType())
-                .isEqualTo(new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS));
+                .isEqualTo(LogicalType.time(true, LogicalType.TimeUnit.MILLIS));
     }
 
     @Test
     void timeMicrosResolvesToUtcAdjustedMicros() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.TIME_MICROS).logicalType())
-                .isEqualTo(new LogicalType.TimeType(true, LogicalType.TimeUnit.MICROS));
+                .isEqualTo(LogicalType.time(true, LogicalType.TimeUnit.MICROS));
     }
 
     @Test
     void timestampMillisResolvesToUtcAdjustedMillis() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.TIMESTAMP_MILLIS).logicalType())
-                .isEqualTo(new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS));
+                .isEqualTo(LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS));
     }
 
     @Test
     void timestampMicrosResolvesToUtcAdjustedMicros() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.TIMESTAMP_MICROS).logicalType())
-                .isEqualTo(new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS));
+                .isEqualTo(LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
     }
 
     @Test
     void int8ResolvesToSigned8Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.INT_8).logicalType())
-                .isEqualTo(new LogicalType.IntType(8, true));
+                .isEqualTo(LogicalType.intType(8, true));
     }
 
     @Test
     void int16ResolvesToSigned16Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.INT_16).logicalType())
-                .isEqualTo(new LogicalType.IntType(16, true));
+                .isEqualTo(LogicalType.intType(16, true));
     }
 
     @Test
     void int32ResolvesToSigned32Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.INT_32).logicalType())
-                .isEqualTo(new LogicalType.IntType(32, true));
+                .isEqualTo(LogicalType.intType(32, true));
     }
 
     @Test
     void int64ResolvesToSigned64Bit() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.INT_64).logicalType())
-                .isEqualTo(new LogicalType.IntType(64, true));
+                .isEqualTo(LogicalType.intType(64, true));
     }
 
     @Test
     void uint8ResolvesToUnsigned8Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.UINT_8).logicalType())
-                .isEqualTo(new LogicalType.IntType(8, false));
+                .isEqualTo(LogicalType.intType(8, false));
     }
 
     @Test
     void uint16ResolvesToUnsigned16Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.UINT_16).logicalType())
-                .isEqualTo(new LogicalType.IntType(16, false));
+                .isEqualTo(LogicalType.intType(16, false));
     }
 
     @Test
     void uint32ResolvesToUnsigned32Bit() {
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.UINT_32).logicalType())
-                .isEqualTo(new LogicalType.IntType(32, false));
+                .isEqualTo(LogicalType.intType(32, false));
     }
 
     @Test
     void uint64ResolvesToUnsigned64Bit() {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.UINT_64).logicalType())
-                .isEqualTo(new LogicalType.IntType(64, false));
+                .isEqualTo(LogicalType.intType(64, false));
     }
 
     @Test
     void modernLogicalTypeWinsOverConvertedType() {
         SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
         // converted_type=UTF8, but logical type is explicitly an Int, logical type must win.
-        LogicalType.IntType modern = new LogicalType.IntType(32, false);
+        LogicalType.IntType modern = LogicalType.intType(32, false);
         SchemaElement leaf = new SchemaElement(
                 COLUMN, PhysicalType.INT32, null, RepetitionType.OPTIONAL, null,
                 ConvertedType.UTF8, null, null, null, modern);

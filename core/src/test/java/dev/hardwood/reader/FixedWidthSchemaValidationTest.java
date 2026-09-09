@@ -155,7 +155,7 @@ class FixedWidthSchemaValidationTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
                 .addColumn("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        new LogicalType.DecimalType(2, 18))
+                        LogicalType.decimal(18, 2))
                 .build();
 
         byte[][] digests = { bytes("aaaa"), bytes("bbbb"), bytes("cccc") };

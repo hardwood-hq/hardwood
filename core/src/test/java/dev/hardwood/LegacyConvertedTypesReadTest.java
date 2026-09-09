@@ -50,28 +50,28 @@ class LegacyConvertedTypesReadTest {
 
     @Test
     void everyLegacyConvertedTypeResolvesToItsLogicalType() throws IOException {
-        assertThat(logicalTypeOf("utf8_col")).isEqualTo(new LogicalType.StringType());
-        assertThat(logicalTypeOf("enum_col")).isEqualTo(new LogicalType.EnumType());
-        assertThat(logicalTypeOf("json_col")).isEqualTo(new LogicalType.JsonType());
-        assertThat(logicalTypeOf("bson_col")).isEqualTo(new LogicalType.BsonType());
-        assertThat(logicalTypeOf("date_col")).isEqualTo(new LogicalType.DateType());
-        assertThat(logicalTypeOf("decimal_col")).isEqualTo(new LogicalType.DecimalType(2, 18));
+        assertThat(logicalTypeOf("utf8_col")).isEqualTo(LogicalType.string());
+        assertThat(logicalTypeOf("enum_col")).isEqualTo(LogicalType.enumType());
+        assertThat(logicalTypeOf("json_col")).isEqualTo(LogicalType.json());
+        assertThat(logicalTypeOf("bson_col")).isEqualTo(LogicalType.bson());
+        assertThat(logicalTypeOf("date_col")).isEqualTo(LogicalType.date());
+        assertThat(logicalTypeOf("decimal_col")).isEqualTo(LogicalType.decimal(18, 2));
         assertThat(logicalTypeOf("time_millis_col"))
-                .isEqualTo(new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS));
+                .isEqualTo(LogicalType.time(true, LogicalType.TimeUnit.MILLIS));
         assertThat(logicalTypeOf("time_micros_col"))
-                .isEqualTo(new LogicalType.TimeType(true, LogicalType.TimeUnit.MICROS));
+                .isEqualTo(LogicalType.time(true, LogicalType.TimeUnit.MICROS));
         assertThat(logicalTypeOf("timestamp_millis_col"))
-                .isEqualTo(new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS));
+                .isEqualTo(LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS));
         assertThat(logicalTypeOf("timestamp_micros_col"))
-                .isEqualTo(new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS));
-        assertThat(logicalTypeOf("int8_col")).isEqualTo(new LogicalType.IntType(8, true));
-        assertThat(logicalTypeOf("int16_col")).isEqualTo(new LogicalType.IntType(16, true));
-        assertThat(logicalTypeOf("int32_col")).isEqualTo(new LogicalType.IntType(32, true));
-        assertThat(logicalTypeOf("int64_col")).isEqualTo(new LogicalType.IntType(64, true));
-        assertThat(logicalTypeOf("uint8_col")).isEqualTo(new LogicalType.IntType(8, false));
-        assertThat(logicalTypeOf("uint16_col")).isEqualTo(new LogicalType.IntType(16, false));
-        assertThat(logicalTypeOf("uint32_col")).isEqualTo(new LogicalType.IntType(32, false));
-        assertThat(logicalTypeOf("uint64_col")).isEqualTo(new LogicalType.IntType(64, false));
+                .isEqualTo(LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
+        assertThat(logicalTypeOf("int8_col")).isEqualTo(LogicalType.intType(8, true));
+        assertThat(logicalTypeOf("int16_col")).isEqualTo(LogicalType.intType(16, true));
+        assertThat(logicalTypeOf("int32_col")).isEqualTo(LogicalType.intType(32, true));
+        assertThat(logicalTypeOf("int64_col")).isEqualTo(LogicalType.intType(64, true));
+        assertThat(logicalTypeOf("uint8_col")).isEqualTo(LogicalType.intType(8, false));
+        assertThat(logicalTypeOf("uint16_col")).isEqualTo(LogicalType.intType(16, false));
+        assertThat(logicalTypeOf("uint32_col")).isEqualTo(LogicalType.intType(32, false));
+        assertThat(logicalTypeOf("uint64_col")).isEqualTo(LogicalType.intType(64, false));
     }
 
     @Test

@@ -33,7 +33,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveDateToInt() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, LogicalType.date());
         LocalDate date = LocalDate.of(2024, 6, 15);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("col", date), schema);
@@ -47,7 +47,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveDateEpoch() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, LogicalType.date());
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalDate.of(1970, 1, 1)), schema);
 
@@ -59,7 +59,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveInstantMillisToLong() {
         FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
-                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS));
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS));
         Instant instant = Instant.parse("2024-06-15T12:30:00Z");
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("ts", instant), schema);
@@ -72,7 +72,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveInstantMicrosToLong() {
         FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
-                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS));
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
         Instant instant = Instant.parse("2024-06-15T12:30:00.123456Z");
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("ts", instant), schema);
@@ -86,7 +86,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveInstantNanosToLong() {
         FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
-                new LogicalType.TimestampType(true, LogicalType.TimeUnit.NANOS));
+                LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS));
         Instant instant = Instant.parse("2024-06-15T12:30:00.123456789Z");
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("ts", instant), schema);
@@ -98,7 +98,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveInstantOnNonTimestampColumnThrows() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT64, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT64, LogicalType.date());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", Instant.now()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -110,7 +110,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveTimeMillisToInt() {
         FileSchema schema = schemaWithLogicalType("t", PhysicalType.INT32,
-                new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS));
+                LogicalType.time(false, LogicalType.TimeUnit.MILLIS));
         LocalTime time = LocalTime.of(12, 30, 45);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.lt("t", time), schema);
@@ -122,7 +122,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveTimeMicrosToLong() {
         FileSchema schema = schemaWithLogicalType("t", PhysicalType.INT64,
-                new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS));
+                LogicalType.time(false, LogicalType.TimeUnit.MICROS));
         LocalTime time = LocalTime.of(12, 30, 45, 123_456_000);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("t", time), schema);
@@ -133,7 +133,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveTimeOnNonTimeColumnThrows() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, LogicalType.date());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalTime.NOON), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -145,7 +145,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveDecimalInt32() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
-                new LogicalType.DecimalType(2, 9));
+                LogicalType.decimal(9, 2));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("amount", new BigDecimal("99.99")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.IntPredicate.class);
@@ -156,7 +156,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveDecimalInt64() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT64,
-                new LogicalType.DecimalType(4, 18));
+                LogicalType.decimal(18, 4));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("123.4567")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.LongPredicate.class);
@@ -166,7 +166,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveDecimalFixedLenByteArray() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16,
-                new LogicalType.DecimalType(2, 30));
+                LogicalType.decimal(30, 2));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("1.00")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
@@ -180,7 +180,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveDecimalOnNonDecimalColumnThrows() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, LogicalType.date());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", new BigDecimal("1.0")), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -190,7 +190,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveNegativeDecimalInt32() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
-                new LogicalType.DecimalType(2, 9));
+                LogicalType.decimal(9, 2));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("amount", new BigDecimal("-99.99")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.IntPredicate.class);
@@ -201,7 +201,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveSignedBinaryOnDecimalColumn() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
-                new LogicalType.DecimalType(2, 18));
+                LogicalType.decimal(18, 2));
         byte[] value = new byte[8];
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 new FilterPredicate.SignedBinaryColumnPredicate("amount", FilterPredicate.Operator.GT, value),
@@ -224,7 +224,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveNegativeDecimalFixedLenByteArray() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
-                new LogicalType.DecimalType(2, 18));
+                LogicalType.decimal(18, 2));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("-1.50")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
@@ -243,7 +243,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveUuidToUnsignedBinary() {
         FileSchema schema = schemaWithLogicalType("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16,
-                new LogicalType.UuidType());
+                LogicalType.uuid());
         UUID uuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("id", uuid), schema);
@@ -268,7 +268,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveRecursesIntoAnd() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, LogicalType.date());
         LocalDate d1 = LocalDate.of(2024, 1, 1);
         LocalDate d2 = LocalDate.of(2024, 12, 31);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
@@ -426,7 +426,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveIntersectsOnGeometryColumn() {
         FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
-                new LogicalType.GeometryType("OGC:CRS84"));
+                LogicalType.geometry("OGC:CRS84"));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.intersects("loc", -25.0, 35.0, 45.0, 72.0), schema);
 
@@ -442,7 +442,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveIntersectsOnGeographyColumn() {
         FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
-                new LogicalType.GeographyType("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
+                LogicalType.geography("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0), schema);
 
@@ -451,7 +451,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void resolveIntersectsOnNonGeoColumnThrows() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.BYTE_ARRAY, LogicalType.string());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.intersects("col", 0.0, 0.0, 1.0, 1.0), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -462,7 +462,7 @@ class FilterPredicateResolverTest {
     @Test
     void resolveNotIntersectsThrows() {
         FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
-                new LogicalType.GeometryType("OGC:CRS84"));
+                LogicalType.geometry("OGC:CRS84"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
@@ -498,7 +498,7 @@ class FilterPredicateResolverTest {
     @Test
     void float16TypeDefinedOrderMarksPredicateForWidening() {
         FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type());
+                LogicalType.float16());
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
         assertThat(resolved).isInstanceOf(ResolvedPredicate.Float16Predicate.class);
@@ -508,7 +508,7 @@ class FilterPredicateResolverTest {
     @Test
     void float16Ieee754OrderMarksPredicateExact() {
         FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type());
+                LogicalType.float16());
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
         assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isTrue();

@@ -53,32 +53,32 @@ class WriterAnnotationRangeTest {
     /// carrier holds, with a scale of zero and a scale as large as the precision.
     static Stream<Arguments> boundedColumns() {
         return Stream.of(
-                arguments(PhysicalType.INT32, new LogicalType.IntType(8, true), -128L, 127L),
-                arguments(PhysicalType.INT32, new LogicalType.IntType(8, false), 0L, 255L),
-                arguments(PhysicalType.INT32, new LogicalType.IntType(16, true), -32_768L, 32_767L),
-                arguments(PhysicalType.INT32, new LogicalType.IntType(16, false), 0L, 65_535L),
+                arguments(PhysicalType.INT32, LogicalType.intType(8, true), -128L, 127L),
+                arguments(PhysicalType.INT32, LogicalType.intType(8, false), 0L, 255L),
+                arguments(PhysicalType.INT32, LogicalType.intType(16, true), -32_768L, 32_767L),
+                arguments(PhysicalType.INT32, LogicalType.intType(16, false), 0L, 65_535L),
 
-                arguments(PhysicalType.INT32, new LogicalType.DecimalType(0, 1), -9L, 9L),
-                arguments(PhysicalType.INT32, new LogicalType.DecimalType(1, 1), -9L, 9L),
-                arguments(PhysicalType.INT32, new LogicalType.DecimalType(2, 9), -999_999_999L, 999_999_999L),
-                arguments(PhysicalType.INT32, new LogicalType.DecimalType(9, 9), -999_999_999L, 999_999_999L),
-                arguments(PhysicalType.INT64, new LogicalType.DecimalType(0, 1), -9L, 9L),
-                arguments(PhysicalType.INT64, new LogicalType.DecimalType(4, 18),
+                arguments(PhysicalType.INT32, LogicalType.decimal(1, 0), -9L, 9L),
+                arguments(PhysicalType.INT32, LogicalType.decimal(1, 1), -9L, 9L),
+                arguments(PhysicalType.INT32, LogicalType.decimal(9, 2), -999_999_999L, 999_999_999L),
+                arguments(PhysicalType.INT32, LogicalType.decimal(9, 9), -999_999_999L, 999_999_999L),
+                arguments(PhysicalType.INT64, LogicalType.decimal(1, 0), -9L, 9L),
+                arguments(PhysicalType.INT64, LogicalType.decimal(18, 4),
                         -999_999_999_999_999_999L, 999_999_999_999_999_999L),
-                arguments(PhysicalType.INT64, new LogicalType.DecimalType(18, 18),
+                arguments(PhysicalType.INT64, LogicalType.decimal(18, 18),
                         -999_999_999_999_999_999L, 999_999_999_999_999_999L),
 
-                arguments(PhysicalType.INT32, new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS),
+                arguments(PhysicalType.INT32, LogicalType.time(true, LogicalType.TimeUnit.MILLIS),
                         0L, 86_399_999L),
-                arguments(PhysicalType.INT32, new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS),
+                arguments(PhysicalType.INT32, LogicalType.time(false, LogicalType.TimeUnit.MILLIS),
                         0L, 86_399_999L),
-                arguments(PhysicalType.INT64, new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS),
+                arguments(PhysicalType.INT64, LogicalType.time(false, LogicalType.TimeUnit.MICROS),
                         0L, 86_399_999_999L),
-                arguments(PhysicalType.INT64, new LogicalType.TimeType(true, LogicalType.TimeUnit.MICROS),
+                arguments(PhysicalType.INT64, LogicalType.time(true, LogicalType.TimeUnit.MICROS),
                         0L, 86_399_999_999L),
-                arguments(PhysicalType.INT64, new LogicalType.TimeType(true, LogicalType.TimeUnit.NANOS),
+                arguments(PhysicalType.INT64, LogicalType.time(true, LogicalType.TimeUnit.NANOS),
                         0L, 86_399_999_999_999L),
-                arguments(PhysicalType.INT64, new LogicalType.TimeType(false, LogicalType.TimeUnit.NANOS),
+                arguments(PhysicalType.INT64, LogicalType.time(false, LogicalType.TimeUnit.NANOS),
                         0L, 86_399_999_999_999L));
     }
 
@@ -87,10 +87,10 @@ class WriterAnnotationRangeTest {
     /// as a negative, which is also how the reader returns it.
     static Stream<Arguments> unboundedColumns() {
         return Stream.of(
-                arguments(PhysicalType.INT32, new LogicalType.IntType(32, false), -1L),
-                arguments(PhysicalType.INT64, new LogicalType.IntType(64, false), -1L),
-                arguments(PhysicalType.INT32, new LogicalType.DateType(), Integer.MIN_VALUE + 0L),
-                arguments(PhysicalType.INT64, new LogicalType.TimestampType(true, LogicalType.TimeUnit.NANOS),
+                arguments(PhysicalType.INT32, LogicalType.intType(32, false), -1L),
+                arguments(PhysicalType.INT64, LogicalType.intType(64, false), -1L),
+                arguments(PhysicalType.INT32, LogicalType.date(), Integer.MIN_VALUE + 0L),
+                arguments(PhysicalType.INT64, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS),
                         Long.MIN_VALUE));
     }
 
@@ -192,7 +192,7 @@ class WriterAnnotationRangeTest {
     /// which value to look at.
     @Test
     void theColumnarRejectionNamesTheOffendingRow() {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.IntType(8, false));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(8, false));
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 0, 1, 300 })))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -204,7 +204,7 @@ class WriterAnnotationRangeTest {
     /// also rejects the `24:00:00` spelling some producers emit for the end of a day.
     @Test
     void aFullDayIsOutsideATimeColumn() {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.time(true, LogicalType.TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 86_400_000 })))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -221,7 +221,7 @@ class WriterAnnotationRangeTest {
     @Test
     void theValueAtANullRowIsNotChecked() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.IntType(8, false))
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.intType(8, false))
                 .build();
 
         ByteBufferOutputFile out = writeBatch(schema, batch -> batch.ints(0, new int[] { 300, 5 },
@@ -239,10 +239,10 @@ class WriterAnnotationRangeTest {
     /// its bytes carry, whatever the width of the column those bytes sit in.
     @Test
     void aBinaryDecimalRejectsAnUnscaledValueBeyondItsPrecision() {
-        FileSchema variable = single(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(0, 4));
+        FileSchema variable = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(4, 0));
         FileSchema fixed = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2,
-                        new LogicalType.DecimalType(0, 4))
+                        LogicalType.decimal(4, 0))
                 .build();
         byte[] tooLarge = { 0x30, 0x39 };      // 12345, five digits against a declared four
 
@@ -264,7 +264,7 @@ class WriterAnnotationRangeTest {
     /// is on the magnitude of the value the bytes denote, not on the bytes.
     @Test
     void aBinaryDecimalTakesTheExtremesOfItsPrecision() throws Exception {
-        FileSchema schema = single(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(0, 4));
+        FileSchema schema = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(4, 0));
         byte[] largest = { 0x27, 0x0f };            // 9999
         byte[] smallest = { (byte) 0xd8, (byte) 0xf1 };  // -9999
 
@@ -284,7 +284,7 @@ class WriterAnnotationRangeTest {
     /// to reach it still is.
     @Test
     void aValueTooShortToReachThePrecisionIsWritten() throws Exception {
-        FileSchema schema = single(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(2, 20));
+        FileSchema schema = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2));
         byte[] shortValue = { (byte) 0xff };                                  // -1
         byte[] eightBytes = { 0x7f, -1, -1, -1, -1, -1, -1, -1 };             // 2^63 - 1
         byte[] tooLarge = { 0x7f, -1, -1, -1, -1, -1, -1, -1, -1 };           // 2^71 - 1, 22 digits
@@ -312,7 +312,7 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.DecimalType(0, 1)))
+                                LogicalType.decimal(1, 0)))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -335,7 +335,7 @@ class WriterAnnotationRangeTest {
     /// handed over.
     @Test
     void anEmptyValueIsNotAnUnscaledDecimal() {
-        FileSchema schema = single(PhysicalType.BYTE_ARRAY, new LogicalType.DecimalType(0, 4));
+        FileSchema schema = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(4, 0));
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.bytes(0, new byte[][] { new byte[0] })))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -353,7 +353,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnHoldsOnlyNulls() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
                 .build();
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 7 })))
@@ -375,7 +375,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnTakesItsNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
                 .build();
 
         ByteBufferOutputFile out = writeBatch(schema,
@@ -398,7 +398,7 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType()))
+                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -423,7 +423,7 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType()))
+                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -447,7 +447,7 @@ class WriterAnnotationRangeTest {
     void anUnknownListElementHoldsOnlyNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType()))
+                        PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -536,9 +536,9 @@ class WriterAnnotationRangeTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .addColumn("req", PhysicalType.INT32, RepetitionType.REQUIRED,
-                                new LogicalType.IntType(8, false))
+                                LogicalType.intType(8, false))
                         .addColumn("opt", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                new LogicalType.IntType(8, false)))
+                                LogicalType.intType(8, false)))
                 .build();
     }
 
@@ -546,7 +546,7 @@ class WriterAnnotationRangeTest {
     /// is, rather than as a range failure against the annotation of the column it landed on.
     @Test
     void aPhysicalTypeMismatchIsReportedAheadOfTheRange() {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.IntType(8, false));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(8, false));
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.longs(0, new long[] { 300L })))
                 .isInstanceOf(IllegalArgumentException.class)

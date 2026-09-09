@@ -22,7 +22,7 @@ class NestedLeafDecoderTest {
 
     @Test
     void decodesStringWhenStringLogicalTypeIsSet() {
-        SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, LogicalType.string());
         byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
 
         Object result = NestedLeafDecoder.decode(bytes, schema);
@@ -46,7 +46,7 @@ class NestedLeafDecoderTest {
 
     @Test
     void returnsRawBytesForBsonLogicalType() {
-        SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, new LogicalType.BsonType());
+        SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, LogicalType.bson());
         byte[] bytes = new byte[] {0x05, 0x00, 0x00, 0x00, 0x00};
 
         Object result = NestedLeafDecoder.decode(bytes, schema);

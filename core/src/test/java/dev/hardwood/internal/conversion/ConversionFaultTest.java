@@ -24,12 +24,12 @@ class ConversionFaultTest {
 
     @Test
     void anAnnotationItsPhysicalTypeCarriesHasNoFault() {
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.StringType())).isNull();
-        assertThat(fault(PhysicalType.INT32, null, new LogicalType.DateType())).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.string())).isNull();
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.date())).isNull();
         assertThat(fault(PhysicalType.INT64, null, timestamp())).isNull();
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2, new LogicalType.Float16Type())).isNull();
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, new LogicalType.UuidType())).isNull();
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, new LogicalType.IntervalType())).isNull();
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2, LogicalType.float16())).isNull();
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, LogicalType.uuid())).isNull();
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, LogicalType.interval())).isNull();
     }
 
     @Test
@@ -39,9 +39,9 @@ class ConversionFaultTest {
 
     @Test
     void anAnnotationItsPhysicalTypeCannotCarryIsFaulted() {
-        assertThat(fault(PhysicalType.INT64, null, new LogicalType.DateType()))
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.date()))
                 .isEqualTo("DATE is read from INT32, but the column is INT64");
-        assertThat(fault(PhysicalType.INT32, null, new LogicalType.StringType()))
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.string()))
                 .isEqualTo("STRING is read from BYTE_ARRAY, but the column is INT32");
         assertThat(fault(PhysicalType.INT32, null, timestamp()))
                 .isEqualTo("TIMESTAMP is read from INT64, but the column is INT32");
@@ -49,11 +49,11 @@ class ConversionFaultTest {
 
     @Test
     void aFixedWidthAnnotationOnTheWrongWidthIsFaulted() {
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 3, new LogicalType.Float16Type()))
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 3, LogicalType.float16()))
                 .isEqualTo("FLOAT16 is exactly 2 bytes, but the column declares 3");
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, new LogicalType.UuidType()))
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.uuid()))
                 .isEqualTo("UUID is exactly 16 bytes, but the column declares 8");
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, new LogicalType.IntervalType()))
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.interval()))
                 .isEqualTo("INTERVAL is exactly 12 bytes, but the column declares 8");
     }
 
@@ -61,11 +61,11 @@ class ConversionFaultTest {
     /// fixed-width has no width to be wrong about.
     @Test
     void theWrongPhysicalTypeIsReportedAheadOfTheWidth() {
-        assertThat(fault(PhysicalType.INT64, null, new LogicalType.Float16Type()))
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.float16()))
                 .isEqualTo("FLOAT16 is read from FIXED_LEN_BYTE_ARRAY, but the column is INT64");
-        assertThat(fault(PhysicalType.INT64, null, new LogicalType.IntervalType()))
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.interval()))
                 .isEqualTo("INTERVAL is read from FIXED_LEN_BYTE_ARRAY, but the column is INT64");
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.UuidType()))
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.uuid()))
                 .isEqualTo("UUID is read from FIXED_LEN_BYTE_ARRAY, but the column is BYTE_ARRAY");
     }
 
@@ -75,29 +75,29 @@ class ConversionFaultTest {
     @Test
     void readingIsLenientWhereWritingIsStrict() {
         assertThat(fault(PhysicalType.INT64, null,
-                new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS))).isNull();
-        assertThat(fault(PhysicalType.INT64, null, new LogicalType.IntType(8, true))).isNull();
+                LogicalType.time(true, LogicalType.TimeUnit.MILLIS))).isNull();
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.intType(8, true))).isNull();
     }
 
     /// Geometry and geography payloads are carried through untouched, so no physical type
     /// is imposed on them.
     @Test
     void anOpaquePayloadImposesNoPhysicalType() {
-        assertThat(fault(PhysicalType.INT32, null, new LogicalType.GeometryType(null))).isNull();
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.geometry(null))).isNull();
     }
 
     /// `JSON`, `BSON` and `ENUM` all carry a `BYTE_ARRAY` payload, so each is faulted on
     /// any other physical type even though only `STRING` is decoded to a `String`.
     @Test
     void aByteArrayPayloadAnnotationIsFaultedOnAnyOtherPhysicalType() {
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.JsonType())).isNull();
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.BsonType())).isNull();
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.EnumType())).isNull();
-        assertThat(fault(PhysicalType.INT64, null, new LogicalType.JsonType()))
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.json())).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.bson())).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.enumType())).isNull();
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.json()))
                 .isEqualTo("JSON is read from BYTE_ARRAY, but the column is INT64");
-        assertThat(fault(PhysicalType.INT32, null, new LogicalType.BsonType()))
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.bson()))
                 .isEqualTo("BSON is read from BYTE_ARRAY, but the column is INT32");
-        assertThat(fault(PhysicalType.DOUBLE, null, new LogicalType.EnumType()))
+        assertThat(fault(PhysicalType.DOUBLE, null, LogicalType.enumType()))
                 .isEqualTo("ENUM is read from BYTE_ARRAY, but the column is DOUBLE");
     }
 
@@ -128,11 +128,11 @@ class ConversionFaultTest {
     /// is what keeps them out of `convert`, whose structural arms throw.
     @Test
     void aStructuralAnnotationOnAPrimitiveIsFaulted() {
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.ListType()))
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.list()))
                 .isEqualTo("LIST annotates a group, but the column is a primitive");
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.MapType()))
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.map()))
                 .isEqualTo("MAP annotates a group, but the column is a primitive");
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.VariantType(1)))
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.variant(1)))
                 .isEqualTo("VARIANT annotates a group, but the column is a primitive");
     }
 
@@ -140,8 +140,8 @@ class ConversionFaultTest {
     /// Only the values can contradict it, and this answers from the schema alone.
     @Test
     void nullIsLegalOverAnyPhysicalType() {
-        assertThat(fault(PhysicalType.INT32, null, new LogicalType.NullType())).isNull();
-        assertThat(fault(PhysicalType.BYTE_ARRAY, null, new LogicalType.NullType())).isNull();
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.nullType())).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.nullType())).isNull();
     }
 
     /// A footer that omits `type_length` states no width for the annotation to contradict,
@@ -150,7 +150,7 @@ class ConversionFaultTest {
     /// annotation would drop a sound one and describe the wrong defect.
     @Test
     void anUndeclaredWidthIsNotTheAnnotationsFault() {
-        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, new LogicalType.Float16Type()))
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, LogicalType.float16()))
                 .isNull();
     }
 
@@ -159,10 +159,10 @@ class ConversionFaultTest {
     }
 
     private static LogicalType.DecimalType decimal() {
-        return new LogicalType.DecimalType(4, 10);
+        return LogicalType.decimal(10, 4);
     }
 
     private static LogicalType.TimestampType timestamp() {
-        return new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS);
+        return LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS);
     }
 }

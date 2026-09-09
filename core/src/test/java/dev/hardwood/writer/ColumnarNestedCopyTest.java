@@ -41,12 +41,12 @@ class ColumnarNestedCopyTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.StringType())
+                                LogicalType.string())
                         .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType()))
+                        PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string()))
                 .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
-                        new LogicalType.StringType(),
+                        LogicalType.string(),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
 

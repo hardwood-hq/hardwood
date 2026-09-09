@@ -31,7 +31,7 @@ class SchemaElementFactoryTest {
 
     @Test
     void annotatedGroupEqualsCanonicalConstruction() {
-        LogicalType listType = new LogicalType.ListType();
+        LogicalType listType = LogicalType.list();
         assertThat(group("items", RepetitionType.OPTIONAL, 1, listType))
                 .isEqualTo(new SchemaElement("items", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null,
                         listType));
@@ -46,7 +46,7 @@ class SchemaElementFactoryTest {
 
     @Test
     void annotatedPrimitiveEqualsCanonicalConstruction() {
-        LogicalType stringType = new LogicalType.StringType();
+        LogicalType stringType = LogicalType.string();
         assertThat(primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, stringType))
                 .isEqualTo(new SchemaElement("city", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL, null, null,
                         null, null, null, stringType));
@@ -61,7 +61,7 @@ class SchemaElementFactoryTest {
 
     @Test
     void annotatedFixedLengthPrimitiveEqualsCanonicalConstruction() {
-        LogicalType uuidType = new LogicalType.UuidType();
+        LogicalType uuidType = LogicalType.uuid();
         assertThat(fixedLengthPrimitive("id", 16, RepetitionType.REQUIRED, uuidType))
                 .isEqualTo(new SchemaElement("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, RepetitionType.REQUIRED, null,
                         null, null, null, null, uuidType));
@@ -96,7 +96,7 @@ class SchemaElementFactoryTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Element g requires a repetition level; only the root element may omit it")
                 ;
-        assertThatThrownBy(() -> group("g", null, 1, new LogicalType.ListType()))
+        assertThatThrownBy(() -> group("g", null, 1, LogicalType.list()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Element g requires a repetition level; only the root element may omit it");
         assertThatThrownBy(() -> primitive("p", PhysicalType.INT32, null))
@@ -177,10 +177,10 @@ class SchemaElementFactoryTest {
     void factoryBuiltElementsRoundTripThroughFileSchema() {
         List<SchemaElement> elements = List.of(
                 root("root", 3),
-                group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 primitive("element", PhysicalType.INT32, RepetitionType.REQUIRED),
-                primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType()),
-                fixedLengthPrimitive("id", 16, RepetitionType.REQUIRED, new LogicalType.UuidType()));
+                primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()),
+                fixedLengthPrimitive("id", 16, RepetitionType.REQUIRED, LogicalType.uuid()));
 
         FileSchema schema = FileSchema.fromSchemaElements(elements);
 
@@ -190,10 +190,10 @@ class SchemaElementFactoryTest {
         assertThat(schema.toSchemaElements()).containsExactly(
                 new SchemaElement("root", null, null, RepetitionType.REQUIRED, 3, null, null, null, null, null),
                 new SchemaElement("items", null, null, RepetitionType.OPTIONAL, 1, ConvertedType.LIST, null, null,
-                        null, new LogicalType.ListType()),
+                        null, LogicalType.list()),
                 elements.get(2),
                 new SchemaElement("name", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL, null,
-                        ConvertedType.UTF8, null, null, null, new LogicalType.StringType()),
+                        ConvertedType.UTF8, null, null, null, LogicalType.string()),
                 elements.get(4));
     }
 }

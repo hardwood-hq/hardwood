@@ -172,33 +172,33 @@ final class CoverageDomain {
     static List<Annotation> annotations() {
         List<Annotation> annotations = new ArrayList<>();
 
-        binary(annotations, new LogicalType.StringType());
-        binary(annotations, new LogicalType.EnumType());
-        binary(annotations, new LogicalType.JsonType());
-        binary(annotations, new LogicalType.BsonType());
-        binary(annotations, new LogicalType.GeometryType("EPSG:4326"));
-        binary(annotations, new LogicalType.GeographyType("EPSG:4326",
+        binary(annotations, LogicalType.string());
+        binary(annotations, LogicalType.enumType());
+        binary(annotations, LogicalType.json());
+        binary(annotations, LogicalType.bson());
+        binary(annotations, LogicalType.geometry("EPSG:4326"));
+        binary(annotations, LogicalType.geography("EPSG:4326",
                 LogicalType.EdgeInterpolationAlgorithm.KARNEY));
 
-        annotations.add(new Annotation(new LogicalType.DateType(), PhysicalType.INT32, null));
-        annotations.add(new Annotation(new LogicalType.NullType(), PhysicalType.INT32, null));
-        fixed(annotations, new LogicalType.UuidType(), 16);
-        fixed(annotations, new LogicalType.Float16Type(), 2);
-        fixed(annotations, new LogicalType.IntervalType(), 12);
+        annotations.add(new Annotation(LogicalType.date(), PhysicalType.INT32, null));
+        annotations.add(new Annotation(LogicalType.nullType(), PhysicalType.INT32, null));
+        fixed(annotations, LogicalType.uuid(), 16);
+        fixed(annotations, LogicalType.float16(), 2);
+        fixed(annotations, LogicalType.interval(), 12);
 
         for (int bitWidth : List.of(8, 16, 32, 64)) {
             for (boolean signed : List.of(true, false)) {
-                annotations.add(new Annotation(new LogicalType.IntType(bitWidth, signed),
+                annotations.add(new Annotation(LogicalType.intType(bitWidth, signed),
                         bitWidth == Long.SIZE ? PhysicalType.INT64 : PhysicalType.INT32, null));
             }
         }
 
         for (LogicalType.TimeUnit unit : LogicalType.TimeUnit.values()) {
             for (boolean utc : List.of(true, false)) {
-                annotations.add(new Annotation(new LogicalType.TimeType(utc, unit),
+                annotations.add(new Annotation(LogicalType.time(utc, unit),
                         unit == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64,
                         null));
-                annotations.add(new Annotation(new LogicalType.TimestampType(utc, unit),
+                annotations.add(new Annotation(LogicalType.timestamp(utc, unit),
                         PhysicalType.INT64, null));
             }
         }
@@ -213,7 +213,7 @@ final class CoverageDomain {
 
     /// The annotations that sit on a group node rather than on a column.
     static List<LogicalType> groupAnnotations() {
-        return List.of(new LogicalType.ListType(), new LogicalType.MapType());
+        return List.of(LogicalType.list(), LogicalType.map());
     }
 
     /// One annotation the writer refuses outright, and the part of its refusal that names the
@@ -239,7 +239,7 @@ final class CoverageDomain {
     /// [WriteCoverageVerdictTest#everyAnnotationIsRequiredOrRefusedByTheWriter] holds it to one —
     /// a release that starts writing `VARIANT` fails there rather than quietly requiring nothing.
     static List<Refusal> refusedAnnotations() {
-        return List.of(new Refusal(new LogicalType.VariantType(1), "which the writer does not yet build"));
+        return List.of(new Refusal(LogicalType.variant(1), "which the writer does not yet build"));
     }
 
     /// How the writer refuses a column carrying `logicalType` on `carrier`, or `null` where it
@@ -308,7 +308,7 @@ final class CoverageDomain {
     private static void decimals(List<Annotation> annotations, PhysicalType carrier, Integer typeLength) {
         for (int precision : List.of(1, maxDecimalPrecision(carrier, typeLength))) {
             for (int scale : List.of(0, precision)) {
-                annotations.add(new Annotation(new LogicalType.DecimalType(scale, precision),
+                annotations.add(new Annotation(LogicalType.decimal(precision, scale),
                         carrier, typeLength));
             }
         }
@@ -319,7 +319,7 @@ final class CoverageDomain {
     private static int maxDecimalPrecision(PhysicalType carrier, Integer typeLength) {
         int largest = 1;
         for (int precision = 1; precision <= MAX_PROBED_PRECISION; precision++) {
-            if (!accepts(carrier, typeLength, new LogicalType.DecimalType(0, precision),
+            if (!accepts(carrier, typeLength, LogicalType.decimal(precision, 0),
                     WriterConfig.defaults())) {
                 break;
             }

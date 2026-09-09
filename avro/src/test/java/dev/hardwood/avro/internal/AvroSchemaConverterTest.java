@@ -113,11 +113,11 @@ class AvroSchemaConverterTest {
 
     @Test
     void canonicalRootConflictsAreRejected() {
-        assertThatThrownBy(() -> convert(canonicalRootSchema("interval", new LogicalType.IntervalType(),
+        assertThatThrownBy(() -> convert(canonicalRootSchema("interval", LogicalType.interval(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 12)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Root named 'interval' conflicts with canonical fixed type 'interval'");
-        assertThatThrownBy(() -> convert(canonicalRootSchema("float16", new LogicalType.Float16Type(),
+        assertThatThrownBy(() -> convert(canonicalRootSchema("float16", LogicalType.float16(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 2)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Root named 'float16' conflicts with canonical fixed type 'float16'");
@@ -130,7 +130,7 @@ class AvroSchemaConverterTest {
     void canonicalRootConflictSurvivesProjectingTheColumnAway() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 root("interval", 2),
-                fixed("span", 12, new LogicalType.IntervalType()),
+                fixed("span", 12, LogicalType.interval()),
                 primitive("other", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("other")))
@@ -158,7 +158,7 @@ class AvroSchemaConverterTest {
     @Test
     void twinFixedBackedDecimalsAreDistinguishedByNamespace() throws Exception {
         assertTwinsAreDistinct(
-                twinBranches(List.of(fixed("amount", 8, new LogicalType.DecimalType(2, 4)))), "amount");
+                twinBranches(List.of(fixed("amount", 8, LogicalType.decimal(4, 2)))), "amount");
     }
 
     @Test
@@ -174,7 +174,7 @@ class AvroSchemaConverterTest {
         assertThat(homeInt96.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("ts.x");
 
         Schema decimal = new Schema.Parser().parse(convert(
-                twinBranches(List.of(fixed("amount.x", 8, new LogicalType.DecimalType(2, 4))))).toString());
+                twinBranches(List.of(fixed("amount.x", 8, LogicalType.decimal(4, 2))))).toString());
         Schema homeDecimal = pickRecordBranch(decimal.getField("home").schema()).getField("amount_x").schema();
         assertThat(homeDecimal.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("amount.x");
     }
@@ -187,7 +187,7 @@ class AvroSchemaConverterTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 root("schema", 2),
                 group("acme-address", RepetitionType.OPTIONAL, 1),
-                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType()),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string()),
                 primitive("other", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         Schema projected = AvroSchemaConverter.plan(schema,
@@ -295,7 +295,7 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsNonStringKeyedMapUsedAsListElement() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement items = group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType());
+        SchemaElement items = group("items", RepetitionType.OPTIONAL, 1, LogicalType.list());
         SchemaElement list = group("list", RepetitionType.REPEATED, 1);
         List<SchemaElement> elements = new ArrayList<>(List.of(rootElement, items, list));
         elements.addAll(intKeyedMap("element"));
@@ -306,10 +306,10 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsNonStringKeyedMapUsedAsMapValue() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement outer = group("outer", RepetitionType.OPTIONAL, 1, new LogicalType.MapType());
+        SchemaElement outer = group("outer", RepetitionType.OPTIONAL, 1, LogicalType.map());
         SchemaElement outerKv = group("key_value", RepetitionType.REPEATED, 2);
         SchemaElement outerKey = primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType());
+                LogicalType.string());
         List<SchemaElement> elements = new ArrayList<>(List.of(rootElement, outer, outerKv, outerKey));
         elements.addAll(intKeyedMap("value"));
 
@@ -322,11 +322,11 @@ class AvroSchemaConverterTest {
     @Test
     void acceptsEveryMapKeyAvroRendersAsString() {
         assertMapConverts(mapKeyedBy(
-                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, new LogicalType.StringType())));
+                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, LogicalType.string())));
         assertMapConverts(mapKeyedBy(
-                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, new LogicalType.EnumType())));
+                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, LogicalType.enumType())));
         assertMapConverts(mapKeyedBy(
-                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, new LogicalType.JsonType())));
+                convertedPrimitive("key", PhysicalType.BYTE_ARRAY, null, LogicalType.json())));
     }
 
     /// Writers predating the logical-type union annotate string keys with the legacy
@@ -353,7 +353,7 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsUuidMapKey() {
         assertRejectsMap(mapKeyedBy(convertedPrimitive("key", PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                null, new LogicalType.UuidType())), "m", "FIXED_LEN_BYTE_ARRAY (UUID)");
+                null, LogicalType.uuid())), "m", "FIXED_LEN_BYTE_ARRAY (UUID)");
     }
 
     /// The Parquet spec requires a primitive map key; a group in the key position has
@@ -362,7 +362,7 @@ class AvroSchemaConverterTest {
     void rejectsMapWithGroupKey() {
         List<SchemaElement> elements = List.of(
                 root("root", 1),
-                group("m", RepetitionType.OPTIONAL, 1, new LogicalType.MapType()),
+                group("m", RepetitionType.OPTIONAL, 1, LogicalType.map()),
                 group("key_value", RepetitionType.REPEATED, 2),
                 group("key", RepetitionType.REQUIRED, 1),
                 convertedPrimitive("part", PhysicalType.INT32, null, null),
@@ -389,7 +389,7 @@ class AvroSchemaConverterTest {
 
     @Test
     void rejectsFixedBackedDecimalMapKey() {
-        assertRejectsMap(mapKeyedBy(fixed("key", 8, new LogicalType.DecimalType(2, 4))), "m",
+        assertRejectsMap(mapKeyedBy(fixed("key", 8, LogicalType.decimal(4, 2))), "m",
                 "FIXED_LEN_BYTE_ARRAY (DECIMAL(4, 2))");
     }
 
@@ -416,7 +416,7 @@ class AvroSchemaConverterTest {
     /// without restating the surrounding MAP / `key_value` shape.
     private static List<SchemaElement> keyedMap(String name, SchemaElement key) {
         return List.of(
-                group(name, RepetitionType.OPTIONAL, 1, new LogicalType.MapType()),
+                group(name, RepetitionType.OPTIONAL, 1, LogicalType.map()),
                 group("key_value", RepetitionType.REPEATED, 2),
                 key,
                 primitive("value", PhysicalType.INT64, RepetitionType.OPTIONAL));
@@ -439,7 +439,7 @@ class AvroSchemaConverterTest {
     /// side by side.
     private static FileSchema variantAndOrdinarySchema() {
         SchemaElement rootElement = root("root", 2);
-        SchemaElement variant = group("variant_record", RepetitionType.OPTIONAL, 2, new LogicalType.VariantType(1));
+        SchemaElement variant = group("variant_record", RepetitionType.OPTIONAL, 2, LogicalType.variant(1));
         SchemaElement variantMetadata = primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
         SchemaElement variantValue = primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
         SchemaElement ordinary = group("ordinary_record", RepetitionType.OPTIONAL, 2);
@@ -458,7 +458,7 @@ class AvroSchemaConverterTest {
     void nullLogicalTypeBecomesBareAvroNull() {
         SchemaElement rootElement = root("root", 1);
         SchemaElement nothing = primitive("nothing", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                new LogicalType.NullType());
+                LogicalType.nullType());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, nothing));
 
         Schema avroSchema = convert(schema);
@@ -475,7 +475,7 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsListWithoutElementDuringPlanning() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement list = group("items", RepetitionType.OPTIONAL, 0, new LogicalType.ListType());
+        SchemaElement list = group("items", RepetitionType.OPTIONAL, 0, LogicalType.list());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, list));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
@@ -487,10 +487,10 @@ class AvroSchemaConverterTest {
     @Test
     void keyOnlyMapBecomesMapOfBareNull() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement map = group("attributes", RepetitionType.OPTIONAL, 1, new LogicalType.MapType());
+        SchemaElement map = group("attributes", RepetitionType.OPTIONAL, 1, LogicalType.map());
         SchemaElement keyValue = group("key_value", RepetitionType.REPEATED, 1);
         SchemaElement key = primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType());
+                LogicalType.string());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, map, keyValue, key));
 
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
@@ -505,7 +505,7 @@ class AvroSchemaConverterTest {
     @Test
     void rejectsKeyOnlyMapWhoseKeyIsNotAString() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement map = group("attributes", RepetitionType.OPTIONAL, 1, new LogicalType.MapType());
+        SchemaElement map = group("attributes", RepetitionType.OPTIONAL, 1, LogicalType.map());
         SchemaElement keyValue = group("key_value", RepetitionType.REPEATED, 1);
         SchemaElement key = primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED);
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, map, keyValue, key));
@@ -523,7 +523,7 @@ class AvroSchemaConverterTest {
     void namesTheDottedPathWhenANestedListHasNoElement() {
         SchemaElement rootElement = root("root", 1);
         SchemaElement holder = group("holder", RepetitionType.OPTIONAL, 1);
-        SchemaElement list = group("items", RepetitionType.OPTIONAL, 0, new LogicalType.ListType());
+        SchemaElement list = group("items", RepetitionType.OPTIONAL, 0, LogicalType.list());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, holder, list));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
@@ -536,10 +536,10 @@ class AvroSchemaConverterTest {
     @Test
     void listOfNullElementsBecomesArrayOfBareNull() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement listGroup = group("nulls", RepetitionType.OPTIONAL, 1, new LogicalType.ListType());
+        SchemaElement listGroup = group("nulls", RepetitionType.OPTIONAL, 1, LogicalType.list());
         SchemaElement listInner = group("list", RepetitionType.REPEATED, 1);
         SchemaElement element = primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                new LogicalType.NullType());
+                LogicalType.nullType());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, listGroup, listInner, element));
 
         Schema avroSchema = convert(schema);
@@ -554,12 +554,12 @@ class AvroSchemaConverterTest {
     @Test
     void mapWithNullValuesBecomesMapOfBareNull() {
         SchemaElement rootElement = root("root", 1);
-        SchemaElement mapGroup = group("m", RepetitionType.OPTIONAL, 1, new LogicalType.MapType());
+        SchemaElement mapGroup = group("m", RepetitionType.OPTIONAL, 1, LogicalType.map());
         SchemaElement kv = group("key_value", RepetitionType.REPEATED, 2);
         SchemaElement key = primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType());
+                LogicalType.string());
         SchemaElement value = primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                new LogicalType.NullType());
+                LogicalType.nullType());
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, mapGroup, kv, key, value));
 
         Schema avroSchema = convert(schema);
@@ -694,7 +694,7 @@ class AvroSchemaConverterTest {
     private static FileSchema listAndRootElementSchema() {
         return FileSchema.fromSchemaElements(List.of(
                 root("schema", 2),
-                group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 group("list", RepetitionType.REPEATED, 1),
                 group("element", RepetitionType.OPTIONAL, 1),
                 primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED),
@@ -705,7 +705,7 @@ class AvroSchemaConverterTest {
     private static FileSchema fixedListAndRootFixedSchema() {
         return FileSchema.fromSchemaElements(List.of(
                 root("schema", 2),
-                group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 group("list", RepetitionType.REPEATED, 1),
                 fixedLengthPrimitive("element", 4, RepetitionType.REQUIRED),
                 fixedLengthPrimitive("element", 4, RepetitionType.REQUIRED)));
@@ -716,7 +716,7 @@ class AvroSchemaConverterTest {
                 root("schema", 3),
                 group("home", RepetitionType.OPTIONAL, 1),
                 group("address", RepetitionType.OPTIONAL, 1),
-                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType()),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string()),
                 group("work", RepetitionType.OPTIONAL, 1),
                 group("address", RepetitionType.OPTIONAL, 1),
                 primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED),
@@ -732,7 +732,7 @@ class AvroSchemaConverterTest {
                 group("home", RepetitionType.OPTIONAL, 1),
                 group("address", RepetitionType.OPTIONAL, 1),
                 convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8,
-                        new LogicalType.StringType())));
+                        LogicalType.string())));
     }
 
     private static FileSchema qualifiedRootNestedSchema() {
@@ -751,10 +751,10 @@ class AvroSchemaConverterTest {
 
     private static FileSchema canonicalFixedSchema() {
         SchemaElement rootElement = root("root", 4);
-        SchemaElement intervalOne = fixed("interval_one", 12, new LogicalType.IntervalType());
-        SchemaElement intervalTwo = fixed("interval_two", 12, new LogicalType.IntervalType());
-        SchemaElement floatOne = fixed("float16_one", 2, new LogicalType.Float16Type());
-        SchemaElement floatTwo = fixed("float16_two", 2, new LogicalType.Float16Type());
+        SchemaElement intervalOne = fixed("interval_one", 12, LogicalType.interval());
+        SchemaElement intervalTwo = fixed("interval_two", 12, LogicalType.interval());
+        SchemaElement floatOne = fixed("float16_one", 2, LogicalType.float16());
+        SchemaElement floatTwo = fixed("float16_two", 2, LogicalType.float16());
         return FileSchema.fromSchemaElements(List.of(rootElement, intervalOne, intervalTwo, floatOne, floatTwo));
     }
 
@@ -795,7 +795,7 @@ class AvroSchemaConverterTest {
 
     private static List<SchemaElement> variantBranch(String name) {
         return List.of(
-                group(name, RepetitionType.OPTIONAL, 2, new LogicalType.VariantType(1)),
+                group(name, RepetitionType.OPTIONAL, 2, LogicalType.variant(1)),
                 primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
                 primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED));
     }
@@ -808,7 +808,7 @@ class AvroSchemaConverterTest {
         SchemaElement rootElement = root("schema", 2);
         SchemaElement home = group("home", RepetitionType.OPTIONAL, 1);
         SchemaElement homeAddress = group("address", RepetitionType.OPTIONAL, 1);
-        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string());
         SchemaElement work = group("work", RepetitionType.OPTIONAL, 1);
         SchemaElement workAddress = group("address", RepetitionType.OPTIONAL, 1);
         SchemaElement zip = primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED);
@@ -819,14 +819,14 @@ class AvroSchemaConverterTest {
     private static FileSchema illegalNestedGroupSchema() {
         SchemaElement rootElement = root("schema", 1);
         SchemaElement address = group("acme.address", RepetitionType.OPTIONAL, 1);
-        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string());
         return FileSchema.fromSchemaElements(List.of(rootElement, address, city));
     }
 
     private static FileSchema buildVariantSchema(boolean includeTypedValue) {
         int varChildren = includeTypedValue ? 3 : 2;
         SchemaElement rootElement = root("root", 1);
-        SchemaElement var = group("var", RepetitionType.OPTIONAL, varChildren, new LogicalType.VariantType(1));
+        SchemaElement var = group("var", RepetitionType.OPTIONAL, varChildren, LogicalType.variant(1));
         SchemaElement metadata = primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
         SchemaElement value = primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
         if (!includeTypedValue) {

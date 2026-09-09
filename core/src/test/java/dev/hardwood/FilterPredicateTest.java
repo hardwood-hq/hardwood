@@ -1378,16 +1378,16 @@ class FilterPredicateTest {
 
     private static FileSchema createUuidSchema() {
         SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.fixedLengthPrimitive("col", 16, RepetitionType.REQUIRED, new LogicalType.UuidType());
+        SchemaElement col = SchemaElement.fixedLengthPrimitive("col", 16, RepetitionType.REQUIRED, LogicalType.uuid());
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
     private static FileSchema createGeometrySchema() {
-        return createSchemaForType(PhysicalType.BYTE_ARRAY, new LogicalType.GeometryType("OGC:CRS84"));
+        return createSchemaForType(PhysicalType.BYTE_ARRAY, LogicalType.geometry("OGC:CRS84"));
     }
 
     private static FileSchema createGeographySchema() {
-        return createSchemaForType(PhysicalType.BYTE_ARRAY, new LogicalType.GeographyType("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
+        return createSchemaForType(PhysicalType.BYTE_ARRAY, LogicalType.geography("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
     }
 
     private static FileSchema createSchemaForType(PhysicalType type) {

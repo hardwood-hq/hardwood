@@ -74,7 +74,7 @@ class LogicalTypeConverterTest {
     @ParameterizedTest(name = "BSON {0} passes through as raw bytes")
     @MethodSource("bsonPayloads")
     void bsonReturnsRawBytes(String name, byte[] payload) {
-        Object result = LogicalTypeConverter.convert(payload, PhysicalType.BYTE_ARRAY, new LogicalType.BsonType());
+        Object result = LogicalTypeConverter.convert(payload, PhysicalType.BYTE_ARRAY, LogicalType.bson());
 
         assertThat(result).isInstanceOf(byte[].class).isEqualTo(payload);
     }
@@ -83,7 +83,7 @@ class LogicalTypeConverterTest {
     void jsonDispatchesToString() {
         byte[] jsonBytes = "{\"k\":1}".getBytes(StandardCharsets.UTF_8);
 
-        Object result = LogicalTypeConverter.convert(jsonBytes, PhysicalType.BYTE_ARRAY, new LogicalType.JsonType());
+        Object result = LogicalTypeConverter.convert(jsonBytes, PhysicalType.BYTE_ARRAY, LogicalType.json());
 
         assertThat(result).isInstanceOf(String.class).isEqualTo("{\"k\":1}");
     }

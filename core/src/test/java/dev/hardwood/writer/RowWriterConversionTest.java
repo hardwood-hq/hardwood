@@ -42,7 +42,7 @@ class RowWriterConversionTest {
 
     @Test
     void instantFinerThanTheColumnUnitIsRejected() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> write(schema,
                 row -> row.setTimestamp("v", Instant.ofEpochSecond(1, 500_000))))
@@ -56,7 +56,7 @@ class RowWriterConversionTest {
 
     @Test
     void timeFinerThanTheColumnUnitIsRejected() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.TimeType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.time(true, TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> write(schema, row -> row.setTime("v", LocalTime.of(1, 2, 3, 4_000))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -68,8 +68,8 @@ class RowWriterConversionTest {
 
     @Test
     void timestampSetterMustMatchTheColumnsUtcAdjustment() throws Exception {
-        FileSchema utc = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
-        FileSchema local = single(PhysicalType.INT64, new LogicalType.TimestampType(false, TimeUnit.MILLIS));
+        FileSchema utc = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
+        FileSchema local = single(PhysicalType.INT64, LogicalType.timestamp(false, TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> write(utc, row -> row.setLocalTimestamp("v", LocalDateTime.of(2026, 1, 1, 0, 0))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -83,7 +83,7 @@ class RowWriterConversionTest {
 
     @Test
     void decimalNeedingARoundingRescaleIsRejected() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.DecimalType(2, 18));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.decimal(18, 2));
 
         assertThatThrownBy(() -> write(schema, row -> row.setDecimal("v", new BigDecimal("1.005"))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -95,7 +95,7 @@ class RowWriterConversionTest {
 
     @Test
     void decimalExceedingTheDeclaredPrecisionIsRejected() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.DecimalType(2, 5));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.decimal(5, 2));
 
         assertThatThrownBy(() -> write(schema, row -> row.setDecimal("v", new BigDecimal("12345.67"))))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -104,7 +104,7 @@ class RowWriterConversionTest {
 
     @Test
     void intValueOutsideANarrowAnnotationIsRejected() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.IntType(8, true));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(8, true));
 
         assertThatThrownBy(() -> write(schema, row -> row.setInt("v", 200)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -126,7 +126,7 @@ class RowWriterConversionTest {
     void intervalComponentOutsideTheUnsignedRangeIsRejected() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        new LogicalType.IntervalType())
+                        LogicalType.interval())
                 .build();
 
         assertThatThrownBy(() -> write(schema, row -> row.setInterval("v", new PqInterval(-1, 0, 0))))
@@ -141,7 +141,7 @@ class RowWriterConversionTest {
     /// rejected. The instant floors, which is what [Instant#toEpochMilli()] does with it.
     @Test
     void truncatePolicyDropsSubUnitTimePrecision() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
         Instant moment = Instant.ofEpochSecond(1_755_600_000L, 123_456_789);
 
         ByteBufferOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
@@ -156,7 +156,7 @@ class RowWriterConversionTest {
     /// floors toward the past rather than toward the epoch — the same value the JDK produces.
     @Test
     void truncatePolicyFloorsAPreEpochInstant() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
         Instant moment = Instant.ofEpochSecond(-1, 499_500_000);
 
         ByteBufferOutputFile out = write(schema, truncating(), row -> row.setTimestamp("v", moment));
@@ -169,7 +169,7 @@ class RowWriterConversionTest {
 
     @Test
     void truncatePolicyDropsSubUnitTimeOfDayPrecision() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.TimeType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.time(true, TimeUnit.MILLIS));
 
         ByteBufferOutputFile out = write(schema, truncating(),
                 row -> row.setTime("v", LocalTime.of(1, 2, 3, 4_999_999)));
@@ -184,7 +184,7 @@ class RowWriterConversionTest {
     /// is never larger in magnitude than the one handed over — in either direction.
     @Test
     void truncatePolicyDropsDecimalDigitsTowardZero() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.DecimalType(2, 18));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.decimal(18, 2));
 
         assertThat(readDecimal(write(schema, truncating(), row -> row.setDecimal("v", new BigDecimal("1.009")))))
                 .isEqualTo(new BigDecimal("1.00"));
@@ -196,8 +196,8 @@ class RowWriterConversionTest {
     /// all is rejected under `TRUNCATE` too, because no narrowing would preserve it.
     @Test
     void truncatePolicyStillRejectsValuesTheColumnCannotRepresent() throws Exception {
-        FileSchema decimal = single(PhysicalType.INT64, new LogicalType.DecimalType(2, 5));
-        FileSchema narrowInt = single(PhysicalType.INT32, new LogicalType.IntType(8, true));
+        FileSchema decimal = single(PhysicalType.INT64, LogicalType.decimal(5, 2));
+        FileSchema narrowInt = single(PhysicalType.INT32, LogicalType.intType(8, true));
         FileSchema fixed = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
                 .build();
@@ -218,8 +218,8 @@ class RowWriterConversionTest {
     /// policy, and named as a range error rather than leaking the `long` overflow underneath.
     @Test
     void valueOutsideTheUnitsRangeIsRejectedUnderEitherPolicy() {
-        FileSchema nanos = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.NANOS));
-        FileSchema localNanos = single(PhysicalType.INT64, new LogicalType.TimestampType(false, TimeUnit.NANOS));
+        FileSchema nanos = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.NANOS));
+        FileSchema localNanos = single(PhysicalType.INT64, LogicalType.timestamp(false, TimeUnit.NANOS));
         Instant beyondNanos = LocalDateTime.of(2263, 1, 1, 0, 0).toInstant(ZoneOffset.UTC);
 
         for (WriterConfig config : List.of(WriterConfig.defaults(), truncating())) {
@@ -236,7 +236,7 @@ class RowWriterConversionTest {
             // Instant.MAX carries sub-millisecond digits too; the magnitude is reported first,
             // so the same value fails the same way whatever the policy says about precision.
             assertThatThrownBy(() -> write(single(PhysicalType.INT64,
-                    new LogicalType.TimestampType(true, TimeUnit.MILLIS)), config,
+                    LogicalType.timestamp(true, TimeUnit.MILLIS)), config,
                     row -> row.setTimestamp("v", Instant.MAX)))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Field v: +1000000000-12-31T23:59:59.999999999Z is outside the range a "
@@ -247,7 +247,7 @@ class RowWriterConversionTest {
     /// The edges of a `TIMESTAMP(NANOS)` column are writable; only beyond them is rejected.
     @Test
     void theExtremesOfTheNanosRangeAreWritable() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.NANOS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.NANOS));
         Instant max = Instant.ofEpochSecond(Long.MAX_VALUE / 1_000_000_000L,
                 Long.MAX_VALUE % 1_000_000_000L);
 
@@ -268,7 +268,7 @@ class RowWriterConversionTest {
     /// `TIMESTAMP(MILLIS)` column learns what to do about it.
     @Test
     void rejectionNamesTheWaysOut() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.MILLIS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS));
 
         assertThatThrownBy(() -> write(schema, row -> row.setTimestamp("v", Instant.ofEpochSecond(1, 500_000))))
                 .hasMessage("Field v: value has finer precision than the column's TIMESTAMP(MILLIS) unit. "
@@ -284,7 +284,7 @@ class RowWriterConversionTest {
     /// fewer decimals than the column declares is written at the column's scale.
     @Test
     void decimalIsRescaledWhenLossless() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.DecimalType(2, 18));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.decimal(18, 2));
 
         ByteBufferOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("1234.5")));
 
@@ -297,7 +297,7 @@ class RowWriterConversionTest {
     void negativeDecimalOnAFixedColumnSurvives() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        new LogicalType.DecimalType(3, 18))
+                        LogicalType.decimal(18, 3))
                 .build();
 
         ByteBufferOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("-42.125")));
@@ -311,7 +311,7 @@ class RowWriterConversionTest {
     /// declares, and which a `uint8` consumer reads as 44.
     @Test
     void narrowUnsignedAnnotationIsRangeChecked() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.IntType(8, false));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(8, false));
 
         for (int accepted : new int[] { 0, 255 }) {
             try (ParquetFileReader reader = open(write(schema, row -> row.setInt("v", accepted)));
@@ -332,7 +332,7 @@ class RowWriterConversionTest {
     /// `Integer.MAX_VALUE` as a negative `int` is the only way to reach it.
     @Test
     void unsignedIntTakesTheRawBits() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.IntType(32, false));
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.intType(32, false));
 
         ByteBufferOutputFile out = write(schema, row -> row.setInt("v", (int) 4_000_000_000L));
 
@@ -346,7 +346,7 @@ class RowWriterConversionTest {
     /// stands — the escape hatch alongside the logical setters, mirroring the reader.
     @Test
     void physicalSetterWritesTheStoredValueOfAnAnnotatedColumn() throws Exception {
-        FileSchema schema = single(PhysicalType.INT32, new LogicalType.DateType());
+        FileSchema schema = single(PhysicalType.INT32, LogicalType.date());
 
         ByteBufferOutputFile out = write(schema, row -> row.setInt("v", 20_684));
 
@@ -359,7 +359,7 @@ class RowWriterConversionTest {
 
     @Test
     void nanosecondUnitsKeepTheirFullPrecision() throws Exception {
-        FileSchema schema = single(PhysicalType.INT64, new LogicalType.TimestampType(true, TimeUnit.NANOS));
+        FileSchema schema = single(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.NANOS));
         Instant moment = Instant.ofEpochSecond(1_755_600_000L, 123_456_789);
 
         ByteBufferOutputFile out = write(schema, row -> row.setTimestamp("v", moment));
@@ -374,7 +374,7 @@ class RowWriterConversionTest {
     void uuidRoundTripsThroughItsSixteenBytes() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        new LogicalType.UuidType())
+                        LogicalType.uuid())
                 .build();
         UUID id = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
 

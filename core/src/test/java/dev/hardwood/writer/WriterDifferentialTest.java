@@ -455,7 +455,7 @@ class WriterDifferentialTest {
     void duckDbReadsWrittenMapWithAnAnnotatedKey(@TempDir Path dir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
                         v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build();
 
@@ -603,7 +603,7 @@ class WriterDifferentialTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        new LogicalType.StringType())
+                        LogicalType.string())
                 .build();
         WriterConfig config = WriterConfig.builder()
                 .encoding("v", encoding)
@@ -1049,14 +1049,14 @@ class WriterDifferentialTest {
 
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
-                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.DateType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
                 .addColumn("ts", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        new LogicalType.TimestampType(false, TimeUnit.MICROS))
+                        LogicalType.timestamp(false, TimeUnit.MICROS))
                 .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        new LogicalType.DecimalType(4, 18))
+                        LogicalType.decimal(18, 4))
                 .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        new LogicalType.UuidType())
+                        LogicalType.uuid())
                 .build();
 
         Path file = dir.resolve("logical.parquet");

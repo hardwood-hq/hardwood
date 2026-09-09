@@ -116,13 +116,13 @@ final class FlatWriteFixture {
         return FileSchema.builder("flat")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("pickup_ts", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS))
+                        LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS))
                 .addColumn("passenger_count", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .addColumn("fare", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .addColumn("payment_type", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        new LogicalType.StringType())
+                        LogicalType.string())
                 .addColumn("vendor", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        new LogicalType.StringType())
+                        LogicalType.string())
                 .build();
     }
 

@@ -78,46 +78,46 @@ class WriterLogicalTypeInteropTest {
     /// and `GEOGRAPHY` have none, so those columns carry a null count and no bounds.
     static Stream<Annotated> annotations() {
         return Stream.of(
-                binary(new LogicalType.StringType(), LogicalTypeAnnotation.stringType(), utf8()),
-                binary(new LogicalType.EnumType(), LogicalTypeAnnotation.enumType(), utf8()),
-                binary(new LogicalType.JsonType(), LogicalTypeAnnotation.jsonType(),
+                binary(LogicalType.string(), LogicalTypeAnnotation.stringType(), utf8()),
+                binary(LogicalType.enumType(), LogicalTypeAnnotation.enumType(), utf8()),
+                binary(LogicalType.json(), LogicalTypeAnnotation.jsonType(),
                         new byte[][] { json("1"), json("2"), json("3"), json("4") }),
-                binary(new LogicalType.BsonType(), LogicalTypeAnnotation.bsonType(), utf8()),
-                binary(new LogicalType.DecimalType(2, 20), LogicalTypeAnnotation.decimalType(2, 20),
+                binary(LogicalType.bson(), LogicalTypeAnnotation.bsonType(), utf8()),
+                binary(LogicalType.decimal(20, 2), LogicalTypeAnnotation.decimalType(2, 20),
                         new byte[][] { { 0x01 }, { 0x02 }, { 0x00, 0x03 }, { (byte) 0xff } }),
-                unordered(binary(new LogicalType.GeometryType("EPSG:4326"),
+                unordered(binary(LogicalType.geometry("EPSG:4326"),
                         LogicalTypeAnnotation.geometryType("EPSG:4326"), wkb())),
-                unordered(binary(new LogicalType.GeographyType("EPSG:4326",
+                unordered(binary(LogicalType.geography("EPSG:4326",
                         LogicalType.EdgeInterpolationAlgorithm.KARNEY),
                         LogicalTypeAnnotation.geographyType("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY),
                         wkb())),
 
-                ints(new LogicalType.DateType(), LogicalTypeAnnotation.dateType()),
-                ints(new LogicalType.IntType(8, true), LogicalTypeAnnotation.intType(8, true)),
-                ints(new LogicalType.IntType(16, false), LogicalTypeAnnotation.intType(16, false)),
-                ints(new LogicalType.IntType(32, false), LogicalTypeAnnotation.intType(32, false)),
-                ints(new LogicalType.DecimalType(2, 9), LogicalTypeAnnotation.decimalType(2, 9)),
-                ints(new LogicalType.TimeType(true, TimeUnit.MILLIS),
+                ints(LogicalType.date(), LogicalTypeAnnotation.dateType()),
+                ints(LogicalType.intType(8, true), LogicalTypeAnnotation.intType(8, true)),
+                ints(LogicalType.intType(16, false), LogicalTypeAnnotation.intType(16, false)),
+                ints(LogicalType.intType(32, false), LogicalTypeAnnotation.intType(32, false)),
+                ints(LogicalType.decimal(9, 2), LogicalTypeAnnotation.decimalType(2, 9)),
+                ints(LogicalType.time(true, TimeUnit.MILLIS),
                         LogicalTypeAnnotation.timeType(true, LogicalTypeAnnotation.TimeUnit.MILLIS)),
 
-                longs(new LogicalType.IntType(64, false), LogicalTypeAnnotation.intType(64, false)),
-                longs(new LogicalType.DecimalType(4, 18), LogicalTypeAnnotation.decimalType(4, 18)),
-                longs(new LogicalType.TimeType(false, TimeUnit.MICROS),
+                longs(LogicalType.intType(64, false), LogicalTypeAnnotation.intType(64, false)),
+                longs(LogicalType.decimal(18, 4), LogicalTypeAnnotation.decimalType(4, 18)),
+                longs(LogicalType.time(false, TimeUnit.MICROS),
                         LogicalTypeAnnotation.timeType(false, LogicalTypeAnnotation.TimeUnit.MICROS)),
-                longs(new LogicalType.TimeType(true, TimeUnit.NANOS),
+                longs(LogicalType.time(true, TimeUnit.NANOS),
                         LogicalTypeAnnotation.timeType(true, LogicalTypeAnnotation.TimeUnit.NANOS)),
-                longs(new LogicalType.TimestampType(true, TimeUnit.MILLIS),
+                longs(LogicalType.timestamp(true, TimeUnit.MILLIS),
                         LogicalTypeAnnotation.timestampType(true, LogicalTypeAnnotation.TimeUnit.MILLIS)),
-                longs(new LogicalType.TimestampType(false, TimeUnit.MICROS),
+                longs(LogicalType.timestamp(false, TimeUnit.MICROS),
                         LogicalTypeAnnotation.timestampType(false, LogicalTypeAnnotation.TimeUnit.MICROS)),
-                longs(new LogicalType.TimestampType(true, TimeUnit.NANOS),
+                longs(LogicalType.timestamp(true, TimeUnit.NANOS),
                         LogicalTypeAnnotation.timestampType(true, LogicalTypeAnnotation.TimeUnit.NANOS)),
 
-                fixed(16, new LogicalType.UuidType(), LogicalTypeAnnotation.uuidType(), fill(16)),
-                fixed(2, new LogicalType.Float16Type(), LogicalTypeAnnotation.float16Type(), float16()),
-                unordered(fixed(12, new LogicalType.IntervalType(), LogicalTypeAnnotation.intervalType(),
+                fixed(16, LogicalType.uuid(), LogicalTypeAnnotation.uuidType(), fill(16)),
+                fixed(2, LogicalType.float16(), LogicalTypeAnnotation.float16Type(), float16()),
+                unordered(fixed(12, LogicalType.interval(), LogicalTypeAnnotation.intervalType(),
                         fill(12))),
-                fixed(8, new LogicalType.DecimalType(3, 18), LogicalTypeAnnotation.decimalType(3, 18), fill(8)),
+                fixed(8, LogicalType.decimal(18, 3), LogicalTypeAnnotation.decimalType(3, 18), fill(8)),
 
                 nulls());
     }
@@ -193,8 +193,8 @@ class WriterLogicalTypeInteropTest {
     @Test
     void unsignedIntegerBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.IntType(32, false))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, new LogicalType.IntType(64, false))
+                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(32, false))
+                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false))
                 .build();
 
         // -1 is 4294967295 / 18446744073709551615 read unsigned, so it is the maximum of each.
@@ -217,7 +217,7 @@ class WriterLogicalTypeInteropTest {
     void binaryDecimalBoundsUseSignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
                 .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2,
-                        new LogicalType.DecimalType(0, 4))
+                        LogicalType.decimal(4, 0))
                 .build();
 
         byte[] one = { 0x00, 0x01 };
@@ -244,7 +244,7 @@ class WriterLogicalTypeInteropTest {
     void stringBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
                 .addColumn(COLUMN, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        new LogicalType.StringType())
+                        LogicalType.string())
                 .build();
 
         byte[] ascii = bytes("a");
@@ -370,7 +370,7 @@ class WriterLogicalTypeInteropTest {
     /// The `UNKNOWN` row: an `OPTIONAL INT32` column whose every value is null, which is the only
     /// shape the annotation is legal on and the only one whose meaning it can describe.
     private static Annotated nulls() {
-        return new Annotated(PhysicalType.INT32, null, new LogicalType.NullType(),
+        return new Annotated(PhysicalType.INT32, null, LogicalType.nullType(),
                 LogicalTypeAnnotation.unknownType(), null, false, true);
     }
 

@@ -40,31 +40,31 @@ class WriterLogicalTypeRoundTripTest {
     /// type and (where fixed) byte length it annotates.
     static Stream<Annotated> annotations() {
         return Stream.of(
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.StringType()),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.EnumType()),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.JsonType()),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.BsonType()),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.DecimalType(2, 20)),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.GeometryType("EPSG:4326")),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.string()),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.enumType()),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.json()),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.bson()),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.decimal(20, 2)),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.geometry("EPSG:4326")),
                 new Annotated(PhysicalType.BYTE_ARRAY, null,
-                        new LogicalType.GeographyType("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY)),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.DateType()),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.IntType(8, true)),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.IntType(16, false)),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.IntType(32, false)),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.DecimalType(2, 9)),
-                new Annotated(PhysicalType.INT32, null, new LogicalType.TimeType(true, TimeUnit.MILLIS)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.IntType(64, false)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.DecimalType(4, 18)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.TimeType(false, TimeUnit.MICROS)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.TimeType(true, TimeUnit.NANOS)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.TimestampType(true, TimeUnit.MILLIS)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.TimestampType(false, TimeUnit.MICROS)),
-                new Annotated(PhysicalType.INT64, null, new LogicalType.TimestampType(true, TimeUnit.NANOS)),
-                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, new LogicalType.UuidType()),
-                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2, new LogicalType.Float16Type()),
-                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, new LogicalType.IntervalType()),
-                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, new LogicalType.DecimalType(3, 18)));
+                        LogicalType.geography("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY)),
+                new Annotated(PhysicalType.INT32, null, LogicalType.date()),
+                new Annotated(PhysicalType.INT32, null, LogicalType.intType(8, true)),
+                new Annotated(PhysicalType.INT32, null, LogicalType.intType(16, false)),
+                new Annotated(PhysicalType.INT32, null, LogicalType.intType(32, false)),
+                new Annotated(PhysicalType.INT32, null, LogicalType.decimal(9, 2)),
+                new Annotated(PhysicalType.INT32, null, LogicalType.time(true, TimeUnit.MILLIS)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.intType(64, false)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.decimal(18, 4)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.time(false, TimeUnit.MICROS)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.time(true, TimeUnit.NANOS)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.timestamp(true, TimeUnit.MILLIS)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.timestamp(false, TimeUnit.MICROS)),
+                new Annotated(PhysicalType.INT64, null, LogicalType.timestamp(true, TimeUnit.NANOS)),
+                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, LogicalType.uuid()),
+                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2, LogicalType.float16()),
+                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, LogicalType.interval()),
+                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.decimal(18, 3)));
     }
 
     record Annotated(PhysicalType type, Integer typeLength, LogicalType logicalType) {
@@ -89,11 +89,11 @@ class WriterLogicalTypeRoundTripTest {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("person", RepetitionType.OPTIONAL, person -> person
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                                new LogicalType.StringType())
+                                LogicalType.string())
                         .addColumn("born", PhysicalType.INT32, RepetitionType.REQUIRED,
-                                new LogicalType.DateType()))
+                                LogicalType.date()))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType()))
+                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
                 .build();
 
         Validity present = Validity.ofNulls(new boolean[] { false, false });
@@ -109,10 +109,10 @@ class WriterLogicalTypeRoundTripTest {
 
         try (ParquetFileReader reader = openReader(out)) {
             FileSchema readBack = reader.getFileSchema();
-            assertThat(readBack.getColumn("person.name").logicalType()).isEqualTo(new LogicalType.StringType());
-            assertThat(readBack.getColumn("person.born").logicalType()).isEqualTo(new LogicalType.DateType());
+            assertThat(readBack.getColumn("person.name").logicalType()).isEqualTo(LogicalType.string());
+            assertThat(readBack.getColumn("person.born").logicalType()).isEqualTo(LogicalType.date());
             assertThat(readBack.getColumn("tags.list.element").logicalType())
-                    .isEqualTo(new LogicalType.StringType());
+                    .isEqualTo(LogicalType.string());
         }
     }
 
@@ -121,7 +121,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void signedOrderAnnotationsKeepTheirBounds() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.DateType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -154,10 +154,10 @@ class WriterLogicalTypeRoundTripTest {
 
     static Stream<Annotated> unorderedAnnotations() {
         return Stream.of(
-                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, new LogicalType.IntervalType()),
-                new Annotated(PhysicalType.BYTE_ARRAY, null, new LogicalType.GeometryType("EPSG:4326")),
+                new Annotated(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, LogicalType.interval()),
+                new Annotated(PhysicalType.BYTE_ARRAY, null, LogicalType.geometry("EPSG:4326")),
                 new Annotated(PhysicalType.BYTE_ARRAY, null,
-                        new LogicalType.GeographyType("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY)));
+                        LogicalType.geography("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY)));
     }
 
     /// `UNKNOWN` describes a column holding only nulls, so its ordering is undefined and it
@@ -165,7 +165,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void unknownColumnWritesOnlyItsNullCount() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, new LogicalType.NullType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -175,7 +175,7 @@ class WriterLogicalTypeRoundTripTest {
         }
 
         try (ParquetFileReader reader = openReader(out)) {
-            assertThat(reader.getFileSchema().getColumn("v").logicalType()).isEqualTo(new LogicalType.NullType());
+            assertThat(reader.getFileSchema().getColumn("v").logicalType()).isEqualTo(LogicalType.nullType());
             Statistics statistics = columnMeta(reader, 0).statistics();
             assertThat(statistics.minValue()).isNull();
             assertThat(statistics.maxValue()).isNull();
@@ -188,7 +188,7 @@ class WriterLogicalTypeRoundTripTest {
     @Test
     void integerBackedDecimalKeepsItsBounds() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.DecimalType(2, 9))
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.decimal(9, 2))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();

@@ -40,7 +40,7 @@ class WriterLogicalTypeStatisticsTest {
         int[] values = { 1, -1, 7 }; // -1 is 4294967295 unsigned
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.INT32, null,
-                new LogicalType.IntType(32, false), batch -> batch.ints(0, values));
+                LogicalType.intType(32, false), batch -> batch.ints(0, values));
 
         assertThat(toInt(statistics.minValue())).isEqualTo(1);
         assertThat(toInt(statistics.maxValue())).isEqualTo(-1);
@@ -51,7 +51,7 @@ class WriterLogicalTypeStatisticsTest {
         int[] values = { 1, -1, 7 };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.INT32, null,
-                new LogicalType.IntType(32, true), batch -> batch.ints(0, values));
+                LogicalType.intType(32, true), batch -> batch.ints(0, values));
 
         assertThat(toInt(statistics.minValue())).isEqualTo(-1);
         assertThat(toInt(statistics.maxValue())).isEqualTo(7);
@@ -62,7 +62,7 @@ class WriterLogicalTypeStatisticsTest {
         long[] values = { 1L, -1L, 7L };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.INT64, null,
-                new LogicalType.IntType(64, false), batch -> batch.longs(0, values));
+                LogicalType.intType(64, false), batch -> batch.longs(0, values));
 
         assertThat(toLong(statistics.minValue())).isEqualTo(1L);
         assertThat(toLong(statistics.maxValue())).isEqualTo(-1L);
@@ -75,7 +75,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { hex("01"), hex("FF"), hex("7F") }; // 1, -1, 127
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.BYTE_ARRAY, null,
-                new LogicalType.DecimalType(0, 18), batch -> batch.bytes(0, values));
+                LogicalType.decimal(18, 0), batch -> batch.bytes(0, values));
 
         assertThat(statistics.minValue()).isEqualTo(hex("FF"));
         assertThat(statistics.maxValue()).isEqualTo(hex("7F"));
@@ -88,7 +88,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { hex("FF"), hex("00FF"), hex("FF00") }; // -1, 255, -256
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.BYTE_ARRAY, null,
-                new LogicalType.DecimalType(0, 18), batch -> batch.bytes(0, values));
+                LogicalType.decimal(18, 0), batch -> batch.bytes(0, values));
 
         assertThat(statistics.minValue()).isEqualTo(hex("FF00"));
         assertThat(statistics.maxValue()).isEqualTo(hex("00FF"));
@@ -101,7 +101,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { hex("0000000000000001"), hex("FFFFFFFFFFFFFFFF"), hex("000000000000007F") };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
-                new LogicalType.DecimalType(0, 18), batch -> batch.fixed(0, values));
+                LogicalType.decimal(18, 0), batch -> batch.fixed(0, values));
 
         assertThat(statistics.minValue()).isEqualTo(hex("FFFFFFFFFFFFFFFF"));
         assertThat(statistics.maxValue()).isEqualTo(hex("000000000000007F"));
@@ -113,7 +113,7 @@ class WriterLogicalTypeStatisticsTest {
     void undefinedOrderColumnsStillCountNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        new LogicalType.GeometryType("EPSG:4326"))
+                        LogicalType.geometry("EPSG:4326"))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -139,7 +139,7 @@ class WriterLogicalTypeStatisticsTest {
         WriterConfig config = WriterConfig.builder().statisticsTruncationLength(4).build();
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.BYTE_ARRAY, null,
-                new LogicalType.DecimalType(0, 24), config, batch -> batch.bytes(0, values));
+                LogicalType.decimal(24, 0), config, batch -> batch.bytes(0, values));
 
         assertThat(statistics.minValue()).isEqualTo(hex("0102030405060708090A"));
         assertThat(statistics.maxValue()).isEqualTo(hex("0102030405060708090B"));
@@ -156,7 +156,7 @@ class WriterLogicalTypeStatisticsTest {
         WriterConfig config = WriterConfig.builder().statisticsTruncationLength(4).build();
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.BYTE_ARRAY, null,
-                new LogicalType.StringType(), config, batch -> batch.bytes(0, values));
+                LogicalType.string(), config, batch -> batch.bytes(0, values));
 
         assertThat(statistics.minValue()).isEqualTo("aaaa".getBytes(StandardCharsets.UTF_8));
         assertThat(statistics.isMinValueExact()).isFalse();
@@ -171,7 +171,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(1.0f), half(-2.0f), half(0.5f) };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type(), batch -> batch.fixed(0, values));
+                LogicalType.float16(), batch -> batch.fixed(0, values));
 
         assertThat(toHalf(statistics.minValue())).isEqualTo(-2.0f);
         assertThat(toHalf(statistics.maxValue())).isEqualTo(1.0f);
@@ -184,7 +184,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(Float.NaN), half(0.0f), half(2.0f) };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type(), batch -> batch.fixed(0, values));
+                LogicalType.float16(), batch -> batch.fixed(0, values));
 
         assertThat(toHalf(statistics.minValue())).isEqualTo(-0.0f);
         assertThat(Float.floatToRawIntBits(toHalf(statistics.minValue())))
@@ -200,7 +200,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(1.0f), half(-2.0f), half(0.5f) };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type(), batch -> batch.fixed(0, values));
+                LogicalType.float16(), batch -> batch.fixed(0, values));
 
         assertThat(statistics.nanCount()).isEqualTo(0L);
     }
@@ -212,7 +212,7 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(Float.NaN), half(Float.NaN), half(Float.NaN) };
 
         Statistics statistics = writeAndReadStatistics(PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                new LogicalType.Float16Type(), batch -> batch.fixed(0, values));
+                LogicalType.float16(), batch -> batch.fixed(0, values));
 
         assertThat(statistics.minValue()).isNull();
         assertThat(statistics.maxValue()).isNull();
@@ -228,7 +228,7 @@ class WriterLogicalTypeStatisticsTest {
                 half(2.0f), half(-99.0f) };
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 2,
-                        new LogicalType.Float16Type())
+                        LogicalType.float16())
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -254,7 +254,7 @@ class WriterLogicalTypeStatisticsTest {
                 .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, group -> group
                         .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                                new LogicalType.StringType()))
+                                LogicalType.string()))
                 .build();
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();

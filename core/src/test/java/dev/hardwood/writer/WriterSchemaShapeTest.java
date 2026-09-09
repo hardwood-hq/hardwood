@@ -161,7 +161,7 @@ class WriterSchemaShapeTest {
     void acceptsAKeyOnlyMap() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, new LogicalType.MapType()),
+                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
                 SchemaElement.group("key_value", RepetitionType.REPEATED, 1),
                 SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
@@ -178,7 +178,7 @@ class WriterSchemaShapeTest {
     void rejectsAnAnnotatedGroupThatIsItselfRepeated() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.REPEATED, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.REPEATED, 1, LogicalType.list()),
                 SchemaElement.group("list", RepetitionType.REPEATED, 1),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
@@ -198,8 +198,8 @@ class WriterSchemaShapeTest {
     void rejectsAnAnnotatedGroupThatIsItselfRepeatedInsideAList() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
-                SchemaElement.group("inner", RepetitionType.REPEATED, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
+                SchemaElement.group("inner", RepetitionType.REPEATED, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
@@ -217,7 +217,7 @@ class WriterSchemaShapeTest {
     void rejectsAnAnnotatedGroupWhoseEntryIsNotRepeated() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
@@ -234,7 +234,7 @@ class WriterSchemaShapeTest {
     void rejectsAnAnnotatedGroupHoldingMoreThanItsEntry() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 2, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 2, LogicalType.list()),
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.OPTIONAL),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 
@@ -252,7 +252,7 @@ class WriterSchemaShapeTest {
     void rejectsAMapWhoseEntryIsALeaf() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, new LogicalType.MapType()),
+                SchemaElement.group("props", RepetitionType.OPTIONAL, 1, LogicalType.map()),
                 SchemaElement.primitive("key", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
@@ -270,7 +270,7 @@ class WriterSchemaShapeTest {
     void acceptsALegacyTwoLevelListWithALeafEntry() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
@@ -290,7 +290,7 @@ class WriterSchemaShapeTest {
     void acceptsALegacyTwoLevelListOfStructs() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.group("element", RepetitionType.REPEATED, 2),
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));

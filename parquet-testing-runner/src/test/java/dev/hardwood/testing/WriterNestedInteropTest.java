@@ -257,7 +257,7 @@ class WriterNestedInteropTest {
     void requiredMapWithStringKeys(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
                 .map("props", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
-                        new LogicalType.StringType(),
+                        LogicalType.string(),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
                 .build();
 
@@ -527,7 +527,7 @@ class WriterNestedInteropTest {
     @Test
     void rowWrittenMaps(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("nested")
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
 
@@ -651,7 +651,7 @@ class WriterNestedInteropTest {
     void legacyTwoLevelListWithALeafEntry(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("nested", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         // Row 0: [1,2]; row 1: []; row 2: [3,4,5].
@@ -671,7 +671,7 @@ class WriterNestedInteropTest {
     void legacyTwoLevelListOfStructs(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("nested", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.group("element", RepetitionType.REPEATED, 2),
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));

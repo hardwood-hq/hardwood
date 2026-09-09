@@ -150,7 +150,7 @@ class WriterFooterMetadataInteropTest {
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.REQUIRED, person -> person
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.StringType())
+                                LogicalType.string())
                         .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
                 .addColumn("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();

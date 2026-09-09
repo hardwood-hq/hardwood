@@ -40,7 +40,7 @@ class RowWriterRulesTest {
     private static FileSchema schema() {
         return FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
                 .list("tags", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .struct("address", RepetitionType.OPTIONAL, address -> address
@@ -344,7 +344,7 @@ class RowWriterRulesTest {
     void aLegacyTwoLevelListIsWritableColumnarAndRejectedByTheRowView() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)));
 
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
@@ -370,7 +370,7 @@ class RowWriterRulesTest {
     void aLegacyTwoLevelListOfStructsIsRejectedByTheRowView() throws Exception {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
-                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                SchemaElement.group("items", RepetitionType.OPTIONAL, 1, LogicalType.list()),
                 SchemaElement.group("element", RepetitionType.REPEATED, 2),
                 SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
                 SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)));

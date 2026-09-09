@@ -26,11 +26,11 @@ class LeafKindTest {
     /// on the interned-`String` path rather than decoding per value.
     @Test
     void utf8EnumAndJsonOverByteArrayAreStrings() {
-        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, new LogicalType.StringType()))
+        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, LogicalType.string()))
                 .isEqualTo(LeafKind.STRING);
-        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, new LogicalType.EnumType()))
+        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, LogicalType.enumType()))
                 .isEqualTo(LeafKind.STRING);
-        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, new LogicalType.JsonType()))
+        assertThat(LeafKind.of(PhysicalType.BYTE_ARRAY, LogicalType.json()))
                 .isEqualTo(LeafKind.STRING);
     }
 
@@ -38,7 +38,7 @@ class LeafKindTest {
     /// `BinaryBatchValues`, which only a `BYTE_ARRAY` column is stored as.
     @Test
     void aStringAnnotationOverAnotherPhysicalTypeIsNotAStringLeaf() {
-        assertThat(LeafKind.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, new LogicalType.StringType()))
+        assertThat(LeafKind.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.string()))
                 .isEqualTo(LeafKind.CONVERT);
     }
 
@@ -52,7 +52,7 @@ class LeafKindTest {
     /// decode as it would on any other column.
     @Test
     void anAnnotatedInt96DecodesThroughItsAnnotation() {
-        assertThat(LeafKind.of(PhysicalType.INT96, new LogicalType.StringType()))
+        assertThat(LeafKind.of(PhysicalType.INT96, LogicalType.string()))
                 .isEqualTo(LeafKind.CONVERT);
     }
 
@@ -67,7 +67,7 @@ class LeafKindTest {
 
     @Test
     void anAnnotatedLeafConverts() {
-        assertThat(LeafKind.of(PhysicalType.INT32, new LogicalType.DateType()))
+        assertThat(LeafKind.of(PhysicalType.INT32, LogicalType.date()))
                 .isEqualTo(LeafKind.CONVERT);
     }
 
@@ -85,7 +85,7 @@ class LeafKindTest {
     void classifyingATypeAndAnnotationNeverAnswersGroup() {
         for (PhysicalType type : PhysicalType.values()) {
             assertThat(LeafKind.of(type, null)).as("%s", type).isNotEqualTo(LeafKind.GROUP);
-            assertThat(LeafKind.of(type, new LogicalType.DateType())).as("%s", type)
+            assertThat(LeafKind.of(type, LogicalType.date())).as("%s", type)
                     .isNotEqualTo(LeafKind.GROUP);
         }
     }
@@ -93,7 +93,7 @@ class LeafKindTest {
     @Test
     void aLeafNodeClassifiesAsItsTypeAndAnnotationDo() {
         SchemaNode leaf = new SchemaNode.PrimitiveNode(
-                "d", PhysicalType.INT32, RepetitionType.REQUIRED, new LogicalType.DateType(), 0, 0, 0);
+                "d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date(), 0, 0, 0);
 
         assertThat(LeafKind.of(leaf)).isEqualTo(LeafKind.CONVERT);
     }
