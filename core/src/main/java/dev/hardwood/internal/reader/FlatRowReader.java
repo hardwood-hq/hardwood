@@ -851,6 +851,14 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (exhausted) {
             return false;
         }
+        // A schema with no columns has no batch to take a record count from: the loop below
+        // reads one from column 0, and there is no column 0, so it would fall through and
+        // report a batch that does not exist — leaving `hasNext()` permanently true over a
+        // `batchSize` of zero. Arrow writes such a file, so it reaches this reader; there is
+        // nothing in it to yield, which makes the relation empty rather than endless.
+        if (columnCount == 0) {
+            return false;
+        }
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
                 exchanges[i].recycle(previousBatches[i]);
