@@ -23,6 +23,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `FilterPredicate.in(String, double...)` filters `FLOAT` and `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).
 
+- Row-group and page statistics pruning no longer drops `NaN` rows that a floating-point predicate matches ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016)).
+
 - Statistics whose `min` sorts above its `max` no longer prune ([#1172](https://github.com/hardwood-hq/hardwood/issues/1172)).
 
 - Statistics carrying a null count and no bounds are no longer reported as carrying deprecated `min` / `max` bounds ([#1172](https://github.com/hardwood-hq/hardwood/issues/1172)).

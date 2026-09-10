@@ -105,7 +105,7 @@ FilterPredicate anyZero = FilterPredicate.or(
 );
 ```
 
-Row-group and page-level pushdown is defensive against non-conformant writers: if a column's statistics carry `NaN` as `min` or `max` (forbidden by the Parquet spec, but produced by older or buggy writers), that bound is treated as no-bound and the row group / page is not pruned on its account.
+Row-group and page pruning never drops a `NaN` row that a predicate matches. Which floating-point predicates prune from statistics is listed under [When statistics are ignored](../reference/query-controls.md#when-statistics-are-ignored).
 
 ### Logical Type Support
 

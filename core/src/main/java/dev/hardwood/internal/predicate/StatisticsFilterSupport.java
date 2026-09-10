@@ -39,9 +39,16 @@ final class StatisticsFilterSupport {
     /// Determines if a range can be dropped given `FLOAT` or `FLOAT16` min/max statistics.
     ///
     /// The bounds are assumed usable — neither `NaN` nor inverted — which [MinMaxStats]
-    /// establishes where it sources them.
+    /// establishes where it sources them. They describe the unit's non-`NaN` values only, so
+    /// they rule out a predicate that a `NaN` row satisfies only where `nanFree` says the unit
+    /// holds no `NaN` (#1016).
+    ///
+    /// @param nanFree whether the unit records a `nan_count` of zero
     static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max,
-            boolean ieee754TotalOrder) {
+            boolean ieee754TotalOrder, boolean nanFree) {
+        if (!nanFree && naNRowSatisfies(op, Float.isNaN(value))) {
+            return false;
+        }
         // Under the type-defined ordering the spec leaves +0/-0 ambiguous: a +0 min may hide -0, a
         // -0 max may hide +0. Float.compare's total order separates them (-0 < +0), which could
         // wrongly drop the opposite zero, so widen each zero bound to its total-order extreme. The
@@ -61,9 +68,12 @@ final class StatisticsFilterSupport {
     }
 
     /// Determines if a range can be dropped given `DOUBLE` min/max statistics. See
-    /// [#canDropFloat] for what the bounds are assumed to be.
+    /// [#canDropFloat] for what the bounds are assumed to be and what `nanFree` decides.
     static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max,
-            boolean ieee754TotalOrder) {
+            boolean ieee754TotalOrder, boolean nanFree) {
+        if (!nanFree && naNRowSatisfies(op, Double.isNaN(value))) {
+            return false;
+        }
         // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
         // the unambiguous IEEE 754 total order.
         if (!ieee754TotalOrder) {
@@ -77,6 +87,20 @@ final class StatisticsFilterSupport {
             case LT_EQ -> Double.compare(min, value) > 0;
             case GT -> Double.compare(max, value) <= 0;
             case GT_EQ -> Double.compare(max, value) < 0;
+        };
+    }
+
+    /// Whether a `NaN` row satisfies `op` in the `Float.compare` / `Double.compare` total order
+    /// the matchers use, where `NaN` equals `NaN` and sorts above every other value — the row a
+    /// unit's bounds say nothing about.
+    ///
+    /// @param naNProbe whether the predicate's value is itself `NaN`
+    private static boolean naNRowSatisfies(FilterPredicate.Operator op, boolean naNProbe) {
+        return switch (op) {
+            case EQ, LT_EQ -> naNProbe;
+            case NOT_EQ, GT -> !naNProbe;
+            case LT -> false;
+            case GT_EQ -> true;
         };
     }
 

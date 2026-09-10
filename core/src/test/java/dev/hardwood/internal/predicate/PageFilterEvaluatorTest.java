@@ -214,11 +214,39 @@ class PageFilterEvaluatorTest {
                 Arguments.of(Operator.LT,     1.0f, false, false),
                 Arguments.of(Operator.LT_EQ,  2.0f, true,  false),
                 Arguments.of(Operator.LT_EQ,  4.0f, true,  true),
-                Arguments.of(Operator.GT,     2.0f, false, true),
-                Arguments.of(Operator.GT,     4.0f, false, false),
-                Arguments.of(Operator.GT_EQ,  3.0f, false, true),
+                // GT / GT_EQ never prune: finite bounds cannot exclude NaN rows (#1016).
+                Arguments.of(Operator.GT,     2.0f, true,  true),
+                Arguments.of(Operator.GT,     4.0f, true,  true),
+                Arguments.of(Operator.GT_EQ,  3.0f, true,  true),
                 Arguments.of(Operator.GT_EQ,  1.0f, true,  true)
         );
+    }
+
+    /// Drives a floating-point predicate through the page-index sourcing route
+    /// ([MinMaxStats#ofPage]) rather than the shared helpers directly: with no `nan_counts` in
+    /// the index a GT probe keeps both pages, while EQ prunes through the same route.
+    @Test
+    void floatPredicateThroughOfPageFollowsTheNaNAwareTable() {
+        ResolvedPredicate gt = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 3.0f, false);
+        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 0, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
+        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 1, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
+
+        ResolvedPredicate eq = new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 2.5f, false);
+        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 0, eq, BoundsReadability.ALL).canDrop(eq)).isTrue();
+        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 1, eq, BoundsReadability.ALL).canDrop(eq)).isTrue();
+    }
+
+    /// Each page reads its own `nan_counts` entry: a zero lets its bounds rule out GT, a
+    /// non-zero one keeps the page whatever its bounds say.
+    @Test
+    void pageNaNCountOfZeroLetsItsBoundsDecideGt() {
+        ColumnIndex columnIndex = new ColumnIndex(new boolean[2],
+                List.of(floatBytes(1.0f), floatBytes(3.0f)), List.of(floatBytes(2.0f), floatBytes(4.0f)),
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null, null, new long[]{ 0, 1 });
+        ResolvedPredicate gt = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 4.5f, false);
+
+        assertThat(MinMaxStats.ofPage(columnIndex, 0, gt, BoundsReadability.ALL).canDrop(gt)).isTrue();
+        assertThat(MinMaxStats.ofPage(columnIndex, 1, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
     }
 
     // Double Filtering Tests
@@ -248,9 +276,10 @@ class PageFilterEvaluatorTest {
                 Arguments.of(Operator.LT,     10.0, false, false),
                 Arguments.of(Operator.LT_EQ,  20.0, true,  false),
                 Arguments.of(Operator.LT_EQ,  40.0, true,  true),
-                Arguments.of(Operator.GT,     20.0, false, true),
-                Arguments.of(Operator.GT,     40.0, false, false),
-                Arguments.of(Operator.GT_EQ,  30.0, false, true),
+                // GT / GT_EQ never prune: finite bounds cannot exclude NaN rows (#1016).
+                Arguments.of(Operator.GT,     20.0, true,  true),
+                Arguments.of(Operator.GT,     40.0, true,  true),
+                Arguments.of(Operator.GT_EQ,  30.0, true,  true),
                 Arguments.of(Operator.GT_EQ,  10.0, true,  true)
         );
     }

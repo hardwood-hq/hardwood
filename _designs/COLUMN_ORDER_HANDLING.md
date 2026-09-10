@@ -21,8 +21,8 @@ implement the IEEE 754 *total order*.
 For `FLOAT`/`DOUBLE`, `TYPE_ORDER` and total order diverge only at **NaN** and **±0.0**. Everywhere
 else they are identical, so the choice of order is irrelevant for pruning every finite, non-zero value.
 
-- **NaN** bounds are already neutralised: `StatisticsFilterSupport.canDropFloat` / `canDropDouble`
-  return `false` whenever a bound is NaN and never prune.
+- **NaN** bounds are already neutralised: `MinMaxStats` discards a pair holding NaN where it sources
+  the bounds, so no comparator is ever handed one and no such unit is pruned.
 - **±0.0**: a spec-compliant `TYPE_ORDER` writer normalises zero bounds to `-0.0` for min and `+0.0`
   for max. PyArrow 24.0.0 does exactly this: a float column whose minimum is zero is written with min
   `-0.0` (raw `0x00000080`) and a column whose maximum is zero with max `+0.0` (raw `0x00000000`).

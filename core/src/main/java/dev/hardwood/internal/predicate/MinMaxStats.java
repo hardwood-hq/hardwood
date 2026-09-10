@@ -34,11 +34,13 @@ sealed interface MinMaxStats {
     String DEPRECATED_SORT_ORDER =
             "they come from the deprecated min/max fields, which compare unsigned";
 
-    /// The Parquet spec forbids writing `NaN` to statistics min/max, but older and buggy
-    /// writers have produced such bounds (#566). `NaN` sorts above every finite value in
-    /// `Double.compare`'s total order, so comparing against it would prune units holding
-    /// matching finite rows.
-    String NOT_A_NUMBER = "one of them is NaN, which sits outside the column's ordering";
+    /// A floating-point pair containing `NaN` cannot be pruned against: `NaN` sorts above
+    /// every finite value in `Double.compare`'s total order, so comparing against such a
+    /// bound would prune units holding matching finite rows (#566). A `NaN` bound is
+    /// invalid under `TYPE_ORDER`; under `IEEE_754_TOTAL_ORDER` it may instead represent
+    /// an all-`NaN` unit, whose interpretation is deferred to #898 — so the pair is
+    /// discarded either way.
+    String NOT_A_NUMBER = "one of them is NaN, which sorts above every finite value";
 
     /// The spec requires `min <= max`. A pair the wrong way round excludes every value it
     /// should contain and contains every value it should exclude, so it is wrong in both
@@ -129,22 +131,30 @@ sealed interface MinMaxStats {
         if (stats.isMinMaxDeprecated()) {
             return new NullCountOnlyStats(stats.nullCount(), DEPRECATED_SORT_ORDER);
         }
-        return sourced(stats.minValue(), stats.maxValue(), stats.nullCount(), leaf, readability);
+        Long nanCount = stats.nanCount();
+        return sourced(stats.minValue(), stats.maxValue(), stats.nullCount(),
+                nanCount != null && nanCount == 0, leaf, readability);
     }
 
     /// The [ColumnIndex] entry for one page of a column chunk.
     static MinMaxStats ofPage(ColumnIndex columnIndex, int pageIndex, ResolvedPredicate leaf,
             BoundsReadability readability) {
         long[] nullCounts = columnIndex.nullCounts();
+        long[] nanCounts = columnIndex.nanCounts();
         return sourced(columnIndex.minValues().get(pageIndex), columnIndex.maxValues().get(pageIndex),
-                nullCounts != null ? Long.valueOf(nullCounts[pageIndex]) : null, leaf, readability);
+                nullCounts != null ? Long.valueOf(nullCounts[pageIndex]) : null,
+                nanCounts != null && nanCounts[pageIndex] == 0, leaf, readability);
     }
 
     /// Decodes the pair as the leaf reads it, yielding [NullCountOnlyStats] where the file
     /// wrote no bounds, where they are in an order this reader cannot read, where the leaf reads
     /// none, or where the pair does not hold together.
-    private static MinMaxStats sourced(byte[] min, byte[] max, Long nullCount, ResolvedPredicate leaf,
-            BoundsReadability readability) {
+    ///
+    /// `nanFree` is whether the unit records a `nan_count` of zero. Only the floating-point
+    /// variants read it: their bounds exclude `NaN`, so it is what lets them rule out a `NaN`
+    /// row.
+    private static MinMaxStats sourced(byte[] min, byte[] max, Long nullCount, boolean nanFree,
+            ResolvedPredicate leaf, BoundsReadability readability) {
         if (min == null || max == null) {
             // Nothing was written, so nothing was discarded; a half-present pair prunes no
             // more than an absent one. This comes first so that a column whose annotation names
@@ -177,26 +187,26 @@ sealed interface MinMaxStats {
                     StatisticsDecoder.decodeBoolean(min), StatisticsDecoder.decodeBoolean(max), nullCount);
             case ResolvedPredicate.FloatPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                    p.ieee754TotalOrder(), nullCount);
+                    p.ieee754TotalOrder(), nanFree, nullCount);
             // A binary16 bound is a float once decoded, so it needs no variant of its own.
             case ResolvedPredicate.Float16Predicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nullCount);
+                    p.ieee754TotalOrder(), nanFree, nullCount);
             case ResolvedPredicate.DoublePredicate p -> DoubleStats.of(
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                    p.ieee754TotalOrder(), nullCount);
+                    p.ieee754TotalOrder(), nanFree, nullCount);
             case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
             case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nullCount);
+                    p.ieee754TotalOrder(), nanFree, nullCount);
             case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
                     ? FloatStats.of(StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                            p.ieee754TotalOrder(), nullCount)
+                            p.ieee754TotalOrder(), nanFree, nullCount)
                     : DoubleStats.of(StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                            p.ieee754TotalOrder(), nullCount);
+                            p.ieee754TotalOrder(), nanFree, nullCount);
             // These leaves read no bounds, so there is nothing to decode and nothing to
             // validate. What the file wrote is not discarded; it is simply not their business.
             case ResolvedPredicate.IsNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
@@ -432,24 +442,26 @@ sealed interface MinMaxStats {
     ///
     /// `ieee754TotalOrder` is carried rather than applied here because it changes what the
     /// comparators compare against, not whether the bounds hold together; see
-    /// [StatisticsFilterSupport#canDropFloat].
-    record FloatStats(float min, float max, boolean ieee754TotalOrder, Long nullCount)
+    /// [StatisticsFilterSupport#canDropFloat]. So is `nanFree`, whether the unit records a
+    /// `nan_count` of zero, which decides whether the bounds can rule out a `NaN` row.
+    record FloatStats(float min, float max, boolean ieee754TotalOrder, boolean nanFree, Long nullCount)
             implements MinMaxStats {
 
-        static MinMaxStats of(float min, float max, boolean ieee754TotalOrder, Long nullCount) {
+        static MinMaxStats of(float min, float max, boolean ieee754TotalOrder, boolean nanFree,
+                Long nullCount) {
             String reason = floatingPointReason(min, max, ieee754TotalOrder);
             return reason != null
                     ? new NullCountOnlyStats(nullCount, reason)
-                    : new FloatStats(min, max, ieee754TotalOrder, nullCount);
+                    : new FloatStats(min, max, ieee754TotalOrder, nanFree, nullCount);
         }
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
             return switch (leaf) {
                 case ResolvedPredicate.FloatPredicate p -> StatisticsFilterSupport.canDropFloat(
-                        p.op(), p.value(), min, max, ieee754TotalOrder);
+                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
                 case ResolvedPredicate.Float16Predicate p -> StatisticsFilterSupport.canDropFloat(
-                        p.op(), p.value(), min, max, ieee754TotalOrder);
+                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
                 case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
                         p.values(), min, max, ieee754TotalOrder);
                 case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
@@ -459,31 +471,33 @@ sealed interface MinMaxStats {
         }
 
         /// NaN values sit outside the min/max ordering, so a unit whose `[min, max]` fully
-        /// satisfies the predicate may still hold non-matching NaN rows. `nan_count` would
-        /// settle it — the reader parses it and Hardwood's writer emits it — but nothing here
-        /// consults it, so a floating-point column is never promised a full match (#898).
+        /// satisfies the predicate may still hold non-matching NaN rows. Only a `nanFree` unit
+        /// rules them out, and promoting one to a full match is #898, so a floating-point column
+        /// is never promised a full match here.
         @Override
         public boolean alwaysMatches(ResolvedPredicate leaf) {
             return false;
         }
     }
 
-    /// `DOUBLE` bounds. See [FloatStats] for what `ieee754TotalOrder` is doing here.
-    record DoubleStats(double min, double max, boolean ieee754TotalOrder, Long nullCount)
+    /// `DOUBLE` bounds. See [FloatStats] for what `ieee754TotalOrder` and `nanFree` are doing
+    /// here.
+    record DoubleStats(double min, double max, boolean ieee754TotalOrder, boolean nanFree, Long nullCount)
             implements MinMaxStats {
 
-        static MinMaxStats of(double min, double max, boolean ieee754TotalOrder, Long nullCount) {
+        static MinMaxStats of(double min, double max, boolean ieee754TotalOrder, boolean nanFree,
+                Long nullCount) {
             String reason = floatingPointReason(min, max, ieee754TotalOrder);
             return reason != null
                     ? new NullCountOnlyStats(nullCount, reason)
-                    : new DoubleStats(min, max, ieee754TotalOrder, nullCount);
+                    : new DoubleStats(min, max, ieee754TotalOrder, nanFree, nullCount);
         }
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
             return switch (leaf) {
                 case ResolvedPredicate.DoublePredicate p -> StatisticsFilterSupport.canDropDouble(
-                        p.op(), p.value(), min, max, ieee754TotalOrder);
+                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
                 case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
                         p.values(), min, max, ieee754TotalOrder);
                 default -> throw wrongWidth("DOUBLE", leaf);

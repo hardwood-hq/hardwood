@@ -130,6 +130,8 @@ Logic per operator:
 
 Float/double comparisons use `Float.compare()` / `Double.compare()` for correct NaN and -0.0 handling.
 
+For `FLOAT`, `DOUBLE` and `FLOAT16` a usable min/max pair covers non-NaN values only, so it cannot rule out a NaN row. Where the unit's `nan_count` is absent or non-zero, an operator that a NaN row satisfies never drops: `NOT_EQ`, `GT` and `GT_EQ` against a non-NaN value, and `EQ`, `LT_EQ` and `GT_EQ` against NaN (#1016). The rules above decide every other case, and every operator where `nan_count` is zero. Promoting a NaN-free unit to `ALWAYS_MATCHES`, and pruning an all-NaN unit, is #898.
+
 Column lookup uses `schema.getColumn(name).columnIndex()` (O(1) via name-to-index map) with a fallback to path-based matching for nested columns. Supports dotted paths (e.g., `"address.zip"` matches path `["address", "zip"]`) and top-level names for repeated columns (e.g., `"scores"` matches path `["scores", "list", "element"]`).
 
 **Files:**

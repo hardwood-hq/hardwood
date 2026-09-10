@@ -261,8 +261,10 @@ class FilterPredicateTest {
         RowGroup rg = createDoubleRowGroup(1.0, 10.0);
         FileSchema schema = createDoubleSchema();
 
+        // GT above max: finite bounds cannot exclude NaN rows (which sort above every
+        // finite value), so cannot drop
         assertThat(canDropRowGroup(
-                FilterPredicate.gt("col", 10.0), rg, schema)).isTrue();
+                FilterPredicate.gt("col", 10.0), rg, schema)).isFalse();
         assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 1.0), rg, schema)).isTrue();
         assertThat(canDropRowGroup(
@@ -274,8 +276,9 @@ class FilterPredicateTest {
         RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
         FileSchema schema = createFloatSchema();
 
+        // GT above max: finite bounds cannot exclude NaN rows, so cannot drop
         assertThat(canDropRowGroup(
-                FilterPredicate.gt("col", 10.0f), rg, schema)).isTrue();
+                FilterPredicate.gt("col", 10.0f), rg, schema)).isFalse();
         assertThat(canDropRowGroup(
                 FilterPredicate.ltEq("col", 0.5f), rg, schema)).isTrue();
         assertThat(canDropRowGroup(
@@ -781,9 +784,10 @@ class FilterPredicateTest {
         // NaN is ordered after +Infinity by Double.compare
         RowGroup rg = createDoubleRowGroup(1.0, 10.0);
         FileSchema schema = createDoubleSchema();
-        // EQ NaN: NaN > max(10.0), so can drop
-        assertThat(canDropRowGroup(FilterPredicate.eq("col", Double.NaN), rg, schema)).isTrue();
-        // GT NaN: max(10.0) < NaN, so can drop
+        // EQ NaN / GT_EQ NaN: the bounds cover non-NaN values only and NaN rows may be present
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", Double.NaN), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", Double.NaN), rg, schema)).isFalse();
+        // GT NaN: nothing sorts above NaN, so can drop
         assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.NaN), rg, schema)).isTrue();
         // LT NaN: min(1.0) < NaN, so cannot drop (some values < NaN)
         assertThat(canDropRowGroup(FilterPredicate.lt("col", Double.NaN), rg, schema)).isFalse();
@@ -817,9 +821,9 @@ class FilterPredicateTest {
         FileSchema schema = createDoubleSchema();
         // Any finite value is in range
         assertThat(canDropRowGroup(FilterPredicate.eq("col", 0.0), rg, schema)).isFalse();
-        // GT +Infinity: max is +Inf, +Inf <= +Inf, can drop
-        assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.POSITIVE_INFINITY), rg, schema)).isTrue();
-        // LT -Infinity: min is -Inf, -Inf >= -Inf, can drop
+        // GT +Infinity: only NaN sorts above +Infinity, and NaN rows may be present
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.POSITIVE_INFINITY), rg, schema)).isFalse();
+        // LT -Infinity: no value (NaN included) sorts below -Infinity, so can drop
         assertThat(canDropRowGroup(FilterPredicate.lt("col", Double.NEGATIVE_INFINITY), rg, schema)).isTrue();
     }
 
@@ -827,9 +831,37 @@ class FilterPredicateTest {
     void testCanDropWithFloatNaN() throws IOException {
         RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
         FileSchema schema = createFloatSchema();
-        assertThat(canDropRowGroup(FilterPredicate.eq("col", Float.NaN), rg, schema)).isTrue();
+        // EQ NaN / GT_EQ NaN: the bounds cover non-NaN values only and NaN rows may be present
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", Float.NaN), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", Float.NaN), rg, schema)).isFalse();
+        // GT NaN: nothing sorts above NaN, so can drop
         assertThat(canDropRowGroup(FilterPredicate.gt("col", Float.NaN), rg, schema)).isTrue();
+        // LT NaN: min(1.0f) < NaN, so cannot drop
         assertThat(canDropRowGroup(FilterPredicate.lt("col", Float.NaN), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithDoubleNonNaNAboveMaxAndCollapsedBounds() throws IOException {
+        // Finite bounds cover non-NaN values only; without nan_count they cannot prove the
+        // row group NaN-free, so gt/gtEq above max and notEq on a collapsed pair keep it.
+        RowGroup rg = createDoubleRowGroup(1.0, 10.0);
+        FileSchema schema = createDoubleSchema();
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", 20.0), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", 20.0), rg, schema)).isFalse();
+
+        RowGroup collapsed = createDoubleRowGroup(1.0, 1.0);
+        assertThat(canDropRowGroup(FilterPredicate.notEq("col", 1.0), collapsed, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithFloatNonNaNAboveMaxAndCollapsedBounds() throws IOException {
+        RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
+        FileSchema schema = createFloatSchema();
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", 20.0f), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", 20.0f), rg, schema)).isFalse();
+
+        RowGroup collapsed = createFloatRowGroup(1.0f, 1.0f);
+        assertThat(canDropRowGroup(FilterPredicate.notEq("col", 1.0f), collapsed, schema)).isFalse();
     }
 
     @Test
