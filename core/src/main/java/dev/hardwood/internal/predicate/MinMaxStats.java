@@ -107,10 +107,10 @@ sealed interface MinMaxStats {
     /// Truncated (inexact) bounds are safe by construction: they only widen the interval,
     /// and a predicate satisfied by the widened interval is satisfied by the actual values.
     ///
-    /// `IS NULL` and `IS NOT NULL` are not value predicates and do not come here.
-    /// [RowGroupFilterEvaluator] decides them from the null count against the row count,
-    /// which lets it drop a wholly-null row group — something this cannot see, holding no
-    /// row count of its own.
+    /// `IS NULL` and `IS NOT NULL` are not value predicates and do not come here. [UnitStats]
+    /// decides them from the null count or the definition level histogram, and drops a unit
+    /// null on every row from the null count against the unit's row count before these bounds
+    /// are consulted — something this cannot see, holding no row count of its own.
     default FilterDecision decideLeaf(ResolvedPredicate leaf) {
         if (canDrop(leaf)) {
             return FilterDecision.CANNOT_MATCH;
