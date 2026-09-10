@@ -162,6 +162,44 @@ class FilterPredicateResolverTest {
 
     // ==================== Decimal ====================
 
+    /// A literal is rescaled to the column's scale, so a column holding more scale than the
+    /// literal pads it rather than refusing it.
+    @Test
+    void resolveDecimalPadsALiteralCoarserThanTheColumn() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(9, 4));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("amount", new BigDecimal("99.99")), schema);
+
+        // 99.99 restated at scale 4 is 99.9900, unscaled 999900.
+        assertThat(((ResolvedPredicate.IntPredicate) resolved).value()).isEqualTo(999900);
+    }
+
+    /// Trailing zeros carry no value, so dropping them to reach the column's scale is not
+    /// rounding and is allowed.
+    @Test
+    void resolveDecimalDropsTrailingZerosToReachTheColumnScale() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(9, 2));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("amount", new BigDecimal("99.9900")), schema);
+
+        assertThat(((ResolvedPredicate.IntPredicate) resolved).value()).isEqualTo(9999);
+    }
+
+    /// A digit the column cannot hold is refused rather than rounded away, so a predicate never
+    /// silently answers for a value other than the one asked about.
+    @Test
+    void resolveDecimalRefusesALiteralFinerThanTheColumn() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(9, 2));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.gt("amount", new BigDecimal("99.999")), schema))
+                .isInstanceOf(ArithmeticException.class)
+                .hasMessage("Rounding necessary");
+    }
+
     @Test
     void resolveDecimalInt32() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,

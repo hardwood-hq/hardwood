@@ -22,27 +22,85 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
 | Set operators | `in` (int, long, double), `inStrings` |
 | Null operators | `isNull`, `isNotNull` (any type) |
-| Physical types (comparison) | `int`, `long`, `float`, `double`, `boolean`, `String` |
-| Logical types (comparison) | `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` |
+| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
-| Column form | Leaf columns only, by name or dot-separated path (`address.city`); group, `LIST`, and `MAP` names and leaves below a repeated group are rejected |
+| Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
 
-`in(column, double...)` accepts FLOAT and DOUBLE columns only; other physical or logical
-types, including `FLOAT16`, throw `IllegalArgumentException` at reader creation. Comparisons
-use the `Double.compare` total order: all `NaN` values equal each other and `-0.0` differs
-from `+0.0`. On a `FLOAT` column, stored values are widened to `double` before comparison, so
-a probe with no exact `float` representation (e.g. `0.1`) never matches.
+All predicates, including those wrapped in `not`, are pushed down for row-group and page
+skipping. Filters work with all reader types — `RowReader`, `ColumnReader`,
+`AvroRowReader`, and across multi-file readers.
 
-All predicates, including those wrapped in `not`, are pushed down to the statistics level for
-row-group and page skipping.
+## Predicate literals by column type
 
-The logical-type factories validate the column's logical type at reader creation: `BigDecimal`
-predicates require a `DECIMAL` column and `UUID` predicates require a `UUID` column. Applying them
-to a plain `FIXED_LEN_BYTE_ARRAY` column without the corresponding logical-type annotation throws
-`IllegalArgumentException`. Raw physical-type predicates (`int`, `long`, etc.) remain available for
-columns without logical types or for filtering on the underlying physical value directly. Filters
-work with all reader types — `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file
-readers.
+A column takes the literal types listed for its physical type, and — where it carries an
+annotation — those listed for that annotation as well. Where both rows apply, the annotation
+names the order: a `UINT_32` column matches the `INT32` row and the `INT(32, isSigned = false)`
+row, and compares by unsigned magnitude. Set membership follows the same mapping: `in` on the
+`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, `inStrings` on those taking a `String`. A
+literal a column does not take throws `IllegalArgumentException` at reader creation.
+
+| Physical type | Logical type | Literal | Compared as |
+|---|---|---|---|
+| `BOOLEAN` | | `boolean` | equality only (`eq`, `notEq`) |
+| `INT32` | | `int` | signed |
+| `INT64` | | `long` | signed |
+| `FLOAT` | | `float` | numeric |
+| `DOUBLE` | | `double` | numeric |
+| `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY(n)` | | `String` | unsigned lexicographic |
+| `INT32`, `INT64` | `INT(8/16/32/64, isSigned = true)` | `int` / `long` | signed |
+| `INT32`, `INT64` | `INT(8/16/32/64, isSigned = false)` | `int` / `long` | unsigned magnitude |
+| `INT32` | `DATE` | `LocalDate` | days since the Unix epoch |
+| `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
+| `INT64` | `TIMESTAMP` | `Instant` | the column's time unit |
+| `INT32`, `INT64`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `DECIMAL` | `BigDecimal`, `String` | the represented value, under all four physical types |
+| `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON`, `BSON` | `String` | unsigned lexicographic |
+| `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | four `double` bounds | bounding-box overlap |
+| `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `String` | the 16 bytes, unsigned |
+| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `String` | numeric, widened to `float` |
+| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `String`, `inStrings` | the 12 bytes, unsigned; the format defines no order for `INTERVAL`, so only equality is meaningful |
+| any | `NULL` | the literal for the physical type | nothing — every value is null, so no comparison matches |
+| group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
+
+A predicate on a `VARIANT` column reaches the group's presence, not the values inside it.
+Filtering on a shredded variant's sub-paths is in progress, tracked by
+[#309](https://github.com/hardwood-hq/hardwood/issues/309); the `metadata` and `value` leaves below
+the group take `BYTE_ARRAY` predicates as any leaf does, but they hold the encoded payload rather
+than the values a caller would filter on.
+
+A `FLOAT` or `DOUBLE` column compares by the `Double.compare` total order, so all `NaN` values
+equal each other and `-0.0` differs from `+0.0`. A `FLOAT` column's stored values widen to
+`double` first, so a probe with no exact `float` representation — `0.1`, say — never matches.
+
+A `BigDecimal` literal is rescaled to the column's scale before it is compared. A column with
+more scale than the literal pads it, so `99.99` against a `DECIMAL(scale = 4)` column compares
+as `99.9900`, and trailing zeros drop the same way. A literal carrying a digit the column's
+scale cannot hold throws `ArithmeticException` rather than rounding it away — `99.999` against
+a `DECIMAL(scale = 2)` column.
+
+An unsigned column's literal is the stored two's-complement bit pattern, the same form
+[the accessors](accessors.md) hand back for it: `4_000_000_000` in a `UINT_32` column is the `int`
+`-294_967_296`, so a value read from a row can be passed straight back as a predicate literal.
+Write one with `Integer.parseUnsignedInt` / `Long.parseUnsignedLong`. Comparisons order by the
+unsigned magnitude regardless, so that literal is above every positive `int` rather than below
+zero.
+
+A column that carries an annotation also takes the literal for its physical type, comparing the
+value as it is stored: an `int` against a `DATE` column tests the epoch day directly.
+
+`DECIMAL` and `FLOAT16` are the exceptions to *how* the bytes compare. Both order by the value
+their bytes stand for rather than by the bytes themselves, and their statistics are written in
+that order, so a `String` literal against either compares as the column does — a `DECIMAL` by its
+unscaled value, a `FLOAT16` by the number its two little-endian bytes encode — rather than as a
+byte string. A `FLOAT16` literal must be exactly two bytes.
+
+`inStrings` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe is
+still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
+encodes. `in(double...)` on a `FLOAT16` compares against the decoded half as it does against a
+`FLOAT`'s widened value, so a probe no half represents, such as `0.1`, matches nothing.
+
+Note that a `String` literal is encoded as UTF-8, which reproduces a byte one-for-one only below
+`0x80`. A `DECIMAL`'s unscaled value sets the high bit for every negative number, so those are
+not expressible this way; reach for the `BigDecimal` factory instead.
 
 ## When statistics are ignored
 
