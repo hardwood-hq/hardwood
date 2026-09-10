@@ -87,7 +87,9 @@ public final class PageDropPredicates {
     /// Returns `false` when `stats` is `null`, when its bounds are unusable — see
     /// [MinMaxStats] — or when no leaf can drop.
     ///
-    /// @param leaves the AND-necessary leaves testing this page's column
+    /// @param leaves the AND-necessary leaves testing this page's column, empty where the file
+    ///        this page belongs to records the column's bounds in an order this reader cannot
+    ///        read (see [BoundsReadability])
     /// @param stats the page's inline statistics, or `null` if it carries none
     /// @param logContext the page these statistics came from, for a discard to name
     public static boolean canDropPage(List<ResolvedPredicate> leaves, Statistics stats,
@@ -97,8 +99,9 @@ public final class PageDropPredicates {
         }
         for (ResolvedPredicate leaf : leaves) {
             // Sourced per leaf: what makes bounds usable depends on the order the leaf
-            // compares them in.
-            MinMaxStats minMax = MinMaxStats.of(stats, leaf);
+            // compares them in. Readability was settled when the leaves were handed over,
+            // which is where the file they are read against is known.
+            MinMaxStats minMax = MinMaxStats.of(stats, leaf, BoundsReadability.ALL);
             minMax.reportIfDiscarded(logContext);
             if (minMax.canDrop(leaf)) {
                 return true;

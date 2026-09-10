@@ -407,7 +407,7 @@ class PageFilterEvaluatorTest {
                             predicate,
                             rowGroup,
                             buffers,
-                            new LogContext("group-null.parquet", 0));
+                            new LogContext("group-null.parquet", 0), BoundsReadability.ALL);
 
             assertFalse(ranges.overlapsPage(0, 30));
             assertTrue(ranges.overlapsPage(30, 60));
@@ -469,7 +469,7 @@ class PageFilterEvaluatorTest {
                             predicate,
                             rowGroup,
                             buffers,
-                            new LogContext("group-not-null.parquet", 0));
+                            new LogContext("group-not-null.parquet", 0), BoundsReadability.ALL);
 
             assertTrue(ranges.overlapsPage(0, 30));
             assertFalse(ranges.overlapsPage(30, 60));
@@ -582,7 +582,7 @@ class PageFilterEvaluatorTest {
             RowGroup rowGroup = metaData.rowGroups().get(0);
             RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
             return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers,
-                    new LogContext(inputFile.name(), 0));
+                    new LogContext(inputFile.name(), 0), BoundsReadability.ALL);
         }
         finally {
             inputFile.close();
@@ -761,7 +761,7 @@ class PageFilterEvaluatorTest {
             ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(
                     0, new double[]{ 150.0, 350.0 }, true, false);
             RowRanges ranges = PageFilterEvaluator.computeMatchingRows(in, rowGroup, buffers,
-                    new LogContext("float-in.parquet", 0));
+                    new LogContext("float-in.parquet", 0), BoundsReadability.ALL);
             assertTrue(ranges.overlapsPage(0, 30));
             assertFalse(ranges.overlapsPage(30, 60));
             assertTrue(ranges.overlapsPage(60, 90));
@@ -839,7 +839,7 @@ class PageFilterEvaluatorTest {
             // planned, and the pipeline puts the file and row group in front of it.
             assertThatThrownBy(() -> PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IsNotNullPredicate(0, 1, 1), rowGroup, buffers,
-                    new LogContext(inputFile.name(), 0)))
+                    new LogContext(inputFile.name(), 0), BoundsReadability.ALL))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("Failed to parse the page index of column 0: Malformed Parquet"
                             + " metadata: ColumnIndex describes 3 pages but OffsetIndex locates 2");
@@ -870,7 +870,7 @@ class PageFilterEvaluatorTest {
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
             RowRanges ranges = PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IntPredicate(0, Operator.EQ, 15), rowGroup, buffers,
-                    new LogContext("orders.parquet", 4));
+                    new LogContext("orders.parquet", 4), BoundsReadability.ALL);
 
             assertTrue(ranges.overlapsPage(0, 29), "the page holding the probe must be kept");
             assertTrue(ranges.overlapsPage(30, 59),
@@ -933,14 +933,14 @@ class PageFilterEvaluatorTest {
 
             RowRanges isNull = PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IsNullPredicate(0, 2, 3), rowGroup, buffers,
-                    new LogContext("histogram.parquet", 0));
+                    new LogContext("histogram.parquet", 0), BoundsReadability.ALL);
 
             assertTrue(isNull.overlapsPage(0, 30), "the page whose group is absent must be kept");
             assertFalse(isNull.overlapsPage(30, 60), "the page whose group is always present must be dropped");
 
             RowRanges isNotNull = PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IsNotNullPredicate(0, 2, 3), rowGroup, buffers,
-                    new LogContext("histogram.parquet", 0));
+                    new LogContext("histogram.parquet", 0), BoundsReadability.ALL);
 
             assertFalse(isNotNull.overlapsPage(0, 30), "the page whose group is always absent must be dropped");
             assertTrue(isNotNull.overlapsPage(30, 60), "the page whose group is present must be kept");
@@ -996,14 +996,14 @@ class PageFilterEvaluatorTest {
                             new ResolvedPredicate.IsNullPredicate(0, 2, 3),
                             rowGroup,
                             buffers,
-                            new LogContext("no-histogram.parquet", 0));
+                            new LogContext("no-histogram.parquet", 0), BoundsReadability.ALL);
 
             RowRanges isNotNullRanges =
                     PageFilterEvaluator.computeMatchingRows(
                             new ResolvedPredicate.IsNotNullPredicate(0, 2, 3),
                             rowGroup,
                             buffers,
-                            new LogContext("no-histogram.parquet", 0));
+                            new LogContext("no-histogram.parquet", 0), BoundsReadability.ALL);
 
             assertTrue(isNullRanges.overlapsPage(0, 30));
             assertTrue(isNullRanges.overlapsPage(30, 60));
@@ -1064,7 +1064,7 @@ class PageFilterEvaluatorTest {
                             new ResolvedPredicate.IsNotNullPredicate(0, 2, 3),
                             rowGroup,
                             buffers,
-                            new LogContext("bad-histogram.parquet", 0));
+                            new LogContext("bad-histogram.parquet", 0), BoundsReadability.ALL);
 
             assertTrue(ranges.overlapsPage(0, 30));
             assertTrue(ranges.overlapsPage(30, 60));

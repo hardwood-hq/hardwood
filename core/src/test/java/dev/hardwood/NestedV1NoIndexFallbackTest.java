@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.reader.FileColumnOrdinals;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
@@ -74,7 +75,7 @@ class NestedV1NoIndexFallbackTest {
             ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
             boolean applicable = RowGroupIterator.masksApplicableForRowGroup(
                     projected, rg, schema,
-                    FileColumnOrdinals.identity(schema.getColumnCount(), null), file);
+                    FileColumnOrdinals.identity(schema.getColumnCount(), null, BoundsReadability.ALL), file);
 
             // Gate must be closed: a nested column without an OffsetIndex
             // and with v1 pages can't be record-counted without

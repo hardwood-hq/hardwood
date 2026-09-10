@@ -189,7 +189,7 @@ class ByteStringOrderFilterTest {
                 FilterPredicate.inStrings("h", asString(new byte[] { 0x01, 0x3C })), float16Schema());
         Statistics stats = new Statistics(half(1.0f), half(1.5f), 0L, null, false);
 
-        assertThat(MinMaxStats.of(stats, leaf).canDrop(leaf)).isFalse();
+        assertThat(MinMaxStats.of(stats, leaf, BoundsReadability.ALL).canDrop(leaf)).isFalse();
     }
 
     /// Every annotation whose order is the bytes themselves keeps the byte-string comparison, as
