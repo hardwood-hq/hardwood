@@ -64,6 +64,12 @@ hardwood print -n -5 -f data.parquet
 # Show all rows
 hardwood print -f data.parquet
 
+# Start at row 5000 (rows are counted from 0)
+hardwood print --skip 5000 -n 20 -f data.parquet
+
+# Show the rows of row group 3 (row groups are counted from 0)
+hardwood print --row-group 3 -f data.parquet
+
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 
@@ -87,6 +93,9 @@ hardwood convert -n 100 --format json -f data.parquet
 
 # Convert last 50 rows to CSV
 hardwood convert -n -50 --format csv -f data.parquet
+
+# Convert one row group to CSV
+hardwood convert --row-group 3 --format csv -f data.parquet
 
 # Convert to CSV, writing \N for null values
 hardwood convert --format csv --null-string '\N' -f data.parquet

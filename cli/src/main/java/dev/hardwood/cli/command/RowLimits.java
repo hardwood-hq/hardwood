@@ -8,14 +8,17 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.util.List;
 
+import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetFileReader.RowReaderBuilder;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
-/// Shared `-n / --rows` parsing and application for CLI commands that
-/// support head / tail / ALL row limiting (`print`, `convert`, ...).
+/// Shared `-n / --rows`, `--skip` and `--row-group` parsing and application
+/// for CLI commands that read rows (`print`, `convert`, ...).
 final class RowLimits {
 
     static final String ALL = "ALL";
@@ -46,15 +49,63 @@ final class RowLimits {
         return parsed;
     }
 
-    /// Builds a [RowReader] applying the parsed row limit:
-    /// positive → `head(limit)`, negative → `tail(-limit)`, zero → no limit.
-    static RowReader buildRowReader(ParquetFileReader reader, ColumnProjection projection, int rowLimit) throws IOException {
-        RowReaderBuilder builder = reader.buildRowReader().projection(projection);
-        if (rowLimit > 0) {
-            builder.head(rowLimit);
+    /// The rows a command reads: where it starts, and how many it takes.
+    /// `limit` is positive for head, negative for tail, `0` for no limit.
+    record RowWindow(long skip, long limit) {
+    }
+
+    /// Resolves `--skip` and `--row-group` into the window to read, on top of
+    /// the already parsed `-n` limit. The two options name a starting point in
+    /// two ways, so only one of them may be given.
+    static RowWindow resolveWindow(FileMetaData metadata, Long skip, Integer rowGroup, int rowLimit) {
+        if (skip != null && rowGroup != null) {
+            throw new IllegalArgumentException("--skip and --row-group cannot be combined: both name where to start reading");
         }
-        else if (rowLimit < 0) {
-            builder.tail(-rowLimit);
+        if (skip == null && rowGroup == null) {
+            return new RowWindow(0, rowLimit);
+        }
+        if (rowLimit < 0) {
+            throw new IllegalArgumentException("A negative '-n' counts the last rows of the file, so it cannot be combined with "
+                    + (skip != null ? "--skip" : "--row-group"));
+        }
+        if (skip != null) {
+            if (skip < 0) {
+                throw new IllegalArgumentException(
+                        "Invalid value for option '--skip': expected a non-negative row number, got '" + skip + "'");
+            }
+            if (skip >= metadata.numRows()) {
+                throw new IllegalArgumentException(
+                        "Cannot skip " + skip + " rows (file has " + metadata.numRows() + ")");
+            }
+            return new RowWindow(skip, rowLimit);
+        }
+        List<RowGroup> rowGroups = metadata.rowGroups();
+        if (rowGroup < 0 || rowGroup >= rowGroups.size()) {
+            throw new IllegalArgumentException("No such row group: " + rowGroup + " (file has " + rowGroups.size() + ")");
+        }
+        long firstRow = 0;
+        for (int i = 0; i < rowGroup; i++) {
+            firstRow += rowGroups.get(i).numRows();
+        }
+        // The row group bounds the read; an explicit `-n` may narrow it further,
+        // but never past the group into the next one.
+        long numRows = rowGroups.get(rowGroup).numRows();
+        return new RowWindow(firstRow, rowLimit > 0 ? Math.min(rowLimit, numRows) : numRows);
+    }
+
+    /// Builds a [RowReader] over the window: `skip` rows are passed over, then
+    /// a positive limit takes that many rows from the start, a negative one
+    /// that many from the end, and zero takes every row.
+    static RowReader buildRowReader(ParquetFileReader reader, ColumnProjection projection, RowWindow window) throws IOException {
+        RowReaderBuilder builder = reader.buildRowReader().projection(projection);
+        if (window.skip() > 0) {
+            builder.skip(window.skip());
+        }
+        if (window.limit() > 0) {
+            builder.head(window.limit());
+        }
+        else if (window.limit() < 0) {
+            builder.tail(-window.limit());
         }
         return builder.build();
     }
