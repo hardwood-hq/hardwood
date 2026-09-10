@@ -25,8 +25,10 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.metadata.BoundingBox;
@@ -49,6 +51,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FilterPredicateTest {
+
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
 
     // ==================== Predicate Factory Tests ====================
 
@@ -1407,6 +1414,6 @@ class FilterPredicateTest {
     /// This mirrors the production code path: resolve first, then evaluate.
     private static boolean canDropRowGroup(FilterPredicate filter, RowGroup rg, FileSchema schema) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rg, null, null) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rg, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 }

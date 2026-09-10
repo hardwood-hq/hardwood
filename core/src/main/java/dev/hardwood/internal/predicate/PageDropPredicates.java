@@ -28,10 +28,10 @@ import dev.hardwood.metadata.Statistics;
 /// recursive descent: recurse into `And` children, skip `Or` subtrees, keep
 /// leaves.
 ///
-/// [StatisticsFilterSupport#canDropLeaf] returns `false` for `IsNullPredicate`
-/// and `IsNotNullPredicate`, so including them in the result is harmless —
-/// they will never cause a page drop. They are included anyway so callers do
-/// not have to distinguish.
+/// [MinMaxStats#canDrop] is `false` for `IsNullPredicate` and
+/// `IsNotNullPredicate`, so including them in the result is harmless — they
+/// will never cause a page drop. They are included anyway so callers do not
+/// have to distinguish.
 public final class PageDropPredicates {
 
     private PageDropPredicates() {
@@ -78,15 +78,23 @@ public final class PageDropPredicates {
     /// supplied inline page [Statistics] alone, that the page cannot match — i.e.
     /// the page can be skipped.
     ///
-    /// Returns `false` when `stats` is `null`, carries only deprecated (unsigned
-    /// sort order) min/max bytes, or when no leaf can drop.
-    public static boolean canDropPage(List<ResolvedPredicate> leaves, Statistics stats) {
-        if (leaves == null || leaves.isEmpty() || stats == null || stats.isMinMaxDeprecated()) {
+    /// Returns `false` when `stats` is `null`, when its bounds are unusable — see
+    /// [MinMaxStats] — or when no leaf can drop.
+    ///
+    /// @param leaves the AND-necessary leaves testing this page's column
+    /// @param stats the page's inline statistics, or `null` if it carries none
+    /// @param logContext the page these statistics came from, for a discard to name
+    public static boolean canDropPage(List<ResolvedPredicate> leaves, Statistics stats,
+            LogContext logContext) {
+        if (leaves == null || leaves.isEmpty() || stats == null) {
             return false;
         }
-        MinMaxStats minMax = MinMaxStats.of(stats);
         for (ResolvedPredicate leaf : leaves) {
-            if (StatisticsFilterSupport.canDropLeaf(leaf, minMax)) {
+            // Sourced per leaf: what makes bounds usable depends on the order the leaf
+            // compares them in.
+            MinMaxStats minMax = MinMaxStats.of(stats, leaf);
+            minMax.reportIfDiscarded(logContext);
+            if (minMax.canDrop(leaf)) {
                 return true;
             }
         }

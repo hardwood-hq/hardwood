@@ -38,6 +38,22 @@ columns without logical types or for filtering on the underlying physical value 
 work with all reader types — `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file
 readers.
 
+## When statistics are ignored
+
+Pruning compares a unit's `min` / `max` bounds. A pair a reader cannot compare against is
+ignored rather than trusted, so the row group or page is kept and its rows are read and filtered
+one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored for
+one of three reasons:
+
+| Reason | Bounds |
+|---|---|
+| The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
+| One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound the Parquet spec forbids, sitting outside the column's ordering |
+| They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
+
+The bounds themselves are still reported as the file carries them, by `Statistics` on the metadata
+API and by `hardwood inspect` and `hardwood dive`.
+
 ## Column projection forms
 
 | Form | Description |

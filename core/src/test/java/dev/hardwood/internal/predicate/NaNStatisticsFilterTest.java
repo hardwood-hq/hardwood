@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate.Operator;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,12 +28,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The Parquet spec forbids writing `NaN` to `min`/`max`, but older or buggy writers have
 /// emitted such values. A conformant reader must treat a `NaN` bound as unusable for
 /// pruning (parquet-mr does the same).
+///
+/// The check lives where [MinMaxStats] sources the bounds, alongside the other reasons a pair
+/// of bounds can be unusable (#1172), so these cases go in through a leaf and its statistics
+/// rather than straight at a comparator. The comparators below are still exercised directly
+/// where the bounds they are given are usable ones.
 class NaNStatisticsFilterTest {
 
     @ParameterizedTest(name = "double {0} with NaN min")
     @EnumSource(Operator.class)
     void doubleNaNMinNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropDouble(op, 1.0, Double.NaN, 10.0, false))
+        assertThat(dropsDouble(op, 1.0, Double.NaN, 10.0))
                 .as("NaN min must be treated as no-bound and never prune")
                 .isFalse();
     }
@@ -38,7 +46,7 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "double {0} with NaN max")
     @EnumSource(Operator.class)
     void doubleNaNMaxNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropDouble(op, 1.0, -10.0, Double.NaN, false))
+        assertThat(dropsDouble(op, 1.0, -10.0, Double.NaN))
                 .as("NaN max must be treated as no-bound and never prune")
                 .isFalse();
     }
@@ -46,14 +54,13 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "double {0} with NaN min and max")
     @EnumSource(Operator.class)
     void doubleNaNBothNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropDouble(op, 1.0, Double.NaN, Double.NaN, false))
-                .isFalse();
+        assertThat(dropsDouble(op, 1.0, Double.NaN, Double.NaN)).isFalse();
     }
 
     @ParameterizedTest(name = "float {0} with NaN min")
     @EnumSource(Operator.class)
     void floatNaNMinNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropFloat(op, 1.0f, Float.NaN, 10.0f, false))
+        assertThat(dropsFloat(op, 1.0f, Float.NaN, 10.0f))
                 .as("NaN min must be treated as no-bound and never prune")
                 .isFalse();
     }
@@ -61,7 +68,7 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "float {0} with NaN max")
     @EnumSource(Operator.class)
     void floatNaNMaxNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropFloat(op, 1.0f, -10.0f, Float.NaN, false))
+        assertThat(dropsFloat(op, 1.0f, -10.0f, Float.NaN))
                 .as("NaN max must be treated as no-bound and never prune")
                 .isFalse();
     }
@@ -69,8 +76,35 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "float {0} with NaN min and max")
     @EnumSource(Operator.class)
     void floatNaNBothNeverDrops(Operator op) {
-        assertThat(StatisticsFilterSupport.canDropFloat(op, 1.0f, Float.NaN, Float.NaN, false))
-                .isFalse();
+        assertThat(dropsFloat(op, 1.0f, Float.NaN, Float.NaN)).isFalse();
+    }
+
+    /// `FLOAT16` bounds are two bytes wide and decode through their own path, so the check
+    /// has to reach them as well as the four- and eight-byte ones.
+    @ParameterizedTest(name = "float16 {0} with a NaN bound")
+    @EnumSource(Operator.class)
+    void float16NaNNeverDrops(Operator op) {
+        ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, 1.0f, false);
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(float16Bytes(Float.NaN), float16Bytes(10.0f), 0L, null, false), leaf);
+
+        assertThat(stats.canDrop(leaf)).isFalse();
+        assertThat(stats.discardReason())
+                .isEqualTo("one of them is NaN, which sits outside the column's ordering");
+    }
+
+    /// A NaN bound is discarded rather than compared against, and says so.
+    @Test
+    void naNBoundsAreDiscardedAtTheSource() {
+        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 1.0, false);
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(doubleBytes(Double.NaN), doubleBytes(10.0), 0L, null, false),
+                leaf);
+
+        assertThat(stats)
+                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is NaN, which sits outside the column's ordering");
     }
 
     /// Sanity check that non-NaN stats still prune as before — guarding against an
@@ -117,5 +151,35 @@ class NaNStatisticsFilterTest {
     void zeroBoundsStillPruneNonZeroValuesUnderBothOrders() {
         assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 5.0f, -0.0f, 0.0f, false)).isTrue();
         assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 5.0f, -0.0f, 0.0f, true)).isTrue();
+    }
+
+    // ==================== Fixtures ====================
+
+    /// Whether the leaf drops a unit with these bounds, sourced the way the evaluators source
+    /// them so that the usability check runs.
+    private static boolean dropsDouble(Operator op, double value, double min, double max) {
+        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, op, value, false);
+        return MinMaxStats.of(new Statistics(doubleBytes(min), doubleBytes(max), 0L, null, false), leaf)
+                .canDrop(leaf);
+    }
+
+    /// See [#dropsDouble].
+    private static boolean dropsFloat(Operator op, float value, float min, float max) {
+        ResolvedPredicate leaf = new ResolvedPredicate.FloatPredicate(0, op, value, false);
+        return MinMaxStats.of(new Statistics(floatBytes(min), floatBytes(max), 0L, null, false), leaf)
+                .canDrop(leaf);
+    }
+
+    private static byte[] float16Bytes(float value) {
+        short raw = Float.floatToFloat16(value);
+        return new byte[]{ (byte) (raw & 0xFF), (byte) ((raw >> 8) & 0xFF) };
+    }
+
+    private static byte[] floatBytes(float value) {
+        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putFloat(value).array();
+    }
+
+    private static byte[] doubleBytes(double value) {
+        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putDouble(value).array();
     }
 }

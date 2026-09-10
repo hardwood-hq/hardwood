@@ -17,6 +17,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.thrift.PageHeaderReader;
@@ -303,6 +304,9 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private class SequentialPageIterator implements PageIterator {
 
         private final ColumnMetaData metaData = columnChunk.metaData();
+        /// Where this chunk is, for a page whose statistics turn out to be unusable to name.
+        private final LogContext logContext =
+                new LogContext(fileName, rowGroupIndex).withColumn(columnSchema.fieldPath());
         private Dictionary dictionary;
         private boolean initialized;
         private boolean exhausted;
@@ -683,7 +687,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 }
                 default -> null;
             };
-            return PageDropPredicates.canDropPage(dropLeaves, inline);
+            return PageDropPredicates.canDropPage(dropLeaves, inline,
+                    logContext.withPageIndex(currentPage));
         }
 
         private void emitEvent() {

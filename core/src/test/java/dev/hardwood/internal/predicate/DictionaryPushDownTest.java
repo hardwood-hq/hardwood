@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.RowGroup;
@@ -35,6 +36,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Asserts the evaluator decision directly; [dev.hardwood.DictionaryEndToEndTest] drives the same
 /// fixture through the public reader APIs.
 class DictionaryPushDownTest {
+
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
 
     private static final Path FIXTURE = Paths.get("src/test/resources/column_index_pushdown_dict.parquet");
 
@@ -125,12 +131,12 @@ class DictionaryPushDownTest {
 
     private static boolean dictionaryDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, dictionaries())
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, dictionaries(), UNNAMED)
                 == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 }

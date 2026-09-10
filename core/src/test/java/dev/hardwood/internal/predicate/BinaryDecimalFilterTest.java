@@ -17,6 +17,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
@@ -38,6 +39,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// `127` is `0x7F` and `128` is `0x00 0x80`. Predicates over such a column compare the
 /// represented value, not the byte string.
 class BinaryDecimalFilterTest {
+
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
 
     private static final int PADDED_ROWS = 512;
 
@@ -239,7 +245,7 @@ class BinaryDecimalFilterTest {
                 new BloomFilterHeader(BLOOM_FILTER_BYTES, BloomFilterHeader.Algorithm.BLOCK,
                         BloomFilterHeader.Hash.XXHASH, BloomFilterHeader.Compression.UNCOMPRESSED),
                 ByteBuffer.allocate(BLOOM_FILTER_BYTES).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer());
-        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, empty, null);
+        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, empty, null, UNNAMED);
     }
 
     /// Rows alternating a padded `127` with a minimally encoded `300`.

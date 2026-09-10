@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Random;
 
@@ -23,7 +21,7 @@ import static dev.hardwood.internal.predicate.FilterDecision.MIGHT_MATCH;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Unit matrix for the three-valued statistics decision: [FilterDecision] combinators and
-/// [StatisticsFilterSupport#decideLeaf] over synthetic [MinMaxStats].
+/// [MinMaxStats#decideLeaf] over synthetic bounds.
 ///
 /// The [#decisionAgreesWithBruteForceOnRandomData] property pins the decision's meaning
 /// against decoded values: [FilterDecision#ALWAYS_MATCHES] must imply zero non-matching
@@ -90,11 +88,11 @@ class FilterDecisionTest {
     @Test
     void intInDecisions() {
         ResolvedPredicate in = new ResolvedPredicate.IntInPredicate(0, new int[]{ 5, 42, 99 });
-        assertThat(StatisticsFilterSupport.decideLeaf(in, intStats(42, 42, 0L)))
+        assertThat(intStats(42, 42, 0L).decideLeaf(in))
                 .isEqualTo(ALWAYS_MATCHES);
-        assertThat(StatisticsFilterSupport.decideLeaf(in, intStats(42, 43, 0L)))
+        assertThat(intStats(42, 43, 0L).decideLeaf(in))
                 .isEqualTo(MIGHT_MATCH);
-        assertThat(StatisticsFilterSupport.decideLeaf(in, intStats(6, 41, 0L)))
+        assertThat(intStats(6, 41, 0L).decideLeaf(in))
                 .isEqualTo(CANNOT_MATCH);
     }
 
@@ -105,18 +103,18 @@ class FilterDecisionTest {
         // [10, 20] fully satisfies GT 5, but nulls (or an unknown null count) may hide
         // non-matching rows: a null row satisfies no value predicate.
         ResolvedPredicate gt = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.GT, 5);
-        assertThat(StatisticsFilterSupport.decideLeaf(gt, intStats(10, 20, 0L)))
+        assertThat(intStats(10, 20, 0L).decideLeaf(gt))
                 .isEqualTo(ALWAYS_MATCHES);
-        assertThat(StatisticsFilterSupport.decideLeaf(gt, intStats(10, 20, 3L)))
+        assertThat(intStats(10, 20, 3L).decideLeaf(gt))
                 .isEqualTo(MIGHT_MATCH);
-        assertThat(StatisticsFilterSupport.decideLeaf(gt, intStats(10, 20, null)))
+        assertThat(intStats(10, 20, null).decideLeaf(gt))
                 .isEqualTo(MIGHT_MATCH);
     }
 
     @Test
     void missingBoundsNeverPromiseAlwaysMatches() {
         ResolvedPredicate gt = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.GT, 5);
-        assertThat(StatisticsFilterSupport.decideLeaf(gt, stats(null, null, 0L)))
+        assertThat(noBounds(0L).decideLeaf(gt))
                 .isEqualTo(MIGHT_MATCH);
     }
 
@@ -128,18 +126,18 @@ class FilterDecisionTest {
         // fully-satisfying interval cannot promise every row for FP columns.
         ResolvedPredicate gtDouble =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 1.0);
-        assertThat(StatisticsFilterSupport.decideLeaf(gtDouble, doubleStats(10.0, 20.0, 0L)))
+        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(gtDouble))
                 .isEqualTo(MIGHT_MATCH);
 
         ResolvedPredicate gtFloat =
                 new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.GT, 1.0f);
-        assertThat(StatisticsFilterSupport.decideLeaf(gtFloat, floatStats(10.0f, 20.0f, 0L)))
+        assertThat(floatStats(10.0f, 20.0f, 0L).decideLeaf(gtFloat))
                 .isEqualTo(MIGHT_MATCH);
 
         // The CANNOT_MATCH side is unaffected.
         ResolvedPredicate gtOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 25.0);
-        assertThat(StatisticsFilterSupport.decideLeaf(gtOutside, doubleStats(10.0, 20.0, 0L)))
+        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(gtOutside))
                 .isEqualTo(CANNOT_MATCH);
     }
 
@@ -160,19 +158,6 @@ class FilterDecisionTest {
                 .isEqualTo(ALWAYS_MATCHES);
         assertThat(decideBinary(FilterPredicate.Operator.EQ, "apple", "mango", "peach"))
                 .isEqualTo(CANNOT_MATCH);
-    }
-
-    // ==================== IS NOT NULL ====================
-
-    @Test
-    void isNotNullDecidedByNullCountAlone() {
-        ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(0);
-        assertThat(StatisticsFilterSupport.decideLeaf(isNotNull, stats(null, null, 0L)))
-                .isEqualTo(ALWAYS_MATCHES);
-        assertThat(StatisticsFilterSupport.decideLeaf(isNotNull, stats(null, null, 3L)))
-                .isEqualTo(MIGHT_MATCH);
-        assertThat(StatisticsFilterSupport.decideLeaf(isNotNull, stats(null, null, null)))
-                .isEqualTo(MIGHT_MATCH);
     }
 
     // ==================== Property: decision agrees with brute force ====================
@@ -198,7 +183,7 @@ class FilterDecisionTest {
 
             ResolvedPredicate leaf = new ResolvedPredicate.LongPredicate(0, op, literal);
             FilterDecision decision =
-                    StatisticsFilterSupport.decideLeaf(leaf, longStats(min, max, 0L));
+                    longStats(min, max, 0L).decideLeaf(leaf);
 
             int matching = 0;
             for (long value : values) {
@@ -234,65 +219,34 @@ class FilterDecisionTest {
 
     private static FilterDecision decideInt(FilterPredicate.Operator op, int value, int min, int max) {
         ResolvedPredicate leaf = new ResolvedPredicate.IntPredicate(0, op, value);
-        return StatisticsFilterSupport.decideLeaf(leaf, intStats(min, max, 0L));
+        return intStats(min, max, 0L).decideLeaf(leaf);
     }
 
     private static FilterDecision decideBinary(FilterPredicate.Operator op, String value,
             String min, String max) {
         ResolvedPredicate leaf = new ResolvedPredicate.BinaryPredicate(
                 0, op, value.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
-        return StatisticsFilterSupport.decideLeaf(leaf, stats(
-                min.getBytes(StandardCharsets.UTF_8), max.getBytes(StandardCharsets.UTF_8), 0L));
+        return MinMaxStats.BinaryStats.of(min.getBytes(StandardCharsets.UTF_8),
+                max.getBytes(StandardCharsets.UTF_8), false, 0L).decideLeaf(leaf);
     }
 
     private static MinMaxStats intStats(int min, int max, Long nullCount) {
-        return stats(intBytes(min), intBytes(max), nullCount);
+        return MinMaxStats.IntStats.of(min, max, nullCount);
     }
 
     private static MinMaxStats longStats(long min, long max, Long nullCount) {
-        return stats(longBytes(min), longBytes(max), nullCount);
+        return MinMaxStats.LongStats.of(min, max, nullCount);
     }
 
     private static MinMaxStats floatStats(float min, float max, Long nullCount) {
-        return stats(floatBytes(min), floatBytes(max), nullCount);
+        return MinMaxStats.FloatStats.of(min, max, false, nullCount);
     }
 
     private static MinMaxStats doubleStats(double min, double max, Long nullCount) {
-        return stats(doubleBytes(min), doubleBytes(max), nullCount);
+        return MinMaxStats.DoubleStats.of(min, max, false, nullCount);
     }
 
-    private static MinMaxStats stats(byte[] min, byte[] max, Long nullCount) {
-        return new MinMaxStats() {
-            @Override
-            public byte[] minValue() {
-                return min;
-            }
-
-            @Override
-            public byte[] maxValue() {
-                return max;
-            }
-
-            @Override
-            public Long nullCount() {
-                return nullCount;
-            }
-        };
-    }
-
-    private static byte[] intBytes(int value) {
-        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
-    }
-
-    private static byte[] longBytes(long value) {
-        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
-    }
-
-    private static byte[] floatBytes(float value) {
-        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putFloat(value).array();
-    }
-
-    private static byte[] doubleBytes(double value) {
-        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putDouble(value).array();
+    private static MinMaxStats noBounds(Long nullCount) {
+        return new MinMaxStats.NullCountOnlyStats(nullCount, null);
     }
 }

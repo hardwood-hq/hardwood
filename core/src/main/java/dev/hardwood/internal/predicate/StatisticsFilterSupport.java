@@ -9,148 +9,16 @@ package dev.hardwood.internal.predicate;
 
 import dev.hardwood.reader.FilterPredicate;
 
-/// Shared utilities for evaluating filter predicates against min/max statistics.
+/// What each [dev.hardwood.reader.FilterPredicate.Operator] proves over an interval, as pure
+/// functions of a probe value and a pair of bounds.
 ///
-/// Used by both [RowGroupFilterEvaluator] (row-group-level statistics) and
-/// [PageFilterEvaluator] (page-level Column Index statistics) via the
-/// [MinMaxStats] abstraction.
+/// The bounds arrive already decoded and already established as comparable — [MinMaxStats] is
+/// where a unit's statistics are read and where a pair that cannot be compared against is
+/// turned away — so nothing here asks which column it is working for, or whether the interval
+/// it was handed makes sense.
 final class StatisticsFilterSupport {
 
     private StatisticsFilterSupport() {
-    }
-
-    // ==================== Leaf predicate evaluation ====================
-
-    /// Evaluates a resolved leaf predicate against [MinMaxStats].
-    ///
-    /// @return `true` if the predicate proves no rows can match (safe to drop)
-    static boolean canDropLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
-        if (stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        return switch (leaf) {
-            case ResolvedPredicate.IntPredicate p -> canDrop(p.op(), p.value(),
-                    StatisticsDecoder.decodeInt(stats.minValue()),
-                    StatisticsDecoder.decodeInt(stats.maxValue()));
-            case ResolvedPredicate.LongPredicate p -> canDrop(p.op(), p.value(),
-                    StatisticsDecoder.decodeLong(stats.minValue()),
-                    StatisticsDecoder.decodeLong(stats.maxValue()));
-            case ResolvedPredicate.FloatPredicate p -> canDropFloat(p.op(), p.value(),
-                    StatisticsDecoder.decodeFloat(stats.minValue()),
-                    StatisticsDecoder.decodeFloat(stats.maxValue()), p.ieee754TotalOrder());
-            case ResolvedPredicate.Float16Predicate p -> canDropFloat(p.op(), p.value(),
-                    StatisticsDecoder.decodeFloat16(stats.minValue()),
-                    StatisticsDecoder.decodeFloat16(stats.maxValue()), p.ieee754TotalOrder());
-            case ResolvedPredicate.DoublePredicate p -> canDropDouble(p.op(), p.value(),
-                    StatisticsDecoder.decodeDouble(stats.minValue()),
-                    StatisticsDecoder.decodeDouble(stats.maxValue()), p.ieee754TotalOrder());
-            case ResolvedPredicate.BooleanPredicate p -> canDrop(p.op(), p.value() ? 1 : 0,
-                    StatisticsDecoder.decodeBoolean(stats.minValue()) ? 1 : 0,
-                    StatisticsDecoder.decodeBoolean(stats.maxValue()) ? 1 : 0);
-            case ResolvedPredicate.BinaryPredicate p -> {
-                if (p.signed()) {
-                    int cmpMin = BinaryComparator.compareSigned(p.value(), stats.minValue());
-                    int cmpMax = BinaryComparator.compareSigned(p.value(), stats.maxValue());
-                    yield canDropCompared(p.op(), cmpMin, cmpMax,
-                            BinaryComparator.compareSigned(stats.minValue(), stats.maxValue()));
-                }
-                else {
-                    int cmpMin = BinaryComparator.compareUnsigned(p.value(), stats.minValue());
-                    int cmpMax = BinaryComparator.compareUnsigned(p.value(), stats.maxValue());
-                    yield canDropCompared(p.op(), cmpMin, cmpMax,
-                            BinaryComparator.compareUnsigned(stats.minValue(), stats.maxValue()));
-                }
-            }
-            case ResolvedPredicate.IntInPredicate p -> canDropIntIn(p.values(),
-                    StatisticsDecoder.decodeInt(stats.minValue()),
-                    StatisticsDecoder.decodeInt(stats.maxValue()));
-            case ResolvedPredicate.LongInPredicate p -> canDropLongIn(p.values(),
-                    StatisticsDecoder.decodeLong(stats.minValue()),
-                    StatisticsDecoder.decodeLong(stats.maxValue()));
-            case ResolvedPredicate.BinaryInPredicate p -> canDropBinaryIn(p.values(),
-                    stats.minValue(), stats.maxValue());
-            case ResolvedPredicate.IsNullPredicate ignored -> false;
-            case ResolvedPredicate.IsNotNullPredicate ignored -> false;
-            case ResolvedPredicate.And ignored -> false;
-            case ResolvedPredicate.Or ignored -> false;
-            case ResolvedPredicate.GeospatialPredicate ignored -> false;
-        };
-    }
-
-    /// Evaluates a resolved leaf predicate against [MinMaxStats] as a three-valued
-    /// [FilterDecision].
-    ///
-    /// [FilterDecision#ALWAYS_MATCHES] requires the whole `[min, max]` interval to satisfy
-    /// the predicate **and** a proven-zero null count — a null row satisfies no value
-    /// predicate, so without it a fully-matching range still cannot promise every row.
-    /// Truncated (inexact) bounds are safe by construction: they only widen the interval,
-    /// and a predicate satisfied by the widened interval is satisfied by the actual values.
-    static FilterDecision decideLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
-        // IS NOT NULL is decided by the null count alone; min/max are irrelevant.
-        if (leaf instanceof ResolvedPredicate.IsNotNullPredicate) {
-            return isNullFree(stats) ? FilterDecision.ALWAYS_MATCHES : FilterDecision.MIGHT_MATCH;
-        }
-        if (canDropLeaf(leaf, stats)) {
-            return FilterDecision.CANNOT_MATCH;
-        }
-        if (!isNullFree(stats) || stats.minValue() == null || stats.maxValue() == null) {
-            return FilterDecision.MIGHT_MATCH;
-        }
-        return alwaysMatchesLeaf(leaf, stats) ? FilterDecision.ALWAYS_MATCHES : FilterDecision.MIGHT_MATCH;
-    }
-
-    private static boolean isNullFree(MinMaxStats stats) {
-        Long nullCount = stats.nullCount();
-        return nullCount != null && nullCount == 0;
-    }
-
-    /// Whether the min/max statistics prove the leaf matches every row. Assumes the caller
-    /// has already established a zero null count and present bounds.
-    private static boolean alwaysMatchesLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
-        return switch (leaf) {
-            case ResolvedPredicate.IntPredicate p -> alwaysMatches(p.op(), p.value(),
-                    StatisticsDecoder.decodeInt(stats.minValue()),
-                    StatisticsDecoder.decodeInt(stats.maxValue()));
-            case ResolvedPredicate.LongPredicate p -> alwaysMatches(p.op(), p.value(),
-                    StatisticsDecoder.decodeLong(stats.minValue()),
-                    StatisticsDecoder.decodeLong(stats.maxValue()));
-            case ResolvedPredicate.BooleanPredicate p -> alwaysMatches(p.op(), p.value() ? 1 : 0,
-                    StatisticsDecoder.decodeBoolean(stats.minValue()) ? 1 : 0,
-                    StatisticsDecoder.decodeBoolean(stats.maxValue()) ? 1 : 0);
-            // NaN values sit outside the min/max ordering, and nan_count is not read yet:
-            // a floating-point unit whose [min, max] fully satisfies the predicate may
-            // still hold non-matching NaN rows. Never promise a full match for FP columns.
-            case ResolvedPredicate.FloatPredicate ignored -> false;
-            case ResolvedPredicate.Float16Predicate ignored -> false;
-            case ResolvedPredicate.DoublePredicate ignored -> false;
-            case ResolvedPredicate.BinaryPredicate p -> {
-                if (p.signed()) {
-                    yield alwaysMatchesCompared(p.op(),
-                            BinaryComparator.compareSigned(p.value(), stats.minValue()),
-                            BinaryComparator.compareSigned(p.value(), stats.maxValue()),
-                            BinaryComparator.compareSigned(stats.minValue(), stats.maxValue()));
-                }
-                yield alwaysMatchesCompared(p.op(),
-                        BinaryComparator.compareUnsigned(p.value(), stats.minValue()),
-                        BinaryComparator.compareUnsigned(p.value(), stats.maxValue()),
-                        BinaryComparator.compareUnsigned(stats.minValue(), stats.maxValue()));
-            }
-            case ResolvedPredicate.IntInPredicate p ->
-                    alwaysMatchesIntIn(p.values(),
-                            StatisticsDecoder.decodeInt(stats.minValue()),
-                            StatisticsDecoder.decodeInt(stats.maxValue()));
-            case ResolvedPredicate.LongInPredicate p ->
-                    alwaysMatchesLongIn(p.values(),
-                            StatisticsDecoder.decodeLong(stats.minValue()),
-                            StatisticsDecoder.decodeLong(stats.maxValue()));
-            case ResolvedPredicate.BinaryInPredicate p ->
-                    alwaysMatchesBinaryIn(p.values(), stats.minValue(), stats.maxValue());
-            case ResolvedPredicate.IsNullPredicate ignored -> false;
-            case ResolvedPredicate.IsNotNullPredicate ignored -> false;
-            case ResolvedPredicate.And ignored -> false;
-            case ResolvedPredicate.Or ignored -> false;
-            case ResolvedPredicate.GeospatialPredicate ignored -> false;
-        };
     }
 
     // ==================== Range comparison logic ====================
@@ -168,15 +36,12 @@ final class StatisticsFilterSupport {
         };
     }
 
+    /// Determines if a range can be dropped given `FLOAT` or `FLOAT16` min/max statistics.
+    ///
+    /// The bounds are assumed usable — neither `NaN` nor inverted — which [MinMaxStats]
+    /// establishes where it sources them.
     static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max,
             boolean ieee754TotalOrder) {
-        // The Parquet spec forbids writing NaN to statistics min/max, but older / buggy writers
-        // have produced such bounds. NaN sorts above every finite value in Float.compare's total
-        // order, so applying the range checks below would silently prune row groups / pages that
-        // hold matching finite rows. Treat NaN bounds as no-bound and never prune.
-        if (Float.isNaN(min) || Float.isNaN(max)) {
-            return false;
-        }
         // Under the type-defined ordering the spec leaves +0/-0 ambiguous: a +0 min may hide -0, a
         // -0 max may hide +0. Float.compare's total order separates them (-0 < +0), which could
         // wrongly drop the opposite zero, so widen each zero bound to its total-order extreme. The
@@ -195,11 +60,10 @@ final class StatisticsFilterSupport {
         };
     }
 
+    /// Determines if a range can be dropped given `DOUBLE` min/max statistics. See
+    /// [#canDropFloat] for what the bounds are assumed to be.
     static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max,
             boolean ieee754TotalOrder) {
-        if (Double.isNaN(min) || Double.isNaN(max)) {
-            return false;
-        }
         // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
         // the unambiguous IEEE 754 total order.
         if (!ieee754TotalOrder) {

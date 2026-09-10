@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -28,6 +29,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Statistics are disabled in the fixture so these assertions exercise bloom-filter decisions
 /// directly.
 class BloomFilterSignedZeroPushDownTest {
+
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
 
     private static final Path FIXTURE =
             Paths.get("src/test/resources/bloom_filter_signed_zero_test.parquet");
@@ -73,11 +79,11 @@ class BloomFilterSignedZeroPushDownTest {
     private static boolean bloomDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup,
-                new RowGroupBloomFilterSource(inputFile, rowGroup), null) == FilterDecision.CANNOT_MATCH;
+                new RowGroupBloomFilterSource(inputFile, rowGroup), null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 }

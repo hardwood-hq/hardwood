@@ -54,12 +54,23 @@ public class RowGroupFilterEvaluator {
     ///        filter checks
     /// @param dictionaries source of the row group's dictionaries, or `null` to skip the dictionary
     ///        checks
+    /// @param logContext where this row group is, for the warning raised when a column's
+    ///        statistics bounds turn out to be unusable
     /// @return the statistics decision for the row group
     public static FilterDecision decideRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
-            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries) throws IOException {
+            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
+            LogContext logContext) throws IOException {
+        return decide(predicate, rowGroup, bloomFilters, dictionaries, logContext);
+    }
+
+    /// The recursive body of [#decideRowGroup], carrying where the row group is so that a
+    /// column whose bounds turn out to be unusable can be named.
+    private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup,
+            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
+            LogContext logContext) throws IOException {
         return switch (predicate) {
             case ResolvedPredicate.IntPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
@@ -69,7 +80,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.LongPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, p.columnIndex()), p.value())
@@ -79,7 +90,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.FloatPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
@@ -96,7 +107,7 @@ public class RowGroupFilterEvaluator {
             // neighbouring value would prove the wrong one absent. The dictionary holds the
             // stored values, so its entries can be widened instead and compared exactly.
             case ResolvedPredicate.Float16Predicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         && DictionaryFilterSupport.valueAbsentFloat16(dictionary(dictionaries, p.columnIndex()), p.value())) {
@@ -105,7 +116,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.DoublePredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
@@ -118,9 +129,9 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.BooleanPredicate p ->
-                    statisticsDecision(p, p.columnIndex(), rowGroup);
+                    statisticsDecision(p, rowGroup, logContext, p.columnIndex());
             case ResolvedPredicate.BinaryPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 // Bloom filters and dictionary membership answer "are these exact bytes here?",
                 // which stands in for "is this value here?" only where the value has one
                 // encoding — see BinaryPredicate#byteExact. Statistics compare in the column's
@@ -135,7 +146,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.IntInPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
                                 || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values()))) {
@@ -144,7 +155,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.LongInPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
                                 || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values()))) {
@@ -153,7 +164,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.BinaryInPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
                         && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
                                 || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values()))) {
@@ -162,7 +173,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.IsNullPredicate p -> {
-                Statistics stats = getStatistics(p.columnIndex(), rowGroup);
+                Statistics stats = getStatistics(rowGroup, p.columnIndex());
                 // Can drop IS NULL if nullCount is known to be 0 (no nulls exist).
                 // The always-matching dual (every row null) is deliberately not derived:
                 // for nested columns the null count tallies leaf values, not rows, so
@@ -172,7 +183,7 @@ public class RowGroupFilterEvaluator {
                         : FilterDecision.MIGHT_MATCH;
             }
             case ResolvedPredicate.IsNotNullPredicate p -> {
-                Statistics stats = getStatistics(p.columnIndex(), rowGroup);
+                Statistics stats = getStatistics(rowGroup, p.columnIndex());
                 if (stats == null || stats.nullCount() == null) {
                     yield FilterDecision.MIGHT_MATCH;
                 }
@@ -190,7 +201,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.ALWAYS_MATCHES;
                 for (ResolvedPredicate child : a.children()) {
-                    result = FilterDecision.and(result, decideRowGroup(child, rowGroup, bloomFilters, dictionaries));
+                    result = FilterDecision.and(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext));
                     if (result == FilterDecision.CANNOT_MATCH) {
                         break;
                     }
@@ -203,7 +214,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.CANNOT_MATCH;
                 for (ResolvedPredicate child : o.children()) {
-                    result = FilterDecision.or(result, decideRowGroup(child, rowGroup, bloomFilters, dictionaries));
+                    result = FilterDecision.or(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext));
                     if (result == FilterDecision.ALWAYS_MATCHES) {
                         break;
                     }
@@ -227,18 +238,23 @@ public class RowGroupFilterEvaluator {
     }
 
     /// The column's min/max statistics decision for the leaf, [FilterDecision#MIGHT_MATCH]
-    /// when statistics are absent.
-    private static FilterDecision statisticsDecision(ResolvedPredicate leaf, int columnIndex,
-            RowGroup rowGroup) {
-        Statistics stats = getStatistics(columnIndex, rowGroup);
-        return stats == null
-                ? FilterDecision.MIGHT_MATCH
-                : StatisticsFilterSupport.decideLeaf(leaf, MinMaxStats.of(stats));
+    /// when statistics are absent — or when their bounds are unusable, which [MinMaxStats]
+    /// decides and this reports.
+    private static FilterDecision statisticsDecision(ResolvedPredicate leaf, RowGroup rowGroup,
+            LogContext logContext, int columnIndex) {
+        Statistics stats = getStatistics(rowGroup, columnIndex);
+        if (stats == null) {
+            return FilterDecision.MIGHT_MATCH;
+        }
+        MinMaxStats minMax = MinMaxStats.of(stats, leaf);
+        minMax.reportIfDiscarded(logContext.withColumn(
+                rowGroup.columns().get(columnIndex).metaData().pathInSchema()));
+        return minMax.decideLeaf(leaf);
     }
 
     /// Gets statistics for a column by its pre-resolved index.
     /// Returns null if the column index is out of bounds or statistics are absent.
-    private static Statistics getStatistics(int columnIndex, RowGroup rowGroup) {
+    private static Statistics getStatistics(RowGroup rowGroup, int columnIndex) {
         if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return null;
         }

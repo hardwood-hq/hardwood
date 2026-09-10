@@ -14,7 +14,9 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -35,7 +37,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// decision against a single row group.
 class RowGroupDecideTest {
 
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
     private static final int COL = 0;
+
+    @RegisterExtension
+    final CapturedWarnings warnings = new CapturedWarnings();
 
     @Test
     void rangePredicateOverFullySatisfyingRowGroup() throws IOException {
@@ -98,7 +107,7 @@ class RowGroupDecideTest {
         // always-matching decision derived from statistics.
         RowGroup rg = intRowGroup(10, 20, 0L);
         BloomFilterSource noFilters = columnIndex -> null;
-        assertThat(RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, noFilters, null))
+        assertThat(RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, noFilters, null, UNNAMED))
                 .isEqualTo(ALWAYS_MATCHES);
     }
 
@@ -120,11 +129,29 @@ class RowGroupDecideTest {
         assertThat(decide(intGt(5), rg)).isEqualTo(MIGHT_MATCH);
     }
 
+    @Test
+    void discardedBoundsAreNamedByTheColumnTheRowGroupCarries() throws IOException {
+        // The column path comes from the row group's own metadata rather than from the leaf,
+        // which knows the column only by its index. A row group is the finest position the
+        // decision has, so no page is named.
+        RowGroup rg = rowGroup(PhysicalType.INT32,
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), 100);
+
+        FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, null, null,
+                new LogContext("orders.parquet", 4));
+
+        assertThat(decision).isEqualTo(MIGHT_MATCH);
+        assertThat(warnings.messages()).containsExactly(
+                "[orders.parquet: row group 4, column 'order.price'] Ignoring the min/max "
+                        + "statistics for pruning: the minimum sorts above the maximum. Rows they "
+                        + "could have skipped are read and filtered instead.");
+    }
+
     // ==================== Fixtures ====================
 
     private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup)
             throws IOException {
-        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, null, null);
+        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, null, null, UNNAMED);
     }
 
     private static ResolvedPredicate intGt(int value) {
@@ -158,7 +185,7 @@ class RowGroupDecideTest {
 
     private static RowGroup rowGroup(PhysicalType type, Statistics stats, long numRows) {
         ColumnMetaData cmd = new ColumnMetaData(
-                type, List.of(Encoding.PLAIN), FieldPath.of("col"),
+                type, List.of(Encoding.PLAIN), FieldPath.of("order", "price"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats,
                 null, null, null, List.of(), null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null, "");

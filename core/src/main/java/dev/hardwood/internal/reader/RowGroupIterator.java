@@ -26,6 +26,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.predicate.FilterDecision;
+import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -423,7 +424,8 @@ public class RowGroupIterator implements Closeable {
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
-                            workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers);
+                            workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers,
+                            new LogContext(workItem.inputFile().name(), workItem.rowGroupIndex()));
                 }
 
                 MaskCapability maskCapability = masksApplicableForRowGroup(
@@ -1380,7 +1382,8 @@ public class RowGroupIterator implements Closeable {
             RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
                     new RowGroupBloomFilterSource(inputFile, rg),
-                    new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context));
+                    new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
+                    new LogContext(inputFile.name(), rgIndex));
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }

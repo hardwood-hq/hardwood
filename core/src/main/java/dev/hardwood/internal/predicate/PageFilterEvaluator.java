@@ -28,8 +28,8 @@ import dev.hardwood.reader.ParquetReadException;
 /// decides whether an entire row group can be skipped, this class determines which
 /// pages within a surviving row group can be skipped.
 ///
-/// Leaf predicate evaluation is delegated to [StatisticsFilterSupport#canDropLeaf],
-/// which handles all resolved predicate types against a [MinMaxStats] abstraction.
+/// Leaf predicate evaluation is delegated to [MinMaxStats#canDrop], which decodes each page's
+/// bounds once and answers for the leaf they were decoded for.
 ///
 /// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()` — page
 /// skipping then happens per-column inside [dev.hardwood.internal.reader.SequentialFetchPlan]
@@ -45,27 +45,29 @@ public class PageFilterEvaluator {
     /// @param predicate    the resolved predicate to evaluate
     /// @param rowGroup     the row group to evaluate against
     /// @param indexBuffers pre-fetched index buffers for the row group
+    /// @param logContext  where this row group is, for the warning raised when a column's
+    ///                     page bounds turn out to be unusable
     /// @return row ranges that might contain matching rows
     public static RowRanges computeMatchingRows(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers) {
+            RowGroupIndexBuffers indexBuffers, LogContext logContext) {
         long rowCount = rowGroup.numRows();
-        return evaluate(predicate, rowGroup, indexBuffers, rowCount);
+        return evaluate(predicate, rowGroup, indexBuffers, rowCount, logContext);
     }
 
     private static RowRanges evaluate(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount) {
+            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext) {
         return switch (predicate) {
             case ResolvedPredicate.And a -> {
                 RowRanges result = RowRanges.all(rowCount);
                 for (ResolvedPredicate child : a.children()) {
-                    result = result.intersect(evaluate(child, rowGroup, indexBuffers, rowCount));
+                    result = result.intersect(evaluate(child, rowGroup, indexBuffers, rowCount, logContext));
                 }
                 yield result;
             }
             case ResolvedPredicate.Or o -> {
                 RowRanges result = null;
                 for (ResolvedPredicate child : o.children()) {
-                    RowRanges childRanges = evaluate(child, rowGroup, indexBuffers, rowCount);
+                    RowRanges childRanges = evaluate(child, rowGroup, indexBuffers, rowCount, logContext);
                     result = (result == null) ? childRanges : result.union(childRanges);
                 }
                 yield (result != null) ? result : RowRanges.all(rowCount);
@@ -75,16 +77,16 @@ public class PageFilterEvaluator {
             // Parquet has no per-page geospatial statistics (GeospatialStatistics lives only on
             // ColumnMetaData, applied during row-group filtering), so no page-level pruning is possible.
             case ResolvedPredicate.GeospatialPredicate ignored -> RowRanges.all(rowCount);
-            default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount);
+            default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount, logContext);
         };
     }
 
     /// Evaluates a leaf predicate against per-page Column Index statistics,
-    /// using [StatisticsFilterSupport#canDropLeaf] for the actual comparison.
+    /// using [MinMaxStats#canDrop] for the actual comparison.
     private static RowRanges evaluateLeafPages(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount) {
+            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext) {
 
-        int columnIndex = leafColumnIndex(predicate);
+        int columnIndex = ResolvedPredicate.leafColumnIndex(predicate);
         if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return RowRanges.all(rowCount);
         }
@@ -102,11 +104,16 @@ public class PageFilterEvaluator {
         int pageCount = pages.size();
         boolean[] keep = new boolean[pageCount];
 
+        LogContext columnContext = logContext.withColumn(
+                rowGroup.columns().get(columnIndex).metaData().pathInSchema());
+
         for (int i = 0; i < pageCount; i++) {
             if (columnIdx.nullPages()[i]) {
                 continue;
             }
-            keep[i] = !StatisticsFilterSupport.canDropLeaf(predicate, MinMaxStats.ofPage(columnIdx, i));
+            MinMaxStats pageStats = MinMaxStats.ofPage(columnIdx, i, predicate);
+            pageStats.reportIfDiscarded(columnContext.withPageIndex(i));
+            keep[i] = !pageStats.canDrop(predicate);
         }
 
         return RowRanges.fromPages(pages, keep, rowCount);
@@ -162,27 +169,6 @@ public class PageFilterEvaluator {
         }
 
         return RowRanges.fromPages(pages, keep, rowCount);
-    }
-
-    /// Extracts the column index from a leaf predicate.
-    private static int leafColumnIndex(ResolvedPredicate predicate) {
-        return switch (predicate) {
-            case ResolvedPredicate.IntPredicate p -> p.columnIndex();
-            case ResolvedPredicate.LongPredicate p -> p.columnIndex();
-            case ResolvedPredicate.FloatPredicate p -> p.columnIndex();
-            case ResolvedPredicate.Float16Predicate p -> p.columnIndex();
-            case ResolvedPredicate.DoublePredicate p -> p.columnIndex();
-            case ResolvedPredicate.BooleanPredicate p -> p.columnIndex();
-            case ResolvedPredicate.BinaryPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.BinaryInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
-            case ResolvedPredicate.GeospatialPredicate p -> p.columnIndex();
-            case ResolvedPredicate.And ignored -> -1;
-            case ResolvedPredicate.Or ignored -> -1;
-        };
     }
 
     /// Evaluates a keep bitmap for pages using pre-parsed Column Index and Offset Index.

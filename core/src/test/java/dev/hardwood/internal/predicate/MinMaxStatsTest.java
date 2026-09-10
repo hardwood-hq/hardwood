@@ -11,12 +11,24 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.Statistics;
+import dev.hardwood.reader.FilterPredicate.Operator;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MinMaxStatsTest {
+
+    /// The leaf every case here decides against, and the one the bounds are read in the order
+    /// of: `INT32`, compared signed.
+    private static final ResolvedPredicate.IntPredicate GT_MINUS_FIVE =
+            new ResolvedPredicate.IntPredicate(0, Operator.GT, -5);
+
+    @RegisterExtension
+    final CapturedWarnings warnings = new CapturedWarnings();
 
     @Test
     void testDeprecatedMinMaxStatsReturnsNull() {
@@ -28,12 +40,14 @@ class MinMaxStatsTest {
         byte[] fakeMax = intBytes(-10);
         Statistics deprecated = new Statistics(fakeMin, fakeMax, 0L, null, true);
 
-        MinMaxStats stats = MinMaxStats.of(deprecated);
+        MinMaxStats stats = MinMaxStats.of(deprecated, GT_MINUS_FIVE);
 
         // When isMinMaxDeprecated is true, minValue/maxValue must be null so that
         // canDropLeaf conservatively returns false (never drops the row group).
-        assertThat(stats.minValue()).isNull();
-        assertThat(stats.maxValue()).isNull();
+        assertThat(stats)
+                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("they come from the deprecated min/max fields, which compare unsigned");
     }
 
     @Test
@@ -42,10 +56,9 @@ class MinMaxStatsTest {
         byte[] max = intBytes(100);
         Statistics nonDeprecated = new Statistics(min, max, 0L, null, false);
 
-        MinMaxStats stats = MinMaxStats.of(nonDeprecated);
+        MinMaxStats stats = MinMaxStats.of(nonDeprecated, GT_MINUS_FIVE);
 
-        assertThat(stats.minValue()).isEqualTo(min);
-        assertThat(stats.maxValue()).isEqualTo(max);
+        assertThat(stats).isEqualTo(new MinMaxStats.IntStats(1, 100, 0L));
     }
 
     @Test
@@ -59,13 +72,90 @@ class MinMaxStatsTest {
         byte[] deprecatedMax = intBytes(-10);
         Statistics stats = new Statistics(deprecatedMin, deprecatedMax, 0L, null, true);
 
-        MinMaxStats minMaxStats = MinMaxStats.of(stats);
+        MinMaxStats minMaxStats = MinMaxStats.of(stats, GT_MINUS_FIVE);
 
         // With the fix, canDropLeaf sees null min/max and returns false (conservative)
-        ResolvedPredicate.IntPredicate predicate = new ResolvedPredicate.IntPredicate(
-                0, dev.hardwood.reader.FilterPredicate.Operator.GT, -5);
-        boolean canDrop = StatisticsFilterSupport.canDropLeaf(predicate, minMaxStats);
+        boolean canDrop = minMaxStats.canDrop(GT_MINUS_FIVE);
         assertThat(canDrop).isFalse();
+    }
+
+    @Test
+    void boundsSourcedForOneWidthRefuseALeafOfAnother() {
+        // A unit is decoded for the leaf it is then asked about, so a mismatch is a wiring
+        // mistake in the reader rather than anything a file can cause. It fails loudly rather
+        // than answering "cannot prove anything", which would silently disable pruning.
+        MinMaxStats int32 = MinMaxStats.IntStats.of(10, 20, 0L);
+        ResolvedPredicate longLeaf = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
+
+        assertThatThrownBy(() -> int32.canDrop(longLeaf))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("INT32 statistics cannot decide a LongPredicate");
+        assertThatThrownBy(() -> int32.alwaysMatches(longLeaf))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("INT32 statistics cannot decide a LongPredicate");
+    }
+
+    @Test
+    void aLeafThatReadsNoBoundsGetsNoneAndDiscardsNothing() {
+        // IS NULL and IS NOT NULL are decided by the null count; the bytes the file wrote are
+        // not theirs to read, and not discarded either — nothing should warn about them.
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(intBytes(10), intBytes(20), 0L, null, false),
+                new ResolvedPredicate.IsNullPredicate(0));
+
+        assertThat(stats).isInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+        assertThat(stats.discardReason()).isNull();
+        assertThat(stats.nullCount()).isZero();
+    }
+
+    @Test
+    void discardedBoundsSayWhereTheyCameFromAndWhy() {
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+
+        stats.reportIfDiscarded(chunk());
+
+        assertThat(warnings.messages()).containsExactly(
+                "[orders.parquet: row group 3, column 'order.price'] Ignoring the min/max "
+                        + "statistics for pruning: the minimum sorts above the maximum. Rows they "
+                        + "could have skipped are read and filtered instead.");
+    }
+
+    @Test
+    void aPageSaysWhichPageItWas() {
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+
+        stats.reportIfDiscarded(chunk().withPageIndex(7));
+
+        assertThat(warnings.messages()).singleElement().asString()
+                .startsWith("[orders.parquet: row group 3, column 'order.price', page 7] ");
+    }
+
+    @Test
+    void usableBoundsSayNothing() {
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(intBytes(10), intBytes(20), 0L, null, false), GT_MINUS_FIVE);
+
+        stats.reportIfDiscarded(chunk());
+
+        assertThat(warnings.messages()).isEmpty();
+    }
+
+    @Test
+    void everyDiscardIsReported() {
+        // Repeats are not collapsed: statistics that will not compare are rare, and a reader
+        // who finds the volume unhelpful can raise the level on this logger.
+        MinMaxStats stats = MinMaxStats.of(
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+        stats.reportIfDiscarded(chunk().withPageIndex(0));
+        stats.reportIfDiscarded(chunk().withPageIndex(1));
+
+        assertThat(warnings.messages()).hasSize(2);
+    }
+
+    private static LogContext chunk() {
+        return new LogContext("orders.parquet", 3).withColumn(FieldPath.of("order", "price"));
     }
 
     private static byte[] intBytes(int value) {

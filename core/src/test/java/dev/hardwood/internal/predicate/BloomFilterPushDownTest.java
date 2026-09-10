@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.XxHash64;
 import dev.hardwood.internal.reader.CountingInputFile;
@@ -55,6 +56,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// so statistics alone keep the row group — but were never written, so only the bloom filter can
 /// prove their absence.
 class BloomFilterPushDownTest {
+
+    /// A position with nothing to point at: these cases assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
 
     private static final Path FIXTURE = Paths.get("src/test/resources/bloom_filter_test.parquet");
 
@@ -333,12 +339,12 @@ class BloomFilterPushDownTest {
     private static boolean bloomDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup,
-                new RowGroupBloomFilterSource(inputFile, rowGroup), null) == FilterDecision.CANNOT_MATCH;
+                new RowGroupBloomFilterSource(inputFile, rowGroup), null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
     }
 
     /// A `BloomFilterHeader` thrift struct followed by a minimal one-block (32-byte) bitset holding

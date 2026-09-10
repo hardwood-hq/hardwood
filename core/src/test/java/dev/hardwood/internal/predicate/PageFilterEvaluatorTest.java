@@ -14,9 +14,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -29,21 +31,30 @@ import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.internal.thrift.ThriftStructBuilder;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PageFilterEvaluatorTest {
+
+    @RegisterExtension
+    final CapturedWarnings warnings = new CapturedWarnings();
 
     // Integer Filtering Tests
 
@@ -446,7 +457,8 @@ class PageFilterEvaluatorTest {
             ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
             RowGroup rowGroup = metaData.rowGroups().get(0);
             RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers);
+            return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers,
+                    new LogContext(inputFile.name(), 0));
         }
         finally {
             inputFile.close();
@@ -626,11 +638,58 @@ class PageFilterEvaluatorTest {
             // Called directly here; in the reader this runs while a column's pages are
             // planned, and the pipeline puts the file and row group in front of it.
             assertThatThrownBy(() -> PageFilterEvaluator.computeMatchingRows(
-                    new ResolvedPredicate.IsNotNullPredicate(0), rowGroup, buffers))
+                    new ResolvedPredicate.IsNotNullPredicate(0), rowGroup, buffers, new LogContext(inputFile.name(), 0)))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("Failed to parse the page index of column 0: Malformed Parquet"
                             + " metadata: ColumnIndex describes 3 pages but OffsetIndex locates 2");
         }
+    }
+
+    @Test
+    void discardedPageBoundsAreNamedByTheirColumnAndPage() throws IOException {
+        // Page 0 is bounded [1, 20] and holds the probe; page 1 carries min = 30 with
+        // max = 11, the wrong way round. The column path comes from the row group's metadata
+        // and the page index from the scan, and a pair that brackets nothing drops no page.
+        byte[] columnIndex = new ThriftStructBuilder()
+                .field(1, FieldType.LIST).boolList(false, false)
+                .field(2, FieldType.LIST).binaryList(intBytes(1), intBytes(30))
+                .field(3, FieldType.LIST).binaryList(intBytes(20), intBytes(11))
+                .stop().build();
+        byte[] offsetIndex = new ThriftStructBuilder()
+                .field(1, FieldType.LIST)
+                .structList(pageLocation(0, 0), pageLocation(100, 30))
+                .stop().build();
+
+        ByteBuffer file = ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
+        file.put(offsetIndex).put(columnIndex).flip();
+        RowGroup rowGroup = new RowGroup(List.of(indexedChunk(offsetIndex.length, columnIndex.length)),
+                1000, 60);
+
+        try (InputFile inputFile = InputFile.of(file)) {
+            RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            RowRanges ranges = PageFilterEvaluator.computeMatchingRows(
+                    new ResolvedPredicate.IntPredicate(0, Operator.EQ, 15), rowGroup, buffers,
+                    new LogContext("orders.parquet", 4));
+
+            assertTrue(ranges.overlapsPage(0, 29), "the page holding the probe must be kept");
+            assertTrue(ranges.overlapsPage(30, 59),
+                    "read as an interval, min = 30 with max = 11 excludes 15 and would drop the page");
+            assertThat(warnings.messages()).containsExactly(
+                    "[orders.parquet: row group 4, column 'order.price', page 1] Ignoring the "
+                            + "min/max statistics for pruning: the minimum sorts above the maximum. "
+                            + "Rows they could have skipped are read and filtered instead.");
+        }
+    }
+
+    /// A column chunk whose page index sits at the head of the file: the offset index first,
+    /// the column index after it.
+    private static ColumnChunk indexedChunk(int offsetIndexLength, int columnIndexLength) {
+        ColumnMetaData metaData = new ColumnMetaData(
+                PhysicalType.INT32, List.of(Encoding.PLAIN), FieldPath.of("order", "price"),
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, null,
+                null, null, null, List.of(), null);
+        return new ColumnChunk(metaData, 0L, offsetIndexLength,
+                (long) offsetIndexLength, columnIndexLength, "");
     }
 
     /// A PageLocation struct body: offset, compressed_page_size, first_row_index.
