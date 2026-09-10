@@ -92,8 +92,12 @@ public class StatisticsReader {
             }
         }
 
-        // Prefer fields 5/6 over deprecated 1/2
-        boolean deprecated = (minValue == null && maxValue == null);
+        // Prefer fields 5/6 over deprecated 1/2. A struct carrying neither pair — a column
+        // that wrote a null count and no bounds — took its bounds from nowhere, so it is not
+        // reporting deprecated ones; saying otherwise labels an ordinary file's statistics
+        // deprecated for everything that reads the flag.
+        boolean deprecated = minValue == null && maxValue == null
+                && (deprecatedMin != null || deprecatedMax != null);
         byte[] resolvedMin = minValue != null ? minValue : deprecatedMin;
         byte[] resolvedMax = maxValue != null ? maxValue : deprecatedMax;
 

@@ -88,6 +88,39 @@ class StatisticsReaderTest {
         assertThat(stats.nanCount()).isEqualTo(3L);
     }
 
+    @Test
+    void statisticsWithoutAnyBoundsReportNoDeprecatedBounds() throws IOException {
+        // An all-null column writes a null count and neither pair of bounds. Nothing was
+        // read from the deprecated fields, so nothing should say it was: the flag drives the
+        // `(deprecated)` cell in `inspect pages` and the warning the filter layer raises when
+        // it throws bounds away.
+        byte[] thrift = struct()
+                .field(3, FieldType.I64).i64(100)
+                .stop().build();
+
+        Statistics stats = read(thrift);
+
+        assertThat(stats.minValue()).isNull();
+        assertThat(stats.maxValue()).isNull();
+        assertThat(stats.nullCount()).isEqualTo(100L);
+        assertThat(stats.isMinMaxDeprecated()).isFalse();
+    }
+
+    @Test
+    void deprecatedMaxAloneStillReportsDeprecatedBounds() throws IOException {
+        // Only one of the two deprecated fields was written (field 1 is the deprecated
+        // `max`); the one bound that exists still came from them.
+        byte[] thrift = struct()
+                .field(1, FieldType.BINARY).binary(bytes(8))
+                .stop().build();
+
+        Statistics stats = read(thrift);
+
+        assertThat(stats.maxValue()).isEqualTo(bytes(8));
+        assertThat(stats.minValue()).isNull();
+        assertThat(stats.isMinMaxDeprecated()).isTrue();
+    }
+
     private static Statistics read(byte[] thrift) throws IOException {
         return StatisticsReader.read(new ThriftCompactReader(ByteBuffer.wrap(thrift)));
     }
