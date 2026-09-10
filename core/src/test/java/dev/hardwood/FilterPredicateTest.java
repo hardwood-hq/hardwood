@@ -26,6 +26,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.LogContext;
@@ -1537,6 +1538,6 @@ class FilterPredicateTest {
     /// This mirrors the production code path: resolve first, then evaluate.
     private static boolean canDropRowGroup(FilterPredicate filter, RowGroup rg, FileSchema schema) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rg, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rg, null, null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
     }
 }

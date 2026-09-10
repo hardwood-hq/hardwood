@@ -108,7 +108,7 @@ class RowGroupDecideTest {
         // always-matching decision derived from statistics.
         RowGroup rg = intRowGroup(10, 20, 0L);
         BloomFilterSource noFilters = columnIndex -> null;
-        assertThat(RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, noFilters, null, UNNAMED))
+        assertThat(RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, noFilters, null, UNNAMED, BoundsReadability.ALL))
                 .isEqualTo(ALWAYS_MATCHES);
     }
 
@@ -139,7 +139,7 @@ class RowGroupDecideTest {
                 new Statistics(intBytes(20), intBytes(10), 0L, null, false), 100);
 
         FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(intGt(5), rg, null, null,
-                new LogContext("orders.parquet", 4));
+                new LogContext("orders.parquet", 4), BoundsReadability.ALL);
 
         assertThat(decision).isEqualTo(MIGHT_MATCH);
         assertThat(warnings.messages()).containsExactly(
@@ -308,7 +308,7 @@ class RowGroupDecideTest {
 
     private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup)
             throws IOException {
-        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, null, null, UNNAMED);
+        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, null, null, UNNAMED, BoundsReadability.ALL);
     }
 
     private static ResolvedPredicate intGt(int value) {

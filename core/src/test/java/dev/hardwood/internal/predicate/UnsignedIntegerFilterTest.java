@@ -87,7 +87,7 @@ class UnsignedIntegerFilterTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("v", FOUR_BILLION), schema());
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(encode(ZERO), encode(FOUR_BILLION), 0L, null, false), resolved);
+                new Statistics(encode(ZERO), encode(FOUR_BILLION), 0L, null, false), resolved, BoundsReadability.ALL);
 
         assertThat(stats.canDrop(resolved)).isTrue();
     }
@@ -153,7 +153,7 @@ class UnsignedIntegerFilterTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("v", THREE_BILLION), schema());
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(encode(FOUR_BILLION), encode(FOUR_BILLION), 0L, null, false), resolved);
+                new Statistics(encode(FOUR_BILLION), encode(FOUR_BILLION), 0L, null, false), resolved, BoundsReadability.ALL);
 
         assertThat(stats.alwaysMatches(resolved)).isTrue();
         assertThat(stats.canDrop(resolved)).isFalse();
@@ -166,7 +166,7 @@ class UnsignedIntegerFilterTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.in("v", SEVEN, FOUR_BILLION), schema());
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(encode(FOUR_BILLION), encode(FOUR_BILLION), 0L, null, false), resolved);
+                new Statistics(encode(FOUR_BILLION), encode(FOUR_BILLION), 0L, null, false), resolved, BoundsReadability.ALL);
 
         assertThat(stats.alwaysMatches(resolved)).isTrue();
     }
@@ -178,7 +178,7 @@ class UnsignedIntegerFilterTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.in("v", FOUR_BILLION), schema());
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(encode(ZERO), encode(THREE_BILLION), 0L, null, false), resolved);
+                new Statistics(encode(ZERO), encode(THREE_BILLION), 0L, null, false), resolved, BoundsReadability.ALL);
 
         assertThat(stats.canDrop(resolved)).isTrue();
     }
@@ -193,7 +193,7 @@ class UnsignedIntegerFilterTest {
                 List.of(encode(ZERO)), List.of(encode(FOUR_BILLION)),
                 ColumnIndex.BoundaryOrder.UNORDERED, new long[] { 0L }, null, null, null);
 
-        assertThat(MinMaxStats.ofPage(columnIndex, 0, resolved).canDrop(resolved)).isTrue();
+        assertThat(MinMaxStats.ofPage(columnIndex, 0, resolved, BoundsReadability.ALL).canDrop(resolved)).isTrue();
     }
 
     /// The `INT64` bounds read the same way: `[2^64 - 1, 2^64 - 1]` is `[-1, -1]` signed and
@@ -203,7 +203,7 @@ class UnsignedIntegerFilterTest {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.gt("v", SMALL_LONG), longSchema());
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(encodeLong(HUGE_LONG), encodeLong(HUGE_LONG), 0L, null, false), resolved);
+                new Statistics(encodeLong(HUGE_LONG), encodeLong(HUGE_LONG), 0L, null, false), resolved, BoundsReadability.ALL);
 
         assertThat(stats.alwaysMatches(resolved)).isTrue();
         assertThat(stats.canDrop(resolved)).isFalse();

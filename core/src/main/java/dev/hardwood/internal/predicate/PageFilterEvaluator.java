@@ -49,25 +49,25 @@ public class PageFilterEvaluator {
     ///                     page bounds turn out to be unusable
     /// @return row ranges that might contain matching rows
     public static RowRanges computeMatchingRows(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, LogContext logContext) {
+            RowGroupIndexBuffers indexBuffers, LogContext logContext, BoundsReadability readability) {
         long rowCount = rowGroup.numRows();
-        return evaluate(predicate, rowGroup, indexBuffers, rowCount, logContext);
+        return evaluate(predicate, rowGroup, indexBuffers, rowCount, logContext, readability);
     }
 
     private static RowRanges evaluate(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext) {
+            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext, BoundsReadability readability) {
         return switch (predicate) {
             case ResolvedPredicate.And a -> {
                 RowRanges result = RowRanges.all(rowCount);
                 for (ResolvedPredicate child : a.children()) {
-                    result = result.intersect(evaluate(child, rowGroup, indexBuffers, rowCount, logContext));
+                    result = result.intersect(evaluate(child, rowGroup, indexBuffers, rowCount, logContext, readability));
                 }
                 yield result;
             }
             case ResolvedPredicate.Or o -> {
                 RowRanges result = null;
                 for (ResolvedPredicate child : o.children()) {
-                    RowRanges childRanges = evaluate(child, rowGroup, indexBuffers, rowCount, logContext);
+                    RowRanges childRanges = evaluate(child, rowGroup, indexBuffers, rowCount, logContext, readability);
                     result = (result == null) ? childRanges : result.union(childRanges);
                 }
                 yield (result != null) ? result : RowRanges.all(rowCount);
@@ -79,14 +79,14 @@ public class PageFilterEvaluator {
             // Parquet has no per-page geospatial statistics (GeospatialStatistics lives only on
             // ColumnMetaData, applied during row-group filtering), so no page-level pruning is possible.
             case ResolvedPredicate.GeospatialPredicate ignored -> RowRanges.all(rowCount);
-            default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount, logContext);
+            default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount, logContext, readability);
         };
     }
 
     /// Evaluates a leaf predicate against per-page Column Index statistics,
     /// using [MinMaxStats#canDrop] for the actual comparison.
     private static RowRanges evaluateLeafPages(ResolvedPredicate predicate, RowGroup rowGroup,
-            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext) {
+            RowGroupIndexBuffers indexBuffers, long rowCount, LogContext logContext, BoundsReadability readability) {
 
         int columnIndex = ResolvedPredicate.leafColumnIndex(predicate);
         if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
@@ -113,7 +113,7 @@ public class PageFilterEvaluator {
             if (columnIdx.nullPages()[i]) {
                 continue;
             }
-            MinMaxStats pageStats = MinMaxStats.ofPage(columnIdx, i, predicate);
+            MinMaxStats pageStats = MinMaxStats.ofPage(columnIdx, i, predicate, readability);
             pageStats.reportIfDiscarded(columnContext.withPageIndex(i));
             keep[i] = !pageStats.canDrop(predicate);
         }

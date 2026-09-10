@@ -107,13 +107,15 @@ not expressible this way; reach for the `BigDecimal` factory instead.
 Pruning compares a unit's `min` / `max` bounds. A pair a reader cannot compare against is
 ignored rather than trusted, so the row group or page is kept and its rows are read and filtered
 one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored for
-one of three reasons:
+one of five reasons:
 
 | Reason | Bounds |
 |---|---|
 | The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound the Parquet spec forbids, sitting outside the column's ordering |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
+| The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
+| The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |
 
 The bounds themselves are still reported as the file carries them, by `Statistics` on the metadata
 API and by `hardwood inspect` and `hardwood dive`.

@@ -40,7 +40,7 @@ class MinMaxStatsTest {
         byte[] fakeMax = intBytes(-10);
         Statistics deprecated = new Statistics(fakeMin, fakeMax, 0L, null, true);
 
-        MinMaxStats stats = MinMaxStats.of(deprecated, GT_MINUS_FIVE);
+        MinMaxStats stats = MinMaxStats.of(deprecated, GT_MINUS_FIVE, BoundsReadability.ALL);
 
         // When isMinMaxDeprecated is true, minValue/maxValue must be null so that
         // canDropLeaf conservatively returns false (never drops the row group).
@@ -56,7 +56,7 @@ class MinMaxStatsTest {
         byte[] max = intBytes(100);
         Statistics nonDeprecated = new Statistics(min, max, 0L, null, false);
 
-        MinMaxStats stats = MinMaxStats.of(nonDeprecated, GT_MINUS_FIVE);
+        MinMaxStats stats = MinMaxStats.of(nonDeprecated, GT_MINUS_FIVE, BoundsReadability.ALL);
 
         assertThat(stats).isEqualTo(new MinMaxStats.IntStats(1, 100, 0L));
     }
@@ -72,7 +72,7 @@ class MinMaxStatsTest {
         byte[] deprecatedMax = intBytes(-10);
         Statistics stats = new Statistics(deprecatedMin, deprecatedMax, 0L, null, true);
 
-        MinMaxStats minMaxStats = MinMaxStats.of(stats, GT_MINUS_FIVE);
+        MinMaxStats minMaxStats = MinMaxStats.of(stats, GT_MINUS_FIVE, BoundsReadability.ALL);
 
         // With the fix, canDropLeaf sees null min/max and returns false (conservative)
         boolean canDrop = minMaxStats.canDrop(GT_MINUS_FIVE);
@@ -101,7 +101,7 @@ class MinMaxStatsTest {
         // not theirs to read, and not discarded either — nothing should warn about them.
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(10), intBytes(20), 0L, null, false),
-                new ResolvedPredicate.IsNullPredicate(0, 1));
+                new ResolvedPredicate.IsNullPredicate(0, 1), BoundsReadability.ALL);
 
         assertThat(stats).isInstanceOf(MinMaxStats.NullCountOnlyStats.class);
         assertThat(stats.discardReason()).isNull();
@@ -111,7 +111,7 @@ class MinMaxStatsTest {
     @Test
     void discardedBoundsSayWhereTheyCameFromAndWhy() {
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
         stats.reportIfDiscarded(chunk());
 
@@ -124,7 +124,7 @@ class MinMaxStatsTest {
     @Test
     void aPageSaysWhichPageItWas() {
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
         stats.reportIfDiscarded(chunk().withPageIndex(7));
 
@@ -135,7 +135,7 @@ class MinMaxStatsTest {
     @Test
     void usableBoundsSayNothing() {
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(intBytes(10), intBytes(20), 0L, null, false), GT_MINUS_FIVE);
+                new Statistics(intBytes(10), intBytes(20), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
         stats.reportIfDiscarded(chunk());
 
@@ -147,7 +147,7 @@ class MinMaxStatsTest {
         // Repeats are not collapsed: statistics that will not compare are rare, and a reader
         // who finds the volume unhelpful can raise the level on this logger.
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE);
+                new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
         stats.reportIfDiscarded(chunk().withPageIndex(0));
         stats.reportIfDiscarded(chunk().withPageIndex(1));
 

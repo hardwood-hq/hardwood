@@ -92,12 +92,12 @@ class DictionaryFixedLenByteArrayPushDownTest {
 
     private static boolean dictionaryDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, dictionaries(), UNNAMED)
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, dictionaries(), UNNAMED, BoundsReadability.ALL)
                 == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED) == FilterDecision.CANNOT_MATCH;
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
     }
 }

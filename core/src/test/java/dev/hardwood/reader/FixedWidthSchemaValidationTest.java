@@ -21,9 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.thrift.FileMetaDataWriter;
-import dev.hardwood.internal.thrift.ThriftCompactWriter;
+import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
@@ -47,8 +45,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// the file it came from. A read that does not touch it, and the metadata accessors, are
 /// unaffected: an unreadable column is not an unreadable file.
 class FixedWidthSchemaValidationTest {
-
-    private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.US_ASCII);
 
     @TempDir
     Path tempDir;
@@ -186,40 +182,20 @@ class FixedWidthSchemaValidationTest {
     }
 
     /// Rewrites `file`'s footer with `columnName`'s `type_length` set to `width`, dropping
-    /// the field entirely when `width` is `null`. The data pages are untouched, so what
-    /// changes is only what the file claims about the column.
+    /// the field entirely when `width` is `null`.
     private static byte[] withTypeLength(byte[] file, String columnName, Integer width) throws IOException {
-        FileMetaData metaData = ParquetMetadataReader.readMetadata(InputFile.of(ByteBuffer.wrap(file)));
-
-        List<SchemaElement> patched = new ArrayList<>(metaData.schema().size());
-        for (SchemaElement element : metaData.schema()) {
-            patched.add(element.name().equals(columnName)
-                    ? new SchemaElement(element.name(), element.type(), width, element.repetitionType(),
-                            element.numChildren(), element.convertedType(), element.scale(),
-                            element.precision(), element.fieldId(), element.logicalType())
-                    : element);
-        }
-
-        ThriftCompactWriter footer = new ThriftCompactWriter();
-        FileMetaDataWriter.write(footer, new FileMetaData(metaData.version(), patched, metaData.numRows(),
-                metaData.rowGroups(), metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders()));
-        byte[] footerBytes = footer.toByteArray();
-
-        int dataLength = file.length - MAGIC.length - Integer.BYTES - footerLength(file);
-        ByteBuffer rewritten = ByteBuffer
-                .allocate(dataLength + footerBytes.length + Integer.BYTES + MAGIC.length)
-                .order(ByteOrder.LITTLE_ENDIAN);
-        rewritten.put(file, 0, dataLength);
-        rewritten.put(footerBytes);
-        rewritten.putInt(footerBytes.length);
-        rewritten.put(MAGIC);
-        return rewritten.array();
-    }
-
-    private static int footerLength(byte[] file) {
-        return ByteBuffer.wrap(file, file.length - MAGIC.length - Integer.BYTES, Integer.BYTES)
-                .order(ByteOrder.LITTLE_ENDIAN)
-                .getInt();
+        return FooterRewriter.rewrite(file, metaData -> {
+            List<SchemaElement> patched = new ArrayList<>(metaData.schema().size());
+            for (SchemaElement element : metaData.schema()) {
+                patched.add(element.name().equals(columnName)
+                        ? new SchemaElement(element.name(), element.type(), width, element.repetitionType(),
+                                element.numChildren(), element.convertedType(), element.scale(),
+                                element.precision(), element.fieldId(), element.logicalType())
+                        : element);
+            }
+            return new FileMetaData(metaData.version(), patched, metaData.numRows(), metaData.rowGroups(),
+                    metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders());
+        });
     }
 
     private static byte[] bytes(String value) {

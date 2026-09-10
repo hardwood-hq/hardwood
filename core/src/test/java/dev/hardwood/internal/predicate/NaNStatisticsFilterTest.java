@@ -86,7 +86,7 @@ class NaNStatisticsFilterTest {
     void float16NaNNeverDrops(Operator op) {
         ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, 1.0f, false);
         MinMaxStats stats = MinMaxStats.of(
-                new Statistics(float16Bytes(Float.NaN), float16Bytes(10.0f), 0L, null, false), leaf);
+                new Statistics(float16Bytes(Float.NaN), float16Bytes(10.0f), 0L, null, false), leaf, BoundsReadability.ALL);
 
         assertThat(stats.canDrop(leaf)).isFalse();
         assertThat(stats.discardReason())
@@ -99,7 +99,7 @@ class NaNStatisticsFilterTest {
         ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 1.0, false);
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(doubleBytes(Double.NaN), doubleBytes(10.0), 0L, null, false),
-                leaf);
+                leaf, BoundsReadability.ALL);
 
         assertThat(stats)
                 .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
@@ -159,14 +159,14 @@ class NaNStatisticsFilterTest {
     /// them so that the usability check runs.
     private static boolean dropsDouble(Operator op, double value, double min, double max) {
         ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, op, value, false);
-        return MinMaxStats.of(new Statistics(doubleBytes(min), doubleBytes(max), 0L, null, false), leaf)
+        return MinMaxStats.of(new Statistics(doubleBytes(min), doubleBytes(max), 0L, null, false), leaf, BoundsReadability.ALL)
                 .canDrop(leaf);
     }
 
     /// See [#dropsDouble].
     private static boolean dropsFloat(Operator op, float value, float min, float max) {
         ResolvedPredicate leaf = new ResolvedPredicate.FloatPredicate(0, op, value, false);
-        return MinMaxStats.of(new Statistics(floatBytes(min), floatBytes(max), 0L, null, false), leaf)
+        return MinMaxStats.of(new Statistics(floatBytes(min), floatBytes(max), 0L, null, false), leaf, BoundsReadability.ALL)
                 .canDrop(leaf);
     }
 

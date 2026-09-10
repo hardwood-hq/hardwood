@@ -126,11 +126,11 @@ class InvertedStatisticsFilterTest {
     @Test
     void typeDefinedZeroBoundsAreNotInverted() {
         MinMaxStats floatStats = MinMaxStats.of(stats(floatBytes(0.0f), floatBytes(-0.0f)),
-                new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 5.0f, false));
+                new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 5.0f, false), BoundsReadability.ALL);
         assertThat(floatStats).isNotInstanceOf(MinMaxStats.NullCountOnlyStats.class);
 
         MinMaxStats doubleStats = MinMaxStats.of(stats(doubleBytes(0.0), doubleBytes(-0.0)),
-                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false));
+                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false), BoundsReadability.ALL);
         assertThat(doubleStats).isNotInstanceOf(MinMaxStats.NullCountOnlyStats.class);
 
         // And they still prune a value neither zero can be.
@@ -143,7 +143,7 @@ class InvertedStatisticsFilterTest {
     @Test
     void ieee754ZeroBoundsTheWrongWayRoundAreInverted() {
         MinMaxStats doubleStats = MinMaxStats.of(stats(doubleBytes(0.0), doubleBytes(-0.0)),
-                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, true));
+                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, true), BoundsReadability.ALL);
         assertThat(doubleStats.discardReason()).isEqualTo(INVERTED);
     }
 
@@ -160,12 +160,12 @@ class InvertedStatisticsFilterTest {
 
         /// The bounds the wrong way round, as a buggy writer emits them.
         MinMaxStats inverted() {
-            return MinMaxStats.of(stats(high, low), leaf.apply(Operator.EQ));
+            return MinMaxStats.of(stats(high, low), leaf.apply(Operator.EQ), BoundsReadability.ALL);
         }
 
         /// The same bounds the right way round.
         MinMaxStats ordered() {
-            return MinMaxStats.of(stats(low, high), leaf.apply(Operator.EQ));
+            return MinMaxStats.of(stats(low, high), leaf.apply(Operator.EQ), BoundsReadability.ALL);
         }
 
         ResolvedPredicate leaf(Operator op) {

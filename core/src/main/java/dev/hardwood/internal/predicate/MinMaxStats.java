@@ -45,6 +45,11 @@ sealed interface MinMaxStats {
     /// pruning directions at once (#1172).
     String INVERTED = "the minimum sorts above the maximum";
 
+    /// The column's annotation names no ordering, or the file names one this build does not
+    /// recognize, so there is no reading of the pair that the file vouches for (#1179).
+    String UNKNOWN_SORT_ORDER =
+            "the order they were written in is one this reader cannot read";
+
     /// The number of null values in the unit, or `null` if unknown.
     Long nullCount();
 
@@ -120,27 +125,36 @@ sealed interface MinMaxStats {
 
     /// The statistics of a column chunk, or of a single page where they are carried inline on
     /// the page header, decoded as the given leaf reads them.
-    static MinMaxStats of(Statistics stats, ResolvedPredicate leaf) {
+    static MinMaxStats of(Statistics stats, ResolvedPredicate leaf, BoundsReadability readability) {
         if (stats.isMinMaxDeprecated()) {
             return new NullCountOnlyStats(stats.nullCount(), DEPRECATED_SORT_ORDER);
         }
-        return sourced(stats.minValue(), stats.maxValue(), stats.nullCount(), leaf);
+        return sourced(stats.minValue(), stats.maxValue(), stats.nullCount(), leaf, readability);
     }
 
     /// The [ColumnIndex] entry for one page of a column chunk.
-    static MinMaxStats ofPage(ColumnIndex columnIndex, int pageIndex, ResolvedPredicate leaf) {
+    static MinMaxStats ofPage(ColumnIndex columnIndex, int pageIndex, ResolvedPredicate leaf,
+            BoundsReadability readability) {
         long[] nullCounts = columnIndex.nullCounts();
         return sourced(columnIndex.minValues().get(pageIndex), columnIndex.maxValues().get(pageIndex),
-                nullCounts != null ? Long.valueOf(nullCounts[pageIndex]) : null, leaf);
+                nullCounts != null ? Long.valueOf(nullCounts[pageIndex]) : null, leaf, readability);
     }
 
     /// Decodes the pair as the leaf reads it, yielding [NullCountOnlyStats] where the file
-    /// wrote no bounds, where the leaf reads none, or where the pair does not hold together.
-    private static MinMaxStats sourced(byte[] min, byte[] max, Long nullCount, ResolvedPredicate leaf) {
+    /// wrote no bounds, where they are in an order this reader cannot read, where the leaf reads
+    /// none, or where the pair does not hold together.
+    private static MinMaxStats sourced(byte[] min, byte[] max, Long nullCount, ResolvedPredicate leaf,
+            BoundsReadability readability) {
         if (min == null || max == null) {
             // Nothing was written, so nothing was discarded; a half-present pair prunes no
-            // more than an absent one.
+            // more than an absent one. This comes first so that a column whose annotation names
+            // no order, and whose writer therefore recorded no bounds, reports no discard.
             return new NullCountOnlyStats(nullCount, null);
+        }
+        if (!readability.readable(ResolvedPredicate.leafColumnIndex(leaf))) {
+            // Not decoded either: an order this reader cannot name may lay the bytes out in a
+            // way the leaf's decoder does not expect.
+            return new NullCountOnlyStats(nullCount, UNKNOWN_SORT_ORDER);
         }
         return switch (leaf) {
             case ResolvedPredicate.IntPredicate ignored -> IntStats.of(

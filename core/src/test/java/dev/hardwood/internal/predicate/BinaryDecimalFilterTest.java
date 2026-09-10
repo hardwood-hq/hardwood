@@ -293,7 +293,7 @@ class BinaryDecimalFilterTest {
                 new BloomFilterHeader(BLOOM_FILTER_BYTES, BloomFilterHeader.Algorithm.BLOCK,
                         BloomFilterHeader.Hash.XXHASH, BloomFilterHeader.Compression.UNCOMPRESSED),
                 ByteBuffer.allocate(BLOOM_FILTER_BYTES).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer());
-        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, empty, null, UNNAMED);
+        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, empty, null, UNNAMED, BoundsReadability.ALL);
     }
 
     /// Rows alternating a padded `127` with a minimally encoded `300`.

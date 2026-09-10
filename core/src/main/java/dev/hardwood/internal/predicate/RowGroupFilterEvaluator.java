@@ -60,26 +60,26 @@ public class RowGroupFilterEvaluator {
     /// @return the statistics decision for the row group
     public static FilterDecision decideRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext) throws IOException {
-        return decide(predicate, rowGroup, bloomFilters, dictionaries, logContext);
+            LogContext logContext, BoundsReadability readability) throws IOException {
+        return decide(predicate, rowGroup, bloomFilters, dictionaries, logContext, readability);
     }
 
     /// The recursive body of [#decideRowGroup], carrying where the row group is so that a
     /// column whose bounds turn out to be unusable can be named.
     private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext) throws IOException {
+            LogContext logContext, BoundsReadability readability) throws IOException {
         return switch (predicate) {
             case ResolvedPredicate.IntPredicate p -> intEqualityDecision(p, p.op(), p.value(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.UnsignedIntPredicate p -> intEqualityDecision(p, p.op(), p.value(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.LongPredicate p -> longEqualityDecision(p, p.op(), p.value(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.UnsignedLongPredicate p -> longEqualityDecision(p, p.op(), p.value(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.FloatPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
@@ -96,7 +96,7 @@ public class RowGroupFilterEvaluator {
             // neighbouring value would prove the wrong one absent. The dictionary holds the
             // stored values, so its entries can be widened instead and compared exactly.
             case ResolvedPredicate.Float16Predicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         && DictionaryFilterSupport.valueAbsentFloat16(dictionary(dictionaries, p.columnIndex()), p.value())) {
@@ -105,7 +105,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.Float16InPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 // As for Float16Predicate: the dictionary holds the chunk's exact halves and decides
                 // membership. A FLOAT16 column's Bloom filter hashes its two stored bytes and is not
                 // consulted for a numeric probe.
@@ -116,7 +116,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.DoublePredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
@@ -129,9 +129,9 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.BooleanPredicate p ->
-                    statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                    statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
             case ResolvedPredicate.BinaryPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 // Bloom filters and dictionary membership answer "are these exact bytes here?",
                 // which stands in for "is this value here?" only where the value has one
                 // encoding — see BinaryPredicate#byteExact. Statistics compare in the column's
@@ -146,15 +146,15 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.IntInPredicate p -> intInDecision(p, p.values(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.UnsignedIntInPredicate p -> intInDecision(p, p.values(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.LongInPredicate p -> longInDecision(p, p.values(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.UnsignedLongInPredicate p -> longInDecision(p, p.values(),
-                    rowGroup, bloomFilters, dictionaries, logContext);
+                    rowGroup, bloomFilters, dictionaries, logContext, readability);
             case ResolvedPredicate.BinaryInPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 // As for BinaryPredicate: exact-byte shortcuts stand in for membership only where
                 // a value has one encoding.
                 if (decision != FilterDecision.CANNOT_MATCH
@@ -166,7 +166,7 @@ public class RowGroupFilterEvaluator {
                 yield decision;
             }
             case ResolvedPredicate.DoubleInPredicate p -> {
-                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 if (decision != FilterDecision.CANNOT_MATCH
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
                         // read for a list it could not decide either way. The dictionary holds the
@@ -192,7 +192,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.ALWAYS_MATCHES;
                 for (ResolvedPredicate child : a.children()) {
-                    result = FilterDecision.and(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext));
+                    result = FilterDecision.and(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext, readability));
                     if (result == FilterDecision.CANNOT_MATCH) {
                         break;
                     }
@@ -205,7 +205,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.CANNOT_MATCH;
                 for (ResolvedPredicate child : o.children()) {
-                    result = FilterDecision.or(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext));
+                    result = FilterDecision.or(result, decide(child, rowGroup, bloomFilters, dictionaries, logContext, readability));
                     if (result == FilterDecision.ALWAYS_MATCHES) {
                         break;
                     }
@@ -236,9 +236,9 @@ public class RowGroupFilterEvaluator {
     /// statistics half reads an order, and the leaf's own [MinMaxStats] variant supplies it.
     private static FilterDecision intEqualityDecision(ResolvedPredicate leaf,
             FilterPredicate.Operator op, int value, RowGroup rowGroup, BloomFilterSource bloomFilters,
-            RowGroupDictionaryFilterSource dictionaries, LogContext logContext) throws IOException {
+            RowGroupDictionaryFilterSource dictionaries, LogContext logContext, BoundsReadability readability) throws IOException {
         int columnIndex = ResolvedPredicate.leafColumnIndex(leaf);
-        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex);
+        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex, readability);
         if (decision != FilterDecision.CANNOT_MATCH
                 && op == FilterPredicate.Operator.EQ
                 && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, columnIndex), value)
@@ -251,9 +251,9 @@ public class RowGroupFilterEvaluator {
     /// [#intEqualityDecision] for an `INT64` column.
     private static FilterDecision longEqualityDecision(ResolvedPredicate leaf,
             FilterPredicate.Operator op, long value, RowGroup rowGroup, BloomFilterSource bloomFilters,
-            RowGroupDictionaryFilterSource dictionaries, LogContext logContext) throws IOException {
+            RowGroupDictionaryFilterSource dictionaries, LogContext logContext, BoundsReadability readability) throws IOException {
         int columnIndex = ResolvedPredicate.leafColumnIndex(leaf);
-        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex);
+        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex, readability);
         if (decision != FilterDecision.CANNOT_MATCH
                 && op == FilterPredicate.Operator.EQ
                 && (BloomFilterSupport.valueAbsent(bloom(bloomFilters, columnIndex), value)
@@ -267,9 +267,9 @@ public class RowGroupFilterEvaluator {
     /// before the row group can be dropped.
     private static FilterDecision intInDecision(ResolvedPredicate leaf, int[] values, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext) throws IOException {
+            LogContext logContext, BoundsReadability readability) throws IOException {
         int columnIndex = ResolvedPredicate.leafColumnIndex(leaf);
-        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex);
+        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex, readability);
         if (decision != FilterDecision.CANNOT_MATCH
                 && (BloomFilterSupport.absentAll(bloom(bloomFilters, columnIndex), values)
                         || DictionaryFilterSupport.absentAll(dictionary(dictionaries, columnIndex), values))) {
@@ -281,9 +281,9 @@ public class RowGroupFilterEvaluator {
     /// [#intInDecision] for an `INT64` column.
     private static FilterDecision longInDecision(ResolvedPredicate leaf, long[] values, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext) throws IOException {
+            LogContext logContext, BoundsReadability readability) throws IOException {
         int columnIndex = ResolvedPredicate.leafColumnIndex(leaf);
-        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex);
+        FilterDecision decision = statisticsDecision(leaf, rowGroup, logContext, columnIndex, readability);
         if (decision != FilterDecision.CANNOT_MATCH
                 && (BloomFilterSupport.absentAll(bloom(bloomFilters, columnIndex), values)
                         || DictionaryFilterSupport.absentAll(dictionary(dictionaries, columnIndex), values))) {
@@ -296,12 +296,12 @@ public class RowGroupFilterEvaluator {
     /// when statistics are absent — or when their bounds are unusable, which [MinMaxStats]
     /// decides and this reports.
     private static FilterDecision statisticsDecision(ResolvedPredicate leaf, RowGroup rowGroup,
-            LogContext logContext, int columnIndex) {
+            LogContext logContext, int columnIndex, BoundsReadability readability) {
         Statistics stats = getStatistics(rowGroup, columnIndex);
         if (stats == null) {
             return FilterDecision.MIGHT_MATCH;
         }
-        MinMaxStats minMax = MinMaxStats.of(stats, leaf);
+        MinMaxStats minMax = MinMaxStats.of(stats, leaf, readability);
         minMax.reportIfDiscarded(logContext.withColumn(
                 rowGroup.columns().get(columnIndex).metaData().pathInSchema()));
         return minMax.decideLeaf(leaf);

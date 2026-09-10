@@ -25,6 +25,7 @@ import java.util.function.Consumer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
@@ -425,7 +426,8 @@ public class RowGroupIterator implements Closeable {
                 if (pageFiltering) {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
                             workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers,
-                            new LogContext(workItem.inputFile().name(), workItem.rowGroupIndex()));
+                            new LogContext(workItem.inputFile().name(), workItem.rowGroupIndex()),
+                            workItem.columnOrdinals().boundsReadability());
                 }
 
                 MaskCapability maskCapability = masksApplicableForRowGroup(
@@ -700,8 +702,12 @@ public class RowGroupIterator implements Closeable {
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
                 // inline DataPageHeader.statistics and per-page row masks both
-                // happen inside SequentialFetchPlan.
-                List<ResolvedPredicate> leaves = dropLeavesByColumn.getOrDefault(originalIndex, List.of());
+                // happen inside SequentialFetchPlan. Inline page statistics are bounds
+                // like any other, so a column whose bounds this file records in an order
+                // this reader cannot read hands over no leaves to drop pages with (#1179).
+                List<ResolvedPredicate> leaves = workItem.columnOrdinals().boundsReadability().readable(fileOrdinal)
+                        ? dropLeavesByColumn.getOrDefault(originalIndex, List.of())
+                        : List.of();
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
@@ -1168,11 +1174,16 @@ public class RowGroupIterator implements Closeable {
         boolean hasFilter = filterPredicate != null;
         int fileIndex = nextFileToPlan++;
         PreparedFile prepared = getPreparedFile(fileIndex);
+        // Decided per file and in the file's own ordinals: the order its bounds were written in
+        // is this file's to declare, not the reference file's (#1179).
+        BoundsReadability boundsReadability = BoundsReadability.of(
+                prepared.schema(), prepared.metaData().columnOrders());
         FileColumnOrdinals columnOrdinals = fileIndex == 0
-                ? FileColumnOrdinals.identity(referenceSchema.getColumnCount(), filterPredicate)
+                ? FileColumnOrdinals.identity(referenceSchema.getColumnCount(), filterPredicate,
+                        boundsReadability)
                 : FileColumnOrdinals.of(
                         validateSchemaCompatibility(prepared.inputFile(), prepared.schema()),
-                        filterPredicate);
+                        filterPredicate, boundsReadability);
         List<RowGroup> sourceRowGroups = fileIndex == 0 && firstFileRowGroups != null
                 ? firstFileRowGroups : prepared.rowGroups();
         // Metadata pruning indexes every row group's chunk list by ordinal, so with
@@ -1383,7 +1394,7 @@ public class RowGroupIterator implements Closeable {
             FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
                     new RowGroupBloomFilterSource(inputFile, rg),
                     new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
-                    new LogContext(inputFile.name(), rgIndex));
+                    new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability());
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }
