@@ -78,11 +78,12 @@ import java.util.UUID;
 /// columns are not supported and throw `IllegalArgumentException` at reader creation;
 /// express such filters as `or(eq(...), eq(...))` instead.
 ///
-/// Predicate pushdown is defensive against non-conformant writers: if a
-/// column's statistics carry `NaN` as `min` or `max` (forbidden by the
-/// Parquet spec, but produced by older / buggy writers), the bound is
-/// treated as no-bound and pruning is skipped on that side — matching rows
-/// are never dropped.
+/// Row-group and page pruning never drops a `NaN` row that a predicate
+/// matches. Statistics whose `min` or `max` is `NaN` are not used for pruning.
+/// A predicate that a `NaN` value satisfies — `notEq`, `gt` or `gtEq` against
+/// a number, or `eq`, `ltEq` or `gtEq` against `NaN` — prunes a `FLOAT`,
+/// `DOUBLE` or `FLOAT16` column from its statistics only where the row group
+/// or page records a `nan_count` of zero.
 public sealed interface FilterPredicate
         permits FilterPredicate.IntColumnPredicate,
                 FilterPredicate.LongColumnPredicate,

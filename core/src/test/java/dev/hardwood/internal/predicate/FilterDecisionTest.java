@@ -217,11 +217,24 @@ class FilterDecisionTest {
         assertThat(doubleStats(15.0, 15.0, 0L).decideLeaf(inDouble))
                 .isEqualTo(MIGHT_MATCH);
 
-        // The CANNOT_MATCH side is unaffected.
+        // CANNOT_MATCH is still proven by operators a NaN row never satisfies, such as EQ
+        // outside the bounds — not by floating-point GT, which NaN rows may match (#1016).
+        ResolvedPredicate eqOutside =
+                new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.EQ, 25.0);
+        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(eqOutside))
+                .isEqualTo(CANNOT_MATCH);
+
         ResolvedPredicate gtOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 25.0);
         assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(gtOutside))
+                .isEqualTo(MIGHT_MATCH);
+
+        // A recorded nan_count of zero lets the bounds prove GT empty, but a fully-satisfying
+        // interval is not promoted to ALWAYS_MATCHES (#898).
+        assertThat(nanFreeDoubleStats(10.0, 20.0, 0L).decideLeaf(gtOutside))
                 .isEqualTo(CANNOT_MATCH);
+        assertThat(nanFreeDoubleStats(10.0, 20.0, 0L).decideLeaf(gtDouble))
+                .isEqualTo(MIGHT_MATCH);
     }
 
     // ==================== Binary leaf decisions ====================
@@ -377,11 +390,15 @@ class FilterDecisionTest {
     }
 
     private static MinMaxStats floatStats(float min, float max, Long nullCount) {
-        return MinMaxStats.FloatStats.of(min, max, false, nullCount);
+        return MinMaxStats.FloatStats.of(min, max, false, false, nullCount);
     }
 
     private static MinMaxStats doubleStats(double min, double max, Long nullCount) {
-        return MinMaxStats.DoubleStats.of(min, max, false, nullCount);
+        return MinMaxStats.DoubleStats.of(min, max, false, false, nullCount);
+    }
+
+    private static MinMaxStats nanFreeDoubleStats(double min, double max, Long nullCount) {
+        return MinMaxStats.DoubleStats.of(min, max, false, true, nullCount);
     }
 
     private static MinMaxStats noBounds(Long nullCount) {

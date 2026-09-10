@@ -115,13 +115,19 @@ one of five reasons:
 | Reason | Bounds |
 |---|---|
 | The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
-| One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound the Parquet spec forbids, sitting outside the column's ordering |
+| One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
 | The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
 | The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |
 
 The bounds themselves are still reported as the file carries them, by `Statistics` on the metadata
 API and by `hardwood inspect` and `hardwood dive`.
+
+Usable floating-point bounds cover a unit's non-`NaN` values only. A predicate that a `NaN`
+value satisfies — `notEq`, `gt` or `gtEq` against a number, or `eq`, `ltEq` or `gtEq` against
+`NaN` — prunes a `FLOAT`, `DOUBLE` or `FLOAT16` row group or page from its bounds only where the
+unit records a `nan_count` of zero. `eq`, `lt` and `ltEq` against a number, and `gt` against
+`NaN`, prune from the bounds alone.
 
 ## Column projection forms
 
