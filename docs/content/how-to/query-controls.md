@@ -137,9 +137,7 @@ FilterPredicate filter = FilterPredicate.eq("request_id",
     UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
 ```
 
-The logical-type factories validate the column's logical type at reader creation: `BigDecimal` predicates require a `DECIMAL` column and `UUID` predicates require a `UUID` column. Applying them to a plain `FIXED_LEN_BYTE_ARRAY` column without the corresponding logical-type annotation throws `IllegalArgumentException`.
-
-Raw physical-type predicates (`int`, `long`, etc.) remain available for columns without logical types or for filtering on the underlying physical value directly.
+A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
 
@@ -148,29 +146,13 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
 - **Predicates do not apply below a repeated path.** A column or group nested inside a `LIST` or a
   `MAP` occurs many times per row, so no predicate on it has a single answer per row. Such a name
   is rejected with `IllegalArgumentException` at reader creation.
-- **Bloom filter pushdown applies to `eq` and `in` predicates** on `INT32`, `INT64`, `FLOAT`,
-  `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom
-  filter. It runs automatically during row-group pruning, alongside statistics, and skips a
-  row group when every probed value is provably absent. For `FLOAT` / `DOUBLE`,
-  `eq(NaN)` and any `in` list containing `NaN` are not pruned by the Bloom filter — raw-bit
-  hashing distinguishes NaN payloads that `Float.compare` / `Double.compare` treat as equal,
-  so a Bloom miss cannot prove a NaN absent; `eq(-0.0)` and signed zeros in an `in` list are
-  hashed at their own bit width and pruned normally. On a `FLOAT` column, an `in` probe with
-  no exact `float` representation is provably absent without consulting the filter. A
-  `BigDecimal` `eq` on a `DECIMAL` stored as `BYTE_ARRAY` is pruned by neither the Bloom
-  filter nor the dictionary: such a column may hold the same number under more than one byte
-  string, so a miss on the literal's own bytes does not prove the value absent. Range
-  predicates (`lt`, `gt`, …) and `notEq` are unaffected — a Bloom filter answers only
-  membership.
-- **Dictionary-based filtering applies to equality and `in` predicates** on `INT32`, `INT64`,
-  `FLOAT`, `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns, and to `FLOAT16`
-  equality. The dictionary is checked before any page is decoded, and the row group is skipped
-  when none of its stored values can match. It applies only to a column chunk whose encoding
-  statistics show that *every* one of its data pages is dictionary-encoded: a chunk with even one
-  plain-encoded page holds values the dictionary does not list, so its dictionary proves nothing.
-  Every other chunk is pruned by statistics alone. On a `FLOAT` column the stored values are
-  widened to `double` before comparison, and on `FLOAT16` to `float`, so a probe with no exact
-  representation in the stored width matches nothing.
+- **A Bloom filter and a dictionary answer membership, not order.** They sharpen `eq` and `in` on
+  integer, floating-point and binary columns; `lt`, `gt` and `notEq` are left to statistics alone.
+- **Two equality probes cannot use either.** `eq(NaN)`, or an `in` list holding one, is not
+  Bloom-pruned: raw-bit hashing distinguishes NaN payloads that `Double.compare` treats as equal,
+  so a miss cannot prove a NaN absent. An `eq` or `inStrings` on a `DECIMAL` stored as
+  `BYTE_ARRAY` is pruned by neither, since such a column may hold the same number under more than
+  one byte string, so a miss on a probe's own bytes does not prove the value absent.
 
 ## Column Projection
 

@@ -305,7 +305,7 @@ public sealed interface FilterPredicate
 
     /// Creates an equals predicate for a [LocalDate] column (Parquet DATE logical type).
     /// The column must carry the `DATE` logical type; the date is converted to days since the
-    /// Unix epoch at evaluation time.
+    /// Unix epoch at reader creation.
     static FilterPredicate eq(String column, LocalDate value) {
         return new DateColumnPredicate(column, Operator.EQ, value);
     }
@@ -338,7 +338,7 @@ public sealed interface FilterPredicate
     // ==================== Instant (TIMESTAMP) Predicates ====================
 
     /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type).
-    /// The column's time unit is determined from the schema at evaluation time.
+    /// The column's time unit is determined from the schema at reader creation.
     static FilterPredicate eq(String column, Instant value) {
         return new InstantColumnPredicate(column, Operator.EQ, value);
     }
@@ -371,7 +371,7 @@ public sealed interface FilterPredicate
     // ==================== LocalTime (TIME) Predicates ====================
 
     /// Creates an equals predicate for a [LocalTime] column (Parquet TIME logical type).
-    /// The column's time unit is determined from the schema at evaluation time.
+    /// The column's time unit is determined from the schema at reader creation.
     static FilterPredicate eq(String column, LocalTime value) {
         return new TimeColumnPredicate(column, Operator.EQ, value);
     }
@@ -404,7 +404,9 @@ public sealed interface FilterPredicate
     // ==================== BigDecimal (DECIMAL) Predicates ====================
 
     /// Creates an equals predicate for a [BigDecimal] column (Parquet DECIMAL logical type).
-    /// The column's scale, precision, and physical type are determined from the schema at evaluation time.
+    /// The column's scale and physical type are read from the schema at reader creation, and the
+    /// value is rescaled to the column's scale — padded where the column holds more, and rejected
+    /// with `ArithmeticException` where it carries a digit the column's scale cannot hold.
     static FilterPredicate eq(String column, BigDecimal value) {
         return new DecimalColumnPredicate(column, Operator.EQ, value);
     }
@@ -673,22 +675,22 @@ public sealed interface FilterPredicate
 
     // ==================== Logical-Type Predicate Records ====================
 
-    /// Predicate for DATE columns. The [LocalDate] value is converted to epoch days at evaluation time.
+    /// Predicate for DATE columns. The [LocalDate] value is converted to epoch days at reader creation.
     record DateColumnPredicate(String column, Operator op, LocalDate value) implements FilterPredicate {
     }
 
     /// Predicate for TIMESTAMP columns. The [Instant] value is converted to the column's time unit
-    /// (MILLIS, MICROS, or NANOS) at evaluation time using the schema's `TimestampType`.
+    /// (MILLIS, MICROS, or NANOS) at reader creation using the schema's `TimestampType`.
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
     }
 
     /// Predicate for TIME columns. The [LocalTime] value is converted to the column's time unit
-    /// at evaluation time using the schema's `TimeType`.
+    /// at reader creation using the schema's `TimeType`.
     record TimeColumnPredicate(String column, Operator op, LocalTime value) implements FilterPredicate {
     }
 
     /// Predicate for DECIMAL columns. The [BigDecimal] value is converted to the column's physical
-    /// representation at evaluation time using the schema's `DecimalType`.
+    /// representation at reader creation using the schema's `DecimalType`.
     record DecimalColumnPredicate(String column, Operator op, BigDecimal value) implements FilterPredicate {
     }
 
