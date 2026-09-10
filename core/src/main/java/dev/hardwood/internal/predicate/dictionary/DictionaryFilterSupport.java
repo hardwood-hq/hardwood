@@ -114,6 +114,27 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
+    /// Whether every probe of a `FLOAT16` membership test is provably absent, each compared with
+    /// the halves the dictionary holds — the list form of [#valueAbsentFloat16]. A probe no half
+    /// can represent matches no entry, as it matches no stored value.
+    public static boolean absentAllFloat16(Dictionary dictionary, double[] values) {
+        if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
+            return false;
+        }
+        for (byte[] entry : dict.values()) {
+            if (entry.length != FLOAT16_BYTES) {
+                continue;
+            }
+            double stored = StatisticsDecoder.decodeFloat16(entry);
+            for (double value : values) {
+                if (Double.compare(stored, value) == 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     public static boolean valueAbsent(Dictionary dictionary, byte[] value) {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;

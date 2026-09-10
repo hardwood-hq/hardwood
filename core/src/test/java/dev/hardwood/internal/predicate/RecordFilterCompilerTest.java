@@ -239,7 +239,8 @@ class RecordFilterCompilerTest {
     @Test
     void testBinaryIn() {
         FileSchema schema = binarySchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{ bytes("apple"), bytes("cherry") });
+        ResolvedPredicate in = new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{ bytes("apple"), bytes("cherry") },
+                ResolvedPredicate.BinaryPredicate.Comparison.BYTE_STRING);
         assertTrue(matchesRow(in, binaryStub("col", bytes("apple"), false), schema));
         assertFalse(matchesRow(in, binaryStub("col", bytes("banana"), false), schema));
     }

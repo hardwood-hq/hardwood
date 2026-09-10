@@ -607,13 +607,12 @@ class FilterPredicateResolverTest {
     }
 
     @Test
-    void resolveDoubleInOnFloat16Throws() {
+    void resolveDoubleInOnFloat16() {
         FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
                 new LogicalType.Float16Type());
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("h", 1.5, 2.5), schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'h': IN predicate is not supported on FLOAT16 columns");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("h", 1.5, 2.5), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.Float16InPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(1.5, 2.5));
     }
 
     @Test

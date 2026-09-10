@@ -116,6 +116,17 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
+            case ResolvedPredicate.Float16InPredicate p -> {
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                // As for Float16Predicate: the dictionary holds the chunk's exact halves and decides
+                // membership. A FLOAT16 column's Bloom filter hashes its two stored bytes and is not
+                // consulted for a numeric probe.
+                if (decision != FilterDecision.CANNOT_MATCH
+                        && DictionaryFilterSupport.absentAllFloat16(dictionary(dictionaries, p.columnIndex()), p.values())) {
+                    yield FilterDecision.CANNOT_MATCH;
+                }
+                yield decision;
+            }
             case ResolvedPredicate.DoublePredicate p -> {
                 FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
                 if (decision != FilterDecision.CANNOT_MATCH
@@ -166,7 +177,10 @@ public class RowGroupFilterEvaluator {
             }
             case ResolvedPredicate.BinaryInPredicate p -> {
                 FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                // As for BinaryPredicate: exact-byte shortcuts stand in for membership only where
+                // a value has one encoding.
                 if (decision != FilterDecision.CANNOT_MATCH
+                        && p.byteExact()
                         && (BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values())
                                 || DictionaryFilterSupport.absentAll(dictionary(dictionaries, p.columnIndex()), p.values()))) {
                     yield FilterDecision.CANNOT_MATCH;

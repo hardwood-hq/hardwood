@@ -686,7 +686,7 @@ class PageFilterEvaluatorTest {
                     byte[] max = ci.maxValues().get(i);
                     return StatisticsFilterSupport.canDropBinaryIn(
                             new byte[][]{ "banana".getBytes(StandardCharsets.UTF_8), "zebra".getBytes(StandardCharsets.UTF_8) },
-                            min, max);
+                            min, max, false);
                 });
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));

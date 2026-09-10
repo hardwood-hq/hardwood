@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntUnaryOperator;
 
@@ -103,9 +102,14 @@ public final class RecordFilterCompiler {
             case ResolvedPredicate.LongInPredicate p ->
                     longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.BinaryInPredicate p ->
-                    binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+                    binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
+                            p.signed());
             case ResolvedPredicate.DoubleInPredicate p ->
                     doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(), p.floatColumn());
+            // `getFloat` decodes a FLOAT16 column's two bytes itself, as for Float16Predicate, so
+            // membership reads the half through the FLOAT path.
+            case ResolvedPredicate.Float16InPredicate p ->
+                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(), true);
             case ResolvedPredicate.IsNullPredicate p -> {
                 if (!p.group()) {
                     int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
@@ -447,13 +451,15 @@ public final class RecordFilterCompiler {
         };
     }
 
-    private static RowMatcher binaryInLeaf(String[] path, String name, byte[][] values) {
+    /// Membership in the column's order, like [#binaryLeaf]'s `EQ`: a `DECIMAL` compares by value,
+    /// so a padded encoding of a probe is still a member.
+    private static RowMatcher binaryInLeaf(String[] path, String name, byte[][] values, boolean signed) {
         return row -> {
             StructAccessor a = resolve(row, path);
             if (a == null || a.isNull(name)) return false;
             byte[] val = a.getBinary(name);
             for (byte[] value : values) {
-                if (Arrays.equals(val, value)) return true;
+                if (compareBinary(val, value, signed) == 0) return true;
             }
             return false;
         };
