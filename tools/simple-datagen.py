@@ -5058,6 +5058,42 @@ pq.write_table(
 )
 print(f"  - diff_types.parquet:          {DIFF_TYPES_ROWS} rows, typed value-comparison corpus")
 
+# Column-order differential corpus (#1082). Columns whose sort order is not the order of their
+# stored bits or bytes: UINT_32 / UINT_64 order by unsigned magnitude, FLOAT16 by the half its two
+# little-endian bytes encode, a FIXED_LEN_BYTE_ARRAY DECIMAL by its signed unscaled value. Every
+# column rises with __row__ and crosses the point where the two orders part (2^31, 2^63, zero), so
+# in the multi-row-group layouts some groups sit wholly past it and one straddles it. Written with
+# a page index, and once dictionary-encoded, so every pruning path reads these bounds.
+DIFF_ORDER_ROWS = 200
+diff_order_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('u32', pa.uint32(), False),           # r * 21_474_836: crosses 2^31 after row 100
+    ('u64', pa.uint64(), False),           # r * 92_233_720_368_547_758: crosses 2^63 after row 100
+    ('h', pa.float16(), False),            # (r - 100) / 8: -12.5 .. 12.375, all exact halves
+    ('dec', pa.decimal128(9, 2), False),   # (r - 100) * 1.25, stored as FIXED_LEN_BYTE_ARRAY(4)
+])
+diff_order_table = pa.table({
+    '__row__': list(range(DIFF_ORDER_ROWS)),
+    'u32': [r * 21_474_836 for r in range(DIFF_ORDER_ROWS)],
+    'u64': [r * 92_233_720_368_547_758 for r in range(DIFF_ORDER_ROWS)],
+    'h': numpy.array([(r - 100) / 8 for r in range(DIFF_ORDER_ROWS)], dtype=numpy.float16),
+    'dec': [Decimal(r - 100) * Decimal('1.25') for r in range(DIFF_ORDER_ROWS)],
+}, schema=diff_order_schema)
+for diff_name, diff_rg_size, diff_dictionary in [
+        ('diff_order_single', DIFF_ORDER_ROWS, False),
+        ('diff_order_multi', 50, False),
+        ('diff_order_dict', 50, True)]:
+    pq.write_table(
+        diff_order_table,
+        str(diff_dir / f'{diff_name}.parquet'),
+        use_dictionary=diff_dictionary,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=diff_rg_size,
+        write_page_index=True,
+    )
+print(f"  - diff_order_{{single,multi,dict}}.parquet: {DIFF_ORDER_ROWS} rows, column-order corpus")
+
 # Fixed-size-list differential corpus: clean fixed-k LIST columns the read fast
 # path engages, validated against the DuckDB oracle. `vec_f32` is plain-encoded
 # (the primitive fast-path route), `vec_i32` is dictionary-encoded (the dict
