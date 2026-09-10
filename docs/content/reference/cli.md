@@ -302,6 +302,8 @@ hardwood dive -f data.parquet
 | `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
+| `:` | Jump to a row or row group by number (Data preview, Row groups) |
+| `d` | Open the Data preview at the row group under the cursor (Row groups, Row group detail) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
@@ -318,8 +320,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Overview** — file summary and key/value metadata, with Spark JSON schemas pretty-printed and
   Arrow IPC schemas decoded to a hex dump
 - **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`
-- **Row groups**
-- **Row group detail**
+- **Row groups** — `:` jumps to a row group by number, `d` opens the Data preview at the selected group's first row
+- **Row group detail** — `d` opens the Data preview at this row group's first row
 - **Column chunks** — the chunks of one row group, ranked by compressed size, with codec and
   dictionary flag
 - **Column chunk detail** — facts pane grouped into Identity, Storage, Content and Layout, whose
@@ -335,8 +337,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Column-across-row-groups** — `Enter` on a Schema leaf: one row per row group with that
   column's sizes (including unencoded size), encodings and stats; drills into the chunk detail
 - **Dictionary** — `Enter` shows the full value of an entry; `/` inline search
-- **Data preview** — row values via `RowReader`; `←/→` scrolls the visible column window,
-  `PgDn/PgUp` flips pages; `Enter` opens a per-row modal, where the cursor stops on every line and
+- **Data preview** — row values via `RowReader`, with a `#` column giving each row's position in the file, counted from 0; `←/→` scrolls the visible column window,
+  `PgDn/PgUp` flips pages; `:` jumps to a row by number; `Enter` opens a per-row modal, where the cursor stops on every line and
   `Enter` expands the field under it when its full value is not on screen
 
 Screenshots (click any shot to open it full size):

@@ -1,6 +1,6 @@
 # Dive architecture
 
-Describes how `hardwood dive`, the interactive terminal UI in the `cli` module, is put together: the navigation stack of screen states, the split between state records, key handlers and renderers, the `ParquetModel` that owns the open file and its caches, the Data preview row window, the guard that turns a failed read into an overlay, and the test layers.
+Describes how `hardwood dive`, the interactive terminal UI in the `cli` module, is put together: the navigation stack of screen states, the split between state records, key handlers and renderers, the `ParquetModel` that owns the open file and its caches, the Data preview row window, the `:` jump prompt, the guard that turns a failed read into an overlay, and the test layers.
 
 Related documents:
 
@@ -23,7 +23,7 @@ Dive is read-only and runs in one process against one file. It is built on Tambo
 | `*Screen` | `cli.dive.internal` | One class per screen: handler, renderer, keybar text |
 | `Chrome` | `cli.dive.internal` | Top bar, breadcrumb and keybar around the body |
 | `PreviewWindow` | `cli.dive.internal` | Row buffer behind Data preview |
-| `ReadFailureOverlay`, `HelpOverlay` | `cli.dive.internal` | The two overlays `DiveApp` owns |
+| `ReadFailureOverlay`, `HelpOverlay`, `JumpPromptOverlay` | `cli.dive.internal` | The three overlays `DiveApp` owns |
 
 Screens live in the `internal` sub-package; `DiveApp`, `NavigationStack`, `ScreenState` and `ParquetModel` are public so the command and the tests in other packages reach them.
 
@@ -69,18 +69,20 @@ A handler reads the model and may cause it to fill a cache, but changes nothing 
 `DiveApp.dispatchKey` applies the global gates before any screen sees a key, in this order:
 
 1. `Ctrl-C` quits.
-2. When the top screen is in text-input mode (the `/` filter on Schema, Column index or Dictionary), `q`, `?` and `o` are passed to the screen as characters. Otherwise `q` quits and `?` toggles the help overlay.
-3. While the help overlay is open it takes every key: `Esc` closes it, the navigation keys scroll it.
-4. `o` clears any read failure and collapses to Overview.
-5. The read-failure gates (see [Read-failure guard](#read-failure-guard)).
-6. The active screen's handler gets the key.
-7. An unclaimed `Esc` pops one frame.
+2. While the `:` prompt is open it takes every key (see [Jump prompt](#jump-prompt)).
+3. When the top screen is in text-input mode (the `/` filter on Schema, Column index or Dictionary), `q`, `?` and `o` are passed to the screen as characters. Otherwise `q` quits and `?` toggles the help overlay.
+4. While the help overlay is open it takes every key: `Esc` closes it, the navigation keys scroll it.
+5. `o` clears any read failure and collapses to Overview.
+6. `:` opens the prompt on a screen that resolves jumps, when no read failure is showing.
+7. The read-failure gates (see [Read-failure guard](#read-failure-guard)).
+8. The active screen's handler gets the key.
+9. An unclaimed `Esc` pops one frame.
 
 Screens get first refusal on `Esc` so they can use it to close a modal or cancel a filter.
 
 `dispatchKey` returns `HANDLED`, `IGNORED` or `QUIT`; the runtime loop calls `runner.quit()` on `QUIT`, and tests call `dispatchKey` directly without a `TuiRunner`.
 
-Each frame, `DiveApp.render` computes the keybar before the body, because the keybar's height decides the body's height; `Chrome.split` then carves the frame into top bar, breadcrumb, body and keybar. The help overlay is drawn last, over a dimmed body.
+Each frame, `DiveApp.render` computes the keybar before the body, because the keybar's height decides the body's height; `Chrome.split` then carves the frame into top bar, breadcrumb, body and keybar. The help overlay and the `:` prompt are drawn last, over a dimmed body.
 
 ### Process-static side channels
 
@@ -147,6 +149,30 @@ The window is a static instance, not thread-safe, and relies on dive's single UI
 
 Tests: `PreviewWindowTest`, `DataPreviewIoTest`, `DiveRenderTest` (cli).
 
+## Jump prompt
+
+`:` names an item by its number. `DiveApp` owns the prompt as app state, like the help overlay and a read failure: a nullable `JumpPrompt` holding what has been typed and the reason the last `Enter` was refused. One prompt serves every screen, so no `ScreenState` carries it.
+
+A screen takes part by supplying a static `resolveJump(state, model, n) → JumpOutcome`: either the state to replace the top of the stack with, or a refusal the prompt shows under the typed text. `DiveApp.jumpTarget` is the one place that maps a screen state to its resolver and to the word the prompt uses for its items; the Data preview and Row groups have one.
+
+| Screen | `n` names | Resolves to |
+|---|---|---|
+| Data preview | a row of the file | the page seeked so that row is selected at the top, through the same absolute move as `G` |
+| Row groups | a row group | the cursor on that row group |
+
+The contract every resolver keeps:
+
+- `n` counts from zero, as the `#` column of every list screen, `print --row-index` and `inspect columns --row-group` do. The Data preview's leading `#` column and its record modal number rows from zero too, so a row number read off the Data preview is one its prompt accepts. Its title counts the visible range from one, as every list title does.
+- A number the screen has no item for is refused, never clamped: a jump that lands elsewhere is worse than one that does not happen.
+- A screen with no items, such as the Data preview of a file without rows, opens no prompt.
+- A resolver that reads the file is guarded like a screen handler; a failure closes the prompt and shows the read-failure overlay.
+
+The prompt accepts digits only and swallows every other key, so paging keys cannot move the view out from under the target being typed. The keybar is hidden while the prompt is open, but retains its height so the underlying viewport and selection stay unchanged. On the Data preview, `:` does nothing while the record modal is open, since the modal keeps the keys. `:` is the jump key on every screen that has one; `/` stays the inline-search key.
+
+Row groups and Row group detail also answer `d`, which opens the Data preview at the selected group's first row, through `ParquetModel.firstRowOf` over cumulative row counts built once at construction. An empty row group starts where its successor does, so `d` refuses it rather than show the next group's rows under its number. A jump needs nothing from `PreviewWindow`: a seek outside the buffered range is an ordinary miss.
+
+Tests: `DiveAppTest`, `DiveStateTest`, `RowGroupMappingTest` (cli).
+
 ## Read-failure guard
 
 A damaged file must not end the session. Every screen that reads from the file does so inside its handler, its renderer or its keybar, and an exception escaping any of them would end the TamboUI loop with nothing left to press `Esc` in. `DiveApp` guards all three centrally, so no screen carries an error state and a new screen is covered without opting in.
@@ -198,7 +224,7 @@ Tests: `DiveCommandTest`, `NativeBinarySmokeIT` (cli).
 | Layer | Drives | Asserts on | Classes (cli) |
 |---|---|---|---|
 | Handler | A screen's `handle` with synthesised `KeyEvent`s against a fixture model | The resulting `NavigationStack` | `DiveStateTest` |
-| Global dispatch | `DiveApp.dispatchKey` | Help toggle, `o`, quit, input-mode pass-through | `DiveAppTest` |
+| Global dispatch | `DiveApp.dispatchKey` | Help toggle, `o`, quit, input-mode pass-through, the `:` prompt | `DiveAppTest` |
 | Render | Screens and chrome through `RenderHarness` into an in-memory `Buffer` | Captured cells: titles, rows, markers, breadcrumb; a parameterised matrix renders every screen against every fixture | `DiveRenderTest` |
 | Failure | `DiveApp` against deliberately damaged copies of a fixture | Session survives, overlay content, `Esc` and `o` | `DiveReadFailureTest` |
 | Data access | `PreviewWindow` and `readPreviewPage` against counting `InputFile`s | Rows returned, I/O per navigation step, bytes skipped by a seek | `PreviewWindowTest`, `DataPreviewIoTest` |

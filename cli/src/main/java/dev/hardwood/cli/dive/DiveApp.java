@@ -8,6 +8,7 @@
 package dev.hardwood.cli.dive;
 
 import java.time.Duration;
+import java.util.function.LongFunction;
 
 import dev.hardwood.cli.dive.internal.Chrome;
 import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
@@ -19,6 +20,9 @@ import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.FileIndexesScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
+import dev.hardwood.cli.dive.internal.JumpOutcome;
+import dev.hardwood.cli.dive.internal.JumpPrompt;
+import dev.hardwood.cli.dive.internal.JumpPromptOverlay;
 import dev.hardwood.cli.dive.internal.Keys;
 import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
@@ -67,6 +71,17 @@ public final class DiveApp {
 
     private int readFailureScroll;
 
+    /// The `:` prompt, or `null` while it is closed. App state rather than
+    /// screen state, for the same reason as `readFailure`: every jumpable
+    /// screen (Data preview, Row groups) shares one prompt rather than each
+    /// carrying a copy of it, and the resolver that makes sense of what was
+    /// typed is a property of which screen is on top, not of the prompt.
+    private JumpPrompt jumpPrompt;
+
+    /// More rows than any file holds, and short enough that the typed number
+    /// always fits a `long`.
+    private static final int MAX_JUMP_DIGITS = 18;
+
     public DiveApp(ParquetModel model) {
         this.model = model;
         this.stack = new NavigationStack(ScreenState.Overview.initial());
@@ -114,6 +129,12 @@ public final class DiveApp {
         if (ke.isCtrlC()) {
             return Action.QUIT;
         }
+        // Takes every key while open, same reasoning as the help overlay
+        // below: a prompt that let `q` or `?` through would quit the app or
+        // open help out from under whatever the reader was typing.
+        if (jumpPrompt != null) {
+            return handleJumpPrompt(ke);
+        }
         boolean textInput = isTopInInputMode();
         if (!textInput && ke.isQuit()) {
             return Action.QUIT;
@@ -140,6 +161,10 @@ public final class DiveApp {
         if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'o' && !ke.hasCtrl() && !ke.hasAlt()) {
             clearReadFailure();
             stack.clearToRoot();
+            return Action.HANDLED;
+        }
+        if (!textInput && readFailure == null && Keys.isOpenJumpPrompt(ke) && jumpTarget(stack.top()) != null) {
+            jumpPrompt = new JumpPrompt("", null);
             return Action.HANDLED;
         }
         // A failure that is longer than its box owns the navigation keys while
@@ -218,6 +243,74 @@ public final class DiveApp {
         readFailureScroll = 0;
     }
 
+    /// What `:` jumps between on this screen, or `null` when it opens no
+    /// prompt here. Screens that number a list of their own supply a unit
+    /// and a resolver; a screen with nothing to number has no target, and
+    /// the Data preview's record modal keeps the keys while it is open.
+    private JumpTarget jumpTarget(ScreenState state) {
+        return switch (state) {
+            case ScreenState.DataPreview s when s.modalRow() < 0 && model.facts().totalRows() > 0 ->
+                    new JumpTarget("row", n -> DataPreviewScreen.resolveJump(s, model, n));
+            case ScreenState.RowGroups s when model.rowGroupCount() > 0 ->
+                    new JumpTarget("row group", n -> RowGroupsScreen.resolveJump(s, model, n));
+            default -> null;
+        };
+    }
+
+    /// `unit` is one word naming what the prompt's number counts, used in its
+    /// hint and in the refusal shown when nothing was typed; `resolver` turns
+    /// the typed number into a [JumpOutcome].
+    private record JumpTarget(String unit, LongFunction<JumpOutcome> resolver) {
+    }
+
+    /// Typing edits the target, `Enter` resolves it, `Esc` closes the prompt
+    /// and leaves the view where it was. A target the current screen refuses
+    /// leaves the prompt open with the typed text intact and the reason
+    /// under it, rather than seeking to the nearest one that exists. A
+    /// `RuntimeException` from a resolver that had to read the file gets the
+    /// same guard `dispatchToScreen` gives every other screen action.
+    private Action handleJumpPrompt(KeyEvent ke) {
+        if (ke.isCancel()) {
+            jumpPrompt = null;
+            return Action.HANDLED;
+        }
+        if (ke.isConfirm()) {
+            JumpTarget target = jumpTarget(stack.top());
+            if (jumpPrompt.input().isEmpty()) {
+                jumpPrompt = new JumpPrompt("", "Type a " + target.unit() + " number");
+                return Action.HANDLED;
+            }
+            try {
+                JumpOutcome outcome = target.resolver().apply(Long.parseLong(jumpPrompt.input()));
+                if (outcome.error() != null) {
+                    jumpPrompt = new JumpPrompt(jumpPrompt.input(), outcome.error());
+                }
+                else {
+                    stack.replaceTop(outcome.state());
+                    jumpPrompt = null;
+                }
+            }
+            catch (RuntimeException e) {
+                jumpPrompt = null;
+                recordReadFailure(e);
+            }
+            return Action.HANDLED;
+        }
+        if (ke.isDeleteBackward()) {
+            String input = jumpPrompt.input();
+            jumpPrompt = new JumpPrompt(input.isEmpty() ? input : input.substring(0, input.length() - 1), null);
+            return Action.HANDLED;
+        }
+        if (ke.code() == KeyCode.CHAR && ke.character() >= '0' && ke.character() <= '9'
+                && jumpPrompt.input().length() < MAX_JUMP_DIGITS) {
+            jumpPrompt = new JumpPrompt(jumpPrompt.input() + ke.character(), null);
+        }
+        // Every other key — including a non-digit character — is swallowed:
+        // a prompt that let PgDn through would move the view out from under
+        // the target being typed, and the prompt only ever means a number.
+        return Action.HANDLED;
+    }
+
     private boolean isTopInInputMode() {
         return switch (stack.top()) {
             case ScreenState.DictionaryView d -> DictionaryScreen.isInInputMode(d);
@@ -274,6 +367,11 @@ public final class DiveApp {
         String globalKeys = " [?] help   [q] quit";
         int kbHeight = Chrome.keybarHeight(screenKeys, globalKeys, area.width());
         Chrome.Regions regions = Chrome.split(area, kbHeight);
+        if (jumpPrompt != null) {
+            // Hide the keys without resizing the underlying viewport.
+            screenKeys = "";
+            globalKeys = "";
+        }
 
         Chrome.renderTopBar(buffer, regions.topBar(), model);
         Chrome.renderBreadcrumb(buffer, regions.breadcrumb(), stack, model);
@@ -306,6 +404,10 @@ public final class DiveApp {
             buffer.setStyle(regions.body(), Theme.dim());
             helpLineCount = HelpOverlay.lineCount(area);
             HelpOverlay.render(buffer, area, helpScroll);
+        }
+        if (jumpPrompt != null) {
+            buffer.setStyle(regions.body(), Theme.dim());
+            JumpPromptOverlay.render(buffer, regions.body(), jumpPrompt, jumpTarget(stack.top()).unit());
         }
     }
 
@@ -356,5 +458,10 @@ public final class DiveApp {
 
     public boolean helpOpen() {
         return helpOpen;
+    }
+
+    /// The `:` prompt's current state, or `null` while it is closed.
+    public JumpPrompt jumpPrompt() {
+        return jumpPrompt;
     }
 }

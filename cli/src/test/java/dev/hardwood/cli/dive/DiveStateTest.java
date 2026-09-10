@@ -1286,7 +1286,73 @@ class DiveStateTest {
         return stack;
     }
 
+    @Test
+    void rowGroupsScreenOpensTheDataPreviewAtTheSelectedGroup() throws Exception {
+        // 3 row groups of 100 rows; ids run 1..300.
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroups(0));
+            RowGroupsScreen.handle(key(KeyCode.DOWN), rowGroups, stack);
+
+            boolean handled = RowGroupsScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(handled).isTrue();
+            ScreenState.DataPreview state = preview(stack);
+            assertThat(state.firstRow()).isEqualTo(100L);
+            assertThat(state.selectedRow()).isZero();
+            assertThat(state.rows().get(0).get(0)).isEqualTo("101");
+        }
+    }
+
+    @Test
+    void rowGroupDetailScreenOpensTheDataPreviewAtItsGroup() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                    2, ScreenState.RowGroupDetail.Pane.MENU, 0));
+
+            boolean handled = RowGroupDetailScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(handled).isTrue();
+            assertThat(preview(stack).firstRow()).isEqualTo(200L);
+        }
+    }
+
+    @Test
+    void rowGroupDetailScreenOpensTheDataPreviewFromTheFactsPaneToo() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                    1, ScreenState.RowGroupDetail.Pane.FACTS, 0));
+
+            RowGroupDetailScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(preview(stack).firstRow()).isEqualTo(100L);
+        }
+    }
+
+    @Test
+    void openingTheDataPreviewLeavesTheRowGroupsScreenBehindToReturnTo() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroups(2));
+
+            RowGroupsScreen.handle(charKey('d'), rowGroups, stack);
+            stack.pop();
+
+            assertThat(stack.top()).isInstanceOf(ScreenState.RowGroups.class);
+        }
+    }
+
     private static KeyEvent key(KeyCode code) {
         return new KeyEvent(code, KeyModifiers.NONE, '\0');
+    }
+
+    private static KeyEvent charKey(char c) {
+        return new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, c);
+    }
+
+    private static ScreenState.DataPreview preview(NavigationStack stack) {
+        return (ScreenState.DataPreview) stack.top();
     }
 }

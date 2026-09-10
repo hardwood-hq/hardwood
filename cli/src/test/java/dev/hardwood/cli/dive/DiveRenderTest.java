@@ -20,11 +20,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
@@ -36,7 +38,11 @@ import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.Version;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.tui.event.KeyCode;
@@ -319,6 +325,51 @@ class DiveRenderTest {
                 new Rect(0, 0, 24, 6), state, model);
 
         assertThat(frame.contains("a b c d e f g h")).isTrue();
+    }
+
+    @Test
+    void dataPreviewNumbersRowsByTheirPositionInTheFile() {
+        // The `#` column counts from 0, as `:` and `--skip` do; the title
+        // counts the visible range from 1, as every list title does.
+        ScreenState.DataPreview state = DataPreviewScreen.stateAt(model, 4000);
+
+        RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 120, 25), state, model);
+
+        assertThat(frame.contains(" Data preview (rows 4,001–")).isTrue();
+        assertThat(frame.lines().get(1)).startsWith("│  #    ");
+        assertThat(frame.lines().get(2)).startsWith("│▶ 4000 ");
+        assertThat(frame.lines().get(3)).startsWith("│  4001 ");
+    }
+
+    @Test
+    void dataPreviewTitleNamesNoRowsForAFileWithoutRows(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("no_rows.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        try (ParquetFileWriter ignored = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+        }
+        try (ParquetModel empty = ParquetModel.open(InputFile.of(file), file.toString())) {
+            ScreenState.DataPreview state = DataPreviewScreen.initialState(empty, 20);
+
+            RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 120, 25), state, empty);
+
+            assertThat(frame.contains(" Data preview (no rows · cols 1–1 of 1) ")).isTrue();
+        }
+    }
+
+    @Test
+    void recordModalTitleCountsRowsFromZero() {
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(DataPreviewScreen.initialState(model, 20));
+        for (int i = 0; i < 3; i++) {
+            DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        }
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 120, 30), stack.top(), model);
+
+        assertThat(frame.contains(" Row 3 ")).as("the record at index 3 is titled Row 3").isTrue();
     }
 
     @Test
@@ -1104,7 +1155,10 @@ class DiveRenderTest {
         assertThat(fitted.rows())
                 .as("the page fills the rows the body can paint")
                 .hasSize(viewport);
-        assertThat(RenderHarness.render(body, fitted, model).contains(String.valueOf(viewport)))
+        // `id` in column_index_pushdown.parquet is sorted 0..9999, so the last
+        // loaded row's id uniquely identifies it among anything else on screen.
+        String lastRowId = fitted.rows().get(viewport - 1).get(0);
+        assertThat(RenderHarness.render(body, fitted, model).contains(lastRowId))
                 .as("the last row of the viewport is painted, not blank")
                 .isTrue();
     }

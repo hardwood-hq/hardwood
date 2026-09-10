@@ -16,6 +16,13 @@ public final class Keys {
     private Keys() {
     }
 
+    /// `d` (no modifiers): opens the Data preview at the row group under the
+    /// cursor. Modifier free, like the other single-letter keys.
+    public static boolean isOpenDataPreview(KeyEvent event) {
+        return event.code() == KeyCode.CHAR && event.character() == 'd'
+                && !event.hasCtrl() && !event.hasAlt();
+    }
+
     /// `g` (no modifiers): jump to first visible row / page boundary.
     public static boolean isJumpTop(KeyEvent event) {
         return event.code() == KeyCode.CHAR
@@ -30,6 +37,12 @@ public final class Keys {
                 && event.character() == 'G'
                 && !event.hasCtrl()
                 && !event.hasAlt();
+    }
+
+    /// `:` (no modifiers): opens the jump prompt [DiveApp] owns.
+    public static boolean isOpenJumpPrompt(KeyEvent event) {
+        return event.code() == KeyCode.CHAR && event.character() == ':'
+                && !event.hasCtrl() && !event.hasAlt();
     }
 
     /// PgDn or Shift+↓ — page-stride forward navigation. The Shift+↓ alias is
