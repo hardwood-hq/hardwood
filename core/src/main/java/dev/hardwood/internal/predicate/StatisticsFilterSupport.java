@@ -147,6 +147,27 @@ final class StatisticsFilterSupport {
         return true;
     }
 
+    /// [#canDropIntIn] for a column that orders by unsigned magnitude. Compares in place rather
+    /// than biasing the probes into a copy, so a membership test costs no allocation per page.
+    static boolean canDropIntInUnsigned(int[] values, int min, int max) {
+        for (int value : values) {
+            if (Integer.compareUnsigned(value, min) >= 0 && Integer.compareUnsigned(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// [#canDropIntInUnsigned] for an `INT64` column.
+    static boolean canDropLongInUnsigned(long[] values, long min, long max) {
+        for (long value : values) {
+            if (Long.compareUnsigned(value, min) >= 0 && Long.compareUnsigned(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// Whether the bounds prove every value in a floating-point `IN` list absent.
     ///
     /// Takes both widths over `double`: a `float` bound widens exactly, and a probe is never

@@ -147,6 +147,14 @@ sealed interface MinMaxStats {
                     StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
             case ResolvedPredicate.IntInPredicate ignored -> IntStats.of(
                     StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+            case ResolvedPredicate.UnsignedIntPredicate ignored -> UnsignedIntStats.of(
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+            case ResolvedPredicate.UnsignedIntInPredicate ignored -> UnsignedIntStats.of(
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+            case ResolvedPredicate.UnsignedLongPredicate ignored -> UnsignedLongStats.of(
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
+            case ResolvedPredicate.UnsignedLongInPredicate ignored -> UnsignedLongStats.of(
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
             case ResolvedPredicate.LongPredicate ignored -> LongStats.of(
                     StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
             case ResolvedPredicate.LongInPredicate ignored -> LongStats.of(
@@ -284,6 +292,91 @@ sealed interface MinMaxStats {
                 case ResolvedPredicate.LongPredicate p ->
                         StatisticsFilterSupport.alwaysMatches(p.op(), p.value(), min, max);
                 case ResolvedPredicate.LongInPredicate p ->
+                        StatisticsFilterSupport.alwaysMatchesLongIn(p.values(), min, max);
+                default -> throw wrongWidth("INT64", leaf);
+            };
+        }
+    }
+
+    /// `INT32` bounds of a column annotated `INT(bitWidth, isSigned = false)`, whose values order
+    /// by unsigned magnitude.
+    ///
+    /// An ordered comparison biases the bounds and the literal by `Integer.MIN_VALUE` before
+    /// they meet the signed comparators, which is the same reordering the writer's
+    /// `IntStatisticsCollector` applies when it records them. That keeps one set of comparison
+    /// helpers, and it is what makes the pair hold together at all: `[0, 4_000_000_000]` reads
+    /// as `[0, -294_967_296]` unbiased and would be discarded as inverted, giving up pruning on
+    /// exactly the columns this annotation exists for.
+    ///
+    /// A membership test compares each probe in place with `Integer.compareUnsigned`, so an `IN`
+    /// list costs no copy per row group or page.
+    record UnsignedIntStats(int min, int max, Long nullCount) implements MinMaxStats {
+
+        static MinMaxStats of(int min, int max, Long nullCount) {
+            return bias(min) > bias(max)
+                    ? new NullCountOnlyStats(nullCount, INVERTED)
+                    : new UnsignedIntStats(min, max, nullCount);
+        }
+
+        private static int bias(int value) {
+            return value ^ Integer.MIN_VALUE;
+        }
+
+        @Override
+        public boolean canDrop(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.UnsignedIntPredicate p -> StatisticsFilterSupport.canDrop(
+                        p.op(), bias(p.value()), bias(min), bias(max));
+                case ResolvedPredicate.UnsignedIntInPredicate p ->
+                        StatisticsFilterSupport.canDropIntInUnsigned(p.values(), min, max);
+                default -> throw wrongWidth("INT32", leaf);
+            };
+        }
+
+        @Override
+        public boolean alwaysMatches(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.UnsignedIntPredicate p -> StatisticsFilterSupport.alwaysMatches(
+                        p.op(), bias(p.value()), bias(min), bias(max));
+                // A single-point bound and membership in it are both bit equality, which reads
+                // the same in either order, so the signed helper answers unchanged.
+                case ResolvedPredicate.UnsignedIntInPredicate p ->
+                        StatisticsFilterSupport.alwaysMatchesIntIn(p.values(), min, max);
+                default -> throw wrongWidth("INT32", leaf);
+            };
+        }
+    }
+
+    /// `INT64` bounds of a column annotated `INT(64, isSigned = false)`; see [UnsignedIntStats].
+    record UnsignedLongStats(long min, long max, Long nullCount) implements MinMaxStats {
+
+        static MinMaxStats of(long min, long max, Long nullCount) {
+            return bias(min) > bias(max)
+                    ? new NullCountOnlyStats(nullCount, INVERTED)
+                    : new UnsignedLongStats(min, max, nullCount);
+        }
+
+        private static long bias(long value) {
+            return value ^ Long.MIN_VALUE;
+        }
+
+        @Override
+        public boolean canDrop(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.UnsignedLongPredicate p -> StatisticsFilterSupport.canDrop(
+                        p.op(), bias(p.value()), bias(min), bias(max));
+                case ResolvedPredicate.UnsignedLongInPredicate p ->
+                        StatisticsFilterSupport.canDropLongInUnsigned(p.values(), min, max);
+                default -> throw wrongWidth("INT64", leaf);
+            };
+        }
+
+        @Override
+        public boolean alwaysMatches(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.UnsignedLongPredicate p -> StatisticsFilterSupport.alwaysMatches(
+                        p.op(), bias(p.value()), bias(min), bias(max));
+                case ResolvedPredicate.UnsignedLongInPredicate p ->
                         StatisticsFilterSupport.alwaysMatchesLongIn(p.values(), min, max);
                 default -> throw wrongWidth("INT64", leaf);
             };

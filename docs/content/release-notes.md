@@ -36,6 +36,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `String` predicate on a `DECIMAL` or `FLOAT16` column compares as the column does — a `DECIMAL` by its unscaled value, a `FLOAT16` by the number its two bytes encode — rather than as a byte string ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)). Both order by the value their bytes stand for and record their statistics that way, so comparing byte-wise pruned row groups against bounds written in a different order and silently dropped matching rows. This is the comparison parquet-java applies, so a filter carried over through the compatibility shim answers the same. `inStrings` compares its probes the same way — which is also how parquet-java evaluates `In` — so a padded encoding of a `DECIMAL` probe is found; on a `FLOAT16` column each probe is compared as the half it encodes, and `in(double...)` accepts a `FLOAT16` column too.
 
+- An ordered predicate on an `INT(bitWidth, isSigned = false)` column compares by unsigned magnitude, the order the column is written in ([#1144](https://github.com/hardwood-hq/hardwood/issues/1144)). The comparison was signed before, so `lt`, `gt` and their siblings returned wrong rows on a column holding values above 2^31, and bounds straddling that point read as inverted and were discarded — costing those columns row-group and page skipping as well.
+
 **Breaking Changes:**
 
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).

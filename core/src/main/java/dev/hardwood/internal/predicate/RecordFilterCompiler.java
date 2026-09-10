@@ -65,6 +65,18 @@ public final class RecordFilterCompiler {
                         ? indexedLongLeaf(idx, p.op(), p.value())
                         : longLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
+            case ResolvedPredicate.UnsignedIntPredicate p -> {
+                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                yield idx >= 0
+                        ? indexedUnsignedIntLeaf(idx, p.op(), p.value())
+                        : unsignedIntLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
+            }
+            case ResolvedPredicate.UnsignedLongPredicate p -> {
+                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                yield idx >= 0
+                        ? indexedUnsignedLongLeaf(idx, p.op(), p.value())
+                        : unsignedLongLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
+            }
             case ResolvedPredicate.FloatPredicate p -> {
                 int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
                 yield idx >= 0
@@ -100,6 +112,12 @@ public final class RecordFilterCompiler {
             case ResolvedPredicate.IntInPredicate p ->
                     intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.LongInPredicate p ->
+                    longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            // Membership is bit equality, which reads the same signed or unsigned, so an unsigned
+            // IN list matches through the same leaf as a signed one.
+            case ResolvedPredicate.UnsignedIntInPredicate p ->
+                    intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            case ResolvedPredicate.UnsignedLongInPredicate p ->
                     longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.BinaryInPredicate p ->
                     binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
@@ -510,6 +528,57 @@ public final class RecordFilterCompiler {
     // leaves only when the caller passes a `topLevelFieldIndex` callback,
     // which today is done by both [dev.hardwood.internal.reader.FlatRowReader]
     // and [dev.hardwood.internal.reader.NestedRowReader].
+
+    /// Record-level comparison for an unsigned `INT32` column. `EQ` and `NOT_EQ` read the same
+    /// under either interpretation, so they reuse the signed leaf; the four ordered operators
+    /// bias both sides by `Integer.MIN_VALUE`, which reorders the two halves of the range
+    /// without disturbing the order within either.
+    private static RowMatcher indexedUnsignedIntLeaf(int idx, Operator op, int v) {
+        int b = v ^ Integer.MIN_VALUE;
+        return switch (op) {
+            case EQ, NOT_EQ -> indexedIntLeaf(idx, op, v);
+            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) <= b; };
+            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) >= b; };
+        };
+    }
+
+    /// Name-keyed counterpart of [#indexedUnsignedIntLeaf].
+    private static RowMatcher unsignedIntLeaf(String[] path, String name, Operator op, int v) {
+        int b = v ^ Integer.MIN_VALUE;
+        return switch (op) {
+            case EQ, NOT_EQ -> intLeaf(path, name, op, v);
+            case LT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getInt(name) ^ Integer.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getInt(name) ^ Integer.MIN_VALUE) <= b; };
+            case GT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getInt(name) ^ Integer.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getInt(name) ^ Integer.MIN_VALUE) >= b; };
+        };
+    }
+
+    /// Record-level comparison for an unsigned `INT64` column; see [#indexedUnsignedIntLeaf].
+    private static RowMatcher indexedUnsignedLongLeaf(int idx, Operator op, long v) {
+        long b = v ^ Long.MIN_VALUE;
+        return switch (op) {
+            case EQ, NOT_EQ -> indexedLongLeaf(idx, op, v);
+            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) <= b; };
+            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) >= b; };
+        };
+    }
+
+    /// Name-keyed counterpart of [#indexedUnsignedLongLeaf].
+    private static RowMatcher unsignedLongLeaf(String[] path, String name, Operator op, long v) {
+        long b = v ^ Long.MIN_VALUE;
+        return switch (op) {
+            case EQ, NOT_EQ -> longLeaf(path, name, op, v);
+            case LT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getLong(name) ^ Long.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getLong(name) ^ Long.MIN_VALUE) <= b; };
+            case GT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getLong(name) ^ Long.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && (a.getLong(name) ^ Long.MIN_VALUE) >= b; };
+        };
+    }
 
     private static RowMatcher indexedIntLeaf(int idx, Operator op, int v) {
         return switch (op) {

@@ -38,6 +38,10 @@ import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.ints.UnsignedIntGtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.ints.UnsignedIntGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.ints.UnsignedIntLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.ints.UnsignedIntLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
@@ -45,6 +49,10 @@ import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongGtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.reader.FilterPredicate;
@@ -234,40 +242,46 @@ public final class BatchFilterCompiler {
         return out;
     }
 
+    /// The column one leaf reads, or `-1` for a compound that is not a leaf at all. Eligibility
+    /// is [#isSupported]'s question, not this one — a leaf this compiler has no matcher for
+    /// still names its column.
     private static int leafColumnIndex(ResolvedPredicate leaf) {
-        return switch (leaf) {
-            case ResolvedPredicate.LongPredicate p -> p.columnIndex();
-            case ResolvedPredicate.DoublePredicate p -> p.columnIndex();
-            case ResolvedPredicate.IntPredicate p -> p.columnIndex();
-            case ResolvedPredicate.FloatPredicate p -> p.columnIndex();
-            case ResolvedPredicate.BooleanPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.DoubleInPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
-            case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
-            default -> -1;
-        };
+        return ResolvedPredicate.leafColumnIndex(leaf);
     }
 
     private static boolean isTopLevel(FileSchema schema, int columnIndex) {
         return schema.getColumn(columnIndex).fieldPath().elements().size() == 1;
     }
 
+    /// Whether this compiler has a batch matcher for the leaf.
+    ///
+    /// The switch is exhaustive over the hierarchy rather than closed with a `default`, so a new
+    /// [ResolvedPredicate] cannot reach the batch path — or silently fall off it — without an
+    /// answer here.
     private static boolean isSupported(ResolvedPredicate leaf) {
         return switch (leaf) {
             case ResolvedPredicate.LongPredicate ignored -> true;
             case ResolvedPredicate.DoublePredicate ignored -> true;
             case ResolvedPredicate.IntPredicate ignored -> true;
             case ResolvedPredicate.FloatPredicate ignored -> true;
+            case ResolvedPredicate.UnsignedIntPredicate ignored -> true;
+            case ResolvedPredicate.UnsignedLongPredicate ignored -> true;
             case ResolvedPredicate.IntInPredicate ignored -> true;
             case ResolvedPredicate.LongInPredicate ignored -> true;
+            case ResolvedPredicate.UnsignedIntInPredicate ignored -> true;
+            case ResolvedPredicate.UnsignedLongInPredicate ignored -> true;
             case ResolvedPredicate.DoubleInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
             case ResolvedPredicate.BooleanPredicate p ->
                     p.op() == FilterPredicate.Operator.EQ || p.op() == FilterPredicate.Operator.NOT_EQ;
-            default -> false;
+            case ResolvedPredicate.Float16Predicate ignored -> false;
+            case ResolvedPredicate.Float16InPredicate ignored -> false;
+            case ResolvedPredicate.BinaryPredicate ignored -> false;
+            case ResolvedPredicate.BinaryInPredicate ignored -> false;
+            case ResolvedPredicate.GeospatialPredicate ignored -> false;
+            case ResolvedPredicate.And ignored -> false;
+            case ResolvedPredicate.Or ignored -> false;
         };
     }
 
@@ -312,8 +326,28 @@ public final class BatchFilterCompiler {
                         "Unsupported boolean operator reached leafMatcher: " + p.op()
                                 + " — isSupported should have rejected this");
             };
+            // An ordered comparison reads the column's own order; equality and membership are bit
+            // equality, which reads the same either way, so they reuse the signed matchers.
+            case ResolvedPredicate.UnsignedIntPredicate p -> switch (p.op()) {
+                case GT -> new UnsignedIntGtBatchMatcher(p.value());
+                case LT -> new UnsignedIntLtBatchMatcher(p.value());
+                case LT_EQ -> new UnsignedIntLtEqBatchMatcher(p.value());
+                case GT_EQ -> new UnsignedIntGtEqBatchMatcher(p.value());
+                case EQ -> new IntEqBatchMatcher(p.value());
+                case NOT_EQ -> new IntNotEqBatchMatcher(p.value());
+            };
+            case ResolvedPredicate.UnsignedLongPredicate p -> switch (p.op()) {
+                case GT -> new UnsignedLongGtBatchMatcher(p.value());
+                case LT -> new UnsignedLongLtBatchMatcher(p.value());
+                case LT_EQ -> new UnsignedLongLtEqBatchMatcher(p.value());
+                case GT_EQ -> new UnsignedLongGtEqBatchMatcher(p.value());
+                case EQ -> new LongEqBatchMatcher(p.value());
+                case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
+            };
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
+            case ResolvedPredicate.UnsignedIntInPredicate p -> new IntInBatchMatcher(p.values());
+            case ResolvedPredicate.UnsignedLongInPredicate p -> new LongInBatchMatcher(p.values());
             case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
                     ? new FloatWideningDoubleInBatchMatcher(p.values())
                     : new DoubleInBatchMatcher(p.values());
