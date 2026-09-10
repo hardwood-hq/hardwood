@@ -14,8 +14,10 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
+import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -28,6 +30,67 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class BatchFilterCompilerTest {
+
+    /// An unsigned column is eligible for the batch path like any other integer column. The
+    /// ordered operators get matchers that compare in the column's own order; equality and
+    /// membership are bit equality and reuse the signed ones.
+    @Test
+    void tryCompile_unsignedIntLeaf_isEligible() {
+        FileSchema schema = schema(leaf("v", PhysicalType.INT32));
+
+        for (Operator op : Operator.values()) {
+            ColumnBatchMatcher[] result = compileMatchers(
+                    new ResolvedPredicate.UnsignedIntPredicate(0, op, 7),
+                    schema, IntUnaryOperator.identity());
+
+            assertNotNull(result, "no batch matcher for unsigned INT32 " + op);
+            assertInstanceOf(IntBatchMatcher.class, result[0]);
+        }
+    }
+
+    @Test
+    void tryCompile_unsignedLongLeaf_isEligible() {
+        FileSchema schema = schema(leaf("v", PhysicalType.INT64));
+
+        for (Operator op : Operator.values()) {
+            ColumnBatchMatcher[] result = compileMatchers(
+                    new ResolvedPredicate.UnsignedLongPredicate(0, op, 7L),
+                    schema, IntUnaryOperator.identity());
+
+            assertNotNull(result, "no batch matcher for unsigned INT64 " + op);
+            assertInstanceOf(LongBatchMatcher.class, result[0]);
+        }
+    }
+
+    @Test
+    void tryCompile_unsignedInLeaves_areEligible() {
+        FileSchema schema = schema(leaf("v", PhysicalType.INT32), leaf("w", PhysicalType.INT64));
+
+        assertInstanceOf(IntInBatchMatcher.class, compileMatchers(
+                new ResolvedPredicate.UnsignedIntInPredicate(0, new int[] { 1, 7 }),
+                schema, IntUnaryOperator.identity())[0]);
+        assertInstanceOf(LongInBatchMatcher.class, compileMatchers(
+                new ResolvedPredicate.UnsignedLongInPredicate(1, new long[] { 1L, 7L }),
+                schema, IntUnaryOperator.identity())[1]);
+    }
+
+    /// The ordered matchers must read the column's order, not the signed one: `4e9` is a
+    /// negative `int`, so a signed matcher would answer `false` here.
+    @Test
+    void unsignedIntMatcher_ordersByUnsignedMagnitude() {
+        int fourBillion = (int) 4_000_000_000L;
+        ColumnBatchMatcher matcher = compileMatchers(
+                new ResolvedPredicate.UnsignedIntPredicate(0, Operator.GT, 7),
+                schema(leaf("v", PhysicalType.INT32)), IntUnaryOperator.identity())[0];
+
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = new int[] { 0, fourBillion, 7, 8 };
+        batch.recordCount = 4;
+        long[] out = new long[1];
+        matcher.test(batch, out);
+
+        assertEquals(0b1010L, out[0]);
+    }
 
     private static ColumnBatchMatcher[] compileMatchers(ResolvedPredicate predicate, FileSchema schema,
             IntUnaryOperator projection) {

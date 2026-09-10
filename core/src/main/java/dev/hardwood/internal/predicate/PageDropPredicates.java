@@ -56,6 +56,8 @@ public final class PageDropPredicates {
             }
             case ResolvedPredicate.IntPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.LongPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.UnsignedIntPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.UnsignedLongPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.FloatPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.Float16Predicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.DoublePredicate l -> add(out, l.columnIndex(), l);
@@ -63,6 +65,8 @@ public final class PageDropPredicates {
             case ResolvedPredicate.BinaryPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.IntInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.LongInPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.UnsignedIntInPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.UnsignedLongInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.BinaryInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.DoubleInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.Float16InPredicate l -> add(out, l.columnIndex(), l);

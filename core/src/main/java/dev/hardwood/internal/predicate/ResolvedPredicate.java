@@ -25,6 +25,22 @@ public sealed interface ResolvedPredicate {
     record IntPredicate(int columnIndex, FilterPredicate.Operator op, int value) implements ResolvedPredicate {}
     record LongPredicate(int columnIndex, FilterPredicate.Operator op, long value) implements ResolvedPredicate {}
 
+    /// A comparison against an `INT32` column annotated `INT(bitWidth, isSigned = false)`, whose
+    /// values order by their unsigned magnitude. `value` is the literal's stored two's-complement
+    /// bit pattern, the same form the accessors hand back for such a column, so `4_000_000_000`
+    /// arrives as `-294_967_296` and orders above every positive `int`.
+    ///
+    /// Held apart from [IntPredicate] rather than carried as a flag on it so that every
+    /// `switch` over this hierarchy has to name the unsigned case: a flag can be read at one
+    /// evaluator and forgotten at the next, and the two disagreeing is what silently drops rows.
+    record UnsignedIntPredicate(int columnIndex, FilterPredicate.Operator op, int value)
+            implements ResolvedPredicate {}
+
+    /// A comparison against an `INT64` column annotated `INT(64, isSigned = false)`. `value` is
+    /// the literal's stored bit pattern; see [UnsignedIntPredicate].
+    record UnsignedLongPredicate(int columnIndex, FilterPredicate.Operator op, long value)
+            implements ResolvedPredicate {}
+
     /// `ieee754TotalOrder` carries the column's decoded [dev.hardwood.metadata.ColumnOrder]: `true`
     /// only when it is the IEEE 754 total order, which orders `-0` below `+0` unambiguously, so
     /// statistics min/max are exact. Under any other ordering (type-defined / absent / unrecognized)
@@ -149,6 +165,14 @@ public sealed interface ResolvedPredicate {
 
     record IntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
     record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
+
+    /// Membership against an unsigned `INT32` column. Membership itself is bit equality and so
+    /// reads the same either way; the unsigned form exists because statistics pruning orders the
+    /// probes against the column's bounds, which are recorded in unsigned order.
+    record UnsignedIntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
+
+    /// Membership against an unsigned `INT64` column; see [UnsignedIntInPredicate].
+    record UnsignedLongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
     /// Membership against a binary column, comparing each probe in the column's own order —
     /// see [BinaryPredicate.Comparison]. A `DECIMAL` compares by the value its bytes stand for,
     /// so a padded encoding of a probe is still a member; only the Bloom filter and dictionary
@@ -294,6 +318,8 @@ public sealed interface ResolvedPredicate {
         return switch (predicate) {
             case IntPredicate p -> p.columnIndex();
             case LongPredicate p -> p.columnIndex();
+            case UnsignedIntPredicate p -> p.columnIndex();
+            case UnsignedLongPredicate p -> p.columnIndex();
             case FloatPredicate p -> p.columnIndex();
             case Float16Predicate p -> p.columnIndex();
             case DoublePredicate p -> p.columnIndex();
@@ -301,6 +327,8 @@ public sealed interface ResolvedPredicate {
             case BinaryPredicate p -> p.columnIndex();
             case IntInPredicate p -> p.columnIndex();
             case LongInPredicate p -> p.columnIndex();
+            case UnsignedIntInPredicate p -> p.columnIndex();
+            case UnsignedLongInPredicate p -> p.columnIndex();
             case BinaryInPredicate p -> p.columnIndex();
             case DoubleInPredicate p -> p.columnIndex();
             case Float16InPredicate p -> p.columnIndex();
@@ -341,6 +369,10 @@ public sealed interface ResolvedPredicate {
         return switch (predicate) {
             case IntPredicate p -> new IntPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
             case LongPredicate p -> new LongPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
+            case UnsignedIntPredicate p -> new UnsignedIntPredicate(mapped(p.columnIndex(), columnMapping),
+                    p.op(), p.value());
+            case UnsignedLongPredicate p -> new UnsignedLongPredicate(mapped(p.columnIndex(), columnMapping),
+                    p.op(), p.value());
             case FloatPredicate p -> new FloatPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
                     p.ieee754TotalOrder());
             case Float16Predicate p -> new Float16Predicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
@@ -352,6 +384,10 @@ public sealed interface ResolvedPredicate {
                     p.comparison());
             case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            case UnsignedIntInPredicate p -> new UnsignedIntInPredicate(mapped(p.columnIndex(), columnMapping),
+                    p.values());
+            case UnsignedLongInPredicate p -> new UnsignedLongInPredicate(mapped(p.columnIndex(), columnMapping),
+                    p.values());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.comparison());
             case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
@@ -394,6 +430,10 @@ public sealed interface ResolvedPredicate {
         return switch (predicate) {
             case IntPredicate p -> new IntPredicate(p.columnIndex(), p.op().invert(), p.value());
             case LongPredicate p -> new LongPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case UnsignedIntPredicate p -> new UnsignedIntPredicate(p.columnIndex(), p.op().invert(),
+                    p.value());
+            case UnsignedLongPredicate p -> new UnsignedLongPredicate(p.columnIndex(), p.op().invert(),
+                    p.value());
             case FloatPredicate p -> new FloatPredicate(p.columnIndex(), p.op().invert(), p.value(),
                     p.ieee754TotalOrder());
             case Float16Predicate p -> new Float16Predicate(p.columnIndex(), p.op().invert(), p.value(),
@@ -422,6 +462,22 @@ public sealed interface ResolvedPredicate {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (long value : p.values()) {
                     notEqs.add(new LongPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
+                }
+                yield new And(notEqs);
+            }
+            case UnsignedIntInPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (int value : p.values()) {
+                    notEqs.add(new UnsignedIntPredicate(p.columnIndex(),
+                            FilterPredicate.Operator.NOT_EQ, value));
+                }
+                yield new And(notEqs);
+            }
+            case UnsignedLongInPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (long value : p.values()) {
+                    notEqs.add(new UnsignedLongPredicate(p.columnIndex(),
+                            FilterPredicate.Operator.NOT_EQ, value));
                 }
                 yield new And(notEqs);
             }

@@ -145,13 +145,17 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
-                yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(), p.value());
+                yield ordersUnsigned(cs)
+                        ? new ResolvedPredicate.UnsignedIntPredicate(cs.columnIndex(), p.op(), p.value())
+                        : new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case LongColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
-                yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
+                yield ordersUnsigned(cs)
+                        ? new ResolvedPredicate.UnsignedLongPredicate(cs.columnIndex(), p.op(), p.value())
+                        : new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case FloatColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -210,13 +214,17 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
-                yield new ResolvedPredicate.IntInPredicate(cs.columnIndex(), p.values());
+                yield ordersUnsigned(cs)
+                        ? new ResolvedPredicate.UnsignedIntInPredicate(cs.columnIndex(), p.values())
+                        : new ResolvedPredicate.IntInPredicate(cs.columnIndex(), p.values());
             }
             case LongInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
-                yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
+                yield ordersUnsigned(cs)
+                        ? new ResolvedPredicate.UnsignedLongInPredicate(cs.columnIndex(), p.values())
+                        : new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
             }
             case BinaryInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -425,6 +433,16 @@ public class FilterPredicateResolver {
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
         }
+    }
+
+    /// Whether the column's values order by unsigned magnitude, which an `INT(bitWidth,
+    /// isSigned = false)` annotation says and nothing else does.
+    ///
+    /// The narrower unsigned widths never actually diverge — an `INT(8, false)` holds `0..255`,
+    /// which orders the same either way — but they take the unsigned form too, so the annotation
+    /// alone decides and no width is a special case.
+    private static boolean ordersUnsigned(ColumnSchema columnSchema) {
+        return columnSchema.logicalType() instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
     /// The order a binary literal compares in on this column.

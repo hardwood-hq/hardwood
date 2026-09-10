@@ -198,26 +198,15 @@ final class SelectionEngine {
         }
     }
 
+    /// The column one leaf reads, as [ResolvedPredicate#leafColumnIndex] resolves it. `And` and
+    /// `Or` never reach here — [#collectColumnIndices] peels them off first — so the `-1` that
+    /// marks them is a compiler that grew a case this method did not.
     private static int leafColumnIndex(ResolvedPredicate p) {
-        return switch (p) {
-            case ResolvedPredicate.IntPredicate x -> x.columnIndex();
-            case ResolvedPredicate.LongPredicate x -> x.columnIndex();
-            case ResolvedPredicate.FloatPredicate x -> x.columnIndex();
-            case ResolvedPredicate.Float16Predicate x -> x.columnIndex();
-            case ResolvedPredicate.DoublePredicate x -> x.columnIndex();
-            case ResolvedPredicate.BooleanPredicate x -> x.columnIndex();
-            case ResolvedPredicate.BinaryPredicate x -> x.columnIndex();
-            case ResolvedPredicate.IntInPredicate x -> x.columnIndex();
-            case ResolvedPredicate.LongInPredicate x -> x.columnIndex();
-            case ResolvedPredicate.BinaryInPredicate x -> x.columnIndex();
-            case ResolvedPredicate.DoubleInPredicate x -> x.columnIndex();
-            case ResolvedPredicate.Float16InPredicate x -> x.columnIndex();
-            case ResolvedPredicate.IsNullPredicate x -> x.columnIndex();
-            case ResolvedPredicate.IsNotNullPredicate x -> x.columnIndex();
-            case ResolvedPredicate.GeospatialPredicate x -> x.columnIndex();
-            case ResolvedPredicate.And a -> throw new IllegalStateException("And is not a leaf");
-            case ResolvedPredicate.Or o -> throw new IllegalStateException("Or is not a leaf");
-        };
+        int columnIndex = ResolvedPredicate.leafColumnIndex(p);
+        if (columnIndex < 0) {
+            throw new IllegalStateException(p.getClass().getSimpleName() + " is not a leaf");
+        }
+        return columnIndex;
     }
 
     // ==================== Batch-backed predicate accessor ====================
