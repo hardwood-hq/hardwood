@@ -67,6 +67,12 @@ public final class RowGroupDetailScreen {
                     state.factsTop()));
             return true;
         }
+        // `d` works from either pane: it is about the row group the screen is
+        // showing, not about what has focus within it.
+        if (Keys.isOpenDataPreview(event)
+                && DataPreviewScreen.openAtRowGroup(model, stack, state.rowGroupIndex())) {
+            return true;
+        }
         if (state.focus() != ScreenState.RowGroupDetail.Pane.MENU) {
             return scrollFacts(event, model, stack, state);
         }
@@ -105,6 +111,7 @@ public final class RowGroupDetailScreen {
                 .add(onMenu && MenuItem.values().length > 1, "[↑↓] move")
                 .add(!onMenu, factsLines(model, state).hints(Keys.viewportStride()))
                 .add(onMenu, "[Enter] open")
+                .add(DataPreviewScreen.hasRows(model, state.rowGroupIndex()), "[d] data")
                 .add(true, "[Esc] back")
                 .build();
     }
