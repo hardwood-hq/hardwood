@@ -41,6 +41,8 @@ Parse the user's request for one of:
 
 For PR diffs, persist large output to a file and read it in chunks rather than letting it land in the conversation as one blob. The diff for a non-trivial PR can run 5k+ lines.
 
+**Don't build the branch to find out whether it compiles and passes.** CI already answers that. Check it with `gh pr checks <n>`; a green run means no worktree, no `./mvnw`, no test run. Reading the diff is the review. Build locally only when CI is red or absent and you need to know whether a failure is real, or when a specific finding turns on behaviour you cannot settle by reading — and then run the narrowest thing that settles it, not `verify`.
+
 ### 2. Read the design context
 
 If the PR touches a new design area, look in `_designs/` for a matching markdown file. Hardwood requires non-trivial changes to land a design doc; if one is expected but missing, that's a finding. If one exists, skim it before reading code so the review can flag drift between intent and implementation.
