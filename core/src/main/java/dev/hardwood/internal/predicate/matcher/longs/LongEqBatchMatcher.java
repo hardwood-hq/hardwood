@@ -26,10 +26,12 @@ public final class LongEqBatchMatcher implements LongBatchMatcher {
         int fullWords = n >>> 6;
         int tail = n & 63;
 
-        // Build the predicate bitmap ignoring nulls. The inner loop is fixed at 64
-        // iterations and uses a branchless `(cond ? 1 : 0) << b` pack so HotSpot
-        // fully unrolls it and auto-vectorizes the comparison. The tail is split
-        // off to keep the hot loop's trip count constant at 64.
+        // Build the predicate bitmap ignoring nulls; nulls are masked out in the
+        // word-wise pass below. The comparison is branchless, but C2 does not
+        // vectorize it — packing a vector compare into bitmap bits has no
+        // autovectorization idiom, so this compiles to a scalar cmp/setcc/shl/or
+        // chain unrolled 4x. The tail is split off to keep the hot loop's trip
+        // count constant at 64.
         for (int w = 0; w < fullWords; w++) {
             int base = w << 6;
             long word = 0L;
