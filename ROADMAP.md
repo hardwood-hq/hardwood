@@ -536,6 +536,7 @@ TUI for exploring Parquet file structure. See `_designs/DIVE_ARCHITECTURE.md`.
 - [x] Phase 5: a read failure anywhere becomes an error overlay rather than ending the session,
       reporting the file, row group and column (#1092). See `_designs/DIVE_ARCHITECTURE.md`
 - [x] Screenshots in the CLI docs (#333)
+- [x] Jump to a row or row group: `:` on Data preview and Row groups, `d` from Row groups, `--skip` / `--row-group` on `print` and `convert` (#1101)
 - [ ] Follow-ups: async I/O (profiling-dependent); "jump to chunk" from Footer
 
 ## Testing

@@ -50,6 +50,12 @@ hardwood print -n 20 -f data.parquet
 # Show last 5 rows
 hardwood print -n -5 -f data.parquet
 
+# Start at row 5000 (rows are counted from 0)
+hardwood print --skip 5000 -n 20 -f data.parquet
+
+# Show the rows of row group 3 (row groups are counted from 0)
+hardwood print --row-group 3 -f data.parquet
+
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 
@@ -71,9 +77,30 @@ hardwood inspect dictionary -f data.parquet -c category --limit 0
 # Convert first 100 rows to JSON
 hardwood convert -n 100 --format json -f data.parquet
 
+# Convert one row group to CSV
+hardwood convert --row-group 3 --format csv -f data.parquet
+
 # Convert to CSV, writing \N for null values
 hardwood convert --format csv --null-string '\N' -f data.parquet
 ```
+
+## Row selection
+
+`print` and `convert` accept the same row-selection options:
+
+| Option | Rows selected |
+|---|---|
+| `-n N`, `--rows N` | The first `N` rows for a positive number, the last `N` rows for a negative number, or every row for `ALL` (the default). `0` is rejected. |
+| `--skip N` | Start at row `N`, counted from zero. A positive `-n` limits the number of rows read from that position. |
+| `--row-group I` | Read only row group `I`, counted from zero. A positive `-n` limits the read to at most that many rows within the group. |
+
+`--skip` and `--row-group` cannot be combined with each other or with a negative `-n`.
+Negative or out-of-range row and row-group numbers are rejected. `--skip` must identify
+an existing row, and `--row-group` rejects an empty row group.
+
+`print --row-index` shows each row's zero-based position in the original file,
+including when using `--skip`, `--row-group`, or a negative `-n`. For a file with
+100 rows, `-n -2 --row-index` prints indexes `98` and `99`.
 
 ## Convert output
 

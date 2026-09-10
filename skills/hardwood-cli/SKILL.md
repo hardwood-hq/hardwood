@@ -168,6 +168,15 @@ Row-limit semantics for `-n`/`--rows` (used by both `print` and `convert`):
 positive = first _N_ rows (head), negative = last _N_ rows (tail), `ALL` =
 every row, and `0` is rejected.
 
+`--skip <n>` starts the read at row _n_ and `--row-group <i>` reads that row
+group only, both counted from 0, on `print` and `convert`. They cannot be
+combined with each other, nor with a negative `-n` (which counts from the end
+of the file). A positive `-n` stays within the selected row group. Negative or
+out-of-range positions and empty row groups are rejected. `print --row-index`
+numbers rows by their position in the file,
+including under a negative `-n`, so a row number seen in `hardwood dive`
+reproduces here.
+
 ## Playbook: "why isn't predicate pushdown / file skipping working?"
 
 A query is scanning far more data than expected. The engine skips at two

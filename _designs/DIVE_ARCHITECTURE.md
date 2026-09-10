@@ -208,6 +208,8 @@ Dive composes what `info`, `schema`, `footer`, `inspect` and `print` show separa
 
 What dive shares with the commands lives in `dev.hardwood.cli.internal`: value and size formatting (`ValueFormatter`, `Sizes`, `Fmt`, `BinaryValues`, `LevelSummary`, governed by [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md)), encoding helpers (`Encodings`), the page-header walk (`PageHeaderWalk`) and text helpers (`Strings`). `FileMixin` resolves `-f` for dive as for every command, local path or S3 URI. `InspectPagesCommand` and `InspectDictionaryCommand` parse page headers and dictionaries at the byte level as `ParquetModel` does, and classify and place their failures with the same `ExceptionContext.readFailureAt`; `inspect pages` walks page headers with `PageHeaderWalk` and `inspect dictionary` reads the dictionary page with `DictionaryParser.readPage`, as dive does.
 
+A position found in dive can be passed to `print` and `convert`: `--skip <n>` starts the read at row `n`, and `--row-group <i>` reads that row group only, both counting from zero like the prompt. `RowLimits.resolveWindow` turns them and `-n` into a `RowWindow` before anything is read, refusing what the prompt refuses: a row or row group past the end, a negative one, an empty row group, the two together, and either with a negative `-n`, which counts from the end and has no start to move. A `RowWindow` of zero rows cannot be built; every row is the explicit `NO_LIMIT`, so an empty read can never pass for an unbounded one. `print --row-index` numbers each row by its position in the file, under a skip and under a tail alike.
+
 `DiveCommand` adds what an interactive session needs:
 
 - It refuses to start without a console (`System.console() == null`), since a TUI on a redirected stream renders nothing usable.
@@ -217,7 +219,7 @@ What dive shares with the commands lives in `dev.hardwood.cli.internal`: value a
 
 Native-image metadata for TamboUI and JLine is under `cli/src/main/resources/META-INF/native-image/`.
 
-Tests: `DiveCommandTest`, `NativeBinarySmokeIT` (cli).
+Tests: `DiveCommandTest`, `NativeBinarySmokeIT`, `RowLimitsTest`, `PrintCommandTest`, `ConvertCommandTest` (cli).
 
 ## Test layers
 
