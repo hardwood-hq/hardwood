@@ -164,9 +164,12 @@ sealed interface MinMaxStats {
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
                     p.ieee754TotalOrder(), nullCount);
             case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
-            case ResolvedPredicate.BinaryInPredicate ignored -> BinaryStats.of(min, max, false, nullCount);
+            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
+            case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
+                    StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
+                    p.ieee754TotalOrder(), nullCount);
             case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
                     ? FloatStats.of(StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
                             p.ieee754TotalOrder(), nullCount)
@@ -342,6 +345,8 @@ sealed interface MinMaxStats {
                         p.op(), p.value(), min, max, ieee754TotalOrder);
                 case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
                         p.values(), min, max, ieee754TotalOrder);
+                case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
+                        p.values(), min, max, ieee754TotalOrder);
                 default -> throw wrongWidth("FLOAT", leaf);
             };
         }
@@ -407,7 +412,7 @@ sealed interface MinMaxStats {
                 case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.canDropCompared(
                         p.op(), compare(p.value(), min), compare(p.value(), max), compare(min, max));
                 case ResolvedPredicate.BinaryInPredicate p ->
-                        StatisticsFilterSupport.canDropBinaryIn(p.values(), min, max);
+                        StatisticsFilterSupport.canDropBinaryIn(p.values(), min, max, signed);
                 default -> throw wrongWidth("BYTE_ARRAY", leaf);
             };
         }
@@ -418,7 +423,7 @@ sealed interface MinMaxStats {
                 case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.alwaysMatchesCompared(
                         p.op(), compare(p.value(), min), compare(p.value(), max), compare(min, max));
                 case ResolvedPredicate.BinaryInPredicate p ->
-                        StatisticsFilterSupport.alwaysMatchesBinaryIn(p.values(), min, max);
+                        StatisticsFilterSupport.alwaysMatchesBinaryIn(p.values(), min, max, signed);
                 default -> throw wrongWidth("BYTE_ARRAY", leaf);
             };
         }

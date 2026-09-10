@@ -185,6 +185,54 @@ class BinaryDecimalFilterTest {
         }
     }
 
+    /// The bytes of `1.27` are in the file, and a byte-string `eq` for exactly those bytes came
+    /// back empty: the row group's statistics are written in the column's signed order
+    /// (`min = FF 00`, `max = 01 2C`) and pruning them unsigned sorts the literal `7F` below the
+    /// minimum. The literal now takes the column's own comparison, which is the one those bounds
+    /// were written in, so the row is found.
+    @Test
+    void aByteStringPredicateComparesAsTheColumnDoes() throws Exception {
+        assertThat(filtered(FilterPredicate.eq("amount", "\u007F")))
+                .containsExactly(new BigDecimal("1.27"));
+    }
+
+    /// `3.00` is `01 2C`, which sorts below the single byte `7F` byte-wise and above it as a
+    /// number, so the ordering is visible in the rows that come back.
+    @Test
+    void aByteStringRangePredicateOrdersByValue() throws Exception {
+        assertThat(filtered(FilterPredicate.gt("amount", "\u007F")))
+                .containsExactly(new BigDecimal("1.28"), new BigDecimal("3.00"));
+    }
+
+    /// Membership compares each probe in the column's order, as `eq` does, so a probe for `127`
+    /// finds every row holding it — the padded `00 00 00 7F` encodings included, which a
+    /// byte-identity test would miss. parquet-java compares `In` the same way, through the
+    /// column's `PrimitiveComparator` rather than `Binary.equals`.
+    @Test
+    void aByteStringSetPredicateFindsPaddedMembers() throws Exception {
+        byte[] file = writeRawBinaryDecimals(paddedRows());
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+                RowReader rows = reader.buildRowReader()
+                        .filter(FilterPredicate.inStrings("amount", "\u007F"))
+                        .build()) {
+            assertThat(collect(rows)).hasSize(PADDED_ROWS / 2)
+                    .allMatch(value -> value.compareTo(new BigDecimal("1.27")) == 0);
+        }
+    }
+
+    /// A `BYTE_ARRAY` column that is not a `DECIMAL` orders as its bytes, so the same predicates
+    /// stay available on it.
+    @Test
+    void aByteStringPredicateStaysAvailableOnAPlainBinaryColumn() {
+        FileSchema plain = FileSchema.builder("schema")
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null)
+                .build();
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("name", "a"), plain))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
+                        p -> assertThat(p.signed()).isFalse());
+    }
+
     // ==================== Fixtures ====================
 
     private static FileSchema schema() {

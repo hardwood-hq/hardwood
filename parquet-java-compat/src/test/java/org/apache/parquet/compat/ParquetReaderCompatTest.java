@@ -16,6 +16,7 @@ import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.hadoop.GroupReadSupport;
 import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
@@ -217,6 +218,57 @@ class ParquetReaderCompatTest {
             for (Group r : records) {
                 assertThat(r.getLong("id", 0)).isGreaterThan(200L);
             }
+        }
+    }
+
+    /// A `DECIMAL` column orders by the value its bytes stand for, not by the bytes, and
+    /// parquet-java compares a `binaryColumn` literal against it through
+    /// `BINARY_AS_SIGNED_INTEGER`. The shim hands the literal's bytes through verbatim, so the
+    /// same filter has to answer the same way here.
+    @Test
+    void testFilterPushdownBinaryLiteralOnDecimalColumn() throws Exception {
+        // compat_decimal_10_2.parquet: id 1 -> 123.45, id 2 -> 678.90, as DECIMAL(10, 2)
+        // in a FIXED_LEN_BYTE_ARRAY(5). 123.45 is unscaled 12345 -> 00 00 00 30 39.
+        Path path = new Path("../core/src/test/resources/compat_decimal_10_2.parquet");
+        Binary oneTwoThreeFortyFive = Binary.fromConstantByteArray(
+                new byte[] { 0x00, 0x00, 0x00, 0x30, 0x39 });
+
+        FilterPredicate pred = eq(binaryColumn("amount"), oneTwoThreeFortyFive);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Group> records = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                records.add(record);
+            }
+            assertThat(records).hasSize(1);
+            assertThat(records.get(0).getLong("id", 0)).isEqualTo(1L);
+        }
+    }
+
+    /// The ordering is the column's own: `678.90` is unscaled `67890`, which is greater than
+    /// `12345` as a number and also byte-wise at this fixed width — the point is that the row
+    /// comes back at all, since the literal reaches a `DECIMAL` column.
+    @Test
+    void testFilterPushdownBinaryRangeOnDecimalColumn() throws Exception {
+        Path path = new Path("../core/src/test/resources/compat_decimal_10_2.parquet");
+        Binary oneTwoThreeFortyFive = Binary.fromConstantByteArray(
+                new byte[] { 0x00, 0x00, 0x00, 0x30, 0x39 });
+
+        FilterPredicate pred = gt(binaryColumn("amount"), oneTwoThreeFortyFive);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Group> records = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                records.add(record);
+            }
+            assertThat(records).hasSize(1);
+            assertThat(records.get(0).getLong("id", 0)).isEqualTo(2L);
         }
     }
 

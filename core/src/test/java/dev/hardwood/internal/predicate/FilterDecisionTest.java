@@ -314,9 +314,9 @@ class FilterDecisionTest {
         byte[] a = "a".getBytes(StandardCharsets.UTF_8);
         byte[] b = "b".getBytes(StandardCharsets.UTF_8);
         byte[] c = "c".getBytes(StandardCharsets.UTF_8);
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, b, b)).isTrue();
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, c, c)).isFalse();
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, a, b)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, b, b, false)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, c, c, false)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, a, b, false)).isFalse();
     }
 
     @Test

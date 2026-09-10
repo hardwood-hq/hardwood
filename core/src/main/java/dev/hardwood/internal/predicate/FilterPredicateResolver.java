@@ -53,6 +53,9 @@ import dev.hardwood.schema.SchemaNode;
 /// need to repeat column lookups or type checks.
 public class FilterPredicateResolver {
 
+    /// A `FLOAT16` value is two little-endian bytes of an IEEE half.
+    private static final int FLOAT16_BYTES = 2;
+
     /// Resolves a [FilterPredicate] tree without column-order information. Float/double leaves are
     /// treated as type-defined, so statistics pruning widens `±0` bounds (the conservative default).
     ///
@@ -179,8 +182,13 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                if (cs.logicalType() instanceof LogicalType.Float16Type) {
+                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(),
+                            float16ToFloat(p.column(), p.value()),
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                }
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
-                        Comparison.BYTE_STRING);
+                        byteComparison(cs));
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -214,15 +222,21 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
-                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values());
+                if (cs.logicalType() instanceof LogicalType.Float16Type) {
+                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(),
+                            float16Probes(p.column(), p.values()),
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                }
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values(),
+                        byteComparison(cs));
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
-                    throw new IllegalArgumentException(
-                            "Column '" + p.column() + "': IN predicate is not supported on FLOAT16 columns");
+                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
                 if (cs.type() == PhysicalType.DOUBLE) {
                     yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(), false,
@@ -411,6 +425,76 @@ public class FilterPredicateResolver {
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
         }
+    }
+
+    /// The order a binary literal compares in on this column.
+    ///
+    /// Either binary physical type reaches here whatever it is annotated, since [#validateType]
+    /// bridges `BYTE_ARRAY` and `FIXED_LEN_BYTE_ARRAY`. Most annotations order as the bytes
+    /// themselves. A `DECIMAL` orders by the value they stand for, and its statistics are
+    /// written that way, so the literal takes the column's own comparison rather than a
+    /// byte-string one — the same comparison a `BigDecimal` literal resolves to, and the one
+    /// parquet-java applies through `BINARY_AS_SIGNED_INTEGER`.
+    ///
+    /// The switch is exhaustive rather than a list of exceptions, so an annotation added later
+    /// has to name its order instead of inheriting the byte-string one by default.
+    private static Comparison byteComparison(ColumnSchema columnSchema) {
+        LogicalType logicalType = columnSchema.logicalType();
+        if (logicalType == null) {
+            return Comparison.BYTE_STRING;
+        }
+        return switch (logicalType) {
+            // Padded to the column's width, so one number has exactly one encoding here.
+            case LogicalType.DecimalType ignored ->
+                    columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                            ? Comparison.FIXED_DECIMAL
+                            : Comparison.VARIABLE_DECIMAL;
+            case LogicalType.StringType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.EnumType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.JsonType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.BsonType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.UuidType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.IntervalType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.GeometryType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.GeographyType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.VariantType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.NullType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.ListType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.MapType ignored -> Comparison.BYTE_STRING;
+            // Handled before this is reached, or rejected by [#validateType] as a non-binary
+            // physical type.
+            case LogicalType.Float16Type ignored -> Comparison.BYTE_STRING;
+            case LogicalType.IntType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.DateType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.TimeType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.TimestampType ignored -> Comparison.BYTE_STRING;
+        };
+    }
+
+    /// The two bytes of a `FLOAT16` literal, as the value they encode.
+    ///
+    /// A `FLOAT16` is two little-endian bytes of an IEEE half. Comparing them as a byte string
+    /// would order the low mantissa byte first, which is not the column's order and not the
+    /// order its statistics are written in, so the literal is decoded and compared numerically —
+    /// as parquet-java does through `BINARY_AS_FLOAT16`. A literal that is a `NaN` payload
+    /// therefore matches any stored `NaN`, the same widening a `float` literal already carries.
+    private static float float16ToFloat(String columnName, byte[] value) {
+        if (value.length != FLOAT16_BYTES) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' is a FLOAT16, whose literal is "
+                            + FLOAT16_BYTES + " bytes, not " + value.length);
+        }
+        return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
+    }
+
+    /// The two-byte probes of a `FLOAT16` membership test, as the halves they encode. See
+    /// [#float16ToFloat].
+    private static double[] float16Probes(String columnName, byte[][] values) {
+        double[] probes = new double[values.length];
+        for (int i = 0; i < values.length; i++) {
+            probes[i] = float16ToFloat(columnName, values[i]);
+        }
+        return probes;
     }
 
     private static void validateLogicalType(String columnName,

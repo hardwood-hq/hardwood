@@ -149,9 +149,32 @@ public sealed interface ResolvedPredicate {
 
     record IntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
     record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
-    record BinaryInPredicate(int columnIndex, byte[][] values) implements ResolvedPredicate {}
+    /// Membership against a binary column, comparing each probe in the column's own order —
+    /// see [BinaryPredicate.Comparison]. A `DECIMAL` compares by the value its bytes stand for,
+    /// so a padded encoding of a probe is still a member; only the Bloom filter and dictionary
+    /// shortcuts, which test exact bytes, depend on [#byteExact()].
+    record BinaryInPredicate(int columnIndex, byte[][] values, BinaryPredicate.Comparison comparison)
+            implements ResolvedPredicate {
+
+        /// Whether the probes compare signed. See [BinaryPredicate.Comparison#signed()].
+        public boolean signed() {
+            return comparison.signed();
+        }
+
+        /// Whether the column encodes a value as exactly these bytes. See
+        /// [BinaryPredicate.Comparison#byteExact()].
+        public boolean byteExact() {
+            return comparison.byteExact();
+        }
+    }
     record DoubleInPredicate(int columnIndex, double[] values, boolean floatColumn,
             boolean ieee754TotalOrder) implements ResolvedPredicate {}
+
+    /// Membership against a `FLOAT16` column, each probe compared with the decoded half the way
+    /// [DoubleInPredicate] compares a `FLOAT` column's widened values, so a probe no half can
+    /// represent matches nothing. `ieee754TotalOrder` is as on [Float16Predicate].
+    record Float16InPredicate(int columnIndex, double[] values, boolean ieee754TotalOrder)
+            implements ResolvedPredicate {}
 
     /// A test for the absence of the node named by the predicate, which is either the leaf column
     /// `columnIndex` itself or a non-repeated group enclosing it.
@@ -280,6 +303,7 @@ public sealed interface ResolvedPredicate {
             case LongInPredicate p -> p.columnIndex();
             case BinaryInPredicate p -> p.columnIndex();
             case DoubleInPredicate p -> p.columnIndex();
+            case Float16InPredicate p -> p.columnIndex();
             case IsNullPredicate p -> p.columnIndex();
             case IsNotNullPredicate p -> p.columnIndex();
             case GeospatialPredicate p -> p.columnIndex();
@@ -328,9 +352,12 @@ public sealed interface ResolvedPredicate {
                     p.comparison());
             case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
-            case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.comparison());
             case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.floatColumn(), p.ieee754TotalOrder());
+            case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.ieee754TotalOrder());
             case IsNullPredicate p -> new IsNullPredicate(
                     mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
             case IsNotNullPredicate p -> new IsNotNullPredicate(
@@ -402,7 +429,23 @@ public sealed interface ResolvedPredicate {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (byte[] value : p.values()) {
                     notEqs.add(new BinaryPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
-                            BinaryPredicate.Comparison.BYTE_STRING));
+                            p.comparison()));
+                }
+                yield new And(notEqs);
+            }
+            case Float16InPredicate p -> {
+                // A probe no half can represent is never equal to a stored value, so it drops out of
+                // the conjunction rather than narrowing onto a half `in` would not have matched; with
+                // none left, every non-null row is outside the set.
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (double v : p.values()) {
+                    if (Double.isNaN(v) || isFloat16(v)) {
+                        notEqs.add(new Float16Predicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ,
+                                (float) v, p.ieee754TotalOrder()));
+                    }
+                }
+                if (notEqs.isEmpty()) {
+                    yield IsNotNullPredicate.ofLeaf(p.columnIndex());
                 }
                 yield new And(notEqs);
             }
@@ -428,5 +471,12 @@ public sealed interface ResolvedPredicate {
             case GeospatialPredicate p -> throw new UnsupportedOperationException(
                     "Negation of spatial intersects predicate is not supported");
         };
+    }
+
+    /// Whether `value` is exactly a `FLOAT16`: representable as a `float`, and that `float` as a
+    /// half.
+    private static boolean isFloat16(double value) {
+        float asFloat = (float) value;
+        return asFloat == value && Float.float16ToFloat(Float.floatToFloat16(asFloat)) == asFloat;
     }
 }

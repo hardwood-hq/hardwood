@@ -175,10 +175,9 @@ final class StatisticsFilterSupport {
         return true;
     }
 
-    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max) {
+    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, boolean signed) {
         for (byte[] value : values) {
-            if (BinaryComparator.compareUnsigned(value, min) >= 0
-                    && BinaryComparator.compareUnsigned(value, max) <= 0) {
+            if (compareBinary(value, min, signed) >= 0 && compareBinary(value, max, signed) <= 0) {
                 return false;
             }
         }
@@ -213,15 +212,23 @@ final class StatisticsFilterSupport {
         return false;
     }
 
-    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max) {
-        if (BinaryComparator.compareUnsigned(min, max) != 0) {
+    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max, boolean signed) {
+        if (compareBinary(min, max, signed) != 0) {
             return false;
         }
         for (byte[] value : values) {
-            if (BinaryComparator.compareUnsigned(value, min) == 0) {
+            if (compareBinary(value, min, signed) == 0) {
                 return true;
             }
         }
         return false;
+    }
+
+    /// Compares two binary values in a column's order: as big-endian two's complement numbers
+    /// when `signed`, the order a `DECIMAL` sorts in, or unsigned lexicographic otherwise.
+    private static int compareBinary(byte[] left, byte[] right, boolean signed) {
+        return signed
+                ? BinaryComparator.compareSigned(left, right)
+                : BinaryComparator.compareUnsigned(left, right);
     }
 }
