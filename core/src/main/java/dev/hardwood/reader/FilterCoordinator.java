@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.io.IOException;
 
 import dev.hardwood.internal.reader.RecordFilterTally;
+import dev.hardwood.internal.reader.RowGroupIterator;
 
 /// Drives the filtered column-reader path (#624). It advances every reader of
 /// the augmented projection (payload columns plus the predicate columns) in
@@ -29,6 +30,10 @@ final class FilterCoordinator {
     /// The exposed subset, compacted to the matching records each batch.
     private final ColumnReader[] payloadReaders;
     private final SelectionEngine engine;
+    /// The iterator all readers decode through. A filtered single-column read is
+    /// handed one reader out of the projection and never sees the enclosing group,
+    /// so tearing the projection down has to release the iterator too.
+    private final RowGroupIterator rowGroupIterator;
     /// Per-file record-filter counts for JFR. Every batch this path produces has
     /// passed through the selection, so the counts are complete for the read.
     private final RecordFilterTally tally = new RecordFilterTally();
@@ -38,10 +43,12 @@ final class FilterCoordinator {
     private int recordCount;
     private boolean closed;
 
-    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine) {
+    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine,
+                      RowGroupIterator rowGroupIterator) {
         this.allReaders = allReaders;
         this.payloadReaders = payloadReaders;
         this.engine = engine;
+        this.rowGroupIterator = rowGroupIterator;
     }
 
     long generation() {
@@ -113,8 +120,13 @@ final class FilterCoordinator {
         }
         closed = true;
         tally.close();
-        for (ColumnReader reader : allReaders) {
-            reader.rawClose();
+        // Released even when a reader's teardown fails: this coordinator will not
+        // run its close body again, so skipping the release would leave the work
+        // list reachable for the parent reader's whole lifetime.
+        try (rowGroupIterator) {
+            for (ColumnReader reader : allReaders) {
+                reader.rawClose();
+            }
         }
     }
 }

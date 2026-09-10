@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
@@ -61,7 +62,7 @@ import dev.hardwood.schema.FileSchema;
 /// Each [PageSource] maintains its own cursor into the work list exposed by
 /// this iterator. Shared per-row-group metadata (index buffers, matching rows)
 /// is cached for the current file and reused across columns.
-public class RowGroupIterator {
+public class RowGroupIterator implements Closeable {
 
     private static final System.Logger LOG = System.getLogger(RowGroupIterator.class.getName());
 
@@ -83,6 +84,13 @@ public class RowGroupIterator {
     private final FileMetadataCache fileMetadataCache;
     private final boolean ownsFileMetadataCache;
     private final Consumer<RowGroupIterator> closeListener;
+
+    /// Several owners can reach [#close()]: the group that consumes this iterator,
+    /// the `FilterCoordinator` that tears that group down on the filtered path, and
+    /// every reader of a no-rows group, which has neither. A read handed a single
+    /// reader out of a group it never sees reaches the iterator only through the
+    /// last two. Closing twice releases nothing twice.
+    private boolean closed;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -1099,7 +1107,12 @@ public class RowGroupIterator {
     /// ParquetFileReader leave those shared resources to the parent and instead
     /// tell it to stop tracking this iterator, so a closed child reader's work
     /// list does not stay reachable for the parent's whole lifetime.
+    @Override
     public void close() throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
         metadataCache.clear();
         fetchPlanCache.clear();
 

@@ -54,6 +54,11 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// filter and nothing evaluates records.
     private final RecordFilterTally tally;
 
+    /// The iterator this reader consumes. No column reader owns it — they all
+    /// draw from the one iterator — so this reader releases it, which is also
+    /// what stops the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
+    private final RowGroupIterator rowGroupIterator;
+
     // Iteration state
     private NestedBatch[] previousBatches;
     /// File name from the current batch — used for exception enrichment
@@ -84,7 +89,9 @@ public final class NestedRowReader implements FileAwareRowReader {
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
                     FileSchema fileSchema, ProjectedSchema projectedSchema,
-                    long maxMatchedRows, RowMatcher recordMatcher, RecordFilterTally tally) {
+                    long maxMatchedRows, RowMatcher recordMatcher, RecordFilterTally tally,
+                    RowGroupIterator rowGroupIterator) {
+        this.rowGroupIterator = rowGroupIterator;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
         this.tally = tally;
@@ -191,7 +198,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         }
         long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
         NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projectedSchema,
-                readerMatchLimit, recordMatcher, tally);
+                readerMatchLimit, recordMatcher, tally, rowGroupIterator);
         reader.initialize();
         return reader;
     }
@@ -456,20 +463,26 @@ public final class NestedRowReader implements FileAwareRowReader {
             return;
         }
         closed = true;
-        if (tally != null) {
-            tally.close();
-        }
-        if (columnWorkers != null) {
-            for (NestedColumnWorker worker : columnWorkers) {
-                worker.close();
+        // The iterator is released even when tearing the pipeline down fails: this
+        // reader will not run its close body again, so skipping the release would
+        // leave the work list reachable for the parent reader's whole lifetime. A
+        // failure to release is suppressed beneath the original.
+        try (rowGroupIterator) {
+            if (tally != null) {
+                tally.close();
             }
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (previousBatches[i] != null) {
-                exchanges[i].recycle(previousBatches[i]);
-                previousBatches[i] = null;
+            if (columnWorkers != null) {
+                for (NestedColumnWorker worker : columnWorkers) {
+                    worker.close();
+                }
             }
-            exchanges[i].drainReady();
+            for (int i = 0; i < columnCount; i++) {
+                if (previousBatches[i] != null) {
+                    exchanges[i].recycle(previousBatches[i]);
+                    previousBatches[i] = null;
+                }
+                exchanges[i].drainReady();
+            }
         }
     }
 

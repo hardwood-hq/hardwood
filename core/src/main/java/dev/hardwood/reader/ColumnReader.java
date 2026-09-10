@@ -138,13 +138,21 @@ public class ColumnReader implements Closeable {
     /// A reader that yields no batches, for when row-group pruning has dropped
     /// every row group so nothing can match. Allocates no batch buffer and
     /// starts no worker thread — [#nextBatch()] reports exhausted immediately.
-    static ColumnReader exhausted(FileSchema schema, ColumnSchema column) {
+    ///
+    /// Every reader of such a group holds `rowGroupIterator`, because a no-rows
+    /// group has no [FilterCoordinator] and no per-column state, so each reader is
+    /// independent and closing any one of them must release the iterator: the
+    /// filtered single-column entry point is handed one reader out of the group and
+    /// never sees the group itself. [RowGroupIterator#close()] is idempotent, so the
+    /// group and its readers releasing the same iterator releases it once.
+    static ColumnReader exhausted(FileSchema schema, ColumnSchema column,
+                                  RowGroupIterator rowGroupIterator) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), column.columnIndex());
         boolean nested = layers.count() > 0 || column.maxRepetitionLevel() > 0;
         ColumnReader reader = nested
-                ? forNested(column, layers, null, null, null)
-                : forFlat(column, null, null, null);
+                ? forNested(column, layers, null, null, rowGroupIterator)
+                : forFlat(column, null, null, rowGroupIterator);
         reader.exhausted = true;
         return reader;
     }

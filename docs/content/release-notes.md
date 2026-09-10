@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- A `ParquetFileReader` no longer retains a read's `RowGroupIterator` after the reader consuming it is closed ([#1170](https://github.com/hardwood-hq/hardwood/issues/1170)).
+
 - A logical type annotation that a column's physical type cannot carry is now dropped, and the column is read as its physical type. Previously it surfaced as an `IllegalArgumentException` from whichever accessor first reached the column ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)). `FLOAT16` is defined as a two-byte payload, so a column annotated `FLOAT16` that declares three bytes is invalid; [parquet-format PR 606](https://github.com/apache/parquet-format/pull/606) specifies that readers ignore the annotation and use only the physical type. An annotation this version does not recognize is dropped the same way, so a file written against a newer format version can still be read. Both cases log a warning, naming the column and the reason, or the union field that was not recognized. **What changes for you:** `getFileSchema()` reports no logical type for such a column, `getValue` returns its physical value where it used to throw, and a logical accessor on it fails as it does on any unannotated column.
 
 - A multi-file read opens each file as it reaches it, rather than opening every file when the reader is built, so the time to the first row no longer grows with the number of files ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).

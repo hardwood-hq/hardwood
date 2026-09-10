@@ -626,7 +626,7 @@ public class ParquetFileReader implements Closeable {
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
             if (iterator.workItemAt(0) == null) {
-                return ColumnReaders.noRows(schema, projected);
+                return ColumnReaders.noRows(schema, projected, iterator);
             }
             return new ColumnReaders(context, fixedListFastPathEnabled, iterator, schema, projected,
                     resolveBatchSize(batchSize, projected, rowGroups));
@@ -644,11 +644,13 @@ public class ParquetFileReader implements Closeable {
         // Statistics/bloom pruning dropped every row group — no record can match.
         // Skip building the per-column readers (worker threads + ~batch-sized
         // buffers) and the selection engine entirely; expose exhausted no-op
-        // readers over the payload columns. The iterator is registered above and
-        // closed by close(), so its file handles/prefetch futures still release.
+        // readers over the payload columns. The group and each of its readers own
+        // the iterator — the single-column entry point below is handed one reader
+        // out of this group — so closing either releases the fetch plans and the
+        // parent's tracking entry.
         // Asked of the first work item, so a read that has one plans no further.
         if (iterator.workItemAt(0) == null) {
-            return ColumnReaders.noRows(schema, payloadProjected);
+            return ColumnReaders.noRows(schema, payloadProjected, iterator);
         }
         // Size against the augmented projection — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.

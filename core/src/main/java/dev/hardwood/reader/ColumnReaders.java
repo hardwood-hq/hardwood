@@ -54,6 +54,11 @@ public class ColumnReaders implements Closeable {
     /// lockstep and compacts each to the matching records per batch. `null` on
     /// the plain projection path.
     private final FilterCoordinator coordinator;
+    /// The iterator every column in this group decodes through. No individual
+    /// column reader owns it, so this group releases it, which is also what stops
+    /// the owning [ParquetFileReader] tracking it. Never `null`: every group is
+    /// built around an iterator, [#noRows] included.
+    private final RowGroupIterator rowGroupIterator;
     private int recordCount;
     private boolean batchAvailable;
 
@@ -67,6 +72,7 @@ public class ColumnReaders implements Closeable {
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];
         this.coordinator = null;
+        this.rowGroupIterator = rowGroupIterator;
 
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
@@ -83,10 +89,12 @@ public class ColumnReaders implements Closeable {
 
     private ColumnReaders(Map<String, ColumnReader> readersByName,
                           ColumnReader[] readersByIndex,
-                          FilterCoordinator coordinator) {
+                          FilterCoordinator coordinator,
+                          RowGroupIterator rowGroupIterator) {
         this.readersByName = readersByName;
         this.readersByIndex = readersByIndex;
         this.coordinator = coordinator;
+        this.rowGroupIterator = rowGroupIterator;
     }
 
     /// Builds a filtered [ColumnReaders] that returns only the records matching
@@ -126,32 +134,34 @@ public class ColumnReaders implements Closeable {
         }
 
         SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
-        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine);
+        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine, rowGroupIterator);
         for (ColumnReader reader : allReaders) {
             reader.setCoordinator(coordinator);
         }
-        return new ColumnReaders(readersByName, payloadReaders, coordinator);
+        return new ColumnReaders(readersByName, payloadReaders, coordinator, rowGroupIterator);
     }
 
     /// Builds a [ColumnReaders] for the case where row-group pruning
     /// (statistics/bloom) dropped every row group, so no record can match.
     /// Exposes the `payloadProjected` columns as immediately-exhausted no-op
     /// readers — no worker threads, no batch buffers, no [SelectionEngine] or
-    /// [FilterCoordinator]. The shared [RowGroupIterator] is owned and closed by
-    /// the [ParquetFileReader]; these readers hold no reference to it. Used by
-    /// [ParquetFileReader#buildColumnReaders] to skip the whole per-column decode
-    /// setup when there is nothing to decode.
-    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected) {
+    /// [FilterCoordinator]. The group and every reader in it release
+    /// `rowGroupIterator`: with no coordinator to tear the projection down, a
+    /// caller handed a single reader out of this group has nothing else to reach
+    /// it through. Used by [ParquetFileReader#buildColumnReaders] to skip the
+    /// whole per-column decode setup when there is nothing to decode.
+    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected,
+                                RowGroupIterator rowGroupIterator) {
         int payloadCount = payloadProjected.getProjectedColumnCount();
         Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
         ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
         for (int p = 0; p < payloadCount; p++) {
             ColumnSchema columnSchema = schema.getColumn(payloadProjected.toOriginalIndex(p));
-            ColumnReader reader = ColumnReader.exhausted(schema, columnSchema);
+            ColumnReader reader = ColumnReader.exhausted(schema, columnSchema, rowGroupIterator);
             payloadReaders[p] = reader;
             readersByName.put(columnSchema.fieldPath().toString(), reader);
         }
-        return new ColumnReaders(readersByName, payloadReaders, null);
+        return new ColumnReaders(readersByName, payloadReaders, null, rowGroupIterator);
     }
 
     /// Get the number of projected columns.
@@ -279,12 +289,17 @@ public class ColumnReaders implements Closeable {
 
     @Override
     public void close() throws IOException {
-        if (coordinator != null) {
-            coordinator.close();
-            return;
-        }
-        for (ColumnReader reader : readersByIndex) {
-            reader.close();
+        // Released even when a reader's teardown fails, so a failed close cannot
+        // leave the work list reachable for the parent reader's whole lifetime.
+        try (rowGroupIterator) {
+            if (coordinator != null) {
+                coordinator.close();
+            }
+            else {
+                for (ColumnReader reader : readersByIndex) {
+                    reader.close();
+                }
+            }
         }
     }
 

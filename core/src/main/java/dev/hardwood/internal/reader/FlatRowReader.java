@@ -133,10 +133,17 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// filter and nothing evaluates records.
     private final RecordFilterTally tally;
 
+    /// The iterator this reader consumes. No column reader owns it — they all
+    /// draw from the one iterator — so this reader releases it, which is also
+    /// what stops the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
+    private final RowGroupIterator rowGroupIterator;
+
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
-                         RowMatcher recordMatcher, RecordFilterTally tally) {
+                         RowMatcher recordMatcher, RecordFilterTally tally,
+                         RowGroupIterator rowGroupIterator) {
+        this.rowGroupIterator = rowGroupIterator;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
         this.tally = tally;
@@ -296,7 +303,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
         FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
-                matchMerger, readerMatchLimit, recordMatcher, tally);
+                matchMerger, readerMatchLimit, recordMatcher, tally, rowGroupIterator);
         reader.initialize();
         return reader;
     }
@@ -941,20 +948,26 @@ public final class FlatRowReader implements FileAwareRowReader {
             return;
         }
         closed = true;
-        if (tally != null) {
-            tally.close();
-        }
-        if (columnWorkers != null) {
-            for (FlatColumnWorker worker : columnWorkers) {
-                worker.close();
+        // The iterator is released even when tearing the pipeline down fails: this
+        // reader will not run its close body again, so skipping the release would
+        // leave the work list reachable for the parent reader's whole lifetime. A
+        // failure to release is suppressed beneath the original.
+        try (rowGroupIterator) {
+            if (tally != null) {
+                tally.close();
             }
-        }
-        for (int i = 0; i < columnCount; i++) {
-            if (previousBatches[i] != null) {
-                exchanges[i].recycle(previousBatches[i]);
-                previousBatches[i] = null;
+            if (columnWorkers != null) {
+                for (FlatColumnWorker worker : columnWorkers) {
+                    worker.close();
+                }
             }
-            exchanges[i].drainReady();
+            for (int i = 0; i < columnCount; i++) {
+                if (previousBatches[i] != null) {
+                    exchanges[i].recycle(previousBatches[i]);
+                    previousBatches[i] = null;
+                }
+                exchanges[i].drainReady();
+            }
         }
     }
 
