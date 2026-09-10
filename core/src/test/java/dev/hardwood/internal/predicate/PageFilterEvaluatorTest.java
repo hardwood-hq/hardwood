@@ -24,6 +24,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.RowRanges;
@@ -53,6 +54,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PageFilterEvaluatorTest {
 
+    /// A position with nothing to point at: the cases using it assert decisions, not diagnostics.
+    private static final LogContext UNNAMED =
+            new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
     @RegisterExtension
     final CapturedWarnings warnings = new CapturedWarnings();
 
@@ -68,12 +73,8 @@ class PageFilterEvaluatorTest {
     @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}, {4}]")
     @MethodSource
     void testIntPageFiltering(Operator op, int value, boolean page0Kept, boolean page1Kept, boolean page2Kept) {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
-                    int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDrop(op, value, min, max);
-                });
+        RowRanges ranges = evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntPredicate(0, op, value));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 30),  "page 0 (rows 0-30)");
         assertEquals(page1Kept, ranges.overlapsPage(30, 60), "page 1 (rows 30-60)");
@@ -117,12 +118,8 @@ class PageFilterEvaluatorTest {
 
     @Test
     void testAllPagesMatch() {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
-                    int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDrop(Operator.GT, 0, min, max);
-                });
+        RowRanges ranges = evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntPredicate(0, Operator.GT, 0));
 
         assertEquals(1, ranges.intervalCount());
         assertTrue(ranges.overlapsPage(0, 90));
@@ -130,12 +127,8 @@ class PageFilterEvaluatorTest {
 
     @Test
     void testNoPagesMatch() {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
-                    int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDrop(Operator.GT, 100, min, max);
-                });
+        RowRanges ranges = evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntPredicate(0, Operator.GT, 100));
 
         assertEquals(0, ranges.intervalCount());
     }
@@ -150,12 +143,8 @@ class PageFilterEvaluatorTest {
                 ColumnIndex.BoundaryOrder.UNORDERED,
                 null, null, null, null);
 
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(nullPageColumnIndex, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
-                    int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDrop(Operator.GT, 0, min, max);
-                });
+        RowRanges ranges = evaluatePages(nullPageColumnIndex, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntPredicate(0, Operator.GT, 0));
 
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
@@ -174,12 +163,8 @@ class PageFilterEvaluatorTest {
     @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
     @MethodSource
     void testLongPageFiltering(Operator op, long value, boolean page0Kept, boolean page1Kept) {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(LONG_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    long min = StatisticsDecoder.decodeLong(columnIndex.minValues().get(pageIndex));
-                    long max = StatisticsDecoder.decodeLong(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDrop(op, value, min, max);
-                });
+        RowRanges ranges = evaluatePages(LONG_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.LongPredicate(0, op, value));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
         assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
@@ -212,12 +197,8 @@ class PageFilterEvaluatorTest {
     @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
     @MethodSource
     void testFloatPageFiltering(Operator op, float value, boolean page0Kept, boolean page1Kept) {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(FLOAT_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    float min = StatisticsDecoder.decodeFloat(columnIndex.minValues().get(pageIndex));
-                    float max = StatisticsDecoder.decodeFloat(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDropFloat(op, value, min, max, false);
-                });
+        RowRanges ranges = evaluatePages(FLOAT_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.FloatPredicate(0, op, value));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
         assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
@@ -250,12 +231,8 @@ class PageFilterEvaluatorTest {
     @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
     @MethodSource
     void testDoublePageFiltering(Operator op, double value, boolean page0Kept, boolean page1Kept) {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(DOUBLE_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    double min = StatisticsDecoder.decodeDouble(columnIndex.minValues().get(pageIndex));
-                    double max = StatisticsDecoder.decodeDouble(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDropDouble(op, value, min, max, false);
-                });
+        RowRanges ranges = evaluatePages(DOUBLE_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.DoublePredicate(0, op, value));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
         assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
@@ -288,13 +265,8 @@ class PageFilterEvaluatorTest {
     @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
     @MethodSource
     void testBooleanPageFiltering(Operator op, boolean value, boolean page0Kept, boolean page1Kept) {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(BOOLEAN_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    int min = StatisticsDecoder.decodeBoolean(columnIndex.minValues().get(pageIndex)) ? 1 : 0;
-                    int max = StatisticsDecoder.decodeBoolean(columnIndex.maxValues().get(pageIndex)) ? 1 : 0;
-                    int val = value ? 1 : 0;
-                    return StatisticsFilterSupport.canDrop(op, val, min, max);
-                });
+        RowRanges ranges = evaluatePages(BOOLEAN_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.BooleanPredicate(0, op, value));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
         assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
@@ -321,15 +293,9 @@ class PageFilterEvaluatorTest {
     @MethodSource
     void testBinaryPageFiltering(Operator op, String value, boolean page0Kept, boolean page1Kept) {
         byte[] searchValue = value.getBytes(StandardCharsets.UTF_8);
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(BINARY_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
-                (columnIndex, pageIndex) -> {
-                    byte[] min = columnIndex.minValues().get(pageIndex);
-                    byte[] max = columnIndex.maxValues().get(pageIndex);
-                    int cmpMin = BinaryComparator.compareUnsigned(searchValue, min);
-                    int cmpMax = BinaryComparator.compareUnsigned(searchValue, max);
-                    return StatisticsFilterSupport.canDropCompared(op,
-                            cmpMin, cmpMax, BinaryComparator.compareUnsigned(min, max));
-                });
+        RowRanges ranges = evaluatePages(BINARY_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.BinaryPredicate(0, op, searchValue,
+                        ResolvedPredicate.BinaryPredicate.Comparison.BYTE_STRING));
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
         assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
@@ -633,12 +599,8 @@ class PageFilterEvaluatorTest {
 
     @Test
     void testIntInPageFiltering() {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (ci, i) -> {
-                    int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
-                    int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                    return StatisticsFilterSupport.canDropIntIn(new int[]{ 5, 15 }, min, max);
-                });
+        RowRanges ranges = evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntInPredicate(0, new int[]{ 5, 15 }));
         assertTrue(ranges.overlapsPage(0, 30));
         assertTrue(ranges.overlapsPage(30, 60));
         assertFalse(ranges.overlapsPage(60, 90));
@@ -646,12 +608,8 @@ class PageFilterEvaluatorTest {
 
     @Test
     void testIntInPageFilteringAllOutside() {
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
-                (ci, i) -> {
-                    int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
-                    int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                    return StatisticsFilterSupport.canDropIntIn(new int[]{ 50, 60 }, min, max);
-                });
+        RowRanges ranges = evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                new ResolvedPredicate.IntInPredicate(0, new int[]{ 50, 60 }));
         assertFalse(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertFalse(ranges.overlapsPage(60, 90));
@@ -662,12 +620,8 @@ class PageFilterEvaluatorTest {
         ColumnIndex longIdx = longColumnIndex(new long[]{ 100, 200, 300 }, new long[]{ 199, 299, 399 });
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(longIdx, oi, 90,
-                (ci, i) -> {
-                    long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
-                    long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
-                    return StatisticsFilterSupport.canDropLongIn(new long[]{ 150, 350 }, min, max);
-                });
+        RowRanges ranges = evaluatePages(longIdx, oi, 90,
+                new ResolvedPredicate.LongInPredicate(0, new long[]{ 150, 350 }));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
@@ -680,14 +634,10 @@ class PageFilterEvaluatorTest {
                 List.of("cherry".getBytes(StandardCharsets.UTF_8), "fig".getBytes(StandardCharsets.UTF_8)));
         OffsetIndex oi = offsetIndex(30, 30);
 
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(binIdx, oi, 60,
-                (ci, i) -> {
-                    byte[] min = ci.minValues().get(i);
-                    byte[] max = ci.maxValues().get(i);
-                    return StatisticsFilterSupport.canDropBinaryIn(
-                            new byte[][]{ "banana".getBytes(StandardCharsets.UTF_8), "zebra".getBytes(StandardCharsets.UTF_8) },
-                            min, max, false);
-                });
+        RowRanges ranges = evaluatePages(binIdx, oi, 60,
+                new ResolvedPredicate.BinaryInPredicate(0,
+                        new byte[][]{ "banana".getBytes(StandardCharsets.UTF_8), "zebra".getBytes(StandardCharsets.UTF_8) },
+                        ResolvedPredicate.BinaryPredicate.Comparison.BYTE_STRING));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
     }
@@ -697,12 +647,8 @@ class PageFilterEvaluatorTest {
         ColumnIndex doubleIdx = doubleColumnIndex(new double[]{ 100.0, 200.0, 300.0 }, new double[]{ 199.0, 299.0, 399.0 });
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(doubleIdx, oi, 90,
-                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
-                        new double[]{ 150.0, 350.0 },
-                        StatisticsDecoder.decodeDouble(ci.minValues().get(i)),
-                        StatisticsDecoder.decodeDouble(ci.maxValues().get(i)),
-                        false));
+        RowRanges ranges = evaluatePages(doubleIdx, oi, 90,
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, false, false));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
@@ -714,32 +660,23 @@ class PageFilterEvaluatorTest {
         ColumnIndex floatIdx = floatColumnIndex(new float[]{ 100.0f, 200.0f, 300.0f }, new float[]{ 199.0f, 299.0f, 399.0f });
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
-        RowRanges ranges = PageFilterEvaluator.evaluatePages(floatIdx, oi, 90,
-                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
-                        new double[]{ 150.0, 350.0 },
-                        StatisticsDecoder.decodeFloat(ci.minValues().get(i)),
-                        StatisticsDecoder.decodeFloat(ci.maxValues().get(i)),
-                        false));
+        RowRanges ranges = evaluatePages(floatIdx, oi, 90,
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, true, false));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
 
         // NaN probe keeps every page.
-        RowRanges nanRanges = PageFilterEvaluator.evaluatePages(floatIdx, oi, 90,
-                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
-                        new double[]{ 150.0, Double.NaN },
-                        StatisticsDecoder.decodeFloat(ci.minValues().get(i)),
-                        StatisticsDecoder.decodeFloat(ci.maxValues().get(i)),
-                        false));
+        RowRanges nanRanges = evaluatePages(floatIdx, oi, 90,
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, Double.NaN }, true, false));
         assertTrue(nanRanges.overlapsPage(0, 90));
     }
 
     @Test
     void testDoubleInPageDispatchFiltersThroughResolvedLeaf() throws IOException {
-        // End-to-end page dispatch: a resolved DoubleInPredicate must flow through
-        // PageFilterEvaluator's leaf switch (unlike the decode-lambda tests above, removing
-        // the DoubleIn arm from the evaluator fails this). Three FLOAT-column pages
-        // [100,199], [200,299], [300,399]; probes 150/350 keep pages 0 and 2 only.
+        // End-to-end page dispatch: a resolved DoubleInPredicate against a page index read from
+        // its wire bytes. Three FLOAT-column pages [100,199], [200,299], [300,399]; probes
+        // 150/350 keep pages 0 and 2 only.
         byte[] columnIndex = new ThriftStructBuilder()
                 .field(1, FieldType.LIST).boolList(false, false, false)
                 .field(2, FieldType.LIST)
@@ -1069,6 +1006,38 @@ class PageFilterEvaluatorTest {
             assertTrue(ranges.overlapsPage(0, 30));
             assertTrue(ranges.overlapsPage(30, 60));
         }
+    }
+
+    @Test
+    void listNullPredicateWithoutPageHistogramKeepsEveryPage() {
+        // An optional LIST of optional elements: the list is present at level 1, an element
+        // non-null at level 3. Every row holds one null and one non-null element, so each page's
+        // null count equals its row count although no list on it is absent. Without a histogram
+        // the null count is all there is, and it answers a different question than either null
+        // predicate on the list asks.
+        ColumnIndex listIndex = new ColumnIndex(
+                new boolean[]{ false, false },
+                List.of(intBytes(1), intBytes(1)),
+                List.of(intBytes(9), intBytes(9)),
+                ColumnIndex.BoundaryOrder.UNORDERED,
+                new long[]{ 30, 30 }, null, null, null);
+        OffsetIndex oi = offsetIndex(30, 30);
+
+        RowRanges isNull = evaluatePages(listIndex, oi, 60, new ResolvedPredicate.IsNullPredicate(0, 1, 3));
+        RowRanges isNotNull = evaluatePages(listIndex, oi, 60, new ResolvedPredicate.IsNotNullPredicate(0, 1, 3));
+
+        assertTrue(isNull.overlapsPage(0, 30));
+        assertTrue(isNull.overlapsPage(30, 60));
+        assertTrue(isNotNull.overlapsPage(0, 30));
+        assertTrue(isNotNull.overlapsPage(30, 60));
+    }
+
+    /// Decides `leaf` page by page over the two indexes, as the evaluator does once it has read
+    /// them.
+    private static RowRanges evaluatePages(ColumnIndex columnIndex, OffsetIndex offsetIndex,
+            long rowCount, ResolvedPredicate leaf) {
+        return PageFilterEvaluator.evaluatePages(columnIndex, offsetIndex, rowCount, leaf, UNNAMED,
+                BoundsReadability.ALL);
     }
 
     /// A PageLocation struct body: offset, compressed_page_size, first_row_index.

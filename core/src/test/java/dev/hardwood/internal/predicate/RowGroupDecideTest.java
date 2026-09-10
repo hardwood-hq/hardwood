@@ -103,6 +103,16 @@ class RowGroupDecideTest {
     }
 
     @Test
+    void valuePredicateCannotMatchARowGroupNullOnEveryRow() throws IOException {
+        // No bounds, as a writer records for a chunk holding no value, and a null count equal to
+        // the row count. A null satisfies no value predicate, NOT_EQ included.
+        RowGroup rg = rowGroup(PhysicalType.INT32, new Statistics(null, null, 100L, null, false), 100);
+        assertThat(decide(intGt(5), rg)).isEqualTo(CANNOT_MATCH);
+        assertThat(decide(new ResolvedPredicate.IntPredicate(COL, FilterPredicate.Operator.NOT_EQ, 5), rg))
+                .isEqualTo(CANNOT_MATCH);
+    }
+
+    @Test
     void bloomFilterSourceDoesNotAffectAlwaysMatches() throws IOException {
         // A bloom filter proves absence only; its presence must not change the
         // always-matching decision derived from statistics.
@@ -227,6 +237,20 @@ class RowGroupDecideTest {
 
         assertThat(decide(isNotNull, rg))
                 .isEqualTo(MIGHT_MATCH);
+    }
+
+    @Test
+    void listNullPredicateWithoutHistogramStaysUndecided() throws IOException {
+        // An optional LIST of optional elements: the list is present at level 1, an element
+        // non-null at level 3. Each of the 100 rows holds one null and one non-null element, so
+        // the null count equals the row count although no list is absent. Without a histogram
+        // the null count is all there is, and it answers a different question than either null
+        // predicate on the list asks.
+        RowGroup rg = rowGroup(PhysicalType.INT32,
+                new Statistics(intBytes(1), intBytes(9), 100L, null, false), 100);
+
+        assertThat(decide(new ResolvedPredicate.IsNullPredicate(COL, 1, 3), rg)).isEqualTo(MIGHT_MATCH);
+        assertThat(decide(new ResolvedPredicate.IsNotNullPredicate(COL, 1, 3), rg)).isEqualTo(MIGHT_MATCH);
     }
 
     @Test
