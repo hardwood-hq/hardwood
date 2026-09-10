@@ -49,6 +49,16 @@ import jdk.jfr.consumer.RecordingStream;
 /// trivially passes if no events were captured (for example, if the test
 /// forgets [#enable] for a default-disabled event like `jdk.SocketRead`,
 /// or if the code under test never runs the relevant path).
+///
+/// ### Events emitted off the test thread
+///
+/// [#awaitEvents] drains what has been committed, so an event a worker thread has
+/// not reached `commit()` for yet is absent from the capture. A read that runs to
+/// completion has finished its workers before the recording stops and all of its
+/// events are there; a test that abandons a read mid-flight races them, and
+/// stopping the recording cannot settle that race. Measure such a read through an
+/// application-level counter instead — `S3InputFile.networkBytesFetched()` is
+/// final once the reader is closed, and is what the S3 tests assert on.
 public abstract class AbstractJfrRecorderTest {
 
     private RecordingStream recording;
