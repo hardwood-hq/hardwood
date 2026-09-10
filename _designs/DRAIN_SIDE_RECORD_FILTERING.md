@@ -181,7 +181,7 @@ The drain-side path is still slower single-threaded across every eligible shape 
 
 Why drain-side stays slower single-threaded:
 
-1. **`BitSet.get(int)` is opaque to autovectorisation.** Even though the value comparison is now branchless, the null-check still goes through a virtual call into a non-final method that does its own shift, mask, bounds check, and array load. HotSpot will not autovectorise around it. The compiled per-row path doesn't have this problem because it uses indexed accessors that the JIT inlines through.
+1. **The bitmap pack does not vectorise.** The value comparison is branchless, but packing a vector compare into bitmap bits has no autovectorisation idiom, so C2 emits a scalar `mov`/`cmp`/`setcc`/`shlx`/`or` per value, unrolled 4× with a rolled remainder. The compiled per-row path pays no packing cost at all.
 2. **Match-all pays full `O(n)` matcher cost.** The compiled path's iterator under match-all is effectively `rowIndex++`; drain-side runs the matcher loop in full whether 100% or 0% of rows pass.
 3. **Per-survivor `nextSetBit`.** The consumer iterates surviving rows via `Long.numberOfTrailingZeros` + clear-low-bit. At match-all density, that's per-row work the compiled path doesn't do.
 
@@ -246,15 +246,35 @@ One read of `vals[]`, one bitmap, no intersect. Strictly cheaper than two single
 
 ### Vector API matchers
 
-**Why.** A `LongVector.compare(GT, lit).toLong()` lowers to a single SIMD instruction (`pcmpgtq` on x86-64, `cmgt` on AArch64) over `SPECIES.length()` lanes per cycle. Per-element cost drops from O(1) instructions to O(1/lane-count). The hardware is sitting there; the matcher loop is exactly the shape SIMD eats.
+**Status: measured, not pursued.** A working implementation for `int` and `float` reached a green build; it is not merged, because the end-to-end ceiling turned out to be about half a percent. The measurements are recorded here so the next reader starts from them rather than re-deriving them.
 
-**Prerequisite.** `notNullWords` migration. Without it, the SIMD comparison can't be paired with a SIMD-friendly null mask — you'd lower the comparison and immediately stall on `BitSet.get` per element.
+**The kernel gain is large and machine-dependent.** One SIMD compare plus a mask-to-bits extraction replaces the scalar loop's six instructions per value. Measured against a 4096-row batch, each vector matcher verified bit-identical to its scalar counterpart before timing:
 
-**What to build.** Multi-release `core/src/main/java22/dev/hardwood/internal/predicate/matcher/.../Vector*BatchMatcher.java`. Strategy pattern via the existing `VectorSupport.isAvailable()` (already used by the SIMD encoders). Per-`(type, op)` pair, mirroring the scalar layout. The output bitmap accumulates word-aligned (`SPECIES.length()` divides 64), so several SIMD iterations contribute to one word; null masking happens in a separate word-wise AND pass after.
+| kernel | AVX2, 256-bit | NEON, 128-bit |
+| --- | ---: | ---: |
+| `int` LT | 0.613 → 0.068 ns/value (9.1×) | 0.352 → 0.131 ns/value (2.7×) |
+| `float` LT | 0.889 → 0.422 ns/value (2.1×) | 0.624 → 0.199 ns/value (3.1×) |
+| `long` GT | 0.546 → 0.316 ns/value (1.7×) | — |
 
-**Payoff.** With the `notNullWords` migration in front of it, this is what could put drain-side ahead of compiled even single-threaded — the lever the v1 design over-promised.
+Which type gains more is a property of the machine, not of the types: `int` carries eight lanes per 256-bit vector against four per 128-bit one, and the total-order key transform that `float` needs costs more on x86 than on AArch64. `long` and `double` carry half the lanes of `int` throughout.
 
-**Difficulty.** High. Multi-release plumbing per matcher (28 files × 2 = 56 classes). Verify each on both scalar fallback (JDK 21 path) and SIMD path. Worth doing only after `notNullWords` lands.
+**The end-to-end gain is bounded by the matcher's share of a scan, which is about 5 %.** A filtered scan over 2 M rows pinned to one core, filtering on an `int` column, ran 26.1 ms against 27.4 ms scalar — a 1.3 ms saving, inside error bars of ±9.0 and ±4.6 ms, with the long-predicate arm as an unmoved control at 58.7 against 58.3 ms. Two routes agree on what that decomposes to:
+
+- The 1.3 ms saving is 89 % of the matcher's cost, putting the whole scalar matcher at ≈1.5 ms, or 5.3 % of the scan.
+- 0.613 ns/value over 2 M rows is 1.23 ms directly, or 4.5 % of the scan.
+
+Either way the residual after a 9× kernel is ≈0.15 ms, **0.5–0.6 % of the scan**, and that is the entire headroom a wider vector would compete for. The parts of the matcher that do not scale with lane count — bitmap word assembly, bounds checks, the word-wise validity AND — are a growing share of what remains, so the realised gain from a wider vector would be smaller still.
+
+`RecordFilterMicroBenchmark` agrees on the magnitude. Raw drain-side numbers for `and3` and `and4` move 11–13 %, but the compiled control moves 6–10 % between the same two JVM launches; normalising each arm against its own control leaves 4–5 %, which is what one `int` leaf out of three or four is worth.
+
+**What it would cost.** Thirteen classes in a multi-release source root that compile only on JDK 22+ and run only when the incubating Vector API module is added, a second implementation of matcher semantics to keep correct — including a hand-rolled `Float.compare` total order whose failure mode is silently wrong NaN and `-0` results rather than a crash — tests that can run only as integration tests, and a two-implementation decision on every matcher added afterwards.
+
+**Two constraints any future attempt inherits.**
+
+- *The species and the operator must both fold to compile-time constants.* Routing either through an instance field or a method parameter drops the kernel onto a generic path that measured roughly 30× slower than the scalar matcher. This forces one class per operator rather than one parameterised by it, and is most of where the class count comes from.
+- *`float` cannot compare on float lanes.* The scalar matcher orders by `Float.compare` — every NaN above `+Infinity`, `-0` below `+0` — and the Vector API's float comparison is IEEE. Comparing lanes directly drops every NaN out of the result and ranks `-0` equal to `+0`. Canonicalising NaN and flipping the magnitude bits of negatives reproduces the ordering as one integer comparison.
+
+**What would change the answer.** Not a wider vector, but a larger matcher share of the scan — which is what the late-materialization fork in #500 would do. Revisit then.
 
 ### Per-batch min/max + sentinel matches
 
