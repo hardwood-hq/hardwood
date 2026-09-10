@@ -1096,7 +1096,7 @@ class DiveRenderTest {
     }
 
     @Test
-    void jumpPromptShowsWhatWasTypedAndCostsTheTableOneRow() {
+    void jumpPromptShowsWhatWasTypedWithoutTakingTableRows() {
         Rect body = new Rect(0, 0, 120, 20);
         ScreenState.DataPreview state = DataPreviewScreen.initialState(model, 5);
         NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
@@ -1109,12 +1109,15 @@ class DiveRenderTest {
         RenderHarness.RenderedFrame frame = RenderHarness.render(body, prompting, model);
 
         assertThat(frame.contains(": 7")).as("the typed target is on screen").isTrue();
+        assertThat(frame.contains("Jump to")).as("the box says what it is").isTrue();
         assertThat(frame.contains("rg followed by a row group"))
                 .as("the prompt says what it accepts").isTrue();
-        // Block borders and header take 3 rows, the prompt line a 4th.
+        assertThat(frame.contains("Esc cancel")).as("the box says how to leave it").isTrue();
+        // The box floats over the table, so the page behind it is unchanged:
+        // block borders and the header take 3 rows, and nothing else does.
         assertThat(prompting.rows())
-                .as("the prompt costs the table exactly one row")
-                .hasSize(body.height() - 4);
+                .as("the prompt costs the table no rows")
+                .hasSize(body.height() - 3);
     }
 
     @Test

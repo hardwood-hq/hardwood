@@ -20,7 +20,6 @@ import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
-import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.CharWidth;
@@ -48,6 +47,11 @@ public final class DataPreviewScreen {
     private static final int COLUMN_SPACING = 1;
     private static final int MIN_PARTIAL_COLUMN_WIDTH = 8;
     private static final int VALUE_TRUNCATE = 32;
+
+    /// The `:` box: wide enough for the longest refusal it prints, tall
+    /// enough for the input, the hint and the keys, plus two borders.
+    private static final int JUMP_MODAL_WIDTH = 48;
+    private static final int JUMP_MODAL_HEIGHT = 6;
 
     /// A sliding ±10×viewport row window of pre-formatted Data preview
     /// rows. Within-window navigation (PgUp/PgDn that stays inside the
@@ -214,7 +218,7 @@ public final class DataPreviewScreen {
         if (!(stack.top() instanceof ScreenState.DataPreview state) || state.modalRow() >= 0) {
             return;
         }
-        int viewport = viewportRows(body, state.jump() != null);
+        int viewport = viewportRows(body);
         if (state.pageSize() == viewport) {
             return;
         }
@@ -226,21 +230,13 @@ public final class DataPreviewScreen {
 
     /// Block borders (top + bottom) and the header row are 3 cells of chrome
     /// around the data rows.
-    private static int viewportRows(Rect body, boolean promptOpen) {
-        return Math.max(1, body.height() - 3 - (promptOpen ? 1 : 0));
+    private static int viewportRows(Rect body) {
+        return Math.max(1, body.height() - 3);
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DataPreview state) {
-        Rect tableArea = area;
-        if (state.jump() != null) {
-            List<Rect> split = Layout.vertical()
-                    .constraints(new Constraint.Length(1), new Constraint.Fill(1))
-                    .split(area);
-            renderJumpPrompt(buffer, split.get(0), state.jump());
-            tableArea = split.get(1);
-        }
         Keys.observeDataPreviewArea(area.width(), area.height());
-        Keys.observeViewport(viewportRows(area, state.jump() != null));
+        Keys.observeViewport(viewportRows(area));
         Keys.observeViewportWidth(area.width());
         int columnCount = state.columnNames().size();
         ColumnWindow window = columnWindow(state, area.width());
@@ -287,27 +283,49 @@ public final class DataPreviewScreen {
         if (!state.rows().isEmpty()) {
             tableState.select(Math.min(state.selectedRow(), state.rows().size() - 1));
         }
-        table.render(tableArea, buffer, tableState);
+        table.render(area, buffer, tableState);
         if (state.modalRow() >= 0 && state.modalRow() < state.rows().size()) {
             buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
+        if (state.jump() != null) {
+            buffer.setStyle(area, Theme.dim());
+            renderJumpPrompt(buffer, area, state.jump());
+        }
     }
 
-    /// The `:` prompt line: what has been typed, and — once an `Enter` has
+    /// The `:` prompt, in the same centred bordered box as the record modal
+    /// and the help overlay: what has been typed, and — once an `Enter` has
     /// been refused — why nothing moved.
-    private static void renderJumpPrompt(Buffer buffer, Rect area,
+    private static void renderJumpPrompt(Buffer buffer, Rect screenArea,
                                          ScreenState.DataPreview.JumpPrompt prompt) {
-        Line line = prompt.error() == null
-                ? Line.from(
-                        new Span(" : ", Theme.primary()),
-                        new Span(prompt.input() + "█", Theme.primary()),
-                        new Span("  (row, or rg followed by a row group)", Theme.dim()))
-                : Line.from(
-                        new Span(" : ", Theme.primary()),
-                        new Span(prompt.input() + "█", Theme.primary()),
-                        new Span("  " + prompt.error(), Theme.accent()));
-        Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
+        int width = Math.min(JUMP_MODAL_WIDTH, Math.max(1, screenArea.width() - 4));
+        int height = Math.min(JUMP_MODAL_HEIGHT, Math.max(1, screenArea.height()));
+        Rect area = new Rect(
+                screenArea.left() + (screenArea.width() - width) / 2,
+                screenArea.top() + (screenArea.height() - height) / 2,
+                width, height);
+        Clear.INSTANCE.render(area, buffer);
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(
+                new Span(" : ", Theme.primary()),
+                new Span(prompt.input() + "\u2588", Theme.primary())));
+        lines.add(Line.empty());
+        lines.add(prompt.error() == null
+                ? Line.from(new Span(" a row, or rg followed by a row group", Theme.dim()))
+                : Line.from(new Span(" " + prompt.error(), Theme.accent())));
+        lines.add(Line.from(new Span(" Enter go \u00b7 Esc cancel", Theme.dim())));
+        Paragraph.builder()
+                .block(Block.builder()
+                        .title(" Jump to ")
+                        .borders(Borders.ALL)
+                        .borderType(BorderType.ROUNDED)
+                        .build())
+                .text(Text.from(lines))
+                .left()
+                .build()
+                .render(area, buffer);
     }
 
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ParquetModel model,
@@ -514,7 +532,9 @@ public final class DataPreviewScreen {
     }
 
     public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
-        if (state.modalRow() >= 0) {
+        // Both boxes carry their own keys, so the keybar stands down while one
+        // of them is open rather than offering keys the box has taken.
+        if (state.modalRow() >= 0 || state.jump() != null) {
             return "";
         }
         long total = model.facts().totalRows();
@@ -528,12 +548,6 @@ public final class DataPreviewScreen {
                 anyLogical = true;
                 break;
             }
-        }
-        if (state.jump() != null) {
-            return new Keys.Hints()
-                    .add(true, "[Enter] go")
-                    .add(true, "[Esc] cancel")
-                    .build();
         }
         return new Keys.Hints()
                 .add(loaded > 1, "[↑↓] row")

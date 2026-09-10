@@ -54,10 +54,10 @@ Input out of range for the file — a row past the last row, a row group past th
 last row group — is reported in the prompt, which stays open with the text
 intact. Nothing is clamped and no seek happens.
 
-The prompt is a single line above the table, in the shape `DictionaryScreen`
-already uses for its filter, rather than a modal box. Typed input in dive is a
-bar; a modal is for content a reader scrolls (`HelpOverlay`) or dismisses
-(`ReadFailureOverlay`).
+The prompt is a centred bordered box over the table, the shape `HelpOverlay`,
+`ReadFailureOverlay` and the Data preview's own record modal use. It carries
+its own keys, so the keybar stands down while it is open, and it costs the page
+behind it no rows.
 
 The seek itself goes through the Data preview's existing absolute-position move,
 so a jump is the same operation as `G` with a different target, and the
