@@ -55,6 +55,25 @@ class FilterPredicateResolverTest {
         assertThat(((ResolvedPredicate.IntPredicate) resolved).value()).isEqualTo(0);
     }
 
+    @Test
+    void resolveDateOnUnannotatedIntColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("col", LocalDate.of(2024, 6, 15)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' is not a DateType column (logical type: null)");
+    }
+
+    @Test
+    void resolveDateOnDifferentlyAnnotatedIntColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32,
+                new LogicalType.IntType(32, true));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.gt("col", LocalDate.of(2024, 6, 15)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' is not a DateType column (logical type: INT_32)");
+    }
+
     // ==================== Instant ====================
 
     @Test

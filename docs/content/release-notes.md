@@ -32,6 +32,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Every `LogicalType` member has a static factory, and those are the documented way to construct one — `LogicalType.string()`, `LogicalType.decimal(18, 2)`, `LogicalType.timestamp(true, TimeUnit.MICROS)` ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). The parameterless ones return a shared instance, which the reader now hands back instead of allocating a record per column while it decodes a footer. The record constructors still work.
 
+- A `LocalDate` predicate requires the column to carry the `DATE` annotation, as its JavaDoc has always said ([#1141](https://github.com/hardwood-hq/hardwood/issues/1141)). The annotation went unchecked before, so a `LocalDate` against a plain `INT32` column compared epoch days against unrelated integers and returned rows answering a different question, with nothing raised. **What changes for you:** such a call now throws `IllegalArgumentException` at reader creation. A plain `INT32` column that does hold epoch days is filtered by the day itself — `gt("d", (int) date.toEpochDay())`.
+
 **Breaking Changes:**
 
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).

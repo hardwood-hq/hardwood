@@ -78,6 +78,7 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
+                validateLogicalType(p.column(), LogicalType.DateType.class, cs);
                 yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(),
                         Math.toIntExact(p.value().toEpochDay()));
             }

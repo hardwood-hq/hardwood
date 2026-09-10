@@ -304,7 +304,8 @@ public sealed interface FilterPredicate
     // ==================== LocalDate (DATE) Predicates ====================
 
     /// Creates an equals predicate for a [LocalDate] column (Parquet DATE logical type).
-    /// The date is converted to days since the Unix epoch at evaluation time.
+    /// The column must carry the `DATE` logical type; the date is converted to days since the
+    /// Unix epoch at evaluation time.
     static FilterPredicate eq(String column, LocalDate value) {
         return new DateColumnPredicate(column, Operator.EQ, value);
     }
