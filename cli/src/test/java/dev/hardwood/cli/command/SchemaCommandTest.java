@@ -892,8 +892,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     /// The emitter's malformed-container and missing-`type_length` rejections are not
     /// reachable through [ParquetFileWriter]: the writer refuses to create such files in
     /// the first place (`WriterSchemaShape`, `ValueEncoder`), so the negative paths only
-    /// trigger for third-party files. Raw hand-written Parquet fixtures are out of scope
-    /// for this PR.
+    /// trigger for third-party files.
     ///
     /// A key-only map cannot be built through [FileSchema.Builder], whose `map` verbs
     /// require a value, so the schema elements are declared directly: a MAP group whose
