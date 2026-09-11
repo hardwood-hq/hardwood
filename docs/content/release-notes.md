@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- A `ColumnReader` filter on a `FLOAT16` column no longer throws `ClassCastException`, and one on a struct leaf no longer reads a leaf that is null under a present struct as a value ([#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
+
 - A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows, and one whose value does not fit the column throws `ArithmeticException` ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
 
 - Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
