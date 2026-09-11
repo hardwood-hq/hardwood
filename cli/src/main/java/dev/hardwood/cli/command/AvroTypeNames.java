@@ -20,8 +20,11 @@ import dev.hardwood.schema.SchemaNode;
 ///
 /// Path rules: the root keeps the CLI's existing effective name; a direct struct or
 /// fixed child of a record is namespaced by that record's full name; a list or map
-/// field contributes its disambiguated, uncapitalized, sanitized field-name segment
-/// before a named descendant. Local candidates are `sanitize(capitalize(node.name()))`.
+/// field contributes its own segment before a named descendant. A struct or fixed
+/// child proposes `sanitize(capitalize(node.name()))`, a list or map field proposes
+/// `sanitize(node.name())`. Both kinds name one segment under the same record, so
+/// they compete in a single pool: a container can never take over the record name of
+/// a sibling struct, which would merge their nested types onto one full name.
 /// Candidates colliding inside one namespace resolve by the #895 ordering: a legal
 /// raw name wins the bare candidate, otherwise the smallest raw name wins, exact
 /// duplicates fall back to declaration order, and every loser receives `_2`, `_3`, ….
@@ -123,36 +126,50 @@ final class AvroTypeNames {
     }
 
     private void visitRecordChildren(SchemaNode.GroupNode record, String scope) {
-        List<SchemaNode> children = record.children();
-        Map<SchemaNode, String> containerSegments = resolveContainerSegments(children);
-        List<NodeCandidate> named = new ArrayList<>(children.size());
-        for (SchemaNode child : children) {
-            switch (child) {
+        List<NodeCandidate> candidates = candidatesOf(record.children());
+        Map<SchemaNode, String> localNames = resolve(candidates);
+        for (NodeCandidate candidate : candidates) {
+            String local = join(scope, localNames.get(candidate.node()));
+            switch (candidate.node()) {
                 case SchemaNode.GroupNode g when g.isList() -> {
                     SchemaNode elem = g.getListElement();
                     if (elem != null) {
-                        visitContainer(elem, join(scope, containerSegments.get(g)));
+                        visitContainer(elem, local);
                     }
                 }
                 case SchemaNode.GroupNode g when g.isMap() -> {
                     SchemaNode value = g.getMapValue();
                     if (value != null) {
-                        visitContainer(value, join(scope, containerSegments.get(g)));
+                        visitContainer(value, local);
                     }
                 }
-                case SchemaNode.GroupNode g -> named.add(new NodeCandidate(g, scope, typeCandidate(g), g.name()));
+                case SchemaNode.GroupNode g -> {
+                    fullNames.put(g, local);
+                    visitRecordChildren(g, local);
+                }
+                default -> fullNames.put(candidate.node(), local);
+            }
+        }
+    }
+
+    /// Every child of one record that claims a name in that record's scope: a list or
+    /// map claims a namespace segment, a struct or fixed child claims a type name.
+    /// Both kinds land in one list, because both become the segment after the record's
+    /// full name and therefore collide with each other.
+    private static List<NodeCandidate> candidatesOf(List<SchemaNode> children) {
+        List<NodeCandidate> candidates = new ArrayList<>(children.size());
+        for (SchemaNode child : children) {
+            switch (child) {
+                case SchemaNode.GroupNode g when g.isList() || g.isMap() ->
+                        candidates.add(new NodeCandidate(g, SchemaNames.sanitize(g.name()), g.name()));
+                case SchemaNode.GroupNode g -> candidates.add(new NodeCandidate(g, typeCandidate(g), g.name()));
                 case SchemaNode.PrimitiveNode p
                         when p.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY || p.type() == PhysicalType.INT96 ->
-                        named.add(new NodeCandidate(p, scope, typeCandidate(p), p.name()));
+                        candidates.add(new NodeCandidate(p, typeCandidate(p), p.name()));
                 default -> {}
             }
         }
-        resolve(named);
-        for (NodeCandidate candidate : named) {
-            if (candidate.node() instanceof SchemaNode.GroupNode g) {
-                visitRecordChildren(g, fullNames.get(g));
-            }
-        }
+        return candidates;
     }
 
     /// Visits a list element or map value sitting in `namespace`. Containers pass
@@ -184,65 +201,28 @@ final class AvroTypeNames {
         }
     }
 
-    private static Map<SchemaNode, String> resolveContainerSegments(List<SchemaNode> children) {
-        Map<String, List<SchemaNode>> groups = new TreeMap<>();
-        for (SchemaNode child : children) {
-            if (child instanceof SchemaNode.GroupNode group && (group.isList() || group.isMap())) {
-                String candidate = SchemaNames.sanitize(group.name());
-                groups.computeIfAbsent(candidate, ignored -> new ArrayList<>()).add(group);
-            }
-        }
-        Set<String> used = new HashSet<>(groups.keySet());
-        Map<SchemaNode, String> resolved = new IdentityHashMap<>();
-        for (Map.Entry<String, List<SchemaNode>> entry : groups.entrySet()) {
-            List<SchemaNode> members = entry.getValue();
-            SchemaNode winner = members.stream()
-                    .filter(node -> SchemaNames.isLegal(node.name()))
-                    .min(Comparator.comparing(SchemaNode::name))
-                    .orElseGet(() -> members.stream()
-                            .min(Comparator.comparing(SchemaNode::name))
-                            .orElseThrow());
-            resolved.put(winner, entry.getKey());
-            // Losers receive their suffixes in raw-name order, mirroring the
-            // named-candidate resolver: reordering columns cannot swap a retained
-            // full name. Exact duplicate raw names keep declaration order via the
-            // stable sort.
-            List<SchemaNode> losers = new ArrayList<>(members);
-            losers.remove(winner);
-            losers.sort(Comparator.comparing(SchemaNode::name));
-            for (SchemaNode loser : losers) {
-                String local = entry.getKey();
-                int suffix = 2;
-                while (!used.add(local + "_" + suffix)) {
-                    suffix++;
-                }
-                resolved.put(loser, local + "_" + suffix);
-            }
-        }
-        return resolved;
-    }
-
-    private void resolve(List<NodeCandidate> named) {
+    /// Assigns each candidate its final local name within one record scope.
+    private static Map<SchemaNode, String> resolve(List<NodeCandidate> candidates) {
         Map<String, List<NodeCandidate>> groups = new TreeMap<>();
-        for (NodeCandidate candidate : named) {
+        for (NodeCandidate candidate : candidates) {
             groups.computeIfAbsent(candidate.candidate(), ignored -> new ArrayList<>()).add(candidate);
         }
         // Every bare candidate is reserved up front, so a suffix never lands on
         // another sibling's bare name.
         Set<String> used = new HashSet<>(groups.keySet());
+        Map<SchemaNode, String> localNames = new IdentityHashMap<>();
         for (List<NodeCandidate> members : groups.values()) {
             NodeCandidate winner = winnerOf(members);
-            fullNames.put(winner.node(), join(winner.namespace(), winner.candidate()));
+            localNames.put(winner.node(), winner.candidate());
             List<NodeCandidate> losers = new ArrayList<>(members);
             losers.remove(winner);
             // Stable sort: exact duplicate raw names keep declaration order.
             losers.sort(Comparator.comparing(NodeCandidate::raw));
             for (NodeCandidate loser : losers) {
-                String local = winner.candidate();
-                String renamed = SchemaCommand.disambiguate(local, used);
-                fullNames.put(loser.node(), join(loser.namespace(), renamed));
+                localNames.put(loser.node(), SchemaCommand.disambiguate(winner.candidate(), used));
             }
         }
+        return localNames;
     }
 
     private static NodeCandidate winnerOf(List<NodeCandidate> members) {
@@ -287,5 +267,5 @@ final class AvroTypeNames {
         return lastDot < 0 ? "" : fullName.substring(0, lastDot);
     }
 
-    private record NodeCandidate(SchemaNode node, String namespace, String candidate, String raw) {}
+    private record NodeCandidate(SchemaNode node, String candidate, String raw) {}
 }
