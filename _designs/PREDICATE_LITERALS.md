@@ -270,7 +270,7 @@ express get the same answer; the differences are listed below.
 | `byte[]` literals and factories; `String` only where `getString` reads; `String` records; null literals and malformed `String`s rejected when built | [#1181](https://github.com/hardwood-hq/hardwood/issues/1181) |
 | Ordered operators exactly on ordered types: `BOOLEAN` gains them, with record-level and batch matchers; `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL` lose them. `PqInterval` literal; leaves below a `VARIANT` group take null tests only; `not` over `intersects` rejected | [#1183](https://github.com/hardwood-hq/hardwood/issues/1183) |
 | `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) |
-| Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) |
+| Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) |
 | Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) |
 | `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) |

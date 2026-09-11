@@ -1158,14 +1158,15 @@ class FilterPredicateTest {
         assertThat(mixedAnd.children()).containsExactly(new ResolvedPredicate.FloatPredicate(
                 0, FilterPredicate.Operator.NOT_EQ, 0.5f, false));
 
-        // Zero surviving probes: not(in("col", 0.1)) resolves to IsNotNullPredicate
+        // Zero surviving probes: not(in("col", 0.1)) matches every non-null row, and negating it
+        // again matches none rather than returning the rows it left out for being null.
         ResolvedPredicate allNonRep = FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.in("col", 0.1)), schema);
-        assertThat(allNonRep).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
-        assertThat(((ResolvedPredicate.IsNotNullPredicate) allNonRep).columnIndex()).isEqualTo(0);
+        assertThat(allNonRep).isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
+        assertThat(ResolvedPredicate.negate(allNonRep)).isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
 
         // NaN probe: NaN is float-representable; Double.isNaN(v) keeps it
-        // and resolves to an And containing FloatPredicate NOT_EQ Float.NaN (never IsNotNullPredicate)
+        // and resolves to an And containing FloatPredicate NOT_EQ Float.NaN (never a constant)
         ResolvedPredicate nanResolved = FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.in("col", Double.NaN)), schema);
         assertThat(nanResolved).isInstanceOf(ResolvedPredicate.And.class);

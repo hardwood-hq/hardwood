@@ -74,8 +74,8 @@ equal each other and `-0.0` differs from `+0.0`. A `FLOAT` column's stored value
 A `BigDecimal` literal is rescaled to the column's scale before it is compared. A column with
 more scale than the literal pads it, so `99.99` against a `DECIMAL(scale = 4)` column compares
 as `99.9900`, and trailing zeros drop the same way. A literal carrying a digit the column's
-scale cannot hold throws `ArithmeticException` rather than rounding it away — `99.999` against
-a `DECIMAL(scale = 2)` column.
+scale cannot hold follows the rule under
+[Literals the column cannot hold](#literals-the-column-cannot-hold).
 
 An unsigned column's literal is the stored two's-complement bit pattern, the same form
 [the accessors](accessors.md) hand back for it: `4_000_000_000` in a `UINT_32` column is the `int`
@@ -93,8 +93,7 @@ that order, so a `String` literal against either compares as the column does —
 unscaled value, a `FLOAT16` by the number its two little-endian bytes encode — rather than as a
 byte string. A `FLOAT16` literal must be exactly two bytes. On a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`,
 a literal of any length stands for the value it encodes and is brought to the column width:
-sign-extended when it is shorter, its leading sign-extension bytes dropped when it is longer. One
-whose value needs more bytes than the column holds throws `ArithmeticException`.
+sign-extended when it is shorter, its leading sign-extension bytes dropped when it is longer.
 
 `inStrings` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe is
 still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
@@ -104,6 +103,45 @@ encodes. `in(double...)` on a `FLOAT16` compares against the decoded half as it 
 Note that a `String` literal is encoded as UTF-8, which reproduces a byte one-for-one only below
 `0x80`. A `DECIMAL`'s unscaled value sets the high bit for every negative number, so those are
 not expressible this way; reach for the `BigDecimal` factory instead.
+
+## Literals the column cannot hold
+
+A literal can be a value of the column's literal type that the column itself cannot store: finer
+than the time unit of a `TIMESTAMP` or `TIME`, carrying more decimal places than a `DECIMAL`'s
+scale, past the range of the `INT32` or `INT64` that holds the column's values, of a width a
+fixed-width column does not have, or a `float` no IEEE half represents.
+
+Equality (`eq`, `notEq`, a set form and its negation) asks whether a stored value *is* the
+literal. Against a value the column cannot store, `eq` could never match and `notEq` always
+would, so it throws `IllegalArgumentException` when the reader is built, naming the column, what
+bounds it and the literal:
+
+```java
+// Column 'ts' holds a whole number of microseconds within the INT64 range;
+// the equality literal 2024-05-01T12:00:00.000000500Z is not a value it can hold
+reader.buildRowReader()
+        .filter(FilterPredicate.eq("ts", Instant.parse("2024-05-01T12:00:00.000000500Z")))
+        .build();
+```
+
+An ordered predicate (`lt`, `ltEq`, `gt`, `gtEq`) asks instead where the literal sits in the
+column's order, which every value of the literal type has an answer for, and is answered exactly.
+`lt("ts", Instant.parse("2024-05-01T12:00:00.000000500Z"))` on a microsecond column returns every
+row up to and including `12:00:00.000000`. Where the literal lies past the range the column's
+carrier holds, the predicate matches every non-null row or none: `lt("d", LocalDate.MAX)` on a
+`DATE` column returns every non-null row, and `gt("d", LocalDate.MAX)` returns none. A comparison
+never matches a null row, and `not` over one of these does not either.
+
+On a fixed-width column whose bytes compare as a byte string, a byte literal of another width
+compares as given for an ordered predicate, since the comparison is exact on it either way. A
+fixed-width `DECIMAL` instead reads the literal as the number it encodes, and an ordered predicate
+against a number past the column's width compares against the largest or smallest the width
+holds — so `lt` on a literal wider than the column returns every non-null row.
+
+An annotation's value range does not bound a literal. That covers the bit width of an `INT(8)`,
+the precision of a `DECIMAL` and the single day of a `TIME`: [the accessors](accessors.md) return
+what a file stores, so `eq("i8", 1000)` on an `INT(8)` column is compared as given and matches no
+row of a file that keeps to its annotation.
 
 ## When statistics are ignored
 

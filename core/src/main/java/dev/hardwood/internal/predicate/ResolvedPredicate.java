@@ -200,6 +200,20 @@ public sealed interface ResolvedPredicate {
     record Float16InPredicate(int columnIndex, double[] values, boolean ieee754TotalOrder)
             implements ResolvedPredicate {}
 
+    /// Every non-null row of the leaf, and no null one: the answer to an ordered predicate whose
+    /// literal lies past every value the column can hold, in the direction the predicate admits.
+    ///
+    /// It is not [IsNotNullPredicate]. The two match the same rows, but they negate differently:
+    /// a comparison is unknown on a null row and stays unknown under `not`, so the negation of
+    /// "every non-null row" is [NoRowPredicate] rather than a test that returns the null rows.
+    /// That difference is why the pair is carried as two predicates of its own — using
+    /// [IsNotNullPredicate] as the stand-in made `not(not(p))` return exactly the rows `p`
+    /// excludes for being null.
+    record EveryNonNullRowPredicate(int columnIndex) implements ResolvedPredicate {}
+
+    /// No row at all, the negation of [EveryNonNullRowPredicate].
+    record NoRowPredicate(int columnIndex) implements ResolvedPredicate {}
+
     /// A test for the absence of the node named by the predicate, which is either the leaf column
     /// `columnIndex` itself or a non-repeated group enclosing it.
     ///
@@ -241,17 +255,6 @@ public sealed interface ResolvedPredicate {
         /// A predicate on the leaf column itself, whose two definition levels are the same.
         public IsNotNullPredicate(int columnIndex, int definitionLevel) {
             this(columnIndex, definitionLevel, definitionLevel);
-        }
-
-        /// A predicate on the leaf column itself, for a caller holding no schema to read the
-        /// leaf's definition level from — a negation rewritten into a null check, say.
-        ///
-        /// Both levels are `0`. Being equal, they settle that the predicate is not [#group()].
-        /// They also size a definition level histogram, and `0` fits only a required column's,
-        /// where it is the real level; `UnitStats.decide` refuses a histogram of any other length
-        /// and answers the predicate from the null count.
-        public static IsNotNullPredicate ofLeaf(int columnIndex) {
-            return new IsNotNullPredicate(columnIndex, 0, 0);
         }
 
         /// Whether a definition level separates the tested node from the leaf, so that the leaf
@@ -341,6 +344,8 @@ public sealed interface ResolvedPredicate {
             case Float16InPredicate p -> p.columnIndex();
             case IsNullPredicate p -> p.columnIndex();
             case IsNotNullPredicate p -> p.columnIndex();
+            case EveryNonNullRowPredicate p -> p.columnIndex();
+            case NoRowPredicate p -> p.columnIndex();
             case GeospatialPredicate p -> p.columnIndex();
             case And ignored -> -1;
             case Or ignored -> -1;
@@ -405,6 +410,8 @@ public sealed interface ResolvedPredicate {
                     mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
             case IsNotNullPredicate p -> new IsNotNullPredicate(
                     mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
+            case EveryNonNullRowPredicate p -> new EveryNonNullRowPredicate(mapped(p.columnIndex(), columnMapping));
+            case NoRowPredicate p -> new NoRowPredicate(mapped(p.columnIndex(), columnMapping));
             case GeospatialPredicate p -> new GeospatialPredicate(mapped(p.columnIndex(), columnMapping),
                     p.xmin(), p.ymin(), p.xmax(), p.ymax());
             case And a -> new And(remapChildren(a.children(), columnMapping));
@@ -454,6 +461,8 @@ public sealed interface ResolvedPredicate {
                     p.leafDefinitionLevel());
             case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex(), p.definitionLevel(),
                     p.leafDefinitionLevel());
+            case EveryNonNullRowPredicate p -> new NoRowPredicate(p.columnIndex());
+            case NoRowPredicate p -> new EveryNonNullRowPredicate(p.columnIndex());
             case And a -> new Or(a.children().stream()
                     .map(ResolvedPredicate::negate).toList());
             case Or o -> new And(o.children().stream()
@@ -508,7 +517,7 @@ public sealed interface ResolvedPredicate {
                     }
                 }
                 if (notEqs.isEmpty()) {
-                    yield IsNotNullPredicate.ofLeaf(p.columnIndex());
+                    yield new EveryNonNullRowPredicate(p.columnIndex());
                 }
                 yield new And(notEqs);
             }
@@ -521,7 +530,7 @@ public sealed interface ResolvedPredicate {
                         }
                     }
                     if (notEqs.isEmpty()) {
-                        yield IsNotNullPredicate.ofLeaf(p.columnIndex());
+                        yield new EveryNonNullRowPredicate(p.columnIndex());
                     }
                     yield new And(notEqs);
                 }

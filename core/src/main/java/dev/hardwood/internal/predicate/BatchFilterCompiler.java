@@ -55,6 +55,7 @@ import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.nulls.NoRowBatchMatcher;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.FileSchema;
 
@@ -273,6 +274,8 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.DoubleInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
+            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> true;
+            case ResolvedPredicate.NoRowPredicate ignored -> true;
             case ResolvedPredicate.BooleanPredicate p ->
                     p.op() == FilterPredicate.Operator.EQ || p.op() == FilterPredicate.Operator.NOT_EQ;
             case ResolvedPredicate.Float16Predicate ignored -> false;
@@ -353,6 +356,8 @@ public final class BatchFilterCompiler {
                     : new DoubleInBatchMatcher(p.values());
             case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher();
             case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher();
+            case ResolvedPredicate.EveryNonNullRowPredicate p -> new IsNotNullBatchMatcher();
+            case ResolvedPredicate.NoRowPredicate p -> new NoRowBatchMatcher();
             default -> throw new IllegalStateException(
                     "Unsupported predicate type reached leafMatcher: " + leaf.getClass().getSimpleName()
                             + " — isSupported should have rejected this");

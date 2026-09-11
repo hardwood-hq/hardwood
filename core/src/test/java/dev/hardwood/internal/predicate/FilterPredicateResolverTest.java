@@ -220,17 +220,56 @@ class FilterPredicateResolverTest {
         assertThat(((ResolvedPredicate.IntPredicate) resolved).value()).isEqualTo(9999);
     }
 
-    /// A digit the column cannot hold is refused rather than rounded away, so a predicate never
-    /// silently answers for a value other than the one asked about.
+    /// A digit the column cannot hold is refused for equality rather than rounded away, so a
+    /// predicate never silently answers for a value other than the one asked about.
     @Test
-    void resolveDecimalRefusesALiteralFinerThanTheColumn() {
+    void resolveDecimalRefusesAnEqualityLiteralFinerThanTheColumn() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
                 LogicalType.decimal(9, 2));
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("amount", new BigDecimal("99.999")), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' holds a DECIMAL of scale 2 within the INT32 range; "
+                        + "the equality literal 99.999 is not a value it can hold");
+
+        // `notEq` asks the same question of the literal and is refused the same way: it would
+        // otherwise hold on every row, for a value the caller cannot have meant.
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.notEq("amount", new BigDecimal("99.999")), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' holds a DECIMAL of scale 2 within the INT32 range; "
+                        + "the equality literal 99.999 is not a value it can hold");
+    }
+
+    /// An order has an answer for such a literal: the bound moves to the nearest value the column
+    /// holds on the side the operator admits, which is exact for every value it can store.
+    @Test
+    void resolveDecimalMovesAnOrderBoundToTheNearestValueTheColumnHolds() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(9, 2));
+
+        assertThat(FilterPredicateResolver.resolve(
                 FilterPredicate.gt("amount", new BigDecimal("99.999")), schema))
-                .isInstanceOf(ArithmeticException.class)
-                .hasMessage("Rounding necessary");
+                .isEqualTo(new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.GT_EQ, 10_000));
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.lt("amount", new BigDecimal("99.999")), schema))
+                .isEqualTo(new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.LT_EQ, 9_999));
+    }
+
+    /// Past the carrier's range there is no such bound, and the predicate matches every non-null
+    /// row or none.
+    @Test
+    void resolveDecimalPastTheCarrierRangeResolvesToAConstant() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(9, 2));
+
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.gt("amount", new BigDecimal("99999999999.00")), schema))
+                .isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.gt("amount", new BigDecimal("99999999999.00"))), schema))
+                .isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
     }
 
     @Test
@@ -264,7 +303,7 @@ class FilterPredicateResolverTest {
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
         assertThat(bp.signed()).isTrue();
         // 1.00 with scale 2 → unscaled 100 → padded to 16 bytes
-        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes("amount",
+        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
                 new BigDecimal("1.00").setScale(2).unscaledValue(), 16);
         assertThat(bp.value()).isEqualTo(expected);
     }
@@ -311,7 +350,7 @@ class FilterPredicateResolverTest {
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
         assertThat(bp.signed()).isTrue();
         // -1.50 with scale 2 → unscaled -150 → sign-extended to 8 bytes
-        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes("amount",
+        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
                 new BigDecimal("-1.50").setScale(2).unscaledValue(), 8);
         assertThat(bp.value()).isEqualTo(expected);
         // First byte should be 0xFF (negative sign extension)
@@ -325,8 +364,9 @@ class FilterPredicateResolverTest {
         // 30000000.00 is unscaled 3_000_000_000, which needs five bytes in two's complement
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("30000000.00")), schema))
-                .isInstanceOf(ArithmeticException.class)
-                .hasMessage("Column 'amount' is a FIXED_LEN_BYTE_ARRAY(4) DECIMAL; the literal needs 5 bytes");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' holds a DECIMAL of scale 2 within 4 bytes; "
+                        + "the equality literal 30000000.00 is not a value it can hold");
     }
 
     // ==================== Byte literal on a fixed-width DECIMAL ====================
@@ -355,8 +395,9 @@ class FilterPredicateResolverTest {
     @Test
     void resolveByteLiteralTooWideForFixedLenDecimalThrows() {
         assertThatThrownBy(() -> resolveFixedDecimalLiteral(0x01, 0x00, 0x00, 0x00, 0x00))
-                .isInstanceOf(ArithmeticException.class)
-                .hasMessage("Column 'amount' is a FIXED_LEN_BYTE_ARRAY(4) DECIMAL; the literal needs 5 bytes");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' holds a DECIMAL within 4 bytes; "
+                        + "the equality literal 0100000000 is not a value it can hold");
     }
 
     @Test
@@ -373,14 +414,51 @@ class FilterPredicateResolverTest {
         });
     }
 
-    /// An unannotated fixed-width column compares its bytes as a byte string, where a shorter
-    /// literal is a different value, not a padded one; it resolves as given.
+    /// Every probe of a membership test is an equality literal, so the column has to hold each
+    /// one; a probe whose value needs more bytes than the column has is refused as a scalar
+    /// literal of the same value would be.
     @Test
-    void resolveByteLiteralOnUnannotatedFixedLenColumnAsGiven() {
+    void resolveByteLiteralProbeTooWideForFixedLenDecimalThrows() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                LogicalType.decimal(9, 2));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                new FilterPredicate.BinaryInPredicate("amount",
+                        new byte[][]{ byteLiteral(0x7D), byteLiteral(0x01, 0x00, 0x00, 0x00, 0x00) }),
+                schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' holds a DECIMAL within 4 bytes; "
+                        + "the equality literal 0100000000 is not a value it can hold");
+    }
+
+    /// The same for a fixed-width column that compares as a byte string, where the width itself
+    /// is what the column holds rather than the value the bytes encode.
+    @Test
+    void resolveByteLiteralProbeOfAnotherWidthOnUnannotatedFixedLenColumnThrows() {
         FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(FilterPredicate.eq("code", "aa"), schema);
-        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
-                p -> assertThat(p.value()).containsExactly('a', 'a'));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.inStrings("code", "aaaa", "aa"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'code' holds a byte string of 4 bytes; "
+                        + "the equality literal 6161 (2 bytes) is not a value it can hold");
+    }
+
+    /// An unannotated fixed-width column compares its bytes as a byte string, where a shorter
+    /// literal is a different value, not a padded one. It holds only byte strings of its width,
+    /// so equality against another width is refused while an order compares as given.
+    @Test
+    void resolveByteLiteralOfAnotherWidthOnUnannotatedFixedLenColumn() {
+        FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("code", "aa"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'code' holds a byte string of 4 bytes; "
+                        + "the equality literal 6161 (2 bytes) is not a value it can hold");
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("code", "aa"), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
+                        p -> assertThat(p.value()).containsExactly('a', 'a'));
     }
 
     /// Resolves `eq` for `literal` against a `DECIMAL(9, 2)` in a `FIXED_LEN_BYTE_ARRAY(4)` and
@@ -978,7 +1056,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void toFixedLenDecimalBytes_zeroSignumPadding() {
-        byte[] bytes = FilterPredicateResolver.toFixedLenDecimalBytes("c", BigInteger.ZERO, 4);
+        byte[] bytes = FilterPredicateResolver.toFixedLenDecimalBytes(BigInteger.ZERO, 4);
         assertThat(bytes).containsExactly(0, 0, 0, 0);
     }
 
