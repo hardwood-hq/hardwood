@@ -196,7 +196,8 @@ Fixed-width columns keep their physical size: `fixed_len_byte_array(n)`
 and `int96` become named Avro `fixed` types of `n` and 12 bytes, and the
 `interval` and `float16` logical types map to shared 12- and 2-byte
 `fixed` types defined once per schema. Protobuf has no fixed-width scalar,
-so both render as `bytes`, which keeps all the bytes of an `int96`.
+so fixed-width values render as `bytes`, except UUID-annotated fixed arrays,
+which render as `string`; `int96` renders as `bytes` to keep all twelve bytes.
 
 Named types in Avro — records and fixed types — are unique by full name.
 Each carries a namespace derived from its position, so two records with
