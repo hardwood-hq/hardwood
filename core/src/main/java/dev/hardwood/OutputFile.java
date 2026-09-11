@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 
+import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.internal.writer.ChannelOutputFile;
 
 /// Abstraction for writing Parquet file data.
@@ -67,5 +68,16 @@ public interface OutputFile extends Closeable {
     /// @return a new uncreated OutputFile
     static OutputFile of(Path path) {
         return new ChannelOutputFile(path);
+    }
+
+    /// Creates an uncreated [OutputFile] that keeps the file in memory. The finished file is
+    /// retrieved from [BufferOutputFile#buffer()] after the writer is closed.
+    ///
+    /// The buffer grows with the file, so no size has to be given up front; the length of a
+    /// Parquet file is only known once it has been written.
+    ///
+    /// @return a new uncreated in-memory OutputFile
+    static BufferOutputFile inMemory() {
+        return new ByteBufferOutputFile();
     }
 }
