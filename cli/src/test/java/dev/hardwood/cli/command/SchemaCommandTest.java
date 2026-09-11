@@ -8,6 +8,7 @@
 package dev.hardwood.cli.command;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -894,13 +895,32 @@ class SchemaCommandTest implements SchemaCommandContract {
         }
     }
 
-    /// Runs `protoc` against the emitted schema. A missing `protoc` is a setup failure,
-    /// not a skip; a timeout is destroyed; both streams are reported on rejection.
+    /// The `protoc` binary Maven copied into `target/protoc` during
+    /// `generate-test-resources`, handed over by the `protoc.path` system property.
+    /// The dependency plugin does not keep the executable bit, so this method restores
+    /// it. A binary that is absent is a setup failure, not a reason to skip.
+    private static String protocPath() {
+        String path = System.getProperty("protoc.path");
+        if (path == null) {
+            fail("The protoc.path system property is not set. Run the tests through Maven.");
+        }
+        File protoc = new File(path);
+        if (!protoc.isFile()) {
+            fail("protoc is missing at " + path + ". Run the generate-test-resources phase first.");
+        }
+        if (!protoc.canExecute() && !protoc.setExecutable(true)) {
+            fail("Cannot make protoc executable at " + path);
+        }
+        return path;
+    }
+
+    /// Runs `protoc` against the emitted schema. A timeout is destroyed; both streams
+    /// are reported on rejection.
     private static void assertProtocAccepts(Path tempDir, String name, String proto) throws Exception {
         Path protoFile = tempDir.resolve(name + ".proto");
         Files.writeString(protoFile, proto);
         Path descriptor = tempDir.resolve(name + ".pb");
-        Process process = new ProcessBuilder("protoc", "--proto_path=" + tempDir,
+        Process process = new ProcessBuilder(protocPath(), "--proto_path=" + tempDir,
                 "--descriptor_set_out=" + descriptor, protoFile.toString())
                 .start();
         if (!process.waitFor(30, TimeUnit.SECONDS)) {
@@ -925,7 +945,7 @@ class SchemaCommandTest implements SchemaCommandContract {
                 }""";
         Path protoFile = tempDir.resolve("legacy.proto");
         Files.writeString(protoFile, legacy);
-        Process process = new ProcessBuilder("protoc", "--proto_path=" + tempDir,
+        Process process = new ProcessBuilder(protocPath(), "--proto_path=" + tempDir,
                 "--descriptor_set_out=" + tempDir.resolve("legacy.pb"), protoFile.toString())
                 .start();
         assertThat(process.waitFor(30, TimeUnit.SECONDS)).isTrue();
