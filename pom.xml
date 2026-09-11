@@ -72,9 +72,11 @@
     <java.version.build>25</java.version.build>
     <maven.compiler.parameters>true</maven.compiler.parameters>
     <maven.compiler.release>${java.version}</maven.compiler.release>
+    <os-maven-plugin.version>1.7.1</os-maven-plugin.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <project.build.outputTimestamp>2026-08-31T14:51:58Z</project.build.outputTimestamp>
+    <protoc.version>4.36.1</protoc.version>
     <!-- Integration tests tagged `native` need the compiled CLI binary, which only
          exists under the `native` profile. That profile clears this exclusion, so a
          native build runs every IT and an ordinary one runs every IT it can. -->
@@ -164,6 +166,11 @@
           <configuration>
             <parameters>true</parameters>
           </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-dependency-plugin</artifactId>
+          <version>3.11.0</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

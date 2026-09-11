@@ -638,6 +638,14 @@
   </profiles>
 
   <build>
+    <!-- Supplies ${os.detected.classifier}, which selects the protoc binary below. -->
+    <extensions>
+      <extension>
+        <groupId>kr.motd.maven</groupId>
+        <artifactId>os-maven-plugin</artifactId>
+        <version>${os-maven-plugin.version}</version>
+      </extension>
+    </extensions>
     <plugins>
       <!-- Copy test Parquet files from core into this module's test-classes so they
            are accessible on the classpath during tests -->
@@ -666,6 +674,37 @@
         </executions>
       </plugin>
 
+      <!-- SchemaCommandTest checks the emitted Protobuf with the real compiler. Maven
+           downloads it so the build needs no protoc on the PATH, and every platform
+           runs the same pinned version. A fixed destFileName keeps one path on
+           Linux, macOS and Windows. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-protoc</id>
+            <phase>generate-test-resources</phase>
+            <goals>
+              <goal>copy</goal>
+            </goals>
+            <configuration>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>com.google.protobuf</groupId>
+                  <artifactId>protoc</artifactId>
+                  <version>${protoc.version}</version>
+                  <classifier>${os.detected.classifier}</classifier>
+                  <type>exe</type>
+                  <outputDirectory>${project.build.directory}/protoc</outputDirectory>
+                  <destFileName>protoc.exe</destFileName>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <!-- Aesh annotation processor for compile-time command metadata -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -687,6 +726,9 @@
         <configuration>
           <skipTests>${skipSurefire}</skipTests>
           <argLine>${cli.test.argLine}</argLine>
+          <systemPropertyVariables>
+            <protoc.path>${project.build.directory}/protoc/protoc.exe</protoc.path>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
 
