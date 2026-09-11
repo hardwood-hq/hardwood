@@ -82,8 +82,10 @@ public final class NestedBatchDataView {
         }
     }
 
-    /// Install batch data from [NestedBatch] objects whose index fields
-    /// have been pre-computed by the drain thread.
+    /// Install batch data from [NestedBatch] objects whose index fields are
+    /// already computed: by the drain thread before publish, or, for the
+    /// predicate columns of an exact-filtered `ColumnReader`, by the
+    /// `SelectionEngine`.
     public void setBatchData(NestedBatch[] batches, ColumnSchema[] columnSchemas, String fileName) {
         this.batchIndex = NestedBatchIndex.buildFromBatches(
                 batches, columnSchemas, schema, projectedSchema, fieldMap);

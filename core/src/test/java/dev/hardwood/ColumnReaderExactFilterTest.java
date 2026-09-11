@@ -446,4 +446,105 @@ class ColumnReaderExactFilterTest {
         assertThat(distinctValueSum).isEqualTo(oracleValueSum);
         assertThat(groupedValueSum).isEqualTo(oracleValueSum);
     }
+
+    // ==================== Leaves read by the record-matcher view ====================
+
+    private static final Path FLOAT16_FILE = Paths.get("src/test/resources/float16_logical_type_test.parquet");
+    private static final Path DICT_FLOAT16_FILE = Paths.get("src/test/resources/dict_float16_pushdown.parquet");
+    private static final Path OPTIONAL_LEAF_FILE = Paths.get("src/test/resources/optional_struct_optional_leaf_test.parquet");
+
+    /// `half` over ids 1..7 holds 0.0, 1.0, -1.5, 65504.0, +Inf, NaN and null; a FLOAT16
+    /// column is held as two-byte binary values, which the record view decodes to a half.
+    static Stream<Arguments> float16Filters() {
+        return Stream.of(
+                Arguments.of(FilterPredicate.eq("half", 1.0f), List.of(2)),
+                Arguments.of(FilterPredicate.notEq("half", 1.0f), List.of(1, 3, 4, 5, 6)),
+                Arguments.of(FilterPredicate.lt("half", 1.0f), List.of(1, 3)),
+                Arguments.of(FilterPredicate.ltEq("half", 0.0f), List.of(1, 3)),
+                Arguments.of(FilterPredicate.gt("half", 1.0f), List.of(4, 5, 6)),
+                Arguments.of(FilterPredicate.gtEq("half", 65504.0f), List.of(4, 5, 6)),
+                Arguments.of(FilterPredicate.in("half", 1.0, -1.5), List.of(2, 3)),
+                Arguments.of(FilterPredicate.not(FilterPredicate.in("half", 1.0, -1.5)), List.of(1, 4, 5, 6)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("float16Filters")
+    void float16LeafAgreesWithRowReader(FilterPredicate filter, List<Integer> expectedIds) throws Exception {
+        assertIdsAgreeWithRowReader(FLOAT16_FILE, filter, expectedIds);
+    }
+
+    @Test
+    void dictionaryEncodedFloat16LeafIsExact() throws Exception {
+        // `half` cycles 1.0, 2.0, 4.0, 8.0 over 4096 rows, so each value is 1024 rows.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(DICT_FLOAT16_FILE));
+             ColumnReader half = reader.buildColumnReader("half")
+                     .filter(FilterPredicate.in("half", 2.0, 8.0)).build()) {
+            int count = 0;
+            while (half.nextBatch()) {
+                count += half.getRecordCount();
+            }
+            assertThat(count).isEqualTo(2048);
+        }
+    }
+
+    /// `point` is an optional struct over the optional leaf `x`: null in id 1, present with
+    /// `x` null in id 2, and present with `x = 42` in id 3.
+    static Stream<Arguments> optionalStructLeafFilters() {
+        return Stream.of(
+                Arguments.of(FilterPredicate.isNull("point.x"), List.of(1, 2)),
+                Arguments.of(FilterPredicate.isNotNull("point.x"), List.of(3)),
+                Arguments.of(FilterPredicate.lt("point.x", 100), List.of(3)),
+                Arguments.of(FilterPredicate.notEq("point.x", 42), List.of()),
+                Arguments.of(FilterPredicate.and(FilterPredicate.isNotNull("point"), FilterPredicate.isNull("point.x")),
+                        List.of(2)),
+                Arguments.of(FilterPredicate.isNull("point"), List.of(1)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("optionalStructLeafFilters")
+    void nullLeafUnderPresentStructAgreesWithRowReader(FilterPredicate filter, List<Integer> expectedIds)
+            throws Exception {
+        assertIdsAgreeWithRowReader(OPTIONAL_LEAF_FILE, filter, expectedIds);
+    }
+
+    /// Reads the `INT32` column `id` of `file` under `filter` through the row reader, a single
+    /// column reader and a column-reader group, and asserts that each yields `expectedIds`.
+    private static void assertIdsAgreeWithRowReader(Path file, FilterPredicate filter, List<Integer> expectedIds)
+            throws Exception {
+        List<Integer> rowIds = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                rowIds.add(rows.getInt("id"));
+            }
+        }
+
+        List<Integer> singleIds = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
+            while (idReader.nextBatch()) {
+                int[] ids = idReader.getInts();
+                for (int i = 0; i < idReader.getRecordCount(); i++) {
+                    singleIds.add(ids[i]);
+                }
+            }
+        }
+
+        List<Integer> groupedIds = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(filter).build()) {
+            while (columns.nextBatch()) {
+                int[] ids = columns.getColumnReader("id").getInts();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    groupedIds.add(ids[i]);
+                }
+            }
+        }
+
+        assertThat(rowIds).isEqualTo(expectedIds);
+        assertThat(singleIds).isEqualTo(expectedIds);
+        assertThat(groupedIds).isEqualTo(expectedIds);
+    }
 }

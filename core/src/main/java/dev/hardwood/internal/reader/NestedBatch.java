@@ -55,9 +55,11 @@ public final class NestedBatch {
     /// otherwise re-derive the same fact.
     public boolean allPresent;
 
-    // Pre-computed index (computed by drain before publish). Validity bit set
-    // iff present. Null means "all items at that layer are present in this
-    // batch."
+    // Pre-computed index. Validity bit set iff present. Null means "all items
+    // at that layer are present in this batch." The drain computes both before
+    // publish, except on the exact-filtered ColumnReader path: there it leaves
+    // both null, and the SelectionEngine derives elementValidity for its
+    // predicate columns.
     public long[] elementValidity;
     public int[][] multiLevelOffsets;
 

@@ -564,7 +564,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // Exact-filtered ColumnReader: applySelection compacts the batch from the
             // raw levels (kept above) before the consumer reads it, then the consumer
             // rebuilds the view lazily. Nothing is derived on the drain here; the
-            // all-items index the ColumnReader never reads is skipped.
+            // all-items index is skipped, and the SelectionEngine derives the element
+            // validity of the predicate columns itself.
             batch.elementValidity = null;
             batch.multiLevelOffsets = null;
             return;

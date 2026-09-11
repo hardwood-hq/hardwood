@@ -31,6 +31,7 @@ import dev.hardwood.internal.reader.BatchMatchMerger;
 import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedBatchDataView;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -295,13 +296,21 @@ final class SelectionEngine {
         /// array + validity for the current batch. Called once per batch before
         /// per-record evaluation, so the per-record accessors avoid repeated
         /// lookups and `getXxx()` dispatch.
+        ///
+        /// The filtered read path publishes nested batches without the leaf
+        /// validity the view reads nulls from, so it is derived here from the
+        /// definition levels. Without it, a leaf that is null under a present
+        /// struct reads as a value.
         void refresh() {
             for (FlatField field : flatByName.values()) {
                 field.refresh();
             }
             if (nestedView != null) {
                 for (int j = 0; j < nestedReaders.length; j++) {
-                    nestedBatches[j] = nestedReaders[j].currentNestedBatch();
+                    NestedBatch batch = nestedReaders[j].currentNestedBatch();
+                    batch.elementValidity = NestedLevelComputer.computeElementValidity(
+                            batch.definitionLevels, batch.valueCount, nestedColumnSchemas[j].maxDefinitionLevel());
+                    nestedBatches[j] = batch;
                 }
                 nestedView.setBatchData(nestedBatches, nestedColumnSchemas, nestedBatches[0].fileName);
             }
@@ -339,7 +348,11 @@ final class SelectionEngine {
         }
 
         @Override public float getFloat(String name) {
-            return ((float[]) flat(name).values)[record];
+            Object values = flat(name).values;
+            // A FLOAT16 column is held as two-byte binary values, read as the half they encode.
+            return values instanceof float[] floats
+                    ? floats[record]
+                    : ((BinaryBatchValues) values).float16At(record);
         }
 
         @Override public double getDouble(String name) {
