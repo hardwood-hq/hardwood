@@ -5898,3 +5898,205 @@ pq.write_table(
 )
 print("\nGenerated no_columns.parquet:")
 print("  - Childless root schema: no columns, no rows")
+
+# ============================================================================
+# Predicate-literal corpus (hardwood-hq/hardwood#1198)
+# ============================================================================
+
+# One column per row of the per-column table in `_designs/PREDICATE_LITERALS.md`, so that a
+# predicate can be put to every literal type, operator and read path over the same 400 rows.
+# Every value column is optional and shares one null mask, which lets a filter's answer be
+# compared against a rule that never matches a null.
+#
+# `f32` and `f64` carry both NaN payloads, a negative zero and both infinities, since those are
+# the values whose comparison and whose statistics bounds diverge. `str` ends on a full-width
+# tilde and an emoji, outside the ASCII range where UTF-8 and byte order coincide trivially.
+#
+# Three layouts: one row group, several row groups, and dictionary-encoded. Small pages and a
+# page index bring the row-group bounds, the page index and the dictionary into play, so a
+# literal resolved into the wrong order shows up as a missing or extra row rather than only in a
+# record-level comparison.
+PRED_ROWS = 400
+
+
+def _pred_null(r):
+    return r % 37 == 5
+
+
+def _pred_opt(values):
+    return [None if _pred_null(r) else v for r, v in enumerate(values)]
+
+
+def _pred_f32(r):
+    if r in (10, 390):
+        return float('nan')
+    if r == 150:
+        return numpy.frombuffer(bytes.fromhex('ffc00000'), dtype='>f4')[0].item()  # NaN, sign bit set
+    if r == 100:
+        return -0.0
+    if r == 300:
+        return float('inf')
+    if r == 301:
+        return float('-inf')
+    return (r - 200) * 0.5
+
+
+_PRED_BASE_MS = 1_700_000_000_000
+_pred_range = list(range(PRED_ROWS))
+
+pred_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('zz', pa.binary(), False),
+    ('bool', pa.bool_()),
+    ('i32', pa.int32()),
+    ('i64', pa.int64()),
+    ('i8', pa.int8()),
+    ('u8', pa.uint8()),
+    ('u32', pa.uint32()),
+    ('u64', pa.uint64()),
+    ('f32', pa.float32()),
+    ('f64', pa.float64()),
+    ('f16', pa.float16()),
+    ('date', pa.date32()),
+    ('time_ms', pa.time32('ms')),
+    ('time_us', pa.time64('us')),
+    ('time_ns', pa.time64('ns')),
+    ('ts_ms_utc', pa.timestamp('ms', tz='UTC')),
+    ('ts_us_utc', pa.timestamp('us', tz='UTC')),
+    ('ts_ns_utc', pa.timestamp('ns', tz='UTC')),
+    ('ts_us_local', pa.timestamp('us')),
+    ('dec_i32', pa.decimal128(9, 2)),
+    ('dec_i64', pa.decimal128(18, 2)),
+    ('dec_flba', pa.decimal128(20, 2)),
+    ('str', pa.string()),
+    ('json', pa.json_()),
+    ('ba', pa.binary()),
+    ('flba5', pa.binary(5)),
+    ('uuid', pa.uuid()),
+    ('enum', pa.binary()),          # post-annotated as ENUM
+])
+pred_table = pa.table({
+    '__row__': _pred_range,
+    'zz': [b'z'] * PRED_ROWS,
+    'bool': _pred_opt([r >= 250 for r in _pred_range]),
+    'i32': _pred_opt([(r - 200) * 2 for r in _pred_range]),
+    'i64': _pred_opt([(r - 200) * 2 * 10**10 for r in _pred_range]),
+    'i8': _pred_opt([(r - 200) // 2 for r in _pred_range]),
+    'u8': _pred_opt([r * 255 // (PRED_ROWS - 1) for r in _pred_range]),
+    'u32': _pred_opt([2**31 - 200 * 10**6 + r * 10**6 for r in _pred_range]),
+    'u64': _pred_opt([2**63 - 200 * 10**15 + r * 10**15 for r in _pred_range]),
+    'f32': _pred_opt([_pred_f32(r) for r in _pred_range]),
+    'f64': _pred_opt([_pred_f32(r) for r in _pred_range]),
+    'f16': pa.array(_pred_opt(numpy.array([_pred_f32(r) / 2 for r in _pred_range], dtype=numpy.float16)),
+                    pa.float16()),
+    'date': _pred_opt([19000 + (r - 200) * 2 for r in _pred_range]),
+    'time_ms': _pred_opt([3_600_000 + r * 60_000 for r in _pred_range]),
+    'time_us': _pred_opt([r * 60_000_000 + r for r in _pred_range]),
+    'time_ns': _pred_opt([r * 60_000_000_000 + r for r in _pred_range]),
+    'ts_ms_utc': _pred_opt([_PRED_BASE_MS + (r - 200) * 3_600_000 for r in _pred_range]),
+    'ts_us_utc': _pred_opt([_PRED_BASE_MS * 1000 + (r - 200) * 3_600_000_000 + r for r in _pred_range]),
+    'ts_ns_utc': _pred_opt([_PRED_BASE_MS * 10**6 + (r - 200) * 3_600_000_000_000 + r for r in _pred_range]),
+    'ts_us_local': _pred_opt([_PRED_BASE_MS * 1000 + (r - 200) * 3_600_000_000 + r for r in _pred_range]),
+    'dec_i32': _pred_opt([Decimal(r - 200) * Decimal('1.25') for r in _pred_range]),
+    'dec_i64': _pred_opt([Decimal((r - 200) * 1234567) / 100 for r in _pred_range]),
+    'dec_flba': _pred_opt([Decimal(r - 200) * Decimal('1.25') for r in _pred_range]),
+    'str': _pred_opt(['～' if r == 398 else '\U0001F600' if r == 399 else f'k{r:04d}' for r in _pred_range]),
+    'json': _pred_opt([f'{{"k":"k{r:04d}"}}' for r in _pred_range]),
+    'ba': _pred_opt([bytes([r >> 8, r & 0xFF]) for r in _pred_range]),
+    'flba5': _pred_opt([bytes([r // 2, 0, 0, 0, r & 0xFF]) for r in _pred_range]),
+    'uuid': _pred_opt([bytes([r // 2]) + bytes(14) + bytes([r & 0xFF]) for r in _pred_range]),
+    'enum': _pred_opt([f'E{r % 7}'.encode() for r in _pred_range]),
+}, schema=pred_schema)
+
+for pred_name, pred_rg_size, pred_dictionary in [
+        ('predicate_single', PRED_ROWS, False),
+        ('predicate_multi', 100, False),
+        ('predicate_dict', 100, True)]:
+    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+    pq.write_table(
+        pred_table,
+        pred_path,
+        use_dictionary=pred_dictionary,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=pred_rg_size,
+        data_page_size=512,
+        write_batch_size=40,
+        write_statistics=True,
+        write_page_index=True,
+        store_decimal_as_integer=True,
+    )
+    annotate_element_at_path_as_enum(pred_path, ['enum'])
+
+# BSON and INTERVAL live in a corpus of their own: DuckDB refuses to open any file holding a BSON
+# column, and the corpus above is what the differential oracle reads.
+pred_opaque_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('zz', pa.binary(), False),
+    ('bson', pa.binary()),          # post-annotated as BSON
+    ('iv', pa.binary(12)),          # post-annotated as INTERVAL
+])
+pred_opaque_table = pa.table({
+    '__row__': _pred_range,
+    'zz': [b'z'] * PRED_ROWS,
+    'bson': _pred_opt([bytes([r >> 8, r & 0xFF, 0]) for r in _pred_range]),
+    'iv': _pred_opt([(r % 13).to_bytes(4, 'little') + (r % 29).to_bytes(4, 'little')
+                     + (r * 1000).to_bytes(4, 'little') for r in _pred_range]),
+}, schema=pred_opaque_schema)
+for pred_name, pred_rg_size, pred_dictionary in [
+        ('predicate_opaque_single', PRED_ROWS, False),
+        ('predicate_opaque_dict', 100, True)]:
+    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+    pq.write_table(
+        pred_opaque_table,
+        pred_path,
+        use_dictionary=pred_dictionary,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=pred_rg_size,
+        data_page_size=512,
+        write_batch_size=40,
+        write_statistics=True,
+        write_page_index=True,
+    )
+    annotate_column_as_bson(pred_path, 'bson')
+    annotate_column_as_interval(pred_path, 'iv')
+
+# A struct whose leaf is null under a present struct, alongside a leaf below a repeated path.
+# The first separates "the group is absent" from "the leaf is null", which the column reader's
+# row view has to derive from definition levels; the second is the shape a predicate is rejected
+# on.
+pred_nested_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('zz', pa.binary(), False),
+    ('s', pa.struct([('x', pa.int32()), ('name', pa.string()), ('dec', pa.decimal128(9, 2))])),
+    ('l', pa.list_(pa.int32())),
+])
+pred_nested_table = pa.table({
+    '__row__': _pred_range,
+    'zz': [b'z'] * PRED_ROWS,
+    's': [None if r % 41 == 7 else {'x': None if r % 43 == 9 else r * 3 - 600,
+                                    'name': f'n{r:04d}',
+                                    'dec': Decimal(r - 200) * Decimal('1.25')}
+          for r in _pred_range],
+    'l': [None if r % 13 == 0 else [r, r + 1] for r in _pred_range],
+}, schema=pred_nested_schema)
+for pred_name, pred_rg_size in [('predicate_nested_single', PRED_ROWS), ('predicate_nested_multi', 100)]:
+    pq.write_table(
+        pred_nested_table,
+        f'core/src/test/resources/predicate/{pred_name}.parquet',
+        use_dictionary=False,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=pred_rg_size,
+        data_page_size=512,
+        write_batch_size=40,
+        write_statistics=True,
+        write_page_index=True,
+        store_decimal_as_integer=True,
+    )
+
+print("\nGenerated predicate/*.parquet:")
+print(f"  - predicate_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")
+print(f"  - predicate_nested_{{single,multi}}.parquet: {PRED_ROWS} rows, struct with a nullable leaf, and a list")
+print(f"  - predicate_opaque_{{single,dict}}.parquet: {PRED_ROWS} rows, the BSON and INTERVAL columns")
