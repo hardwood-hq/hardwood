@@ -693,6 +693,41 @@ class SchemaCommandTest implements SchemaCommandContract {
         assertThat(parsed.getField("Address").schema().getFullName()).isEqualTo("Schema.Address");
     }
 
+    /// A container segment and a sibling struct's type name compete in one scope: both
+    /// name a namespace under the same record, so they must resolve against each other.
+    /// Without that, the list's element record and the struct's inner record collapse
+    /// onto one full name, and the file describes the list element with the struct's
+    /// fields.
+    @Test
+    void resolvesContainerSegmentsAgainstSiblingTypeNames(@TempDir Path tempDir) throws Exception {
+        Path parquetFile = write(tempDir, FileSchema.builder("schema")
+                .struct("hashes", RepetitionType.REQUIRED, hashes -> hashes
+                        .struct("element", RepetitionType.REQUIRED, element -> element
+                                .addColumn("inStruct", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                .list("Hashes", RepetitionType.REQUIRED, element -> element
+                        .struct(RepetitionType.REQUIRED, struct -> struct
+                                .addColumn("inList", PhysicalType.INT64, RepetitionType.REQUIRED)))
+                .build());
+
+        Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
+
+        assertThat(result.exitCode()).isZero();
+        Schema parsed = parseAndCreateFileHeader(result.output());
+        Schema listElement = parsed.getField("Hashes").schema().getElementType();
+        Schema structInner = parsed.getField("hashes").schema().getField("element").schema();
+        assertThat(listElement.getFullName()).isNotEqualTo(structInner.getFullName());
+        assertThat(listElement.getFields()).singleElement()
+                .satisfies(field -> {
+                    assertThat(field.name()).isEqualTo("inList");
+                    assertThat(field.schema().getType()).isEqualTo(Schema.Type.LONG);
+                });
+        assertThat(structInner.getFields()).singleElement()
+                .satisfies(field -> {
+                    assertThat(field.name()).isEqualTo("inStruct");
+                    assertThat(field.schema().getType()).isEqualTo(Schema.Type.INT);
+                });
+    }
+
     /// Reordering struct fields cannot swap the retained records' full names.
     @Test
     void keepsRecordNamesStableWhenFieldsAreReordered(@TempDir Path tempDir) throws Exception {
