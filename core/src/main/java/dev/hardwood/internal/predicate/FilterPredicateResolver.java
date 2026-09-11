@@ -126,7 +126,7 @@ public class FilterPredicateResolver {
                     // Every value is padded to the column width, so the literal is too and the
                     // encoding of a given number is the only one the column can hold.
                     yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                            toFixedLenDecimalBytes(scaled.unscaledValue(),
+                            toFixedLenDecimalBytes(p.column(), scaled.unscaledValue(),
                                     FixedWidthValidator.requireWidth(null, cs)),
                             Comparison.FIXED_DECIMAL);
                 }
@@ -191,16 +191,17 @@ public class FilterPredicateResolver {
                             float16ToFloat(p.column(), p.value()),
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
-                        byteComparison(cs));
+                Comparison comparison = byteComparison(cs);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
+                        comparedBytes(p.column(), p.value(), comparison, cs), comparison);
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.DecimalType.class, cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
-                        Comparison.FIXED_DECIMAL);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
+                        comparedBytes(p.column(), p.value(), Comparison.FIXED_DECIMAL, cs), Comparison.FIXED_DECIMAL);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -235,8 +236,9 @@ public class FilterPredicateResolver {
                             float16Probes(p.column(), p.values()),
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
-                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values(),
-                        byteComparison(cs));
+                Comparison comparison = byteComparison(cs);
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(),
+                        comparedBytes(p.column(), p.values(), comparison, cs), comparison);
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -445,6 +447,40 @@ public class FilterPredicateResolver {
         return columnSchema.logicalType() instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
+    /// The bytes a binary literal compares as on this column.
+    ///
+    /// A fixed-width `DECIMAL` stores each number in one encoding, its unscaled value
+    /// sign-extended to the column width, and the dictionary and Bloom filter probes test for
+    /// exactly those bytes. A literal of another length stands for the same number under
+    /// [BinaryComparator#compareSigned], so it is brought to that encoding and every path of the
+    /// read compares the same bytes. An empty literal is zero, as `compareSigned` reads it. Every
+    /// other comparison takes the literal as given.
+    ///
+    /// @throws ArithmeticException if the literal's value needs more bytes than the column holds
+    private static byte[] comparedBytes(String columnName, byte[] literal, Comparison comparison,
+            ColumnSchema columnSchema) {
+        if (comparison != Comparison.FIXED_DECIMAL) {
+            return literal;
+        }
+        BigInteger unscaled = literal.length == 0 ? BigInteger.ZERO : new BigInteger(literal);
+        return toFixedLenDecimalBytes(columnName, unscaled,
+                FixedWidthValidator.requireWidth(null, columnSchema));
+    }
+
+    /// [#comparedBytes(String, byte[], Comparison, ColumnSchema)] for each probe of a membership
+    /// test.
+    private static byte[][] comparedBytes(String columnName, byte[][] probes, Comparison comparison,
+            ColumnSchema columnSchema) {
+        if (comparison != Comparison.FIXED_DECIMAL) {
+            return probes;
+        }
+        byte[][] resolved = new byte[probes.length][];
+        for (int i = 0; i < probes.length; i++) {
+            resolved[i] = comparedBytes(columnName, probes[i], comparison, columnSchema);
+        }
+        return resolved;
+    }
+
     /// The order a binary literal compares in on this column.
     ///
     /// Either binary physical type reaches here whatever it is annotated, since [#validateType]
@@ -581,14 +617,17 @@ public class FilterPredicateResolver {
     /// Converts an unscaled [BigInteger] to a fixed-length big-endian two's complement byte array,
     /// matching the Parquet `FIXED_LEN_BYTE_ARRAY` encoding for decimals. The output is
     /// sign-extended (0x00 for positive, 0xFF for negative) to fill the fixed length.
-    static byte[] toFixedLenDecimalBytes(BigInteger unscaled, int typeLength) {
+    ///
+    /// @param columnName the column the literal filters, for the message
+    /// @throws ArithmeticException if the value needs more than `typeLength` bytes
+    static byte[] toFixedLenDecimalBytes(String columnName, BigInteger unscaled, int typeLength) {
         byte[] minimal = unscaled.toByteArray();
         if (minimal.length == typeLength) {
             return minimal;
         }
         if (minimal.length > typeLength) {
-            throw new ArithmeticException(
-                    "Decimal value requires " + minimal.length + " bytes but column has typeLength " + typeLength);
+            throw new ArithmeticException("Column '" + columnName + "' is a FIXED_LEN_BYTE_ARRAY("
+                    + typeLength + ") DECIMAL; the literal needs " + minimal.length + " bytes");
         }
         byte[] padded = new byte[typeLength];
         byte fill = (byte) (unscaled.signum() < 0 ? 0xFF : 0x00);

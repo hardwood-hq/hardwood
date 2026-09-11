@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows, and one whose value does not fit the column throws `ArithmeticException` ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
+
 - Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
 
 - `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — testing whether the group itself is present rather than one of its fields ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
