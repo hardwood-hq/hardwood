@@ -90,7 +90,6 @@ public sealed interface FilterPredicate
                 FilterPredicate.DoubleColumnPredicate,
                 FilterPredicate.BooleanColumnPredicate,
                 FilterPredicate.BinaryColumnPredicate,
-                FilterPredicate.SignedBinaryColumnPredicate,
                 FilterPredicate.UUIDColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
@@ -543,27 +542,6 @@ public sealed interface FilterPredicate
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof BinaryColumnPredicate that)) return false;
-            return column.equals(that.column) && op == that.op && Arrays.equals(value, that.value);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = column.hashCode();
-            result = 31 * result + op.hashCode();
-            result = 31 * result + Arrays.hashCode(value);
-            return result;
-        }
-    }
-
-    /// Predicate for decimal columns stored as `FIXED_LEN_BYTE_ARRAY`, which require signed
-    /// (two's complement) comparison. The column must carry a `DECIMAL` logical type and the
-    /// value must be padded to the column's fixed length.
-    record SignedBinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof SignedBinaryColumnPredicate that)) return false;
             return column.equals(that.column) && op == that.op && Arrays.equals(value, that.value);
         }
 

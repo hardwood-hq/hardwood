@@ -195,14 +195,6 @@ public class FilterPredicateResolver {
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
                         comparedBytes(p.column(), p.value(), comparison, cs), comparison);
             }
-            case FilterPredicate.SignedBinaryColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
-                validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
-                validateLogicalType(p.column(), LogicalType.DecimalType.class, cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                        comparedBytes(p.column(), p.value(), Comparison.FIXED_DECIMAL, cs), Comparison.FIXED_DECIMAL);
-            }
             case FilterPredicate.UUIDColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
