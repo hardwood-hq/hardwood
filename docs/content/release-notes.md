@@ -56,6 +56,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 **Breaking Changes:**
 
+- `FilterPredicate.SignedBinaryColumnPredicate` is removed; a `DECIMAL` column is filtered with the `BigDecimal` factories ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
+
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).
     - `IOException` now means the transport — a read that failed, a connection reset — and is declared where the reader reaches the file: `RowReader.hasNext`/`next`/`close` and `ColumnReader.nextBatch`/`close`, as `ParquetFileWriter` has always declared it. **The canonical idiom is unaffected**, because `ParquetFileReader.open(...)` already declared `IOException` and so the enclosing method already handles it:
 

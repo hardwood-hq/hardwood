@@ -262,26 +262,15 @@ class FilterPredicateResolverTest {
     }
 
     @Test
-    void resolveSignedBinaryOnDecimalColumn() {
+    void resolveByteLiteralOnFixedLenDecimalComparesSigned() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
                 LogicalType.decimal(18, 2));
         byte[] value = new byte[8];
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                new FilterPredicate.SignedBinaryColumnPredicate("amount", FilterPredicate.Operator.GT, value),
+                new FilterPredicate.BinaryColumnPredicate("amount", FilterPredicate.Operator.GT, value),
                 schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
         assertThat(((ResolvedPredicate.BinaryPredicate) resolved).signed()).isTrue();
-    }
-
-    @Test
-    void resolveSignedBinaryOnNonDecimalColumnThrows() {
-        FileSchema schema = schemaWithLogicalType("data", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, null);
-        byte[] value = new byte[8];
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                new FilterPredicate.SignedBinaryColumnPredicate("data", FilterPredicate.Operator.EQ, value),
-                schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'data' is not a DecimalType column (logical type: null)");
     }
 
     @Test
@@ -882,7 +871,6 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("rep", LocalTime.NOON),
                 FilterPredicate.eq("rep", BigDecimal.ONE),
                 FilterPredicate.eq("rep", UUID.randomUUID()),
-                new FilterPredicate.SignedBinaryColumnPredicate("rep", FilterPredicate.Operator.EQ, new byte[8]),
                 FilterPredicate.in("rep", 1, 2),
                 FilterPredicate.in("rep", 1L, 2L),
                 FilterPredicate.in("rep", 1.0, 2.0),
@@ -951,13 +939,6 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMicrosWrong))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(incompatible("INT32", "INT64"));
-
-        FileSchema signedBinaryWrong = schemaWithLogicalType("c", PhysicalType.INT32,
-                LogicalType.decimal(18, 2));
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                new FilterPredicate.SignedBinaryColumnPredicate("c", FilterPredicate.Operator.EQ, new byte[8]), signedBinaryWrong))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "FIXED_LEN_BYTE_ARRAY"));
 
         FileSchema uuidWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.UuidType());
