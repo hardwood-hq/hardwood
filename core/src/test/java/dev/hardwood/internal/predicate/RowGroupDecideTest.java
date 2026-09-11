@@ -95,10 +95,11 @@ class RowGroupDecideTest {
     }
 
     @Test
-    void isNullNeverPromisesAlwaysMatches() throws IOException {
-        // Even a fully-null row group is not promised: null counts tally values, not rows.
+    void isNullDecisions() throws IOException {
+        // All 100 rows null. A predicate names a non-repeated leaf, so its null count counts rows.
         assertThat(decide(isNull(), rowGroup(PhysicalType.INT32,
-                new Statistics(null, null, 100L, null, false), 100))).isEqualTo(MIGHT_MATCH);
+                new Statistics(null, null, 100L, null, false), 100))).isEqualTo(ALWAYS_MATCHES);
+        assertThat(decide(isNull(), intRowGroup(10, 20, 5L))).isEqualTo(MIGHT_MATCH);
         assertThat(decide(isNull(), intRowGroup(10, 20, 0L))).isEqualTo(CANNOT_MATCH);
     }
 

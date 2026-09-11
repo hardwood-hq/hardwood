@@ -53,8 +53,12 @@ actual values.
 - **Floating point** (`FLOAT`, `DOUBLE`, `FLOAT16`): NaN sits outside the min/max
   ordering and `nan_count` is not consumed (#607), so a fully-satisfying interval may
   still hide non-matching NaN rows. FP value leaves never yield `ALWAYS_MATCHES`.
-- **`IS NULL`**: the null count tallies leaf values, not rows, so `null_count ==
-  numRows` does not prove every row's leaf is null for nested columns.
+- **`IS NULL` on a group a definition level separates from its leaf, from the null count**:
+  that leaf counts a null wherever the group is present with a null below it, and below a
+  `LIST` or a `MAP` it writes one value per element, so `null_count == numRows` does not prove
+  the group absent. The definition level histogram answers such a group instead. `IS NULL` on a
+  non-repeated leaf, or on a group with only required nodes down to its leaf, is
+  `ALWAYS_MATCHES` on `null_count == numRows` (see `UNIT_STATISTICS_CONVERGENCE.md`).
 - **Bloom filters** prove absence only; they can force `CANNOT_MATCH` but never upgrade
   a decision.
 - **Composition**: `AND` is `ALWAYS_MATCHES` only when every child is; `OR` when any
