@@ -236,7 +236,7 @@ class FilterPredicateResolverTest {
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
         assertThat(bp.signed()).isTrue();
         // 1.00 with scale 2 → unscaled 100 → padded to 16 bytes
-        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
+        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes("amount",
                 new BigDecimal("1.00").setScale(2).unscaledValue(), 16);
         assertThat(bp.value()).isEqualTo(expected);
     }
@@ -294,11 +294,98 @@ class FilterPredicateResolverTest {
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
         assertThat(bp.signed()).isTrue();
         // -1.50 with scale 2 → unscaled -150 → sign-extended to 8 bytes
-        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
+        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes("amount",
                 new BigDecimal("-1.50").setScale(2).unscaledValue(), 8);
         assertThat(bp.value()).isEqualTo(expected);
         // First byte should be 0xFF (negative sign extension)
         assertThat(bp.value()[0]).isEqualTo((byte) 0xFF);
+    }
+
+    @Test
+    void resolveDecimalTooWideForFixedLenColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                LogicalType.decimal(9, 2));
+        // 30000000.00 is unscaled 3_000_000_000, which needs five bytes in two's complement
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("amount", new BigDecimal("30000000.00")), schema))
+                .isInstanceOf(ArithmeticException.class)
+                .hasMessage("Column 'amount' is a FIXED_LEN_BYTE_ARRAY(4) DECIMAL; the literal needs 5 bytes");
+    }
+
+    // ==================== Byte literal on a fixed-width DECIMAL ====================
+
+    /// A fixed-width `DECIMAL` holds each number in one encoding, sign-extended to the column
+    /// width, and the byte-exact shortcuts probe for exactly that encoding. A byte literal of any
+    /// length resolves to it.
+    @Test
+    void resolveNarrowByteLiteralOnFixedLenDecimalSignExtendsToWidth() {
+        assertThat(resolveFixedDecimalLiteral(0x7D)).containsExactly(0x00, 0x00, 0x00, 0x7D);
+        assertThat(resolveFixedDecimalLiteral(0x83)).containsExactly(0xFF, 0xFF, 0xFF, 0x83);
+    }
+
+    @Test
+    void resolveWideByteLiteralOnFixedLenDecimalDropsSignExtension() {
+        assertThat(resolveFixedDecimalLiteral(0x00, 0x00, 0x00, 0x00, 0x7D)).containsExactly(0x00, 0x00, 0x00, 0x7D);
+        assertThat(resolveFixedDecimalLiteral(0xFF, 0xFF, 0xFF, 0xFF, 0x83)).containsExactly(0xFF, 0xFF, 0xFF, 0x83);
+    }
+
+    /// `BinaryComparator.compareSigned` reads an empty array as zero.
+    @Test
+    void resolveEmptyByteLiteralOnFixedLenDecimalAsZero() {
+        assertThat(resolveFixedDecimalLiteral()).containsExactly(0x00, 0x00, 0x00, 0x00);
+    }
+
+    @Test
+    void resolveByteLiteralTooWideForFixedLenDecimalThrows() {
+        assertThatThrownBy(() -> resolveFixedDecimalLiteral(0x01, 0x00, 0x00, 0x00, 0x00))
+                .isInstanceOf(ArithmeticException.class)
+                .hasMessage("Column 'amount' is a FIXED_LEN_BYTE_ARRAY(4) DECIMAL; the literal needs 5 bytes");
+    }
+
+    @Test
+    void resolveByteLiteralProbesOnFixedLenDecimalSignExtendToWidth() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                LogicalType.decimal(9, 2));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                new FilterPredicate.BinaryInPredicate("amount", new byte[][]{ byteLiteral(0x7D), byteLiteral(0x83) }),
+                schema);
+        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+            assertThat(p.byteExact()).isTrue();
+            assertThat(p.values()[0]).containsExactly(0x00, 0x00, 0x00, 0x7D);
+            assertThat(p.values()[1]).containsExactly(0xFF, 0xFF, 0xFF, 0x83);
+        });
+    }
+
+    /// An unannotated fixed-width column compares its bytes as a byte string, where a shorter
+    /// literal is a different value, not a padded one; it resolves as given.
+    @Test
+    void resolveByteLiteralOnUnannotatedFixedLenColumnAsGiven() {
+        FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(FilterPredicate.eq("code", "aa"), schema);
+        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
+                p -> assertThat(p.value()).containsExactly('a', 'a'));
+    }
+
+    /// Resolves `eq` for `literal` against a `DECIMAL(9, 2)` in a `FIXED_LEN_BYTE_ARRAY(4)` and
+    /// returns the bytes the predicate compares.
+    private static byte[] resolveFixedDecimalLiteral(int... literal) {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                LogicalType.decimal(9, 2));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                new FilterPredicate.BinaryColumnPredicate("amount", FilterPredicate.Operator.EQ, byteLiteral(literal)),
+                schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
+        ResolvedPredicate.BinaryPredicate predicate = (ResolvedPredicate.BinaryPredicate) resolved;
+        assertThat(predicate.byteExact()).isTrue();
+        return predicate.value();
+    }
+
+    private static byte[] byteLiteral(int... values) {
+        byte[] bytes = new byte[values.length];
+        for (int i = 0; i < values.length; i++) {
+            bytes[i] = (byte) values[i];
+        }
+        return bytes;
     }
 
     // ==================== UUID ====================
@@ -882,7 +969,7 @@ class FilterPredicateResolverTest {
 
     @Test
     void toFixedLenDecimalBytes_zeroSignumPadding() {
-        byte[] bytes = FilterPredicateResolver.toFixedLenDecimalBytes(BigInteger.ZERO, 4);
+        byte[] bytes = FilterPredicateResolver.toFixedLenDecimalBytes("c", BigInteger.ZERO, 4);
         assertThat(bytes).containsExactly(0, 0, 0, 0);
     }
 

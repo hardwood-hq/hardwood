@@ -91,7 +91,10 @@ value as it is stored: an `int` against a `DATE` column tests the epoch day dire
 their bytes stand for rather than by the bytes themselves, and their statistics are written in
 that order, so a `String` literal against either compares as the column does — a `DECIMAL` by its
 unscaled value, a `FLOAT16` by the number its two little-endian bytes encode — rather than as a
-byte string. A `FLOAT16` literal must be exactly two bytes.
+byte string. A `FLOAT16` literal must be exactly two bytes. On a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`,
+a literal of any length stands for the value it encodes and is brought to the column width:
+sign-extended when it is shorter, its leading sign-extension bytes dropped when it is longer. One
+whose value needs more bytes than the column holds throws `ArithmeticException`.
 
 `inStrings` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe is
 still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
