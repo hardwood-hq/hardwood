@@ -38,6 +38,18 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - An ordered predicate on an `INT(bitWidth, isSigned = false)` column compares by unsigned magnitude, the order the column is written in ([#1144](https://github.com/hardwood-hq/hardwood/issues/1144)). The comparison was signed before, so `lt`, `gt` and their siblings returned wrong rows on a column holding values above 2^31, and bounds straddling that point read as inverted and were discarded — costing those columns row-group and page skipping as well.
 
+- `print`, `convert`, `inspect` and `dive` spell a value of a given logical type the same way: decimals as plain strings (`0.0000001`, never `1E-7`), `INTERVAL` as `1mo 15d 3600000ms`, and `INT96` values and statistics as timestamps ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- Control characters in values shown by `print`, `dive`, `inspect` and `info` render as `·`, so they no longer break table rows or reach the terminal ([#865](https://github.com/hardwood-hq/hardwood/issues/865)).
+
+- A min/max statistic or dictionary entry that does not decode as its type renders in its stored form, `0x` hex or the stored integer, instead of failing `inspect` or blanking a `dive` screen ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- `dive` renders unsigned integers inside structs, lists and maps as unsigned, and its physical toggle shows list elements' stored values ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- `convert --format csv` quotes a field holding a carriage return ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- `convert --format json` writes a non-finite Variant float as a JSON string and a Variant timestamp without a time zone without a trailing `Z` ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
 **Breaking Changes:**
 
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).
@@ -63,6 +75,12 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
     - A corrupt value inside the metadata — a malformed bloom filter header, a geospatial bounding box missing a required field, a decimal scale or precision that cannot be, an unknown physical type, repetition type, codec or time unit — now raises `ParquetReadException` rather than `IllegalArgumentException` or `IllegalStateException`. These are the file being wrong, not your call being wrong. **Silent.** Both types keep their meaning for calls that really are mistakes, such as asking for a column outside the projection.
 
 - `LogicalType.DecimalType` takes its precision before its scale, where it used to take scale first ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). Every other decimal API takes them in that order — SQL's `DECIMAL(p, s)`, Arrow, Avro, Iceberg, parquet-cpp — and it is the order the annotation renders in. Only `parquet.thrift`'s field declaration and the APIs that mirror it read the other way. **This one is silent**, because a swapped call still compiles: `LogicalType.decimal(...)` rejects a scale above the precision, which catches a transposed pair at the call site, but a column whose scale equals its precision passes either way.
+
+- `convert --format json` writes nested structs, lists, maps and repeated fields as native JSON objects and arrays instead of strings holding their display text ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- `convert --format csv` writes a list or map cell as JSON text, as it does a Variant cell ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
+
+- An unannotated byte array whose text starts with `0x` renders as `0x`-prefixed hex on every surface, so a `0x…` value always means bytes ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
 
 ## 1.1.0.Beta1 (2026-08-31)
 

@@ -185,10 +185,24 @@ interface ConvertCommandContract {
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
                 id,tags,scores
-                1,"[a, b, c]","[10, 20, 30]"
+                1,"[""a"", ""b"", ""c""]","[10, 20, 30]"
                 2,[],[100]
                 3,,"[1, 2]"
-                4,[single],""");
+                4,"[""single""]",""");
+    }
+
+    @Test
+    default void jsonWritesListsAsNativeArrays() {
+        Cli.Result result = Cli.launch("convert", "-f", listFile(), "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                [
+                  {"id":1,"tags":["a", "b", "c"],"scores":[10, 20, 30]},
+                  {"id":2,"tags":[],"scores":[100]},
+                  {"id":3,"tags":null,"scores":[1, 2]},
+                  {"id":4,"tags":["single"],"scores":null}
+                ]""");
     }
 
     @Test

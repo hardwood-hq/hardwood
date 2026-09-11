@@ -47,6 +47,13 @@ class BinaryValuesTest {
         assertThat(BinaryValues.asText(new byte[]{'a', 0x00, 'b'})).isNull();
     }
 
+    /// Text spelled like hex would read back as the bytes it spells, so it
+    /// renders as hex itself: a `0x…` value always means bytes.
+    @Test
+    void textSpelledLikeHexRendersAsHex() {
+        assertThat(BinaryValues.render("0x0102".getBytes(StandardCharsets.UTF_8))).isEqualTo("0x307830313032");
+    }
+
     @Test
     void binaryRendersAsPrefixedHex() {
         assertThat(BinaryValues.render(new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF}))

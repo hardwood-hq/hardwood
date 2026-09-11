@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
-import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -111,22 +110,14 @@ class PrintCommandTest implements PrintCommandContract {
         Cli.Result result = Cli.launch("print", "-f", VARIANT_ATTRIBUTES_FILE, "-w", "120");
 
         assertThat(result.exitCode()).isZero();
-        // The table display grammar is unquoted — the same text `convert` CSV
-        // and `dive` show; the JSON grammar exists only in the export writer.
-        String separator = "+----+-------------+" + "-".repeat(33) + "+";
-        assertThat(result.output()).isEqualTo(String.join("\n",
-                separator,
-                row("id", "name", "value"),
-                separator,
-                row("1", "age", "42"),
-                row("1", "email", "ada@example.com"),
-                row("1", "preferences", "{ opt_in : true, theme : dark }"),
-                separator));
-    }
-
-    private static String row(String id, String name, String value) {
-        return "| " + Strings.padRight(id, 2) + " | " + Strings.padRight(name, 11) + " | "
-                + Strings.padRight(value, 31) + " |";
+        assertThat(result.output()).isEqualTo("""
+                +----+-------------+---------------------------------+
+                | id | name        | value                           |
+                +----+-------------+---------------------------------+
+                | 1  | age         | 42                              |
+                | 1  | email       | ada@example.com                 |
+                | 1  | preferences | { opt_in : true, theme : dark } |
+                +----+-------------+---------------------------------+""");
     }
 
     @Test
@@ -135,16 +126,15 @@ class PrintCommandTest implements PrintCommandContract {
         Cli.Result result = Cli.launch("print", "-f", file.toString());
 
         assertThat(result.exitCode()).isZero();
-        String separator = "+----+" + "-".repeat(42) + "+";
-        assertThat(result.output()).isEqualTo(String.join("\n",
-                separator,
-                "| " + Strings.padRight("id", 2) + " | " + Strings.padRight("s", 40) + " |",
-                separator,
-                "| " + Strings.padRight("1", 2) + " | " + Strings.padRight("A·B", 40) + " |",
-                "| " + Strings.padRight("2", 2) + " | " + Strings.padRight("tab·sep", 40) + " |",
-                "| " + Strings.padRight("3", 2) + " | " + Strings.padRight("line·break", 40) + " |",
-                "| " + Strings.padRight("4", 2) + " | " + Strings.padRight(NINETEEN_NULS_AS_HEX, 40) + " |",
-                separator));
+        assertThat(result.output()).isEqualTo("""
+                +----+------------------------------------------+
+                | id | s                                        |
+                +----+------------------------------------------+
+                | 1  | A·B                                      |
+                | 2  | tab·sep                                  |
+                | 3  | line·break                               |
+                | 4  | 0x00000000000000000000000000000000000000 |
+                +----+------------------------------------------+""");
     }
 
     @Test
@@ -153,21 +143,17 @@ class PrintCommandTest implements PrintCommandContract {
         Cli.Result result = Cli.launch("print", "-f", file.toString(), "--no-truncate", "-w", "20");
 
         assertThat(result.exitCode()).isZero();
-        String separator = "+----+" + "-".repeat(22) + "+";
-        assertThat(result.output()).isEqualTo(String.join("\n",
-                separator,
-                "| " + Strings.padRight("id", 2) + " | " + Strings.padRight("s", 20) + " |",
-                separator,
-                "| " + Strings.padRight("1", 2) + " | " + Strings.padRight("A·B", 20) + " |",
-                "| " + Strings.padRight("2", 2) + " | " + Strings.padRight("tab·sep", 20) + " |",
-                "| " + Strings.padRight("3", 2) + " | " + Strings.padRight("line·break", 20) + " |",
-                "| " + Strings.padRight("4", 2) + " | " + "0x000000000000000000" + " |",
-                "| " + Strings.padRight("", 2) + " | " + "00000000000000000000" + " |",
-                separator));
+        assertThat(result.output()).isEqualTo("""
+                +----+----------------------+
+                | id | s                    |
+                +----+----------------------+
+                | 1  | A·B                  |
+                | 2  | tab·sep              |
+                | 3  | line·break           |
+                | 4  | 0x000000000000000000 |
+                |    | 00000000000000000000 |
+                +----+----------------------+""");
     }
-
-    /// The 19-NUL row: all-control text renders as `0x` hex of the UTF-8 bytes.
-    private static final String NINETEEN_NULS_AS_HEX = "0x" + "0".repeat(38);
 
     /// One `STRING` column carrying an embedded `\u0001`, a horizontal tab, a
     /// line feed and a run of NULs — the control characters that must never
@@ -175,7 +161,7 @@ class PrintCommandTest implements PrintCommandContract {
     private static Path writeControlCharactersFile(Path tempDir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
                 .build();
         Path file = tempDir.resolve("control_characters.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {

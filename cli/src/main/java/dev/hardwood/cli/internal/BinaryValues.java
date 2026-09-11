@@ -22,8 +22,9 @@ import java.util.HexFormat;
 /// Such a column may hold text — older writers routinely omitted the `STRING`
 /// annotation — or an opaque blob such as WKB geometry, a Protobuf payload or a
 /// hash. The bytes are the only evidence either way, so they are decoded
-/// strictly: well-formed UTF-8 with no control characters is text, anything
-/// else renders as `0x`-prefixed lowercase hex.
+/// strictly: well-formed UTF-8 with no control characters that does not start
+/// with `0x` is text, anything else renders as `0x`-prefixed lowercase hex. A
+/// rendered `0x…` value therefore always means bytes.
 ///
 /// The hex is always complete as far as the caller can display it. A surface
 /// too narrow for it truncates the way it truncates any other long value, so a
@@ -62,10 +63,11 @@ public final class BinaryValues {
     }
 
     /// The bytes decoded as UTF-8, or `null` when they are not displayable text
-    /// — either not well-formed UTF-8, or decoding to a string containing
-    /// control characters. Decoding reports malformed input rather than
-    /// substituting `U+FFFD`, so a binary payload is never mistaken for text
-    /// that happens to contain replacement characters.
+    /// — not well-formed UTF-8, decoding to a string containing control
+    /// characters, or starting with `0x`, which would read back as the bytes it
+    /// spells. Decoding reports malformed input rather than substituting
+    /// `U+FFFD`, so a binary payload is never mistaken for text that happens to
+    /// contain replacement characters.
     public static String asText(byte[] bytes) {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -82,7 +84,7 @@ public final class BinaryValues {
                 return null;
             }
         }
-        return decoded;
+        return decoded.startsWith("0x") ? null : decoded;
     }
 
     /// The bytes as `0x`-prefixed lowercase hex, stopping once the result

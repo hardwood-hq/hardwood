@@ -30,7 +30,7 @@ run the CLI via Docker without installing it locally — see the [Docker section
 | `hardwood info` | Display high-level file information, including key-value metadata |
 | `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
 | `hardwood print` | Print rows as an ASCII table (head, tail, or all); nested and Variant columns decode into a one-line display grammar |
-| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); JSON output writes numbers and booleans as JSON scalars and a null as `null`; Variant columns are emitted as a single cell in CSV and as a native JSON subtree in JSON |
+| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); JSON output writes numbers and booleans as JSON scalars and a null as `null`; nested and Variant columns are emitted as JSON text in a single CSV cell and as native JSON in JSON |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
@@ -95,13 +95,22 @@ hardwood convert --format csv --null-string '\N' -f data.parquet
 ## Convert output
 
 `hardwood convert --format json` writes JSON numbers and booleans for
-non-repeated `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, and `DOUBLE` fields that
-carry no logical annotation or an `INT` annotation. Date, time, timestamp,
-decimal, UUID, interval, `FLOAT16`, `INT96`, byte-array, and nested values are
-JSON strings. Decimals are always plain strings — `0.0000001`, never `1E-7`.
+`BOOLEAN`, `INT32`, `INT64`, `FLOAT`, and `DOUBLE` values that carry no
+logical annotation or an `INT` annotation. Date, time, timestamp, decimal,
+UUID, interval, `FLOAT16`, `INT96`, and byte-array values are JSON strings.
+Decimals are always plain strings — `0.0000001`, never `1E-7`.
+
+Nested values are native JSON: a struct is an object, a list or repeated field
+an array, and a map an object keyed by each map key's text. Values inside them
+follow the same rules as top-level fields. CSV has no nested structure, so a
+list, map, or Variant in a CSV cell is the same JSON as text.
 
 Finite floating-point values are JSON numbers. `NaN`, `Infinity`, and
 `-Infinity` are JSON strings, because JSON has no non-finite number values.
+This holds for floating-point values inside Variant columns too.
+
+String values are written verbatim, control characters included: JSON escapes
+them, and CSV quotes a field that holds a line feed or a carriage return.
 
 Unsigned integers are JSON numbers, including values above the signed 64-bit
 range such as `18446744073709551615`. A JSON parser that represents numbers as
@@ -121,17 +130,31 @@ column carries, not an absent one.
 
 ## Value rendering
 
-Every command spells a value of a given logical type the same way: timestamps
-as ISO-8601 text (including `INT96` min/max statistics, which are not hex),
-dates as `LocalDate`, decimals as plain strings, UUIDs as their canonical
-`toString`. Table surfaces — `print`, CSV cells, and `dive` — render nested
-and Variant values in one unquoted display grammar: structs and maps as
-`{ a : 1 }`, lists as `[1, 2]`, Variant objects and arrays in the same shape.
-Only `convert --format json` emits real JSON for Variant values, since that
-output must parse as JSON. A control character in any string value renders as
-`·` (or as `0x`-prefixed hex when every character is a control) on every
-surface, including JSON exports — a parsed export contains `·`, never the
-original control byte.
+Every command spells a value of a given logical type the same way:
+
+| Type | Example |
+|---|---|
+| Timestamp adjusted to UTC, and `INT96` | `2025-01-01T00:00:00Z` |
+| Timestamp without a time zone | `2025-01-01T00:00` |
+| Date | `2025-04-24` |
+| Decimal | `0.0000001` |
+| UUID | `f81d4fae-7dec-11d0-a765-00a0c91e6bf6` |
+
+`INT96` min/max statistics render as timestamps too.
+
+`print` and `dive` render nested and Variant values in one unquoted display
+grammar: structs and maps as `{ a : 1 }`, lists as `[1, 2]`, Variant objects
+and arrays in the same shape. `convert` writes nested and Variant values as
+JSON: native in JSON output, JSON text in a CSV cell.
+
+In `print`, `dive`, `inspect` and `info`, a control character in a string
+value renders as `·`, and a value made entirely of control characters as
+`0x`-prefixed hex of its UTF-8 bytes. `convert` writes string values verbatim.
+
+A min/max statistic or dictionary entry that does not decode as its type
+renders in its stored form: bytes whose length does not match the type as
+`0x`-prefixed hex, a `TIME` outside a day as its stored integer. A malformed
+`UUID`, `INTERVAL` or `INT96` value in a row makes `print` and `convert` fail.
 
 ## Schema output formats
 
@@ -223,8 +246,9 @@ A `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column with no logical-type annotation
 carries bytes the schema gives no interpretation for — text from a writer that
 omitted the `STRING` annotation, or an opaque payload such as WKB geometry, a
 Protobuf message or a hash. Every command decides from the bytes themselves:
-well-formed UTF-8 with no control characters prints as text, anything else
-prints as `0x`-prefixed lowercase hex. The same rule applies to values,
+well-formed UTF-8 with no control characters prints as text unless it starts
+with `0x`; anything else prints as `0x`-prefixed lowercase hex, so a `0x…`
+value always means bytes. The same rule applies to values,
 dictionary entries and min/max statistics alike, and to a byte-backed logical
 type whose payload length rules out its own decoder.
 
