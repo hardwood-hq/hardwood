@@ -447,8 +447,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 11.4 Command-line interface (`hardwood-cli`)
 - [x] Shared value renderer across `print` / `convert` / `inspect` / `dive` (#1021)
-- [x] Terminal-cell width and a single truncation primitive via `CharWidth` (#1021, #866)
-- [x] Control-character sanitisation in command output (#865)
+- [x] Control characters in displayed values sanitised (#865)
 
 ---
 

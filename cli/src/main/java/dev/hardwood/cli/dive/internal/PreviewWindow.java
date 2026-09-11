@@ -150,13 +150,13 @@ final class PreviewWindow {
                 for (int c = 0; c < fieldCount; c++) {
                     SchemaNode field = topLevelFields.get(c);
                     rowLogical.add(ValueFormatter.formatReader(reader, c, field, true,
-                            ValueFormatter.NestedStyle.COMPACT, ValueFormatter.PREVIEW_CELL_BUDGET));
+                            ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
                     rowPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
-                            ValueFormatter.NestedStyle.COMPACT, ValueFormatter.PREVIEW_CELL_BUDGET));
+                            ValueFormatter.Style.PREVIEW, ValueFormatter.PREVIEW_CELL_BUDGET));
                     expLogical.add(ValueFormatter.formatReader(reader, c, field, true,
-                            ValueFormatter.NestedStyle.EXPANDED, BinaryValues.NO_LIMIT));
+                            ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
                     expPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
-                            ValueFormatter.NestedStyle.EXPANDED, BinaryValues.NO_LIMIT));
+                            ValueFormatter.Style.EXPANDED, BinaryValues.NO_LIMIT));
                 }
                 rowsLogical.add(rowLogical);
                 rowsPhysical.add(rowPhysical);

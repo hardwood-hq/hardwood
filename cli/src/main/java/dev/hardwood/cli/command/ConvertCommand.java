@@ -25,12 +25,10 @@ import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
-import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -194,7 +192,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
             values.add(nullString);
         }
         else {
-            values.add(ValueFormatter.formatValue(value, schema, BinaryValues.NO_LIMIT));
+            values.add(ValueFormatter.formatValue(value, schema, ValueFormatter.Style.EXPORT, BinaryValues.NO_LIMIT));
         }
     }
 
@@ -253,13 +251,11 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 out.print("\"" + JsonStrings.escape(headers[i]) + "\":");
                 if (rowReader.isNull(i)) {
                     out.print("null");
-                } else if (fieldSchema instanceof SchemaNode.GroupNode group && group.isVariant()) {
-                    PqVariant variant = rowReader.getVariant(fieldSchema.name());
-                    out.print(ValueFormatter.variantJson(variant));
                 } else if (!writeIfJsonScalar(out, rowReader, i, fieldSchema)) {
+                    // A nested field renders as JSON; a primitive one as text to quote.
                     String val = ValueFormatter.formatReader(rowReader, i, fieldSchema, true,
-                            ValueFormatter.NestedStyle.COMPACT, BinaryValues.NO_LIMIT);
-                    out.print("\"" + JsonStrings.escape(val) + "\"");
+                            ValueFormatter.Style.EXPORT, BinaryValues.NO_LIMIT);
+                    out.print(ValueFormatter.isNested(fieldSchema) ? val : "\"" + JsonStrings.escape(val) + "\"");
                 }
             }
             out.print("}");
@@ -270,20 +266,19 @@ public class ConvertCommand implements Command<CommandInvocation> {
     private static boolean writeIfJsonScalar(PrintWriter out, RowReader rowReader, int fieldIndex,
                                              SchemaNode fieldSchema) {
         if (fieldSchema instanceof SchemaNode.PrimitiveNode primitive
-                && primitive.repetitionType() != RepetitionType.REPEATED) {
+                && !ValueFormatter.isNested(primitive) && ValueFormatter.isJsonScalar(primitive)) {
             LogicalType logicalType = primitive.logicalType();
-            return (logicalType == null || logicalType instanceof LogicalType.IntType) &&
-                    switch (primitive.type()) {
-                        case BOOLEAN -> {
-                            out.print(rowReader.getBoolean(fieldIndex));
-                            yield true;
-                        }
-                        case INT32 -> writeJsonInt32(out, logicalType, rowReader.getInt(fieldIndex));
-                        case INT64 -> writeJsonInt64(out, logicalType, rowReader.getLong(fieldIndex));
-                        case FLOAT -> writeJsonFloat(out, rowReader.getFloat(fieldIndex));
-                        case DOUBLE -> writeJsonDouble(out, rowReader.getDouble(fieldIndex));
-                        case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> false;
-                    };
+            return switch (primitive.type()) {
+                case BOOLEAN -> {
+                    out.print(rowReader.getBoolean(fieldIndex));
+                    yield true;
+                }
+                case INT32 -> writeJsonInt32(out, logicalType, rowReader.getInt(fieldIndex));
+                case INT64 -> writeJsonInt64(out, logicalType, rowReader.getLong(fieldIndex));
+                case FLOAT -> writeJsonFloat(out, rowReader.getFloat(fieldIndex));
+                case DOUBLE -> writeJsonDouble(out, rowReader.getDouble(fieldIndex));
+                case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> false;
+            };
         }
 
         return false;
@@ -342,7 +337,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     private static String csvField(String value) {
-        if (value.indexOf(',') < 0 && value.indexOf('"') < 0 && value.indexOf('\n') < 0) {
+        if (value.indexOf(',') < 0 && value.indexOf('"') < 0 && value.indexOf('\n') < 0 && value.indexOf('\r') < 0) {
             return value;
         }
         return "\"" + value.replace("\"", "\"\"") + "\"";
