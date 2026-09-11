@@ -152,11 +152,11 @@ final class ProtoSchemaEmitter {
         SchemaNode key = group.getMapKey();
         boolean representable = key instanceof SchemaNode.PrimitiveNode keyPrim
                 && switch (keyPrim.type()) {
-            case BOOLEAN, INT32, INT64, INT96 -> true;
+            case BOOLEAN, INT32, INT64 -> true;
             case BYTE_ARRAY -> keyPrim.logicalType() instanceof LogicalType.StringType
                     || keyPrim.logicalType() instanceof LogicalType.EnumType
                     || keyPrim.logicalType() instanceof LogicalType.JsonType;
-            case FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY -> false;
+            case FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
         };
         if (!representable) {
             throw new IllegalArgumentException("Protobuf map keys must be an integer, bool, or string scalar; map '"
@@ -261,8 +261,11 @@ final class ProtoSchemaEmitter {
         return switch (prim.type()) {
             case BOOLEAN -> "bool";
             case INT32 -> prim.logicalType() instanceof LogicalType.IntType it && !it.isSigned() ? "uint32" : "int32";
-            case INT64, INT96 ->
+            case INT64 ->
                     prim.logicalType() instanceof LogicalType.IntType it && !it.isSigned() ? "uint64" : "int64";
+            // A 12-byte value does not fit an int64. Protobuf has no 96-bit scalar, so
+            // the bytes pass through whole, as the Avro emitter's 12-byte fixed does.
+            case INT96 -> "bytes";
             case FLOAT -> "float";
             case DOUBLE -> "double";
             case BYTE_ARRAY -> prim.logicalType() instanceof LogicalType.StringType

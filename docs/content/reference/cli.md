@@ -195,7 +195,8 @@ Avro and an empty value message in Protobuf.
 Fixed-width columns keep their physical size: `fixed_len_byte_array(n)`
 and `int96` become named Avro `fixed` types of `n` and 12 bytes, and the
 `interval` and `float16` logical types map to shared 12- and 2-byte
-`fixed` types defined once per schema.
+`fixed` types defined once per schema. Protobuf has no fixed-width scalar,
+so both render as `bytes`, which keeps all the bytes of an `int96`.
 
 Named types in Avro — records and fixed types — are unique by full name.
 Each carries a namespace derived from its position, so two records with
@@ -203,7 +204,9 @@ the same Parquet name under different parents stay distinct:
 `Schema.Home.Address` and `Schema.Work.Address`. Candidates that still
 collide within one namespace get a `_2`, `_3`, … suffix on the *type*
 name; field names keep their own suffixes independently, so a field may
-read `address_2` while its type reads `Address_2`. The same
+read `address_2` while its type reads `Address_2`. A list or map field
+names a namespace for its own nested types, so it competes for that name
+with the record types declared beside it. The same
 uniqueness rule covers Protobuf message declarations, including the
 synthesized wrapper messages.
 

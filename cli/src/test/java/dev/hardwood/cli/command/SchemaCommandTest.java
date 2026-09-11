@@ -199,6 +199,38 @@ class SchemaCommandTest implements SchemaCommandContract {
         parseAndCreateFileHeader(result.output());
     }
 
+    /// Protobuf has no 96-bit scalar, so an INT96 column keeps its 12 bytes as `bytes`.
+    /// Rendering it as `int64` would drop four of them.
+    @Test
+    void rendersInt96AsProtoBytes(@TempDir Path tempDir) throws Exception {
+        Cli.Result result = Cli.launch("schema", "-f", INT96_FILE, "--format", "PROTO");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                syntax = "proto3";
+
+                message Schema {
+                  bytes ts = 1;
+                }""");
+        assertProtocAccepts(tempDir, "int96", result.output());
+    }
+
+    /// The writer refuses INT96 columns, so the map is declared directly.
+    @Test
+    void rejectsInt96ProtoMapKeys() {
+        SchemaNode.PrimitiveNode key = new SchemaNode.PrimitiveNode("key", PhysicalType.INT96,
+                RepetitionType.REQUIRED, null, 0, 1, 1);
+        SchemaNode.GroupNode keyValue = new SchemaNode.GroupNode("key_value", RepetitionType.REPEATED, null, null,
+                List.of(key), 1, 1);
+        SchemaNode.GroupNode map = new SchemaNode.GroupNode("stamps", RepetitionType.OPTIONAL, ConvertedType.MAP,
+                new LogicalType.MapType(), List.of(keyValue), 0, 0);
+
+        assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Protobuf map keys must be an integer, bool, or string scalar; "
+                        + "map 'stamps' has key INT96");
+    }
+
     @Test
     void distinguishesSameNamedFixedLeavesUnderDifferentParents(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
