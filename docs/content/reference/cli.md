@@ -241,7 +241,28 @@ hardwood dive -f data.parquet
 
 `dive` requires an interactive terminal. When stdin or stdout is not a TTY (e.g., a `docker run` without `-it`, or output piped to a file), it exits with an error instead of launching the UI.
 
-<script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
+<div id="dive-player"></div>
+<script>
+  (function() {
+    function initDivePlayer() {
+      var container = document.getElementById('dive-player');
+      if (container && typeof AsciinemaPlayer !== 'undefined' && !container.dataset.rendered) {
+        container.dataset.rendered = 'true';
+        AsciinemaPlayer.create('../../assets/cli/dive-demo.cast', container, {
+          cols: 120,
+          rows: 35,
+          idleTimeLimit: 2,
+          theme: 'solarized-dark'
+        });
+      }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initDivePlayer);
+    } else {
+      initDivePlayer();
+    }
+  })();
+</script>
 
 ### What you can do with it
 

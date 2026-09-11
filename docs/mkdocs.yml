@@ -116,6 +116,10 @@ copyright: >-
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/asciinema-player.css
+
+extra_javascript:
+  - javascripts/asciinema-player.min.js
 
 extra:
   generator: false
