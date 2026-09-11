@@ -168,7 +168,8 @@ class SchemaCommandTest implements SchemaCommandContract {
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.errorOutput()).contains("Avro map keys must be STRING, ENUM, or JSON");
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error rendering schema: Avro map keys must be STRING, ENUM, or JSON; map 'counts' has key INT32");
     }
 
     /// The writer does not support INT96 columns, so this case uses the checked-in
@@ -290,8 +291,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     void rejectsMissingAvroMapKeyClearly() {
         assertThatThrownBy(() -> AvroSchemaEmitter.validateAvroMapKey(null, "broken"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("map 'broken'")
-                .hasMessageContaining("missing key");
+                .hasMessage("Avro map keys must be STRING, ENUM, or JSON; map 'broken' has key missing key");
     }
 
     /// Two legal raw names that capitalize to one type candidate must resolve by raw
@@ -624,11 +624,13 @@ class SchemaCommandTest implements SchemaCommandContract {
 
     @Test
     void rejectsBytesAndFloatingMapKeys(@TempDir Path tempDir) throws Exception {
-        Path bytesFile = write(tempDir, FileSchema.builder("schema")
+        // Separate directories: write() always names the file names.parquet, so one
+        // directory would leave the second schema on top of the first.
+        Path bytesFile = write(Files.createDirectories(tempDir.resolve("bytes")), FileSchema.builder("schema")
                 .map("by_bytes", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, value -> value
                         .primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build());
-        Path floatFile = write(tempDir, FileSchema.builder("schema")
+        Path floatFile = write(Files.createDirectories(tempDir.resolve("float")), FileSchema.builder("schema")
                 .map("by_float", RepetitionType.REQUIRED, PhysicalType.FLOAT, value -> value
                         .primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build());
@@ -637,9 +639,11 @@ class SchemaCommandTest implements SchemaCommandContract {
         Cli.Result floatResult = Cli.launch("schema", "-f", floatFile.toString(), "--format", "PROTO");
 
         assertThat(bytesResult.exitCode()).isNotZero();
-        assertThat(bytesResult.errorOutput()).contains("Protobuf map keys must be an integer, bool, or string scalar");
+        assertThat(bytesResult.errorOutput()).isEqualTo("Error rendering schema: Protobuf map keys must be an "
+                + "integer, bool, or string scalar; map 'by_bytes' has key BYTE_ARRAY");
         assertThat(floatResult.exitCode()).isNotZero();
-        assertThat(floatResult.errorOutput()).contains("Protobuf map keys must be an integer, bool, or string scalar");
+        assertThat(floatResult.errorOutput()).isEqualTo("Error rendering schema: Protobuf map keys must be an "
+                + "integer, bool, or string scalar; map 'by_float' has key FLOAT");
     }
 
     @Test
@@ -653,8 +657,8 @@ class SchemaCommandTest implements SchemaCommandContract {
 
         assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Protobuf map keys must be an integer, bool, or string scalar")
-                .hasMessageContaining("group 'key'");
+                .hasMessage("Protobuf map keys must be an integer, bool, or string scalar; "
+                        + "map 'm' has key group 'key'");
     }
 
     @Test
