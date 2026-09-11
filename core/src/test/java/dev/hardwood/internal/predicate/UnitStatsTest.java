@@ -61,14 +61,34 @@ class UnitStatsTest {
         ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1);
         ResolvedPredicate groupIsNull = new ResolvedPredicate.IsNullPredicate(0, 2, 3);
         ResolvedPredicate groupIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 2, 3);
+        // An optional MAP, answered from its required key one level down.
+        ResolvedPredicate mapIsNull = new ResolvedPredicate.IsNullPredicate(0, 1, 2);
+        ResolvedPredicate mapIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1, 2);
         ResolvedPredicate gt5 = new ResolvedPredicate.IntPredicate(0, Operator.GT, 5);
         ResolvedPredicate gt15 = new ResolvedPredicate.IntPredicate(0, Operator.GT, 15);
 
         return Stream.of(
                 Arguments.of("IS NULL, no nulls", isNull, 0L, null, CANNOT_MATCH),
                 Arguments.of("IS NULL, some nulls", isNull, 40L, null, MIGHT_MATCH),
-                Arguments.of("IS NULL, every row null", isNull, 100L, null, MIGHT_MATCH),
+                Arguments.of("IS NULL, every row null", isNull, 100L, null, ALWAYS_MATCHES),
                 Arguments.of("IS NULL, null count unknown", isNull, NullStats.UNKNOWN_NULL_COUNT, null, MIGHT_MATCH),
+                Arguments.of("IS NULL, no null count, histogram all below the leaf", isNull,
+                        NullStats.UNKNOWN_NULL_COUNT, new long[]{ 100, 0 }, ALWAYS_MATCHES),
+                Arguments.of("IS NULL, no null count, histogram all at the leaf", isNull,
+                        NullStats.UNKNOWN_NULL_COUNT, new long[]{ 0, 100 }, CANNOT_MATCH),
+                Arguments.of("IS NOT NULL, no null count, histogram all at the leaf", isNotNull,
+                        NullStats.UNKNOWN_NULL_COUNT, new long[]{ 0, 100 }, ALWAYS_MATCHES),
+                Arguments.of("IS NOT NULL, no null count, histogram all below the leaf", isNotNull,
+                        NullStats.UNKNOWN_NULL_COUNT, new long[]{ 100, 0 }, CANNOT_MATCH),
+                Arguments.of("IS NOT NULL, histogram short of the rows", isNotNull,
+                        NullStats.UNKNOWN_NULL_COUNT, new long[]{ 0, 90 }, MIGHT_MATCH),
+                Arguments.of("IS NULL, histogram of the wrong length, null count decides", isNull, 100L,
+                        new long[]{ 30, 70, 0 }, ALWAYS_MATCHES),
+                // Levels of 0 fit only a one-bucket histogram. Read at level 0, this two-bucket
+                // one would count every entry as present and promise every row.
+                Arguments.of("IS NOT NULL with no schema levels, optional column",
+                        ResolvedPredicate.IsNotNullPredicate.ofLeaf(0),
+                        40L, new long[]{ 40, 60 }, MIGHT_MATCH),
                 Arguments.of("IS NOT NULL, no nulls", isNotNull, 0L, null, ALWAYS_MATCHES),
                 Arguments.of("IS NOT NULL, some nulls", isNotNull, 40L, null, MIGHT_MATCH),
                 Arguments.of("IS NOT NULL, every row null", isNotNull, 100L, null, CANNOT_MATCH),
@@ -88,7 +108,17 @@ class UnitStatsTest {
                 // group absent throughout.
                 Arguments.of("group IS NOT NULL, no histogram", groupIsNotNull, 100L, null, MIGHT_MATCH),
                 Arguments.of("group IS NULL, histogram of the wrong length", groupIsNull, 100L,
-                        new long[]{ 30, 70, 0 }, MIGHT_MATCH));
+                        new long[]{ 30, 70, 0 }, MIGHT_MATCH),
+                // Every row holds an empty map, which writes one key entry below the key's level,
+                // so the key's null count equals the row count although no map is null. Read as a
+                // leaf's, that count would promise IS NULL on every row and rule out IS NOT NULL.
+                Arguments.of("map IS NULL, every map empty, no histogram", mapIsNull, 100L, null, MIGHT_MATCH),
+                Arguments.of("map IS NOT NULL, every map empty, no histogram", mapIsNotNull, 100L, null,
+                        MIGHT_MATCH),
+                Arguments.of("map IS NULL, every map empty", mapIsNull, 100L, new long[]{ 0, 100, 0 },
+                        CANNOT_MATCH),
+                Arguments.of("map IS NOT NULL, every map empty", mapIsNotNull, 100L, new long[]{ 0, 100, 0 },
+                        ALWAYS_MATCHES));
     }
 
     @Test

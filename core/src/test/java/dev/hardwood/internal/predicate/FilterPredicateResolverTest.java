@@ -14,10 +14,15 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.metadata.ColumnOrder;
+import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -417,6 +422,90 @@ class FilterPredicateResolverTest {
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("tags"), schema))
                 .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 3));
+    }
+
+    /// A `LIST` or a `MAP` is answered from a leaf below a repeated node, and every repeated node
+    /// adds a definition level, so the collection sits strictly below its leaf in every encoding.
+    /// That keeps the predicate on the definition level histogram: the leaf is repeated, and an
+    /// absent collection and an empty one both count among its nulls.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void nullPredicateOnACollectionIsAnsweredAsAGroup(String shape, List<SchemaElement> elements,
+            int definitionLevel, int leafDefinitionLevel) {
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("c"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, definitionLevel, leafDefinitionLevel));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNotNull("c"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNotNullPredicate(0, definitionLevel, leafDefinitionLevel));
+    }
+
+    static Stream<Arguments> nullPredicateOnACollectionIsAnsweredAsAGroup() {
+        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement key = SchemaElement.primitive("key", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
+        SchemaElement value = SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.OPTIONAL);
+
+        return Stream.of(
+                Arguments.of("two-level list of a primitive", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 2),
+                Arguments.of("two-level list, element group of several fields", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.group("element", RepetitionType.REPEATED, 2),
+                        SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED),
+                        SchemaElement.primitive("b", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                Arguments.of("two-level list of lists", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.group("element", RepetitionType.REPEATED, 1),
+                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REPEATED)), 1, 3),
+                Arguments.of("two-level list, element named array", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.group("array", RepetitionType.REPEATED, 1),
+                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                Arguments.of("two-level list, element named c_tuple", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.group("c_tuple", RepetitionType.REPEATED, 1),
+                        SchemaElement.primitive("x", PhysicalType.INT32, RepetitionType.REQUIRED)), 1, 2),
+                Arguments.of("three-level list under other names", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.LIST),
+                        SchemaElement.group("bag", RepetitionType.REPEATED, 1),
+                        SchemaElement.primitive("item", PhysicalType.INT32, RepetitionType.OPTIONAL)), 1, 3),
+                // Never absent, so its IS NULL splits the histogram at level 0: no bucket below.
+                Arguments.of("required two-level list", List.of(root,
+                        legacyGroup("c", RepetitionType.REQUIRED, 1, ConvertedType.LIST),
+                        SchemaElement.primitive("element", PhysicalType.INT32, RepetitionType.REPEATED)), 0, 1),
+                Arguments.of("map", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP),
+                        SchemaElement.group("key_value", RepetitionType.REPEATED, 2), key, value), 1, 2),
+                Arguments.of("map whose repeated group is marked MAP_KEY_VALUE", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP),
+                        legacyGroup("map", RepetitionType.REPEATED, 2, ConvertedType.MAP_KEY_VALUE), key, value),
+                        1, 2),
+                Arguments.of("map marked MAP_KEY_VALUE itself", List.of(root,
+                        legacyGroup("c", RepetitionType.OPTIONAL, 1, ConvertedType.MAP_KEY_VALUE),
+                        SchemaElement.group("map", RepetitionType.REPEATED, 2), key, value), 1, 2));
+    }
+
+    @Test
+    void nullPredicateOnAStructOfRequiredFieldsIsAnsweredAsItsLeaf() {
+        // `optional group c { required int32 a; }`: nothing between `c` and `a` adds a definition
+        // level, so the two share one and the predicate takes the leaf's path. It may: `a` is not
+        // repeated, writes one entry per row, and is null exactly where `c` is absent.
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 1),
+                SchemaElement.group("c", RepetitionType.OPTIONAL, 1),
+                SchemaElement.primitive("a", PhysicalType.INT32, RepetitionType.REQUIRED)));
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("c"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 1));
+    }
+
+    /// A group annotated only by the legacy `converted_type`, as files written before the logical
+    /// type union carry `LIST`, `MAP` and `MAP_KEY_VALUE`.
+    private static SchemaElement legacyGroup(String name, RepetitionType repetitionType, int numChildren,
+            ConvertedType convertedType) {
+        return new SchemaElement(name, null, null, repetitionType, numChildren, convertedType,
+                null, null, null, null);
     }
 
     @Test

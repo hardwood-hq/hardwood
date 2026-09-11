@@ -40,7 +40,7 @@ record DefinitionLevelStats(long[] histogram, long rowCount) {
 
     /// Whether the file wrote a histogram for a leaf at `leafDefinitionLevel`, one bucket per
     /// level up to it. A histogram it omits, or wrote at another length, proves nothing.
-    private boolean sizedFor(int leafDefinitionLevel) {
+    boolean sizedFor(int leafDefinitionLevel) {
         return histogram != null && histogram.length == leafDefinitionLevel + 1;
     }
 

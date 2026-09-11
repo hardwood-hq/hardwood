@@ -7,19 +7,30 @@
  */
 package dev.hardwood;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowGroupPredicate;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.RowWriter;
 import jdk.jfr.consumer.RecordedEvent;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +49,7 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
     private static final Path FIXTURE = Paths.get("src/test/resources/filter_pushdown_int.parquet");
     private static final String BYTE_RANGE_EVENT = "dev.hardwood.RowGroupByteRangeFilter";
     private static final String PUSH_DOWN_EVENT = "dev.hardwood.RowGroupFilter";
+    private static final int NULL_ROWS = 10;
 
     private static long fileLen;
 
@@ -134,6 +146,97 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(events(PUSH_DOWN_EVENT).count())
                 .as("statistics evaluated once: one push-down event")
                 .isEqualTo(1);
+    }
+
+    @Test
+    void isNullOnALeafNullOnEveryRowFullyMatches() throws Exception {
+        // Every row's city is null: the address is absent on even rows and present without a city
+        // on odd ones. The leaf's null count is the row count either way, which proves IS NULL on
+        // every row.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("address", RepetitionType.OPTIONAL, address -> address
+                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
+                .build();
+        byte[] file = writeRows(schema, rows -> {
+            for (int i = 0; i < NULL_ROWS; i++) {
+                int id = i;
+                rows.writeRow(row -> {
+                    row.setInt("id", id);
+                    if (id % 2 == 1) {
+                        row.setStruct("address", address -> address.setString("city", null));
+                    }
+                });
+            }
+        });
+
+        // The column readers' record count is not asserted: they drop the rows where the address
+        // is present (#1189).
+        readFullyMatching(file, FilterPredicate.isNull("address.city"));
+    }
+
+    @Test
+    void isNullOnAStructOfRequiredFieldsAbsentOnEveryRowFullyMatches() throws Exception {
+        // No definition level separates `c` from `a`, so `a` is null exactly where `c` is absent
+        // and its null count answers IS NULL on `c`.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("c", RepetitionType.OPTIONAL, c -> c
+                        .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        byte[] file = writeRows(schema, rows -> {
+            for (int i = 0; i < NULL_ROWS; i++) {
+                int id = i;
+                rows.writeRow(row -> row.setInt("id", id));
+            }
+        });
+
+        assertThat(readFullyMatching(file, FilterPredicate.isNull("c")))
+                .as("column readers return every row")
+                .isEqualTo(NULL_ROWS);
+    }
+
+    /// Reads `file` under `filter` through a row reader and through column readers, asserts that
+    /// the row reader returns every row and that each read reports its one row group fully
+    /// matching, and returns the number of records the column readers returned.
+    private int readFullyMatching(byte[] file, FilterPredicate filter) throws Exception {
+        List<Integer> rowIds = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                rowIds.add(rows.getInt("id"));
+            }
+        }
+        int columnRecords = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(filter)
+                     .build()) {
+            while (cols.nextBatch()) {
+                columnRecords += cols.getRecordCount();
+            }
+        }
+        awaitEvents();
+
+        assertThat(rowIds).containsExactlyElementsOf(IntStream.range(0, NULL_ROWS).boxed().toList());
+        assertThat(events(PUSH_DOWN_EVENT).map(event -> event.getInt("rowGroupsFullyMatching")).toList())
+                .as("one push-down event per read, each proving its one row group fully matching")
+                .containsExactly(1, 1);
+        return columnRecords;
+    }
+
+    private static byte[] writeRows(FileSchema schema, RowWrite filler) throws Exception {
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            filler.accept(writer.rowWriter());
+        }
+        return out.toByteArray();
+    }
+
+    @FunctionalInterface
+    private interface RowWrite {
+        void accept(RowWriter rows) throws Exception;
     }
 
     /// Builds a [ColumnReaders] over the fixture via `build`, then stops the recording.

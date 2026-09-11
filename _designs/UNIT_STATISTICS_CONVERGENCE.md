@@ -1,6 +1,6 @@
 # Design: one statistics abstraction for row group and page filtering (#1177)
 
-**Status: In progress** (stage 1 implemented). Related: #795 (`ALWAYS_MATCH_STATISTICS.md`), #977, #1030, #1107.
+**Status: In progress** (stages 1 and 3 implemented). Related: #795 (`ALWAYS_MATCH_STATISTICS.md`), #977, #1030, #1107.
 
 ## Problem
 
@@ -96,10 +96,11 @@ The last rule arrives in stage 3; the others hold from stage 1. The rules readin
 predicates included, so the unit writes exactly one entry per row and a null count equal to the
 row count accounts for all of them.
 
-**A group predicate must not reach these rules.** `FilterPredicateResolver.resolveNullTarget`
-answers a group from a leaf below it, chosen by `leafToAnswerFrom`, and that leaf is repeated
-whenever the group is a `LIST` or a `MAP` with no non-repeated leaf beneath it — `rejectRepeated`
-runs on the directly-named-leaf branch only. Two things then fail at once. A null count tallies
+**A group predicate, one whose `definitionLevel` is below its `leafDefinitionLevel`, must not
+reach these rules.** `FilterPredicateResolver.resolveNullTarget` answers a group from a leaf below
+it, chosen by `leafToAnswerFrom`, and that leaf is repeated whenever the group is a `LIST` or a
+`MAP` with no non-repeated leaf beneath it — `rejectRepeated` runs on the directly-named-leaf
+branch only. Two things then fail at once. A null count tallies
 every entry below `leafDefinitionLevel`, which is the group being absent *or* the group being
 present with a null below it, so `nullCount == rowCount` does not prove the group absent; that
 conflation is the reason the definition level histogram was introduced. And a repeated leaf writes
@@ -134,10 +135,17 @@ The gate is `definitionLevel < leafDefinitionLevel`, which `group()` on the two 
 tests, because it is what makes the fallback legitimate. It is tested once, in `UnitStats.decide`,
 which both evaluators call.
 
+The gate follows the schema's structure, not its annotations. Every repeated node adds a
+definition level, so a `LIST` or a `MAP` — in the standard encoding and in every legacy one: the
+two-level lists, the repeated group named `array` or `<list>_tuple`, `MAP_KEY_VALUE` on either
+group — has a repeated node between it and its leaf and passes the gate as a group. A group whose
+levels are equal has nothing but required nodes down to its leaf, which is then non-repeated and
+null exactly where the group is absent, so the null count answers it as it answers the leaf.
+
 Preferring the histogram for a leaf predicate counts entries directly, where the null-count rules
 reach the same answer by way of the non-repeated-leaf argument above.
 
-The length guard is load-bearing once leaf predicates take this path.
+The length guard is load-bearing for a leaf predicate.
 `ResolvedPredicate.IsNotNullPredicate.ofLeaf` fabricates both definition levels as `0` for a caller
 holding no schema, and a histogram indexed at a fabricated level would answer about the wrong node.
 A histogram whose length is not `leafDefinitionLevel + 1` is therefore refused before it is read,
@@ -164,9 +172,11 @@ on `nullCount == rowCount` rests on.
 tests that pin each statistic on its own. `PageDropPredicates.canDropPage` is the third caller, and
 routing through `decide` is what turns its boolean drop into the same three-valued answer.
 
-`decide` builds only what its branch reads: one statistic for a null predicate, the null count and
-the min/max for a value predicate. A unit is constructed per page per leaf, so a thousand-page
-column chunk builds a thousand of them.
+`decide` builds only what its branch reads: the histogram for a null predicate, and the null count
+as well where a leaf predicate falls back to it; the null count and the min/max for a value
+predicate. A unit is constructed per page per leaf, so a thousand-page column chunk builds a
+thousand of them, and under a null predicate each copies its page's histogram out of the
+column index.
 
 **The recursion is not shared.** `AND` and `OR` fold to one `FilterDecision` on the row-group side
 and to a pair of `RowRanges` on the page side. The two are the same fold over different algebras;

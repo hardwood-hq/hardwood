@@ -204,11 +204,12 @@ public sealed interface ResolvedPredicate {
     /// `columnIndex` itself or a non-repeated group enclosing it.
     ///
     /// `definitionLevel` is the level at or above which that node is present, and
-    /// `leafDefinitionLevel` is the leaf column's maximum definition level. A leaf predicate has
-    /// the two equal; a group predicate has `definitionLevel` below `leafDefinitionLevel`, and the
-    /// gap between them is where a present group with a null child sits. Carrying both means an
-    /// evaluator can tell the two apart, and can size a definition level histogram, without the
-    /// schema the resolver read them from.
+    /// `leafDefinitionLevel` is the leaf column's maximum definition level. The gap between them
+    /// is where a present group with a null child sits. A leaf predicate has the two equal, and so
+    /// does a group with only required nodes down to the leaf, which is null exactly where the
+    /// group is absent and is answered as that leaf. Carrying both means an evaluator can tell the
+    /// two apart, and can size a definition level histogram, without the schema the resolver read
+    /// them from.
     record IsNullPredicate(int columnIndex, int definitionLevel, int leafDefinitionLevel)
             implements ResolvedPredicate {
 
@@ -221,7 +222,9 @@ public sealed interface ResolvedPredicate {
             this(columnIndex, definitionLevel, definitionLevel);
         }
 
-        /// Whether the tested node is a group enclosing the leaf rather than the leaf itself.
+        /// Whether a definition level separates the tested node from the leaf, so that the leaf
+        /// can be null where the node is present. `false` for the leaf itself and for a group with
+        /// only required nodes down to it.
         public boolean group() {
             return definitionLevel < leafDefinitionLevel;
         }
@@ -243,13 +246,17 @@ public sealed interface ResolvedPredicate {
         /// A predicate on the leaf column itself, for a caller holding no schema to read the
         /// leaf's definition level from — a negation rewritten into a null check, say.
         ///
-        /// A leaf predicate's readers consult the two levels only to establish that it is not a
-        /// group predicate, which equal levels settle on their own.
+        /// Both levels are `0`. Being equal, they settle that the predicate is not [#group()].
+        /// They also size a definition level histogram, and `0` fits only a required column's,
+        /// where it is the real level; `UnitStats.decide` refuses a histogram of any other length
+        /// and answers the predicate from the null count.
         public static IsNotNullPredicate ofLeaf(int columnIndex) {
             return new IsNotNullPredicate(columnIndex, 0, 0);
         }
 
-        /// Whether the tested node is a group enclosing the leaf rather than the leaf itself.
+        /// Whether a definition level separates the tested node from the leaf, so that the leaf
+        /// can be null where the node is present. `false` for the leaf itself and for a group with
+        /// only required nodes down to it.
         public boolean group() {
             return definitionLevel < leafDefinitionLevel;
         }

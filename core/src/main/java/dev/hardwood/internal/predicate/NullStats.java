@@ -7,12 +7,15 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// One unit's null count, and what it proves about a predicate on the leaf column itself.
+/// One unit's null count, and what it proves about a predicate on the leaf column itself or on
+/// a group with only required nodes down to it.
 ///
-/// [FilterPredicateResolver] refuses a repeated column to a directly named leaf, so such a leaf
-/// writes exactly one entry per row, and its null count is a count of rows. That is what lets
-/// the count be held against the unit's row count at all. A null predicate on an enclosing group
-/// is answered from a leaf that may be repeated, where it does not hold, and goes to
+/// [FilterPredicateResolver] refuses a repeated column to a directly named leaf, and a repeated
+/// group to a null predicate, so a leaf with no definition level between it and the named node
+/// writes exactly one entry per row, is null exactly where the node is absent, and has a null
+/// count that is a count of rows. That is what lets the count be held against the unit's row
+/// count at all. A null predicate on a group that a definition level separates from its leaf is
+/// answered from a leaf that may be repeated, where it does not hold, and goes to
 /// [DefinitionLevelStats] instead; [UnitStats#decide] is what keeps it from reaching here.
 ///
 /// @param nullCount the number of null entries in the unit, or [#UNKNOWN_NULL_COUNT]
@@ -32,9 +35,13 @@ record NullStats(long nullCount, long rowCount) {
         return rowCount >= 0 && nullCount == rowCount;
     }
 
-    /// `IS NULL` on the leaf, which no row matches where no entry is null.
+    /// `IS NULL` on the leaf, which no row matches where no entry is null, and every row matches
+    /// where every row is null.
     FilterDecision decideIsNull() {
-        return noNulls() ? FilterDecision.CANNOT_MATCH : FilterDecision.MIGHT_MATCH;
+        if (noNulls()) {
+            return FilterDecision.CANNOT_MATCH;
+        }
+        return allNull() ? FilterDecision.ALWAYS_MATCHES : FilterDecision.MIGHT_MATCH;
     }
 
     /// `IS NOT NULL` on the leaf, which no row matches where every row is null, and every row

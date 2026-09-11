@@ -53,12 +53,21 @@ sealed interface UnitStats {
 
     /// What this unit's statistics prove about one leaf predicate.
     ///
-    /// A null predicate on a group enclosing the leaf is answered from [#definitionLevels]
-    /// alone. The leaf it is answered from may be repeated, and then its null count tallies
-    /// absent groups and null elements alike, over more entries than there are rows, so neither
-    /// null count rule holds for it.
+    /// A null predicate on a group that a definition level separates from the leaf — an optional
+    /// or repeated node between the two — is answered from [#definitionLevels] alone. The leaf it
+    /// is answered from may be repeated, and then its null count tallies absent groups and null
+    /// elements alike, over more entries than there are rows, so neither null count rule holds
+    /// for it.
     ///
-    /// A null predicate on the leaf itself is answered from [#nulls].
+    /// A null predicate on the leaf itself, or on a group with only required nodes down to the
+    /// leaf, is answered from [#definitionLevels] where the file wrote a histogram sized for the
+    /// leaf, and from [#nulls] otherwise. The leaf is then not repeated and is null exactly where
+    /// the node is absent, so it writes one entry per row and the two agree wherever both are
+    /// present. The size check is
+    /// what keeps a predicate whose levels were not read from the schema — see
+    /// `IsNotNullPredicate.ofLeaf` — from reading a histogram at the wrong level: its levels are
+    /// both `0`, which only a required column's histogram is sized for, and for that column `0`
+    /// is its real level.
     ///
     /// A value predicate cannot match a unit that is null on every row, since a null satisfies
     /// none of them, `NOT_EQ` included. Otherwise it is answered from [#minMax]. Every value
@@ -71,12 +80,18 @@ sealed interface UnitStats {
     ///        report bounds it had to discard
     default FilterDecision decide(ResolvedPredicate leaf, LogContext logContext) {
         return switch (leaf) {
-            case ResolvedPredicate.IsNullPredicate p -> p.group()
-                    ? definitionLevels().decideIsNull(p.definitionLevel(), p.leafDefinitionLevel())
-                    : nulls().decideIsNull();
-            case ResolvedPredicate.IsNotNullPredicate p -> p.group()
-                    ? definitionLevels().decideIsNotNull(p.definitionLevel(), p.leafDefinitionLevel())
-                    : nulls().decideIsNotNull();
+            case ResolvedPredicate.IsNullPredicate p -> {
+                DefinitionLevelStats levels = definitionLevels();
+                yield p.group() || levels.sizedFor(p.leafDefinitionLevel())
+                        ? levels.decideIsNull(p.definitionLevel(), p.leafDefinitionLevel())
+                        : nulls().decideIsNull();
+            }
+            case ResolvedPredicate.IsNotNullPredicate p -> {
+                DefinitionLevelStats levels = definitionLevels();
+                yield p.group() || levels.sizedFor(p.leafDefinitionLevel())
+                        ? levels.decideIsNotNull(p.definitionLevel(), p.leafDefinitionLevel())
+                        : nulls().decideIsNotNull();
+            }
             case ResolvedPredicate.IntPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.LongPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedIntPredicate ignored -> decideValue(leaf, logContext);
