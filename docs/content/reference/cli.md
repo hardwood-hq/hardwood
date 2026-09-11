@@ -14,7 +14,7 @@
 The `hardwood` CLI lets you inspect and convert Parquet files from the command line — useful for exploring datasets, debugging file structure, and quick format conversions without writing Java code. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
 
 Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). You can also
-run the CLI via Docker without installing it locally — see the [Docker section below](#docker).
+run the CLI via Docker without installing it locally — see the [Docker section below](#docker). Maven test builds use `protoc` on Linux x86_64 and aarch64, macOS x86_64 and aarch64, and Windows x86_64. Windows aarch64 is not part of the supported build matrix.
 
 !!! note "macOS"
     The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:
@@ -196,7 +196,8 @@ Fixed-width columns keep their physical size: `fixed_len_byte_array(n)`
 and `int96` become named Avro `fixed` types of `n` and 12 bytes, and the
 `interval` and `float16` logical types map to shared 12- and 2-byte
 `fixed` types defined once per schema. Protobuf has no fixed-width scalar,
-so both render as `bytes`, which keeps all the bytes of an `int96`.
+so fixed-width values render as `bytes`, except UUID-annotated fixed arrays,
+which render as `string`; `int96` renders as `bytes` to keep all twelve bytes.
 
 Named types in Avro — records and fixed types — are unique by full name.
 Each carries a namespace derived from its position, so two records with
