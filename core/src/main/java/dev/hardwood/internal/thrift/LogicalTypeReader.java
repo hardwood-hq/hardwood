@@ -246,7 +246,7 @@ public class LogicalTypeReader {
     }
 
     private static LogicalType.IntType readIntTypeInternal(ThriftCompactReader reader) {
-        int bitWidth = 8;
+        int bitWidth = -1;
         boolean isSigned = true;
 
         while (true) {
@@ -268,6 +268,13 @@ public class LogicalTypeReader {
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
+        }
+
+        // Validate the required field was read, and that it names one of the four widths the
+        // annotation defines: the record rejects any other as a caller error, which a file
+        // carrying one is not.
+        if (bitWidth != 8 && bitWidth != 16 && bitWidth != 32 && bitWidth != 64) {
+            throw new ParquetReadException("Invalid IntType: bitWidth=" + bitWidth);
         }
 
         return LogicalType.intType(bitWidth, isSigned);

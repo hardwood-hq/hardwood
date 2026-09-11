@@ -47,12 +47,12 @@ literal a column does not take throws `IllegalArgumentException` at reader creat
 | `FLOAT` | | `float` | numeric |
 | `DOUBLE` | | `double` | numeric |
 | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY(n)` | | `String` | unsigned lexicographic |
-| `INT32`, `INT64` | `INT(8/16/32/64, isSigned = true)` | `int` / `long` | signed |
-| `INT32`, `INT64` | `INT(8/16/32/64, isSigned = false)` | `int` / `long` | unsigned magnitude |
+| `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = true)` | `int` / `long` | signed |
+| `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = false)` | `int` / `long` | unsigned magnitude |
 | `INT32` | `DATE` | `LocalDate` | days since the Unix epoch |
 | `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
 | `INT64` | `TIMESTAMP` | `Instant` | the column's time unit |
-| `INT32`, `INT64`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `DECIMAL` | `BigDecimal`, `String` | the represented value, under all four physical types |
+| `INT32` up to 9 digits, `INT64` up to 18, `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `String` | the represented value, under all four physical types |
 | `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON`, `BSON` | `String` | unsigned lexicographic |
 | `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | four `double` bounds | bounding-box overlap |
 | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `String` | the 16 bytes, unsigned |

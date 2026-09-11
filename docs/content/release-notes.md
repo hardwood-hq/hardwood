@@ -15,6 +15,10 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- A `TIME`, `INT` or `DECIMAL` annotation stored in a physical type that cannot hold it is dropped, and the column is read as its physical type: `TIME(MILLIS)` on `INT64`, `TIME(MICROS)` or `TIME(NANOS)` on `INT32`, `INT(8)`, `INT(16)` or `INT(32)` on `INT64`, `INT(64)` on `INT32`, and a `DECIMAL` with more digits than its `INT32`, `INT64` or `FIXED_LEN_BYTE_ARRAY` holds ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
+
+- An `INT` annotation whose footer names a bit width other than 8, 16, 32 or 64, or names none at all, raises `ParquetReadException` instead of `IllegalArgumentException` ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
+
 - A `ColumnReader` filter on a `FLOAT16` column no longer throws `ClassCastException`, and one on a struct leaf no longer reads a leaf that is null under a present struct as a value ([#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
 
 - A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows, and one whose value does not fit the column throws `ArithmeticException` ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).

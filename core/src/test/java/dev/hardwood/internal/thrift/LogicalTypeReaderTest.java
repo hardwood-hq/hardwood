@@ -13,8 +13,10 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Unit tests for [LogicalTypeReader], focused on a logical-type union member
 /// the reader does not recognize. A future or bespoke logical type must decode
@@ -60,6 +62,56 @@ class LogicalTypeReaderTest {
         int sentinel = reader.readFieldHeader();
         assertThat(ThriftCompactReader.fieldId(sentinel)).isEqualTo((short) 1);
         assertThat(reader.readI32()).isEqualTo(7);
+    }
+
+    /// `INT` names one of four bit widths. A footer naming any other describes an annotation
+    /// the format does not define, which is the file's fault and not the caller's, so it is
+    /// reported as a read failure rather than as the record's `IllegalArgumentException`.
+    @Test
+    void anUndefinedBitWidthIsAReadFailure() throws Exception {
+        assertThatThrownBy(() -> read(intType((byte) 7, true)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid IntType: bitWidth=7");
+    }
+
+    /// `bitWidth` is a required field, so a member struct that omits it states no width at
+    /// all. Defaulting it would read the column as an `INT(8)` the footer never declared.
+    @Test
+    void anAbsentBitWidthIsAReadFailure() throws Exception {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(10, FieldType.STRUCT);
+        short savedMember = writer.pushFieldIdContext();
+        writer.writeBool(2, false);
+        writer.writeFieldStop(); // member struct STOP
+        writer.popFieldIdContext(savedMember);
+        writer.writeFieldStop(); // union STOP
+
+        assertThatThrownBy(() -> read(writer))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid IntType: bitWidth=-1");
+    }
+
+    @Test
+    void everyDefinedBitWidthDecodes() throws Exception {
+        for (byte bitWidth : new byte[] { 8, 16, 32, 64 }) {
+            assertThat(read(intType(bitWidth, false)))
+                    .isEqualTo(LogicalType.intType(bitWidth, false));
+        }
+    }
+
+    /// The `INT` union member, as a footer carries it: field id 10 holding an `IntType`
+    /// struct of an i8 `bitWidth` and a bool `isSigned`.
+    private static ThriftCompactWriter intType(byte bitWidth, boolean isSigned) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(10, FieldType.STRUCT);
+        short savedMember = writer.pushFieldIdContext();
+        writer.writeFieldBegin(1, FieldType.BYTE);
+        writer.writeByte(bitWidth);
+        writer.writeBool(2, isSigned);
+        writer.writeFieldStop(); // member struct STOP
+        writer.popFieldIdContext(savedMember);
+        writer.writeFieldStop(); // union STOP
+        return writer;
     }
 
     private static LogicalType read(ThriftCompactWriter writer) throws Exception {

@@ -66,10 +66,11 @@ normal control flow. If the column type isn't known statically, check it up fron
 `logicalType()` — see [Inspect File Metadata](../how-to/metadata.md).
 
 A column whose annotation its physical type cannot carry is not an error. `FLOAT16` is defined as
-a two-byte payload, so a `FLOAT16` column that declares three bytes is invalid. The format tells
-readers to ignore such an annotation rather than reject the file, so Hardwood drops it — and drops
-one it does not recognize at all — logging a warning in each case. The column is then reported and
-read as its physical type.
+a two-byte payload, so a `FLOAT16` column that declares three bytes is invalid. So are a
+`TIME(MILLIS)` or an `INT(8)` on an `INT64`, and a `DECIMAL(12, 2)` on an `INT32`, which holds at
+most nine digits. The format tells readers to ignore such an annotation rather than reject the
+file, so Hardwood drops it — and drops one it does not recognize at all — logging a warning in each
+case. The column is then reported and read as its physical type.
 
 `getFileSchema()` reports no logical type for it, `getValue` returns the physical value, and the
 physical accessors work. A logical accessor fails as it would on any unannotated column of that

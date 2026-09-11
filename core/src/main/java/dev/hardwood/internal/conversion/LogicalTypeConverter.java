@@ -20,6 +20,7 @@ import java.time.ZoneOffset;
 import java.time.temporal.Temporal;
 import java.util.UUID;
 
+import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
@@ -48,10 +49,12 @@ public final class LogicalTypeConverter {
     /// answers for. Nothing consults it per value, and by the time a conversion below runs
     /// the column has either a sound annotation or none.
     ///
-    /// This mirrors what the conversions accept and nothing more. [LogicalTypeValidator]
-    /// states the *writer's* rule, which is stricter — it pins `TIME(MILLIS)` to `INT32`
-    /// where reading accepts either width — and applying it here would refuse files that
-    /// read today.
+    /// An annotation is faulted where the format rules it out for the column's physical type
+    /// or width: `TIME(MILLIS)` anywhere but an `INT32`, `INT(64)` anywhere but an `INT64`, a
+    /// `DECIMAL` with more digits than its carrier holds. [LogicalTypeValidator] refuses the
+    /// same pairings to the writer. The two differ only where a file on disk leaves nothing to
+    /// prove wrong: a `FIXED_LEN_BYTE_ARRAY` without a usable width, which `FixedWidthValidator`
+    /// refuses by name, an opaque `GEOMETRY` or `GEOGRAPHY` payload, and `NULL`.
     ///
     /// @param physicalType the column's physical type
     /// @param typeLength its `FIXED_LEN_BYTE_ARRAY` byte length, `null` for any other type
@@ -69,13 +72,11 @@ public final class LogicalTypeConverter {
             case LogicalType.BsonType ignored -> requires(physicalType, "BSON", PhysicalType.BYTE_ARRAY);
             case LogicalType.DateType ignored -> requires(physicalType, "DATE", PhysicalType.INT32);
             case LogicalType.TimestampType ignored -> requires(physicalType, "TIMESTAMP", PhysicalType.INT64);
-            case LogicalType.TimeType ignored -> requires(physicalType, "TIME",
-                    PhysicalType.INT32, PhysicalType.INT64);
-            case LogicalType.IntType ignored -> requires(physicalType, "INT",
-                    PhysicalType.INT32, PhysicalType.INT64);
-            case LogicalType.DecimalType ignored -> requires(physicalType, "DECIMAL",
-                    PhysicalType.INT32, PhysicalType.INT64, PhysicalType.BYTE_ARRAY,
-                    PhysicalType.FIXED_LEN_BYTE_ARRAY);
+            case LogicalType.TimeType time -> requires(physicalType, "TIME(" + time.unit() + ")",
+                    time.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64);
+            case LogicalType.IntType integer -> requires(physicalType, "INT(" + integer.bitWidth() + ")",
+                    integer.bitWidth() == 64 ? PhysicalType.INT64 : PhysicalType.INT32);
+            case LogicalType.DecimalType decimal -> decimalFault(physicalType, typeLength, decimal);
             case LogicalType.UuidType ignored -> requiresFixed(physicalType, typeLength, "UUID", 16);
             case LogicalType.IntervalType ignored -> requiresFixed(physicalType, typeLength, "INTERVAL", 12);
             case LogicalType.Float16Type ignored -> requiresFixed(physicalType, typeLength, "FLOAT16", 2);
@@ -108,6 +109,30 @@ public final class LogicalTypeConverter {
             sb.append(i == 0 ? "" : i == allowed.length - 1 ? " or " : ", ").append(allowed[i]);
         }
         return annotation + " is read from " + sb + ", but the column is " + actual;
+    }
+
+    /// A `DECIMAL` is stored in one of four physical types, and its precision must fit the
+    /// digits that type holds.
+    private static String decimalFault(PhysicalType actual, Integer typeLength,
+                                       LogicalType.DecimalType decimal) {
+        String wrongType = requires(actual, "DECIMAL", PhysicalType.INT32, PhysicalType.INT64,
+                PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        if (wrongType != null) {
+            return wrongType;
+        }
+        boolean fixed = actual == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+        // A width that is absent or not positive is FixedWidthValidator's to refuse, and it has
+        // no digits to count. requiresFixed keeps only the absent case, because a declared
+        // width it can still compare against the one its annotation fixes.
+        if (fixed && (typeLength == null || typeLength <= 0)) {
+            return null;
+        }
+        long maxPrecision = LogicalTypeValidator.maxDecimalPrecision(actual, typeLength);
+        if (decimal.precision() <= maxPrecision) {
+            return null;
+        }
+        return decimal + " has " + decimal.precision() + " digits, but "
+                + (fixed ? actual + "(" + typeLength + ")" : actual) + " holds at most " + maxPrecision;
     }
 
     private static String requiresFixed(PhysicalType actual, Integer typeLength, String annotation,

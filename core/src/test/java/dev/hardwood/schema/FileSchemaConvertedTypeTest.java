@@ -30,8 +30,6 @@ class FileSchemaConvertedTypeTest {
     private static final String ROOT = "schema";
     private static final String COLUMN = "col";
 
-    /// Build a one-column schema whose single leaf carries only the given
-    /// `convertedType` (no modern logical type), and return the resolved column.
     /// A legacy `converted_type` is promoted to its modern annotation first, so the same
     /// rule drops it when the column's physical type cannot carry it — a writer that put
     /// `UTF8` on an `INT32` produced a file no version of the format defines, whichever of
@@ -42,6 +40,18 @@ class FileSchemaConvertedTypeTest {
         assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, ConvertedType.DATE).logicalType()).isNull();
     }
 
+    /// The same holds where the converted type names a width or a digit count the physical
+    /// type does not have: `TIME_MILLIS` and `INT_8` are 32-bit, and an `INT32` holds nine
+    /// digits, not twelve.
+    @Test
+    void aPromotedConvertedTypeItsCarrierCannotHoldIsDropped() {
+        assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.TIME_MILLIS).logicalType()).isNull();
+        assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.INT_8).logicalType()).isNull();
+        assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.DECIMAL, 2, 12).logicalType()).isNull();
+    }
+
+    /// Build a one-column schema whose single leaf carries only the given
+    /// `convertedType` (no modern logical type), and return the resolved column.
     private static ColumnSchema resolveColumn(PhysicalType type, ConvertedType convertedType) {
         return resolveColumn(type, convertedType, null, null);
     }
