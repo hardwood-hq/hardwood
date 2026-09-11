@@ -7,7 +7,14 @@
  */
 package dev.hardwood.cli.command;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.metadata.PhysicalType;
@@ -226,10 +233,10 @@ final class AvroTypeNames {
     }
 
     private static NodeCandidate winnerOf(List<NodeCandidate> members) {
-        // The plan's total ordering: a legal raw candidate wins the bare candidate,
-        // legal candidates competing with each other by raw name; without a legal
-        // candidate the smallest raw name wins. Members arrive in declaration order,
-        // so exact duplicate raw names keep source order.
+        // A legal raw candidate wins the bare candidate, legal candidates competing
+        // with each other by raw name. Without a legal candidate the smallest raw name
+        // wins. Members arrive in declaration order, so exact duplicate raw names keep
+        // source order.
         NodeCandidate winner = null;
         for (NodeCandidate member : members) {
             if (!SchemaNames.isLegal(member.raw())) {
