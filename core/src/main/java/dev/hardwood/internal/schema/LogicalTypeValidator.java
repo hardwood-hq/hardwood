@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.schema;
 
-import java.math.BigInteger;
+import java.math.BigDecimal;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -20,9 +20,16 @@ import dev.hardwood.metadata.RepetitionType;
 /// An illegal pairing produces a file whose annotation no reader can honour, so the writer
 /// rejects it where the schema is declared rather than emitting it.
 ///
-/// Only the writer validates. The reader stays lenient, because a file that already exists on
-/// disk has to be readable whatever a foreign writer put in its footer.
+/// Only the writer refuses. A file that already exists on disk has to be readable whatever a
+/// foreign writer put in its footer, so the reader drops an annotation that fails the same
+/// pairings and reads the column as its physical type: see
+/// [dev.hardwood.internal.conversion.LogicalTypeConverter#conversionFault].
 public class LogicalTypeValidator {
+
+    /// `log10(2)` to forty places, which makes [#maxFixedPrecision] exact for every width an
+    /// `i32` can declare: `(8 * length - 1) * log10(2)` never comes within `1e-11` of an
+    /// integer there, and this constant's error at the widest width is below `2e-30`.
+    private static final BigDecimal LOG10_2 = new BigDecimal("0.3010299956639811952137388947244930267681");
 
     /// Validates a primitive column's annotation.
     ///
@@ -74,16 +81,12 @@ public class LogicalTypeValidator {
         }
     }
 
-    /// A `DECIMAL`'s precision must fit the digits its physical representation can hold: 9 for
-    /// an `INT32`, 18 for an `INT64`, and for a `FIXED_LEN_BYTE_ARRAY` whatever the two's
-    /// complement of that byte length spans. A `BYTE_ARRAY` is unbounded.
+    /// A `DECIMAL`'s precision must fit the digits its physical representation can hold, as
+    /// [#maxDecimalPrecision] counts them.
     private static void validateDecimal(String columnName, PhysicalType type, Integer typeLength,
                                         LogicalType.DecimalType decimal) {
-        int maxPrecision = switch (type) {
-            case INT32 -> 9;
-            case INT64 -> 18;
-            case BYTE_ARRAY -> Integer.MAX_VALUE;
-            case FIXED_LEN_BYTE_ARRAY -> maxFixedPrecision(typeLength);
+        long maxPrecision = switch (type) {
+            case INT32, INT64, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> maxDecimalPrecision(type, typeLength);
             default -> throw new IllegalArgumentException("DECIMAL is not valid on physical type " + type
                     + " (column " + columnName + "); use INT32, INT64, BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY");
         };
@@ -94,11 +97,35 @@ public class LogicalTypeValidator {
         }
     }
 
+    /// The most digits a `DECIMAL` stored in `type` can have: 9 for an `INT32`, 18 for an
+    /// `INT64`, and for a `FIXED_LEN_BYTE_ARRAY` whatever the two's complement of its width
+    /// spans. A `BYTE_ARRAY` is unbounded.
+    ///
+    /// @param type the physical type the `DECIMAL` is stored in
+    /// @param typeLength the `FIXED_LEN_BYTE_ARRAY` byte length; ignored for any other type
+    /// @return the largest precision `type` holds; `Long.MAX_VALUE` for a `BYTE_ARRAY`
+    /// @throws IllegalArgumentException if `type` does not store a `DECIMAL`, or is a
+    ///         `FIXED_LEN_BYTE_ARRAY` without a positive width
+    public static long maxDecimalPrecision(PhysicalType type, Integer typeLength) {
+        return switch (type) {
+            case INT32 -> 9;
+            case INT64 -> 18;
+            case BYTE_ARRAY -> Long.MAX_VALUE;
+            case FIXED_LEN_BYTE_ARRAY -> maxFixedPrecision(typeLength);
+            default -> throw new IllegalArgumentException("DECIMAL is not stored in " + type);
+        };
+    }
+
     /// The largest precision a two's-complement value of `length` bytes represents:
-    /// `floor(log10(2^(8 * length - 1) - 1))`, computed exactly rather than through a
-    /// floating-point logarithm.
-    private static int maxFixedPrecision(int length) {
-        return BigInteger.ONE.shiftLeft(8 * length - 1).subtract(BigInteger.ONE).toString().length() - 1;
+    /// `floor(log10(2^(8 * length - 1) - 1))`. No power of two is a power of ten, so that is
+    /// `floor((8 * length - 1) * log10(2))`, which [#LOG10_2] computes without building the
+    /// power, whose size a footer's `type_length` would otherwise set.
+    private static long maxFixedPrecision(Integer length) {
+        if (length == null || length <= 0) {
+            throw new IllegalArgumentException(
+                    "A FIXED_LEN_BYTE_ARRAY DECIMAL needs a positive width, not " + length);
+        }
+        return new BigDecimal(8L * length - 1).multiply(LOG10_2).longValue();
     }
 
     private static void require(String columnName, LogicalType logicalType, PhysicalType actual,

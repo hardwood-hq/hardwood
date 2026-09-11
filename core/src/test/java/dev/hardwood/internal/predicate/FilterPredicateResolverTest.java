@@ -165,6 +165,34 @@ class FilterPredicateResolverTest {
                 .hasMessage("Column 'col' does not have a TIME logical type");
     }
 
+    /// `TIME(MILLIS)` is stored in an `INT32`, so on an `INT64` column the annotation is
+    /// dropped and the column filters as the `INT64` it is: by `long`, not by `LocalTime`.
+    @Test
+    void resolveTimeOnATimeMillisAnnotationOverInt64Throws() {
+        FileSchema schema = schemaWithLogicalType("t", PhysicalType.INT64,
+                LogicalType.time(true, LogicalType.TimeUnit.MILLIS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("t", LocalTime.NOON), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 't' does not have a TIME logical type");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("t", 7L), schema))
+                .isInstanceOf(ResolvedPredicate.LongPredicate.class);
+    }
+
+    /// An `INT32` holds nine digits, so a `DECIMAL(12, 2)` annotation on one is dropped and
+    /// the column filters as a plain `INT32`.
+    @Test
+    void resolveDecimalOnADecimalAnnotationBeyondItsCarrierThrows() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                LogicalType.decimal(12, 2));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("amount", new BigDecimal("1.50")), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' does not have a DECIMAL logical type");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("amount", 150), schema))
+                .isInstanceOf(ResolvedPredicate.IntPredicate.class);
+    }
+
     // ==================== Decimal ====================
 
     /// A literal is rescaled to the column's scale, so a column holding more scale than the
@@ -919,9 +947,9 @@ class FilterPredicateResolverTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(incompatible("INT64", "INT32"));
 
-        // A TIMESTAMP annotation on an INT32 column is dropped from the schema, so the column
-        // arrives with no logical type and the unit lookup rejects it before the physical type is
-        // compared. A TIME annotation survives, so that case still reports the type mismatch.
+        // A TIMESTAMP annotation on an INT32 column, and a TIME annotation on the width its unit
+        // is not stored in, are dropped from the schema, so the column arrives with no logical
+        // type and the unit lookup rejects it before the physical type is compared.
         FileSchema tsSchemaWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.TimestampType(false, LogicalType.TimeUnit.MILLIS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", Instant.EPOCH), tsSchemaWrong))
@@ -932,13 +960,13 @@ class FilterPredicateResolverTest {
                 new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMillisWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT64", "INT32"));
+                .hasMessage("Column 'c' does not have a TIME logical type");
 
         FileSchema timeMicrosWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMicrosWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "INT64"));
+                .hasMessage("Column 'c' does not have a TIME logical type");
 
         FileSchema uuidWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.UuidType());
