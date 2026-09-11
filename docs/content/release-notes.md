@@ -15,13 +15,19 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
+
+- An ordered predicate whose literal the column cannot hold is answered exactly, where several such literals used to throw `ArithmeticException` ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
+
+- `not` over a predicate that matches every non-null row, or over one that matches none, no longer returns the rows the comparison leaves out for being null ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
+
 - A `TIME`, `INT` or `DECIMAL` annotation stored in a physical type that cannot hold it is dropped, and the column is read as its physical type: `TIME(MILLIS)` on `INT64`, `TIME(MICROS)` or `TIME(NANOS)` on `INT32`, `INT(8)`, `INT(16)` or `INT(32)` on `INT64`, `INT(64)` on `INT32`, and a `DECIMAL` with more digits than its `INT32`, `INT64` or `FIXED_LEN_BYTE_ARRAY` holds ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
 - An `INT` annotation whose footer names a bit width other than 8, 16, 32 or 64, or names none at all, raises `ParquetReadException` instead of `IllegalArgumentException` ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
 - A `ColumnReader` filter on a `FLOAT16` column no longer throws `ClassCastException`, and one on a struct leaf no longer reads a leaf that is null under a present struct as a value ([#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
 
-- A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows, and one whose value does not fit the column throws `ArithmeticException` ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
+- A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
 
 - Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
 

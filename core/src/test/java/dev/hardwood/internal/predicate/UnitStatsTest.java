@@ -87,7 +87,7 @@ class UnitStatsTest {
                 // Levels of 0 fit only a one-bucket histogram. Read at level 0, this two-bucket
                 // one would count every entry as present and promise every row.
                 Arguments.of("IS NOT NULL with no schema levels, optional column",
-                        ResolvedPredicate.IsNotNullPredicate.ofLeaf(0),
+                        new ResolvedPredicate.IsNotNullPredicate(0, 0),
                         40L, new long[]{ 40, 60 }, MIGHT_MATCH),
                 Arguments.of("IS NOT NULL, no nulls", isNotNull, 0L, null, ALWAYS_MATCHES),
                 Arguments.of("IS NOT NULL, some nulls", isNotNull, 40L, null, MIGHT_MATCH),

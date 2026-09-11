@@ -210,11 +210,16 @@ class ByteStringOrderFilterTest {
 
     // ==================== Fixtures ====================
 
+    /// The literal takes the column's width where it has one, since a fixed-width column holds
+    /// only byte strings of that width and refuses an equality literal of any other.
     private static void assertByteString(FileSchema schema) {
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("c", "a"), schema))
+        Integer width = schema.getColumn("c").typeLength();
+        String literal = "a".repeat(width == null ? 1 : width);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("c", literal), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING));
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", "a"), schema))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", literal), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING));
     }

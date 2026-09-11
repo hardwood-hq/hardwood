@@ -42,6 +42,7 @@ import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
@@ -88,6 +89,10 @@ class PredicatePathAgreementTest {
     /// and the physical one, indexed by row.
     private static final Map<String, List<Object[]>> VALUES = new HashMap<>();
 
+    /// The schema of each layout, read once: every case of every path asks it for the column it
+    /// filters.
+    private static final Map<String, FileSchema> SCHEMAS = new HashMap<>();
+
     @BeforeAll
     static void openContext() {
         context = HardwoodContext.create();
@@ -97,6 +102,7 @@ class PredicatePathAgreementTest {
     static void closeContext() {
         context.close();
         VALUES.clear();
+        SCHEMAS.clear();
     }
 
     // ==================== Layouts ====================
@@ -310,7 +316,107 @@ class PredicatePathAgreementTest {
                 new Rejected("Column 'f16' has physical type FIXED_LEN_BYTE_ARRAY; "
                         + "given filter predicate type DOUBLE/FLOAT is incompatible")));
 
+        literalsTheColumnCannotHold(cases);
         return cases;
+    }
+
+    /// A literal of the column's literal type that the column cannot hold: finer than its time
+    /// unit, past its scale, or outside the range or width of its physical carrier. Equality asks
+    /// whether a stored value *is* such a value and is refused; an order asks where it sits among
+    /// the column's values and is answered exactly, which for a literal past the carrier's range
+    /// means every non-null row or none.
+    private static void literalsTheColumnCannotHold(List<Case> cases) {
+        Instant subMicrosecond = Instant.ofEpochSecond(1_700_000_000L, 200_500L);
+        cases.add(new Case("ts_us_utc", "eq(a sub-microsecond instant)",
+                FilterPredicate.eq("ts_us_utc", subMicrosecond),
+                new Rejected("Column 'ts_us_utc' holds a whole number of microseconds within the INT64 range; "
+                        + "the equality literal 2023-11-14T22:13:20.000200500Z is not a value it can hold")));
+        cases.add(new Case("ts_us_utc", "lt(a sub-microsecond instant)",
+                FilterPredicate.lt("ts_us_utc", subMicrosecond), matching(cmp(Operator.LT, subMicrosecond))));
+        cases.add(new Case("ts_us_utc", "gt(a sub-microsecond instant)",
+                FilterPredicate.gt("ts_us_utc", subMicrosecond), matching(cmp(Operator.GT, subMicrosecond))));
+
+        LocalTime subMillisecond = LocalTime.ofNanoOfDay(3_600_000_000_000L + 200 * 60_000_000_000L + 1);
+        cases.add(new Case("time_ms", "eq(a sub-millisecond time)",
+                FilterPredicate.eq("time_ms", subMillisecond),
+                new Rejected("Column 'time_ms' holds a whole number of milliseconds; "
+                        + "the equality literal 04:20:00.000000001 is not a value it can hold")));
+        cases.add(new Case("time_ms", "lt(a sub-millisecond time)",
+                FilterPredicate.lt("time_ms", subMillisecond), matching(cmp(Operator.LT, subMillisecond))));
+
+        BigDecimal pastTheScale = new BigDecimal("1.255");
+        cases.add(new Case("dec_i32", "eq(1.255), past the scale",
+                FilterPredicate.eq("dec_i32", pastTheScale),
+                new Rejected("Column 'dec_i32' holds a DECIMAL of scale 2 within the INT32 range; "
+                        + "the equality literal 1.255 is not a value it can hold")));
+        cases.add(new Case("dec_i32", "lt(1.255), past the scale",
+                FilterPredicate.lt("dec_i32", pastTheScale), matching(cmp(Operator.LT, pastTheScale))));
+        cases.add(new Case("dec_i32", "gtEq(1.255), past the scale",
+                FilterPredicate.gtEq("dec_i32", pastTheScale), matching(cmp(Operator.GT_EQ, pastTheScale))));
+        cases.add(new Case("dec_flba", "eq(1.255), past the scale",
+                FilterPredicate.eq("dec_flba", pastTheScale),
+                new Rejected("Column 'dec_flba' holds a DECIMAL of scale 2 within 9 bytes; "
+                        + "the equality literal 1.255 is not a value it can hold")));
+
+        BigDecimal pastTheCarrier = new BigDecimal("99999999999.00");
+        cases.add(new Case("dec_i32", "eq(99999999999.00), past the INT32 range",
+                FilterPredicate.eq("dec_i32", pastTheCarrier),
+                new Rejected("Column 'dec_i32' holds a DECIMAL of scale 2 within the INT32 range; "
+                        + "the equality literal 99999999999.00 is not a value it can hold")));
+        cases.add(new Case("dec_i32", "lt(99999999999.00), past the INT32 range",
+                FilterPredicate.lt("dec_i32", pastTheCarrier), matching(everyNonNullRow())));
+        cases.add(new Case("dec_i32", "gt(99999999999.00), past the INT32 range",
+                FilterPredicate.gt("dec_i32", pastTheCarrier), matching(never())));
+
+        byte[] tooWide = HEX.parseHex("01000000000000000000");
+        cases.add(new Case("dec_flba", "eq(a literal wider than the column)",
+                binary("dec_flba", Operator.EQ, tooWide),
+                new Rejected("Column 'dec_flba' holds a DECIMAL within 9 bytes; "
+                        + "the equality literal 01000000000000000000 is not a value it can hold")));
+        cases.add(new Case("dec_flba", "lt(a literal wider than the column)",
+                binary("dec_flba", Operator.LT, tooWide), matching(everyNonNullRow())));
+
+        byte[] threeBytes = HEX.parseHex("010203");
+        cases.add(new Case("uuid", "eq(a three-byte literal)",
+                binary("uuid", Operator.EQ, threeBytes),
+                new Rejected("Column 'uuid' holds a byte string of 16 bytes; "
+                        + "the equality literal 010203 (3 bytes) is not a value it can hold")));
+        cases.add(new Case("uuid", "lt(a three-byte literal)",
+                binary("uuid", Operator.LT, threeBytes), matching(cmpPhysical(Operator.LT, threeBytes))));
+
+        cases.add(new Case("f16", "eq(0.1), no half is 0.1",
+                FilterPredicate.eq("f16", 0.1f),
+                new Rejected("Column 'f16' holds a value an IEEE half represents; "
+                        + "the equality literal 0.1 is not a value it can hold")));
+        cases.add(new Case("f16", "gtEq(0.1), no half is 0.1",
+                FilterPredicate.gtEq("f16", 0.1f), matching(cmp(Operator.GT_EQ, 0.1f))));
+
+        cases.add(new Case("date", "eq(LocalDate.MAX), past the INT32 range",
+                FilterPredicate.eq("date", LocalDate.MAX),
+                new Rejected("Column 'date' holds an epoch day within the INT32 range; "
+                        + "the equality literal +999999999-12-31 is not a value it can hold")));
+        cases.add(new Case("date", "lt(LocalDate.MAX)", FilterPredicate.lt("date", LocalDate.MAX),
+                matching(everyNonNullRow())));
+        cases.add(new Case("date", "gt(LocalDate.MAX)", FilterPredicate.gt("date", LocalDate.MAX),
+                matching(never())));
+
+        // A predicate past the carrier's range is a constant, and `not` over a constant is the
+        // other constant: neither returns the rows the comparison leaves unknown for being null.
+        cases.add(new Case("ts_us_utc", "lt(Instant.MIN)", FilterPredicate.lt("ts_us_utc", Instant.MIN),
+                matching(never())));
+        cases.add(new Case("ts_us_utc", "gtEq(Instant.MIN)", FilterPredicate.gtEq("ts_us_utc", Instant.MIN),
+                matching(everyNonNullRow())));
+        cases.add(new Case("ts_us_utc", "not(lt(Instant.MIN))",
+                FilterPredicate.not(FilterPredicate.lt("ts_us_utc", Instant.MIN)), matching(everyNonNullRow())));
+        cases.add(new Case("ts_us_utc", "not(not(lt(Instant.MIN)))",
+                FilterPredicate.not(FilterPredicate.not(FilterPredicate.lt("ts_us_utc", Instant.MIN))),
+                matching(never())));
+        cases.add(new Case("f32", "not(in(0.1)), no float is 0.1",
+                FilterPredicate.not(FilterPredicate.in("f32", 0.1)), matching(everyNonNullRow())));
+        cases.add(new Case("f32", "not(not(in(0.1)))",
+                FilterPredicate.not(FilterPredicate.not(FilterPredicate.in("f32", 0.1))), matching(never())));
+        cases.add(new Case("f16", "not(not(in(0.1)))",
+                FilterPredicate.not(FilterPredicate.not(FilterPredicate.in("f16", 0.1))), matching(never())));
     }
 
     /// The comparison cases every column takes: each operator once, membership and its negation,
@@ -462,7 +568,7 @@ class PredicatePathAgreementTest {
         return LAYOUTS.stream().flatMap(layout -> {
             List<String> columns = columnsOf(layout);
             return cases.stream()
-                    .filter(c -> columns.contains(c.column()) || isGroup(layout, c.column()))
+                    .filter(c -> columns.contains(c.column()) || isGroup(columns, c.column()))
                     .flatMap(c -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, c, path)));
         });
     }
@@ -503,6 +609,33 @@ class PredicatePathAgreementTest {
                             + "delete the exclusion", layout, testCase, path, excludedBy)
                     .isNotEqualTo(expected);
         }
+    }
+
+    /// A constant predicate inside a conjunction, negated. `not(in("f32", 0.1))` matches every
+    /// non-null `f32` row, since no `float` is `0.1`; negating the conjunction pushes its
+    /// negation down to the leaves, and the branch that comes back must match no row rather than
+    /// the rows `f32` is null on.
+    @ParameterizedTest(name = "{0} / {1}")
+    @MethodSource("flatLayoutsAndPaths")
+    void negatingAConstantInsideAConjunctionKeepsNullsOut(Layout layout, ReadPath path) throws Exception {
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
+                FilterPredicate.not(FilterPredicate.in("f32", 0.1)),
+                FilterPredicate.gt("i32", 0)));
+
+        List<Object[]> values = values(layout, "i32");
+        List<Long> expected = new ArrayList<>();
+        for (int row = 0; row < values.size(); row++) {
+            if (values.get(row)[0] instanceof Integer value && value <= 0) {
+                expected.add((long) row);
+            }
+        }
+
+        assertThat(read(layout, filter, path)).as("%s / %s", layout, path).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> flatLayoutsAndPaths() {
+        return Stream.of(SINGLE, MULTI, DICTIONARY)
+                .flatMap(layout -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, path)));
     }
 
     // ==================== Reading ====================
@@ -592,36 +725,40 @@ class PredicatePathAgreementTest {
     }
 
     private static ColumnSchema schemaOf(Layout layout, String column) {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,
-                ReaderConfig.defaults())) {
-            return reader.getFileSchema().getColumn(column);
-        }
-        catch (IOException e) {
-            throw new IllegalStateException("Cannot open " + layout.path(), e);
-        }
+        return schemaOf(layout).getColumn(column);
+    }
+
+    private static FileSchema schemaOf(Layout layout) {
+        return SCHEMAS.computeIfAbsent(layout.name(), key -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,
+                    ReaderConfig.defaults())) {
+                return reader.getFileSchema();
+            }
+            catch (IOException e) {
+                throw new IllegalStateException("Cannot open " + layout.path(), e);
+            }
+        });
     }
 
     private static List<String> columnsOf(Layout layout) {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,
-                ReaderConfig.defaults())) {
-            return reader.getFileSchema().getColumns().stream()
-                    .map(c -> c.fieldPath().toString())
-                    .toList();
-        }
-        catch (IOException e) {
-            throw new IllegalStateException("Cannot open " + layout.path(), e);
-        }
+        return schemaOf(layout).getColumns().stream()
+                .map(c -> c.fieldPath().toString())
+                .toList();
     }
 
-    /// Whether `name` denotes a group in this layout, which only the rejection cases name.
-    private static boolean isGroup(Layout layout, String name) {
-        return columnsOf(layout).stream().anyMatch(c -> c.startsWith(name + "."));
+    /// Whether `name` denotes a group, which only the rejection cases name.
+    private static boolean isGroup(List<String> columns, String name) {
+        return columns.stream().anyMatch(c -> c.startsWith(name + "."));
     }
 
     // ==================== The rule, in Java ====================
 
     private static Expect matching(ValueTest test) {
         return new Matching(test);
+    }
+
+    private static ValueTest never() {
+        return (column, logical, physical) -> false;
     }
 
     private static ValueTest everyNonNullRow() {

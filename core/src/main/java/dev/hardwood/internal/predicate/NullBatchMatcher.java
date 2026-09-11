@@ -7,7 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for IS NULL / IS NOT NULL [ColumnBatchMatcher]s. Implementations only inspect
-/// the batch's null tracking — they do not touch `batch.values`.
+/// Marker for [ColumnBatchMatcher]s that answer from the batch's null tracking alone — the
+/// IS NULL and IS NOT NULL tests, and the constant that matches no row. Implementations do not
+/// touch `batch.values`.
 public non-sealed interface NullBatchMatcher extends ColumnBatchMatcher {
 }

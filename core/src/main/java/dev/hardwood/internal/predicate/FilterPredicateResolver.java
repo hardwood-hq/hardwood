@@ -9,8 +9,9 @@ package dev.hardwood.internal.predicate;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.time.Instant;
-import java.time.LocalTime;
+import java.util.HexFormat;
 import java.util.List;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
@@ -56,6 +57,23 @@ public class FilterPredicateResolver {
     /// A `FLOAT16` value is two little-endian bytes of an IEEE half.
     private static final int FLOAT16_BYTES = 2;
 
+    private static final BigInteger INT32_MIN = BigInteger.valueOf(Integer.MIN_VALUE);
+    private static final BigInteger INT32_MAX = BigInteger.valueOf(Integer.MAX_VALUE);
+    private static final BigInteger INT64_MIN = BigInteger.valueOf(Long.MIN_VALUE);
+    private static final BigInteger INT64_MAX = BigInteger.valueOf(Long.MAX_VALUE);
+
+    private static final BigInteger NANOS_PER_MILLI = BigInteger.valueOf(1_000_000L);
+    private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
+    private static final BigInteger NANOS_PER_SECOND = BigInteger.valueOf(1_000_000_000L);
+
+    private static final HexFormat HEX = HexFormat.of();
+
+    /// The leaf a measured literal resolves into, given an operator and a value the column holds.
+    @FunctionalInterface
+    private interface CarriedLeaf {
+        ResolvedPredicate of(FilterPredicate.Operator op, BigInteger value);
+    }
+
     /// Resolves a [FilterPredicate] tree without column-order information. Float/double leaves are
     /// treated as type-defined, so statistics pruning widens `±0` bounds (the conservative default).
     ///
@@ -82,53 +100,68 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
                 validateLogicalType(p.column(), LogicalType.DateType.class, cs);
-                yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(),
-                        Math.toIntExact(p.value().toEpochDay()));
+                BigInteger epochDay = BigInteger.valueOf(p.value().toEpochDay());
+                yield carried(p.column(), cs.columnIndex(), p.op(),
+                        CarriedLiteral.within(epochDay, epochDay, INT32_MIN, INT32_MAX),
+                        "an epoch day within the INT32 range", p.value().toString(),
+                        (op, day) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op, day.intValueExact()));
             }
             case InstantColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
-                yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(),
-                        instantToLong(p.value(), unit));
+                yield carried(p.column(), cs.columnIndex(), p.op(),
+                        inUnit(nanosSinceEpoch(p.value()), unit, INT64_MIN, INT64_MAX),
+                        "a whole number of " + unitName(unit) + " within the INT64 range",
+                        p.value().toString(),
+                        (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
+                                value.longValueExact()));
             }
             case TimeColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 LogicalType.TimeUnit unit = getTimeUnit(p.column(), cs);
-                long value = localTimeToLong(p.value(), unit);
+                BigInteger nanoOfDay = BigInteger.valueOf(p.value().toNanoOfDay());
+                String holds = "a whole number of " + unitName(unit);
                 if (unit == LogicalType.TimeUnit.MILLIS) {
                     validateType(p.column(), PhysicalType.INT32, cs);
-                    yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(),
-                            Math.toIntExact(value));
+                    yield carried(p.column(), cs.columnIndex(), p.op(),
+                            inUnit(nanoOfDay, unit, INT32_MIN, INT32_MAX), holds, p.value().toString(),
+                            (op, value) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op,
+                                    value.intValueExact()));
                 }
                 validateType(p.column(), PhysicalType.INT64, cs);
-                yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), value);
+                yield carried(p.column(), cs.columnIndex(), p.op(),
+                        inUnit(nanoOfDay, unit, INT64_MIN, INT64_MAX), holds, p.value().toString(),
+                        (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
+                                value.longValueExact()));
             }
             case DecimalColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 LogicalType.DecimalType dt = getDecimalType(p.column(), cs);
-                // setScale without RoundingMode throws ArithmeticException if rounding is needed,
-                // which is the correct behavior: the predicate value must match the column's scale exactly
-                BigDecimal scaled = p.value().setScale(dt.scale());
+                BigInteger floor = p.value().setScale(dt.scale(), RoundingMode.FLOOR).unscaledValue();
+                BigInteger ceiling = p.value().setScale(dt.scale(), RoundingMode.CEILING).unscaledValue();
+                String scale = "a DECIMAL of scale " + dt.scale();
                 PhysicalType physicalType = cs.type();
                 if (physicalType == PhysicalType.INT32) {
-                    yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(),
-                            scaled.unscaledValue().intValueExact());
+                    yield carried(p.column(), cs.columnIndex(), p.op(),
+                            CarriedLiteral.within(floor, ceiling, INT32_MIN, INT32_MAX),
+                            scale + " within the INT32 range", p.value().toPlainString(),
+                            (op, value) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op,
+                                    value.intValueExact()));
                 }
                 else if (physicalType == PhysicalType.INT64) {
-                    yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(),
-                            scaled.unscaledValue().longValueExact());
+                    yield carried(p.column(), cs.columnIndex(), p.op(),
+                            CarriedLiteral.within(floor, ceiling, INT64_MIN, INT64_MAX),
+                            scale + " within the INT64 range", p.value().toPlainString(),
+                            (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
+                                    value.longValueExact()));
                 }
                 else if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                    // Every value is padded to the column width, so the literal is too and the
-                    // encoding of a given number is the only one the column can hold.
-                    yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                            toFixedLenDecimalBytes(p.column(), scaled.unscaledValue(),
-                                    FixedWidthValidator.requireWidth(null, cs)),
-                            Comparison.FIXED_DECIMAL);
+                    yield fixedDecimal(p.column(), cs, p.op(), floor, ceiling, scale,
+                            p.value().toPlainString());
                 }
                 else {
                     validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
@@ -136,9 +169,12 @@ public class FilterPredicateResolver {
                     // it — `should`, not `must`, so a writer may pad and two byte strings of
                     // different lengths may be the same number. The literal takes the minimal
                     // form, which is what a conforming writer produces, and VARIABLE_DECIMAL
-                    // keeps equality from ever riding on that encoding.
-                    yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                            scaled.unscaledValue().toByteArray(), Comparison.VARIABLE_DECIMAL);
+                    // keeps equality from ever riding on that encoding. Any unscaled value fits,
+                    // so only the scale can put a literal beyond the column.
+                    yield carried(p.column(), cs.columnIndex(), p.op(),
+                            CarriedLiteral.unbounded(floor, ceiling), scale, p.value().toPlainString(),
+                            (op, value) -> new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), op,
+                                    value.toByteArray(), Comparison.VARIABLE_DECIMAL));
                 }
             }
             case IntColumnPredicate p -> {
@@ -162,6 +198,7 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
+                    rejectUnholdableHalf(p.column(), p.op(), p.value());
                     yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value(),
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
@@ -192,8 +229,13 @@ public class FilterPredicateResolver {
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
                 Comparison comparison = byteComparison(cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                        comparedBytes(p.column(), p.value(), comparison, cs), comparison);
+                if (comparison == Comparison.FIXED_DECIMAL) {
+                    BigInteger unscaled = unscaledOf(p.value());
+                    yield fixedDecimal(p.column(), cs, p.op(), unscaled, unscaled,
+                            "a DECIMAL", HEX.formatHex(p.value()));
+                }
+                rejectUnholdableWidth(p.column(), cs, p.op(), p.value());
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), comparison);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -230,7 +272,7 @@ public class FilterPredicateResolver {
                 }
                 Comparison comparison = byteComparison(cs);
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(),
-                        comparedBytes(p.column(), p.values(), comparison, cs), comparison);
+                        probeBytes(p.column(), p.values(), comparison, cs), comparison);
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -439,38 +481,31 @@ public class FilterPredicateResolver {
         return columnSchema.logicalType() instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
-    /// The bytes a binary literal compares as on this column.
+    /// The bytes each probe of a binary membership test compares as on this column.
     ///
-    /// A fixed-width `DECIMAL` stores each number in one encoding, its unscaled value
-    /// sign-extended to the column width, and the dictionary and Bloom filter probes test for
-    /// exactly those bytes. A literal of another length stands for the same number under
-    /// [BinaryComparator#compareSigned], so it is brought to that encoding and every path of the
-    /// read compares the same bytes. An empty literal is zero, as `compareSigned` reads it. Every
-    /// other comparison takes the literal as given.
-    ///
-    /// @throws ArithmeticException if the literal's value needs more bytes than the column holds
-    private static byte[] comparedBytes(String columnName, byte[] literal, Comparison comparison,
+    /// Every probe is an equality literal, so the column has to hold each of them: a fixed-width
+    /// `DECIMAL` brings the probe to the column's own encoding and refuses a value wider than it,
+    /// and a fixed-width column of any other kind refuses a probe of another width.
+    private static byte[][] probeBytes(String columnName, byte[][] probes, Comparison comparison,
             ColumnSchema columnSchema) {
-        if (comparison != Comparison.FIXED_DECIMAL) {
-            return literal;
-        }
-        BigInteger unscaled = literal.length == 0 ? BigInteger.ZERO : new BigInteger(literal);
-        return toFixedLenDecimalBytes(columnName, unscaled,
-                FixedWidthValidator.requireWidth(null, columnSchema));
-    }
-
-    /// [#comparedBytes(String, byte[], Comparison, ColumnSchema)] for each probe of a membership
-    /// test.
-    private static byte[][] comparedBytes(String columnName, byte[][] probes, Comparison comparison,
-            ColumnSchema columnSchema) {
-        if (comparison != Comparison.FIXED_DECIMAL) {
-            return probes;
-        }
         byte[][] resolved = new byte[probes.length][];
         for (int i = 0; i < probes.length; i++) {
-            resolved[i] = comparedBytes(columnName, probes[i], comparison, columnSchema);
+            if (comparison == Comparison.FIXED_DECIMAL) {
+                resolved[i] = fixedDecimalBytes(columnName, columnSchema, unscaledOf(probes[i]),
+                        HEX.formatHex(probes[i]));
+            }
+            else {
+                rejectUnholdableWidth(columnName, columnSchema, FilterPredicate.Operator.EQ, probes[i]);
+                resolved[i] = probes[i];
+            }
         }
         return resolved;
+    }
+
+    /// The number a binary `DECIMAL` literal stands for. An empty literal is zero, as
+    /// [BinaryComparator#compareSigned] reads it.
+    private static BigInteger unscaledOf(byte[] literal) {
+        return literal.length == 0 ? BigInteger.ZERO : new BigInteger(literal);
     }
 
     /// The order a binary literal compares in on this column.
@@ -562,26 +597,6 @@ public class FilterPredicateResolver {
 
     // ==================== Value conversion helpers ====================
 
-    static long instantToLong(Instant value, LogicalType.TimeUnit unit) {
-        return switch (unit) {
-            case MILLIS -> value.toEpochMilli();
-            case MICROS -> Math.addExact(
-                    Math.multiplyExact(value.getEpochSecond(), 1_000_000L),
-                    value.getNano() / 1_000L);
-            case NANOS -> Math.addExact(
-                    Math.multiplyExact(value.getEpochSecond(), 1_000_000_000L),
-                    value.getNano());
-        };
-    }
-
-    static long localTimeToLong(LocalTime value, LogicalType.TimeUnit unit) {
-        return switch (unit) {
-            case MILLIS -> value.toNanoOfDay() / 1_000_000L;
-            case MICROS -> value.toNanoOfDay() / 1_000L;
-            case NANOS -> value.toNanoOfDay();
-        };
-    }
-
     private static LogicalType.TimeUnit getTimestampUnit(String columnName, ColumnSchema columnSchema) {
         if (columnSchema.logicalType() instanceof LogicalType.TimestampType timestampType) {
             return timestampType.unit();
@@ -610,16 +625,15 @@ public class FilterPredicateResolver {
     /// matching the Parquet `FIXED_LEN_BYTE_ARRAY` encoding for decimals. The output is
     /// sign-extended (0x00 for positive, 0xFF for negative) to fill the fixed length.
     ///
-    /// @param columnName the column the literal filters, for the message
-    /// @throws ArithmeticException if the value needs more than `typeLength` bytes
-    static byte[] toFixedLenDecimalBytes(String columnName, BigInteger unscaled, int typeLength) {
+    /// The value has already been measured against the width by the caller.
+    static byte[] toFixedLenDecimalBytes(BigInteger unscaled, int typeLength) {
         byte[] minimal = unscaled.toByteArray();
         if (minimal.length == typeLength) {
             return minimal;
         }
         if (minimal.length > typeLength) {
-            throw new ArithmeticException("Column '" + columnName + "' is a FIXED_LEN_BYTE_ARRAY("
-                    + typeLength + ") DECIMAL; the literal needs " + minimal.length + " bytes");
+            throw new IllegalStateException("An unscaled value of " + minimal.length
+                    + " bytes reached the encoding for a FIXED_LEN_BYTE_ARRAY(" + typeLength + ") DECIMAL");
         }
         byte[] padded = new byte[typeLength];
         byte fill = (byte) (unscaled.signum() < 0 ? 0xFF : 0x00);
@@ -629,5 +643,128 @@ public class FilterPredicateResolver {
         }
         System.arraycopy(minimal, 0, padded, offset, minimal.length);
         return padded;
+    }
+
+    // ==================== Literals the column cannot hold ====================
+
+    /// A predicate whose literal has been measured against the column's carrier.
+    ///
+    /// Where the column holds the literal, the predicate is what was asked for. Where it does
+    /// not, equality asks whether a stored value *is* a value the column cannot store, which no
+    /// row can answer yes and every row answers no, and which is in practice a mistake — so it is
+    /// refused. An order asks instead where the literal sits among the column's values, which it
+    /// has an answer to: the predicate moves to the nearest value the column holds on the side
+    /// the operator admits, and where the column holds nothing on that side at all, no row can
+    /// match.
+    private static ResolvedPredicate carried(String columnName, int columnIndex,
+            FilterPredicate.Operator op, CarriedLiteral carried, String holds, String literal,
+            CarriedLeaf leaf) {
+        if (carried.exact()) {
+            return leaf.of(op, carried.below());
+        }
+        return switch (op) {
+            case EQ, NOT_EQ -> throw cannotHold(columnName, holds, literal);
+            case LT, LT_EQ -> carried.below() == null
+                    ? new ResolvedPredicate.NoRowPredicate(columnIndex)
+                    : leaf.of(FilterPredicate.Operator.LT_EQ, carried.below());
+            case GT, GT_EQ -> carried.above() == null
+                    ? new ResolvedPredicate.NoRowPredicate(columnIndex)
+                    : leaf.of(FilterPredicate.Operator.GT_EQ, carried.above());
+        };
+    }
+
+    private static IllegalArgumentException cannotHold(String columnName, String holds, String literal) {
+        return new IllegalArgumentException("Column '" + columnName + "' holds " + holds
+                + "; the equality literal " + literal + " is not a value it can hold");
+    }
+
+    /// A predicate on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`, whose unscaled value is sign-extended to
+    /// the column width. The width is what bounds the literal.
+    private static ResolvedPredicate fixedDecimal(String columnName, ColumnSchema columnSchema,
+            FilterPredicate.Operator op, BigInteger floor, BigInteger ceiling, String scale,
+            String literal) {
+        int width = FixedWidthValidator.requireWidth(null, columnSchema);
+        CarriedLiteral.Range range = CarriedLiteral.Range.ofBytes(width);
+        return carried(columnName, columnSchema.columnIndex(), op,
+                CarriedLiteral.within(floor, ceiling, range.min(), range.max()),
+                scale + " within " + width + " bytes", literal,
+                (resolvedOp, value) -> new ResolvedPredicate.BinaryPredicate(columnSchema.columnIndex(),
+                        resolvedOp, toFixedLenDecimalBytes(value, width), Comparison.FIXED_DECIMAL));
+    }
+
+    /// `unscaled` in the column's own encoding, for a probe that has to be a value the column
+    /// holds.
+    private static byte[] fixedDecimalBytes(String columnName, ColumnSchema columnSchema,
+            BigInteger unscaled, String literal) {
+        int width = FixedWidthValidator.requireWidth(null, columnSchema);
+        if (!CarriedLiteral.Range.ofBytes(width).holds(unscaled)) {
+            throw cannotHold(columnName, "a DECIMAL within " + width + " bytes", literal);
+        }
+        return toFixedLenDecimalBytes(unscaled, width);
+    }
+
+    /// Refuses an equality literal of a width a fixed-width column cannot store. An order literal
+    /// of another width compares as given: the comparison is exact on it either way.
+    private static void rejectUnholdableWidth(String columnName, ColumnSchema columnSchema,
+            FilterPredicate.Operator op, byte[] literal) {
+        if (columnSchema.type() != PhysicalType.FIXED_LEN_BYTE_ARRAY || !isEquality(op)) {
+            return;
+        }
+        int width = FixedWidthValidator.requireWidth(null, columnSchema);
+        if (literal.length == width) {
+            return;
+        }
+        throw cannotHold(columnName, "a byte string of " + width + " bytes",
+                HEX.formatHex(literal) + " (" + literal.length + " bytes)");
+    }
+
+    /// Refuses an equality literal no IEEE half represents. An order literal compares as given
+    /// against the halves the column stores, which is exact.
+    private static void rejectUnholdableHalf(String columnName, FilterPredicate.Operator op, float literal) {
+        if (!isEquality(op) || Float.isNaN(literal)
+                || Float.float16ToFloat(Float.floatToFloat16(literal)) == literal) {
+            return;
+        }
+        throw cannotHold(columnName, "a value an IEEE half represents", Float.toString(literal));
+    }
+
+    /// Whether the operator asks whether a stored value *is* the literal, rather than where it
+    /// sits in the column's order.
+    private static boolean isEquality(FilterPredicate.Operator op) {
+        return op == FilterPredicate.Operator.EQ || op == FilterPredicate.Operator.NOT_EQ;
+    }
+
+    /// `nanos` measured in `unit`, narrowed to `[min, max]`.
+    private static CarriedLiteral inUnit(BigInteger nanos, LogicalType.TimeUnit unit,
+            BigInteger min, BigInteger max) {
+        BigInteger[] quotientAndRemainder = nanos.divideAndRemainder(nanosPerUnit(unit));
+        BigInteger floor = quotientAndRemainder[1].signum() < 0
+                ? quotientAndRemainder[0].subtract(BigInteger.ONE)
+                : quotientAndRemainder[0];
+        BigInteger ceiling = quotientAndRemainder[1].signum() == 0 ? floor : floor.add(BigInteger.ONE);
+        return CarriedLiteral.within(floor, ceiling, min, max);
+    }
+
+    private static BigInteger nanosPerUnit(LogicalType.TimeUnit unit) {
+        return switch (unit) {
+            case MILLIS -> NANOS_PER_MILLI;
+            case MICROS -> NANOS_PER_MICRO;
+            case NANOS -> BigInteger.ONE;
+        };
+    }
+
+    private static String unitName(LogicalType.TimeUnit unit) {
+        return switch (unit) {
+            case MILLIS -> "milliseconds";
+            case MICROS -> "microseconds";
+            case NANOS -> "nanoseconds";
+        };
+    }
+
+    /// `value` as a count of nanoseconds since the epoch, which no `long` holds for every
+    /// [Instant].
+    private static BigInteger nanosSinceEpoch(Instant value) {
+        return BigInteger.valueOf(value.getEpochSecond()).multiply(NANOS_PER_SECOND)
+                .add(BigInteger.valueOf(value.getNano()));
     }
 }

@@ -182,6 +182,9 @@ public class RowGroupFilterEvaluator {
                     statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
             case ResolvedPredicate.IsNotNullPredicate p ->
                     statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
+            case ResolvedPredicate.EveryNonNullRowPredicate p ->
+                    statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
+            case ResolvedPredicate.NoRowPredicate ignored -> FilterDecision.CANNOT_MATCH;
             case ResolvedPredicate.And a -> {
                 if (a.children().isEmpty()) {
                     yield FilterDecision.MIGHT_MATCH;

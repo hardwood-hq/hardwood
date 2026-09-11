@@ -324,13 +324,13 @@ class RecordFilterCompilerTest {
     }
 
     @Test
-    void testNotDoubleInWithOnlyNonRepresentableProbesResolvesToIsNotNull() {
+    void testNotDoubleInWithOnlyNonRepresentableProbesMatchesEveryNonNullRow() {
         // Zero-surviving-probe rule: every FLOAT probe is non-representable, so the negation
-        // is IsNotNull (the exact row-level complement), never an empty And.
+        // matches every non-null row — the exact row-level complement — never an empty And.
         FileSchema schema = floatSchema("col");
         ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.1, 0.3 }, true, false);
         ResolvedPredicate notIn = ResolvedPredicate.negate(in);
-        assertThat(notIn).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+        assertThat(notIn).isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
         // Every non-null row matches; null rows drop.
         assertTrue(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
         assertTrue(matchesRow(notIn, floatStub("col", 3.5f, false), schema));

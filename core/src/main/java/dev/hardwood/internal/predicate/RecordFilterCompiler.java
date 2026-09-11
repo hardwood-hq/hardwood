@@ -150,6 +150,16 @@ public final class RecordFilterCompiler {
                 NullFieldTarget target = nullFieldTarget(schema, p.columnIndex(), p.definitionLevel());
                 yield isNotNullLeaf(target.path(), target.name());
             }
+            // Every non-null row of the leaf and no row at all: the same rows an IS NOT NULL
+            // test and an unsatisfiable comparison return, which is what a comparison whose
+            // literal lies past the column's range answers.
+            case ResolvedPredicate.EveryNonNullRowPredicate p -> {
+                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                yield idx >= 0
+                        ? indexedIsNotNullLeaf(idx)
+                        : isNotNullLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()));
+            }
+            case ResolvedPredicate.NoRowPredicate ignored -> row -> false;
             case ResolvedPredicate.And and -> compileAnd(and.children(), schema, topLevelFieldIndex);
             case ResolvedPredicate.Or or -> compileOr(or.children(), schema, topLevelFieldIndex);
             // Spatial intersects is bbox-only pushdown (row group + page level). Per-row WKB

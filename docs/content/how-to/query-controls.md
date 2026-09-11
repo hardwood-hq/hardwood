@@ -139,6 +139,8 @@ FilterPredicate filter = FilterPredicate.eq("request_id",
 
 A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 
+A literal the column cannot store — an `Instant` finer than its time unit, a `BigDecimal` past its scale, a value outside the range of the `INT32` or `INT64` behind it — is rejected for `eq`, `notEq` and the set forms, and answered exactly for `lt`, `ltEq`, `gt` and `gtEq`. See [Literals the column cannot hold](../reference/query-controls.md#literals-the-column-cannot-hold).
+
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
 
 ### Limitations
@@ -148,6 +150,9 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   is rejected with `IllegalArgumentException` at reader creation.
 - **A Bloom filter and a dictionary answer membership, not order.** They sharpen `eq` and `in` on
   integer, floating-point and binary columns; `lt`, `gt` and `notEq` are left to statistics alone.
+- **An unsatisfiable range prunes but does not push down further.** A comparison whose literal
+  lies past the range the column's carrier holds matches every non-null row or none, and is
+  decided from the null count alone.
 - **Two equality probes cannot use either.** `eq(NaN)`, or an `in` list holding one, is not
   Bloom-pruned: raw-bit hashing distinguishes NaN payloads that `Double.compare` treats as equal,
   so a miss cannot prove a NaN absent. An `eq` or `inStrings` on a `DECIMAL` stored as

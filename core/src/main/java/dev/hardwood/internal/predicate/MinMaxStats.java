@@ -211,6 +211,8 @@ sealed interface MinMaxStats {
             // validate. What the file wrote is not discarded; it is simply not their business.
             case ResolvedPredicate.IsNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
             case ResolvedPredicate.IsNotNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
+            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> new NullCountOnlyStats(nullCount, null);
+            case ResolvedPredicate.NoRowPredicate ignored -> new NullCountOnlyStats(nullCount, null);
             case ResolvedPredicate.GeospatialPredicate ignored -> new NullCountOnlyStats(nullCount, null);
             case ResolvedPredicate.And ignored -> new NullCountOnlyStats(nullCount, null);
             case ResolvedPredicate.Or ignored -> new NullCountOnlyStats(nullCount, null);

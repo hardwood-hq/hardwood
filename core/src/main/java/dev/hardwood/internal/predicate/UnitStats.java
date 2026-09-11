@@ -63,11 +63,9 @@ sealed interface UnitStats {
     /// leaf, is answered from [#definitionLevels] where the file wrote a histogram sized for the
     /// leaf, and from [#nulls] otherwise. The leaf is then not repeated and is null exactly where
     /// the node is absent, so it writes one entry per row and the two agree wherever both are
-    /// present. The size check is
-    /// what keeps a predicate whose levels were not read from the schema — see
-    /// `IsNotNullPredicate.ofLeaf` — from reading a histogram at the wrong level: its levels are
-    /// both `0`, which only a required column's histogram is sized for, and for that column `0`
-    /// is its real level.
+    /// present. The size check is what keeps a predicate carrying level `0` from reading a
+    /// histogram at the wrong level: only a required column's histogram is sized for it, and for
+    /// that column `0` is its real level.
     ///
     /// A value predicate cannot match a unit that is null on every row, since a null satisfies
     /// none of them, `NOT_EQ` included. Otherwise it is answered from [#minMax]. Every value
@@ -92,6 +90,10 @@ sealed interface UnitStats {
                         ? levels.decideIsNotNull(p.definitionLevel(), p.leafDefinitionLevel())
                         : nulls().decideIsNotNull();
             }
+            // The constants carry no definition levels, so they read the null count alone; a
+            // level-0 histogram would only repeat what it says.
+            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> nulls().decideIsNotNull();
+            case ResolvedPredicate.NoRowPredicate ignored -> FilterDecision.CANNOT_MATCH;
             case ResolvedPredicate.IntPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.LongPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedIntPredicate ignored -> decideValue(leaf, logContext);
