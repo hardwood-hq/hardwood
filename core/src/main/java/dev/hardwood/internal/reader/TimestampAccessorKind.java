@@ -54,9 +54,14 @@ public final class TimestampAccessorKind {
 
     private static String describe(LogicalType lt, boolean utcAdjusted) {
         if (lt == null) {
-            return "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)";
+            return describeLegacyInt96();
         }
         return describe(utcAdjusted);
+    }
+
+    /// The kind of an unannotated `INT96` column, as a rejection names it.
+    public static String describeLegacyInt96() {
+        return "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)";
     }
 
     /// The kind of a column annotated TIMESTAMP, as a rejection names it.

@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.reader.FilterPredicate;
 
 /// What each [dev.hardwood.reader.FilterPredicate.Operator] proves over an interval, as pure
@@ -220,9 +221,9 @@ final class StatisticsFilterSupport {
         return true;
     }
 
-    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, boolean signed) {
+    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, Comparison comparison) {
         for (byte[] value : values) {
-            if (compareBinary(value, min, signed) >= 0 && compareBinary(value, max, signed) <= 0) {
+            if (comparison.compare(value, min) >= 0 && comparison.compare(value, max) <= 0) {
                 return false;
             }
         }
@@ -257,23 +258,15 @@ final class StatisticsFilterSupport {
         return false;
     }
 
-    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max, boolean signed) {
-        if (compareBinary(min, max, signed) != 0) {
+    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max, Comparison comparison) {
+        if (comparison.compare(min, max) != 0) {
             return false;
         }
         for (byte[] value : values) {
-            if (compareBinary(value, min, signed) == 0) {
+            if (comparison.compare(value, min) == 0) {
                 return true;
             }
         }
         return false;
-    }
-
-    /// Compares two binary values in a column's order: as big-endian two's complement numbers
-    /// when `signed`, the order a `DECIMAL` sorts in, or unsigned lexicographic otherwise.
-    private static int compareBinary(byte[] left, byte[] right, boolean signed) {
-        return signed
-                ? BinaryComparator.compareSigned(left, right)
-                : BinaryComparator.compareUnsigned(left, right);
     }
 }

@@ -136,6 +136,10 @@ FilterPredicate filter = FilterPredicate.gtEq("created_at",
 FilterPredicate filter = FilterPredicate.lt("pickup_time",
     LocalDateTime.of(2025, 1, 1, 8, 30));
 
+// Legacy INT96 timestamp columns, as written by older Spark, Hive and Impala, take an Instant too
+FilterPredicate filter = FilterPredicate.lt("event_time",
+    Instant.parse("2015-06-01T00:00:00Z"));
+
 // TIME columns
 FilterPredicate filter = FilterPredicate.lt("start_time", LocalTime.of(9, 0));
 
@@ -158,7 +162,7 @@ A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an 
 `DECIMAL`, a `FLOAT16`, a `UUID`, an `INTERVAL`, a `BSON`, a `GEOMETRY`, a `GEOGRAPHY`, a `NULL`
 or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`.
 
-A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID`, a `TIMESTAMP` column an `Instant` or, where `isAdjustedToUTC = false`, a `LocalDateTime` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
+A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID`, a `TIMESTAMP` column an `Instant` or, where `isAdjustedToUTC = false`, a `LocalDateTime`, an `INT96` column an `Instant` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 
 `lt`, `ltEq`, `gt` and `gtEq` need a column whose type defines an order. An `INTERVAL`, a `GEOMETRY`, a `GEOGRAPHY` and a `NULL` column define none, and take `eq`, `notEq` and the set form only. A `BOOLEAN` column orders `false` before `true` and takes every operator but the set form, which `eq`, `notEq` and `isNotNull` already express.
 
@@ -181,6 +185,9 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   so a miss cannot prove a NaN absent. An `eq` or `in` on a `DECIMAL` stored as
   `BYTE_ARRAY` is pruned by neither, since such a column may hold the same number under more than
   one byte string, so a miss on a probe's own bytes does not prove the value absent.
+- **An `INT96` comparison does not prune.** A comparison or set predicate on an `INT96` column
+  reads every row group and page and filters the rows one by one: neither the column's `min` /
+  `max` statistics, nor its dictionary, nor a Bloom filter decide it.
 
 ## Column Projection
 

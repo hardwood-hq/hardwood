@@ -309,7 +309,7 @@ public sealed interface FilterPredicate
         return new StringColumnPredicate(column, Operator.GT_EQ, value);
     }
 
-    // ==================== Binary (BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY) Predicates ====================
+    // ==================== Binary (BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96) Predicates ====================
 
     /// Creates an equals predicate for a binary column, whose literal is the stored bytes —
     /// the value [RowReader#getBinary] returns for it.
@@ -318,7 +318,8 @@ public sealed interface FilterPredicate
     /// `DECIMAL` reads them as the number they encode, a `FLOAT16` as the half its two bytes
     /// encode, and every other binary column compares them unsigned lexicographically. A
     /// fixed-width column takes an equality literal of its own width only, and a fixed-width
-    /// `DECIMAL` any length whose value fits that width.
+    /// `DECIMAL` any length whose value fits that width. A legacy `INT96` timestamp column takes
+    /// twelve bytes, compared as the instant they encode.
     ///
     /// The array is copied, so a caller reusing it does not change the predicate.
     static FilterPredicate eq(String column, byte[] value) {
@@ -417,8 +418,8 @@ public sealed interface FilterPredicate
     // ==================== Instant (TIMESTAMP) Predicates ====================
 
     /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type with
-    /// `isAdjustedToUTC = true`). The column's time unit is determined from the schema at reader
-    /// creation.
+    /// `isAdjustedToUTC = true`, or a legacy `INT96` timestamp). The column's time unit is
+    /// determined from the schema at reader creation.
     static FilterPredicate eq(String column, Instant value) {
         return new InstantColumnPredicate(column, Operator.EQ, value);
     }
@@ -871,9 +872,10 @@ public sealed interface FilterPredicate
         }
     }
 
-    /// Predicate for TIMESTAMP columns with `isAdjustedToUTC = true`. The [Instant] value is
-    /// converted to the column's time unit (MILLIS, MICROS, or NANOS) at reader creation using the
-    /// schema's `TimestampType`.
+    /// Predicate for TIMESTAMP columns with `isAdjustedToUTC = true` and for legacy `INT96`
+    /// timestamp columns. The [Instant] value is converted to the column's time unit (MILLIS,
+    /// MICROS, or NANOS) at reader creation using the schema's `TimestampType`, or to the twelve
+    /// bytes of an `INT96`.
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
 
         public InstantColumnPredicate {

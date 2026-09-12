@@ -89,10 +89,10 @@ public sealed interface ResolvedPredicate {
 
     /// A comparison against a byte string.
     ///
-    /// The [Comparison] fixes both the order the bytes compare in and whether a number has a
-    /// single encoding in the column. The two are not independent — only a variable-length
-    /// `DECIMAL` compares signed while admitting more than one encoding of the same value — so
-    /// they are carried as one three-valued choice rather than as two flags.
+    /// The [Comparison] fixes both the order the bytes compare in and whether a value has a
+    /// single encoding in the column. The two are not independent — the order a column's values
+    /// compare in is what decides which encodings stand for the same value — so they are carried
+    /// as one choice rather than as an order and a flag.
     record BinaryPredicate(int columnIndex, FilterPredicate.Operator op, byte[] value,
             Comparison comparison) implements ResolvedPredicate {
 
@@ -102,7 +102,7 @@ public sealed interface ResolvedPredicate {
 
             /// Unsigned lexicographic — the type-defined order of a byte string compared as
             /// itself. A value is exactly the bytes it was written as.
-            BYTE_STRING(false, true),
+            BYTE_STRING(true),
 
             /// Big-endian two's complement over a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`, whose every
             /// value is padded to the column width, so a number has one encoding in it.
@@ -118,7 +118,7 @@ public sealed interface ResolvedPredicate {
             /// Equal widths, so the sign decides first and the rest compares unsigned. One
             /// encoding per number, so a bloom-filter or dictionary probe for the literal's
             /// bytes answers for the value.
-            FIXED_DECIMAL(true, true),
+            FIXED_DECIMAL(true),
 
             /// Big-endian two's complement over a `BYTE_ARRAY` `DECIMAL`. The format asks such a
             /// column for the fewest bytes that hold each value but does not require them, so a
@@ -140,20 +140,39 @@ public sealed interface ResolvedPredicate {
             /// And `00 00 00 7F` is a legal spelling of the same `1.27`, so equality cannot be
             /// decided by hashing or matching the literal's own bytes: the probe would miss a
             /// value the column holds.
-            VARIABLE_DECIMAL(true, false);
+            VARIABLE_DECIMAL(false),
 
-            private final boolean signed;
+            /// A legacy `INT96` timestamp, compared as the instant it encodes: twelve
+            /// little-endian bytes of nanoseconds of the day, then the Julian day.
+            ///
+            /// ```text
+            ///  2023-11-13T12:00:00Z  ->  00 80 A7 48 4A 27 00 00  66 8A 25 00
+            ///  2023-11-14T00:00:00Z  ->  00 00 00 00 00 00 00 00  67 8A 25 00
+            /// ```
+            ///
+            /// Byte-wise, the later instant ranks first, since the low byte of the nanoseconds
+            /// leads. And the format does not bound the nanoseconds by a day, so
+            /// `00 00 4F 91 94 4E 00 00  66 8A 25 00` — the day before and a full day of
+            /// nanoseconds — is a legal spelling of midnight on the 14th, which a probe for its
+            /// canonical bytes would miss.
+            INT96_INSTANT(false);
+
             private final boolean byteExact;
 
-            Comparison(boolean signed, boolean byteExact) {
-                this.signed = signed;
+            Comparison(boolean byteExact) {
                 this.byteExact = byteExact;
             }
 
-            /// Whether the bytes compare as a big-endian two's complement value — the order a
-            /// `DECIMAL`'s unscaled value sorts in — rather than unsigned lexicographically.
-            public boolean signed() {
-                return signed;
+            /// `left` against `right` in this order.
+            ///
+            /// @return negative if `left` sorts first, zero if the two are the same value,
+            ///         positive if `right` sorts first
+            public int compare(byte[] left, byte[] right) {
+                return switch (this) {
+                    case BYTE_STRING -> BinaryComparator.compareUnsigned(left, right);
+                    case FIXED_DECIMAL, VARIABLE_DECIMAL -> BinaryComparator.compareSigned(left, right);
+                    case INT96_INSTANT -> BinaryComparator.compareInt96(left, right);
+                };
             }
 
             /// Whether the column can hold a given value only as exactly one byte string.
@@ -163,11 +182,6 @@ public sealed interface ResolvedPredicate {
             public boolean byteExact() {
                 return byteExact;
             }
-        }
-
-        /// Whether the predicate's bytes compare signed. See [Comparison#signed()].
-        public boolean signed() {
-            return comparison.signed();
         }
 
         /// Whether the column encodes a value as exactly these bytes. See
@@ -193,11 +207,6 @@ public sealed interface ResolvedPredicate {
     /// shortcuts, which test exact bytes, depend on [#byteExact()].
     record BinaryInPredicate(int columnIndex, byte[][] values, BinaryPredicate.Comparison comparison)
             implements ResolvedPredicate {
-
-        /// Whether the probes compare signed. See [BinaryPredicate.Comparison#signed()].
-        public boolean signed() {
-            return comparison.signed();
-        }
 
         /// Whether the column encodes a value as exactly these bytes. See
         /// [BinaryPredicate.Comparison#byteExact()].

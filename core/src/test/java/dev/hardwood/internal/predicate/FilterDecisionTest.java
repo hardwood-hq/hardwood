@@ -327,9 +327,9 @@ class FilterDecisionTest {
         byte[] a = "a".getBytes(StandardCharsets.UTF_8);
         byte[] b = "b".getBytes(StandardCharsets.UTF_8);
         byte[] c = "c".getBytes(StandardCharsets.UTF_8);
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, b, b, false)).isTrue();
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, c, c, false)).isFalse();
-        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, a, b, false)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, b, b, Comparison.BYTE_STRING)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, c, c, Comparison.BYTE_STRING)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, a, b, Comparison.BYTE_STRING)).isFalse();
     }
 
     @Test
@@ -378,7 +378,7 @@ class FilterDecisionTest {
         ResolvedPredicate leaf = new ResolvedPredicate.BinaryPredicate(
                 0, op, value.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
         return MinMaxStats.BinaryStats.of(min.getBytes(StandardCharsets.UTF_8),
-                max.getBytes(StandardCharsets.UTF_8), false, 0L).decideLeaf(leaf);
+                max.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING, 0L).decideLeaf(leaf);
     }
 
     private static MinMaxStats intStats(int min, int max, Long nullCount) {

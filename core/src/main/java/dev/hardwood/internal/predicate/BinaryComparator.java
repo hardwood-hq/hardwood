@@ -7,14 +7,27 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 
-/// Byte array comparison in the two orders a binary column sorts in: unsigned lexicographic
-/// (for BYTE_ARRAY) and signed two's complement (for DECIMAL columns of either byte-array type).
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+
+/// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
+/// BYTE_ARRAY), signed two's complement (for DECIMAL columns of either byte-array type), and the
+/// instant a legacy `INT96` timestamp encodes.
 ///
 /// Both the reader's predicate evaluation and the writer's statistics collection compare through
 /// here, so a chunk's bounds and a predicate over them cannot come to disagree.
 public final class BinaryComparator {
+
+    private static final VarHandle LONG_LE =
+            MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final VarHandle INT_LE =
+            MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
+
+    private static final long NANOS_PER_DAY = 86_400_000_000_000L;
 
     private BinaryComparator() {
     }
@@ -66,5 +79,36 @@ public final class BinaryComparator {
             }
         }
         return 0;
+    }
+
+    /// Compare two legacy `INT96` timestamps by the instants they encode.
+    ///
+    /// Each is twelve little-endian bytes: a signed 64-bit count of nanoseconds of the day, then a
+    /// signed 32-bit Julian day. The format does not bound the nanoseconds by one day, so the same
+    /// instant can be stored as day `d` with `n` nanoseconds or as day `d - 1` with `n` plus a
+    /// day's worth. Both values are brought to whole days and a remainder within one day before
+    /// they compare, which orders every encoding of an instant as that instant. No sum overflows:
+    /// a nanoseconds field moves the day by at most 106,752 days either way.
+    ///
+    /// @return negative if a < b, zero if both encode the same instant, positive if a > b
+    /// @throws IllegalArgumentException if either value is not twelve bytes
+    public static int compareInt96(byte[] a, byte[] b) {
+        requireInt96(a);
+        requireInt96(b);
+        long aNanos = (long) LONG_LE.get(a, 0);
+        long bNanos = (long) LONG_LE.get(b, 0);
+        long aDay = (int) INT_LE.get(a, Long.BYTES) + Math.floorDiv(aNanos, NANOS_PER_DAY);
+        long bDay = (int) INT_LE.get(b, Long.BYTES) + Math.floorDiv(bNanos, NANOS_PER_DAY);
+        int byDay = Long.compare(aDay, bDay);
+        return byDay != 0
+                ? byDay
+                : Long.compare(Math.floorMod(aNanos, NANOS_PER_DAY), Math.floorMod(bNanos, NANOS_PER_DAY));
+    }
+
+    private static void requireInt96(byte[] value) {
+        if (value.length != LogicalTypeConverter.INT96_BYTES) {
+            throw new IllegalArgumentException("An INT96 value is " + LogicalTypeConverter.INT96_BYTES
+                    + " bytes, not " + value.length);
+        }
     }
 }

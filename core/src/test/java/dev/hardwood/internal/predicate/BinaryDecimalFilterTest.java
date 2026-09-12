@@ -110,7 +110,7 @@ class BinaryDecimalFilterTest {
                 FilterPredicate.eq("amount", new BigDecimal("1.27")), schema);
 
         assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class, p -> {
-            assertThat(p.signed()).isTrue();
+            assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL);
             assertThat(p.byteExact()).isFalse();
             // 127 in the fewest bytes that hold it, the form the format asks a writer for.
             assertThat(p.value()).containsExactly(0x7F);
@@ -230,7 +230,7 @@ class BinaryDecimalFilterTest {
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("name", "a"), plain))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
-                        p -> assertThat(p.signed()).isFalse());
+                        p -> assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING));
     }
 
     // ==================== Fixtures ====================

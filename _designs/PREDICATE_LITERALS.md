@@ -85,7 +85,15 @@ define none and take equality and the set form only.
 
 `INT96` values are instants and order as such. The format's `Int96TimestampOrder` orders an
 `INT96` by its day and then its nanoseconds of the day. That agrees with the instant only while
-the nanoseconds stay within one day, so statistics are not used to prune an `INT96` column.
+the nanoseconds stay within one day. Under `TYPE_ORDER` the format leaves the order of an
+`INT96` undefined. Statistics are therefore never read for an `INT96` column, and ignoring them
+is not reported as a discarded pair.
+
+A stored value's nanoseconds of the day are not bounded by one day, so an `INT96` holds instants
+past its first and last Julian day, up to the extreme day plus what an `INT64` of nanoseconds
+reaches. That range is what the column can hold, for equality and order alike. A literal past
+the extreme day keeps that day and carries the remaining days in its nanoseconds, which compares
+as the same instant.
 
 `intersects` has no inverse: `not` over a predicate containing `intersects` is rejected.
 
@@ -271,7 +279,7 @@ express get the same answer; the differences are listed below.
 | Fixed-width `DECIMAL` byte literal resolved to the column width | [#1190](https://github.com/hardwood-hq/hardwood/issues/1190) (done) |
 | `byte[]` literals and factories; `String` only where `getString` reads; `String` records; null literals and malformed `String`s rejected when built | [#1181](https://github.com/hardwood-hq/hardwood/issues/1181) (done) |
 | Ordered operators exactly on ordered types: `BOOLEAN` gains them; `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL` lose them. `PqInterval` literal; leaves below a `VARIANT` group take null tests only; `not` over `intersects` rejected | [#1183](https://github.com/hardwood-hq/hardwood/issues/1183) (done) |
-| `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) |
+| `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) (done) |
 | Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) (done) |
 | Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) |
@@ -294,7 +302,9 @@ the column-reader record view handling `FLOAT16` and struct leaves
     row-group bounds, the page index and the dictionary each decide a predicate the record-level
     comparison decides again; a struct whose leaf is null under a present struct; and the `BSON`
     and `INTERVAL` columns, in a corpus of their own because DuckDB cannot open a file holding a
-    `BSON` column.
+    `BSON` column; and `INT96` columns in the three flat layouts, one value stored under a
+    non-canonical encoding and bounds recorded in the byte order of a big-endian integer, so that
+    both the exact-byte shortcuts and pruning would drop a row that matches.
 - `FilterPredicateResolverTest` covers every row of the per-column table for every literal kind and
   operator: accepted with the expected resolved predicate, or rejected with the full message. For
   every resolved leaf form, `not(not(p))` resolves to a predicate equivalent to `p`.
