@@ -7,10 +7,19 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtEqBatchMatcher;
@@ -26,6 +35,7 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BinaryBatchValues;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -368,4 +378,161 @@ class ColumnBatchMatcherTest {
         long[] out = runMatcher(new FloatInBatchMatcher(new float[]{99.0f}), floatBatch(vals130, null));
         assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
     }
+
+    /// Packs `values` back to back into a [BinaryBatchValues], the layout `FlatColumnWorker`
+    /// assembles. A `null` entry occupies an empty slice; nullness itself comes from `nulls`, so a
+    /// row can be marked null while still holding bytes — the scratch a null fixed-length slot
+    /// keeps.
+    private static BatchExchange.Batch binaryBatch(BitSet nulls, byte[]... values) {
+        int[] offsets = new int[values.length + 1];
+        for (int i = 0; i < values.length; i++) {
+            offsets[i + 1] = offsets[i] + (values[i] == null ? 0 : values[i].length);
+        }
+        byte[] bytes = new byte[offsets[values.length]];
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] != null) {
+                System.arraycopy(values[i], 0, bytes, offsets[i], values[i].length);
+            }
+        }
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = new BinaryBatchValues(bytes, offsets);
+        batch.validity = toValidity(nulls, values.length);
+        batch.recordCount = values.length;
+        return batch;
+    }
+
+    private static byte[] utf8(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /// Big-endian two's complement in two bytes — a `FIXED_LEN_BYTE_ARRAY(2)` DECIMAL value.
+    private static byte[] int16(int v) {
+        return new byte[]{(byte) (v >> 8), (byte) v};
+    }
+
+    @Test
+    void binaryEq_matchesExactBytesAndExcludesNulls() {
+        BatchExchange.Batch batch = binaryBatch(nullsAt(2),
+                utf8("apple"), utf8("app"), utf8("apple"), utf8("apples"), utf8(""));
+        // Row 2 holds "apple" but is NULL → excluded. The prefix "app" and extension "apples" differ.
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new BinaryEqBatchMatcher(utf8("apple"), Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryNotEq_excludesNulls() {
+        BatchExchange.Batch batch = binaryBatch(nullsAt(1),
+                utf8("apple"), null, utf8("pear"), utf8(""));
+        // Row 1 NULL → excluded (NULL != x is unknown → false).
+        assertArrayEquals(new long[]{bits(2, 3)},
+                runMatcher(new BinaryNotEqBatchMatcher(utf8("apple"), Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryOrderingOps_byteStringComparesUnsignedLexicographically() {
+        // A proper prefix sorts before the literal; 0xFF sorts after every ASCII byte unsigned.
+        BatchExchange.Batch batch = binaryBatch(null,
+                utf8("app"), utf8("apple"), utf8("apples"), new byte[]{(byte) 0xFF}, utf8(""), utf8("b"));
+        byte[] literal = utf8("apple");
+        assertArrayEquals(new long[]{bits(0, 4)},
+                runMatcher(new BinaryLtBatchMatcher(literal, Comparison.BYTE_STRING), batch));
+        assertArrayEquals(new long[]{bits(0, 1, 4)},
+                runMatcher(new BinaryLtEqBatchMatcher(literal, Comparison.BYTE_STRING), batch));
+        assertArrayEquals(new long[]{bits(2, 3, 5)},
+                runMatcher(new BinaryGtBatchMatcher(literal, Comparison.BYTE_STRING), batch));
+        assertArrayEquals(new long[]{bits(1, 2, 3, 5)},
+                runMatcher(new BinaryGtEqBatchMatcher(literal, Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryOrderingOps_fixedDecimalComparesAsTwosComplement() {
+        // -1 (0xFFFF) and -256 (0xFF00) sort below zero only under signed order. Row 4 (-300) is NULL.
+        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+                int16(-1), int16(1), int16(-256), int16(256), int16(-300));
+        byte[] zero = int16(0);
+        assertArrayEquals(new long[]{bits(0, 2)},
+                runMatcher(new BinaryLtBatchMatcher(zero, Comparison.FIXED_DECIMAL), batch));
+        assertArrayEquals(new long[]{bits(1, 3)},
+                runMatcher(new BinaryGtEqBatchMatcher(zero, Comparison.FIXED_DECIMAL), batch));
+        // As a byte string, nothing sorts below 0x0000.
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new BinaryLtBatchMatcher(zero, Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryFixedDecimal_skipsNullSlotsInsteadOfComparingThem() {
+        // Row 1 is NULL with an empty slice, which reads as zero under a signed comparison — so
+        // comparing it would answer against a value the row does not hold.
+        BatchExchange.Batch batch = binaryBatch(nullsAt(1), int16(5), null, int16(-5));
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new BinaryGtBatchMatcher(int16(0), Comparison.FIXED_DECIMAL), batch));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new BinaryNotEqBatchMatcher(int16(5), Comparison.FIXED_DECIMAL), batch));
+    }
+
+    /// A `BYTE_ARRAY` DECIMAL stores each value in the fewest bytes that hold it, so widths differ
+    /// and length does not track magnitude: byte-wise `0x7F` would outrank `0x00 0x80`, and `0x9C`
+    /// would fall below `0xFF 0x00`. Both are backwards, so the shorter value sign-extends first.
+    @Test
+    void binaryOrderingOps_variableDecimalSignExtendsBeforeComparing() {
+        // 1.27 -> 7F, 1.28 -> 00 80, -1.00 -> 9C, -2.56 -> FF 00
+        BatchExchange.Batch batch = binaryBatch(null,
+                new byte[]{0x7F}, new byte[]{0x00, (byte) 0x80},
+                new byte[]{(byte) 0x9C}, new byte[]{(byte) 0xFF, 0x00});
+        byte[] oneTwentyEight = {0x00, (byte) 0x80};
+        assertArrayEquals(new long[]{bits(0, 2, 3)},
+                runMatcher(new BinaryLtBatchMatcher(oneTwentyEight, Comparison.VARIABLE_DECIMAL), batch));
+        // -1.00 outranks -2.56 despite being the shorter string.
+        assertArrayEquals(new long[]{bits(0, 1, 2)},
+                runMatcher(new BinaryGtBatchMatcher(new byte[]{(byte) 0xFF, 0x00}, Comparison.VARIABLE_DECIMAL), batch));
+    }
+
+    /// The same number may be spelled with padding on a `BYTE_ARRAY` DECIMAL, so equality there
+    /// cannot be byte equality: `00 7F` is another spelling of the `7F` the literal carries.
+    @Test
+    void binaryEq_variableDecimalMatchesAPaddedSpellingOfTheSameValue() {
+        BatchExchange.Batch batch = binaryBatch(null,
+                new byte[]{0x7F}, new byte[]{0x00, 0x7F}, new byte[]{0x00, 0x00, 0x7F}, new byte[]{(byte) 0x80});
+        assertArrayEquals(new long[]{bits(0, 1, 2)},
+                runMatcher(new BinaryEqBatchMatcher(new byte[]{0x7F}, Comparison.VARIABLE_DECIMAL), batch));
+        // A byte string is exactly its bytes, so there the padded spellings are different values.
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new BinaryEqBatchMatcher(new byte[]{0x7F}, Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryGt_acrossWordBoundary_setsBitsInBothWords() {
+        byte[][] vals = new byte[70][];
+        for (int i = 0; i < vals.length; i++) {
+            vals[i] = new byte[]{(byte) i}; // matches > 5 → rows 6..69
+        }
+        BatchExchange.Batch batch = binaryBatch(null, vals);
+        long[] out = runMatcher(new BinaryGtBatchMatcher(new byte[]{5}, Comparison.BYTE_STRING), batch);
+        long w0 = 0;
+        for (int b = 6; b < 64; b++) w0 |= 1L << b;
+        long w1 = 0;
+        for (int b = 0; b < 6; b++) w1 |= 1L << b;
+        assertArrayEquals(new long[]{w0, w1}, out);
+    }
+
+    @Test
+    void binaryIn_matchesAnyMemberAndExcludesNulls() {
+        BatchExchange.Batch batch = binaryBatch(nullsAt(3),
+                utf8("a"), utf8("bb"), utf8(""), utf8("bb"), utf8("ccc"), utf8("b"));
+        // Rows 1 ("bb") and 2 ("") are members; row 3 is NULL; "b" is only a prefix of "bb".
+        byte[][] members = {utf8("bb"), utf8(""), utf8("zz")};
+        assertArrayEquals(new long[]{bits(1, 2)},
+                runMatcher(new BinaryInBatchMatcher(members, Comparison.BYTE_STRING), batch));
+    }
+
+    @Test
+    void binaryIn_variableDecimalMatchesAPaddedSpellingOfAMember() {
+        BatchExchange.Batch batch = binaryBatch(null,
+                new byte[]{0x00, 0x7F}, new byte[]{(byte) 0xFF, (byte) 0x80}, new byte[]{0x01});
+        byte[][] members = {new byte[]{0x7F}, new byte[]{(byte) 0x80}};
+        // 0x00 0x7F is 127 and 0xFF 0x80 is -128: both members, spelled one byte wider.
+        assertArrayEquals(new long[]{bits(0, 1)},
+                runMatcher(new BinaryInBatchMatcher(members, Comparison.VARIABLE_DECIMAL), batch));
+    }
+
 }

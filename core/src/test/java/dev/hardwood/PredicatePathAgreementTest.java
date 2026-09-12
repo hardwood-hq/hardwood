@@ -34,6 +34,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
@@ -43,6 +46,7 @@ import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -78,9 +82,12 @@ class PredicatePathAgreementTest {
 
     private static final Path RES = Paths.get("src/test/resources/predicate");
 
-    /// A comparison no batch matcher takes, on a required column whose every value is `z`, so it
-    /// matches no row and pushes the filter it is `or`-ed into onto the record-level path.
-    private static final FilterPredicate NEVER = FilterPredicate.lt("zz", new byte[0]);
+    /// Matches no row — nothing sorts below the empty string, and `__row__` is never negative — and
+    /// reads `zz` and `__row__` in both conjunctions, which the batch compiler cannot give one bitmap
+    /// per column for. `or`-ed into any predicate, it puts the filter on the record-level path.
+    private static final FilterPredicate NEVER = FilterPredicate.or(
+            FilterPredicate.and(FilterPredicate.lt("zz", new byte[0]), FilterPredicate.gtEq("__row__", 0L)),
+            FilterPredicate.and(FilterPredicate.lt("zz", new byte[0]), FilterPredicate.lt("__row__", 0L)));
 
     private static final ReaderConfig METADATA_FILTERING_OFF = ReaderConfig.builder()
             .option("hardwood.metadata-filtering", "false")
@@ -911,6 +918,9 @@ class PredicatePathAgreementTest {
         List<Long> rows = new ArrayList<>();
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context, config)) {
+            if (path.forceRecordPath) {
+                assertTakesRecordPath(filter, reader.getFileSchema());
+            }
             if (path.columnReader) {
                 try (ColumnReader columns = reader.buildColumnReader("__row__").filter(filter).build()) {
                     while (columns.nextBatch()) {
@@ -1191,5 +1201,16 @@ class PredicatePathAgreementTest {
                 .putLong(uuid.getMostSignificantBits())
                 .putLong(uuid.getLeastSignificantBits())
                 .array();
+    }
+
+    /// Fails unless `filter` over `schema` falls back to the record-level filter. Which leaves the
+    /// batch compiler supports changes over time, so a test that relies on the record path asserts
+    /// it rather than trusting the filter's shape.
+    private static void assertTakesRecordPath(FilterPredicate filter, FileSchema schema) {
+        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                projected::toProjectedIndex))
+                .as("filter %s must take the record path", filter)
+                .isNull();
     }
 }

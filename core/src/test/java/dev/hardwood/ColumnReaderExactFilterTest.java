@@ -18,12 +18,16 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,6 +47,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ColumnReaderExactFilterTest {
 
     private static final Path INT_FILE = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+    /// `label = 'rg2_150'` — the single row `id == 150` — spelled as two conjunctions over `label` and
+    /// `id`, which the batch compiler rejects, so the filter takes the `RowMatcher` fallback and reads
+    /// `label` through the batch-backed record view. Every `id` is positive, so the second
+    /// conjunction matches nothing.
+    private static final FilterPredicate LABEL_150_ON_RECORD_PATH = FilterPredicate.or(
+            FilterPredicate.and(FilterPredicate.eq("label", "rg2_150"), FilterPredicate.gt("id", 0L)),
+            FilterPredicate.and(FilterPredicate.eq("label", "rg2_150"), FilterPredicate.lt("id", 0L)));
     private static final Path LIST_FILE = Paths.get("src/test/resources/filter_pushdown_list.parquet");
     private static final Path NESTED_FILE = Paths.get("src/test/resources/filter_pushdown_nested.parquet");
     private static final Path MIXED_FILE = Paths.get("src/test/resources/filter_pushdown_mixed.parquet");
@@ -167,12 +179,11 @@ class ColumnReaderExactFilterTest {
 
     @Test
     void flatStringEqualityUsesFallbackAndIsExact() throws Exception {
-        // A string equality predicate is ineligible for the drain-side compiler;
-        // it must still filter exactly via the RowMatcher fallback.
-        // label "rg2_150" identifies the single row id == 150.
+        // A string equality on the RowMatcher fallback must still filter exactly.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE));
              ColumnReader idReader = reader.buildColumnReader("id")
-                     .filter(FilterPredicate.eq("label", "rg2_150")).build()) {
+                     .filter(LABEL_150_ON_RECORD_PATH).build()) {
+            assertTakesRecordPath(LABEL_150_ON_RECORD_PATH, reader.getFileSchema());
 
             List<Long> ids = new ArrayList<>();
             while (idReader.nextBatch()) {
@@ -382,7 +393,7 @@ class ColumnReaderExactFilterTest {
                         FilterPredicate.and(FilterPredicate.gt("id", 150L), FilterPredicate.lt("value", 250L))),
                 Arguments.of("multi-column OR",
                         FilterPredicate.or(FilterPredicate.lt("id", 50L), FilterPredicate.gt("value", 250L))),
-                Arguments.of("fallback (string eq)", FilterPredicate.eq("label", "rg2_150")),
+                Arguments.of("fallback (string eq)", LABEL_150_ON_RECORD_PATH),
                 Arguments.of("NOT lowering", FilterPredicate.not(FilterPredicate.in("id", 50L, 150L, 250L))));
     }
 
@@ -546,5 +557,16 @@ class ColumnReaderExactFilterTest {
         assertThat(rowIds).isEqualTo(expectedIds);
         assertThat(singleIds).isEqualTo(expectedIds);
         assertThat(groupedIds).isEqualTo(expectedIds);
+    }
+
+    /// Fails unless `filter` over `schema` falls back to the record-level filter. Which leaves the
+    /// batch compiler supports changes over time, so a test that relies on the record path asserts
+    /// it rather than trusting the filter's shape.
+    private static void assertTakesRecordPath(FilterPredicate filter, FileSchema schema) {
+        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                projected::toProjectedIndex))
+                .as("filter %s must take the record path", filter)
+                .isNull();
     }
 }

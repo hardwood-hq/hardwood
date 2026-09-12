@@ -15,6 +15,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntUnaryOperator;
 
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
@@ -72,9 +80,10 @@ import dev.hardwood.schema.FileSchema;
 ///   fold into a per-column [AndBatchMatcher] / [OrBatchMatcher] composite — the
 ///   same mechanism that handles `id >= x AND id <= y` today.
 ///
-/// Anything else (intermediate-struct paths, `BinaryPredicate`,
-/// `GeospatialPredicate`, unsupported `(type, op)`) returns `null` and the
-/// caller falls back to the row reader's record-level matcher.
+/// Anything else (intermediate-struct paths, `Float16Predicate`,
+/// `GeospatialPredicate`, unsupported `(type, op)`, and a binary predicate on a
+/// column that is neither `BYTE_ARRAY` nor `FIXED_LEN_BYTE_ARRAY`) returns `null`
+/// and the caller falls back to the row reader's record-level matcher.
 public final class BatchFilterCompiler {
 
     private BatchFilterCompiler() {}
@@ -133,7 +142,7 @@ public final class BatchFilterCompiler {
 
     private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection) {
         int fileIdx = leafColumnIndex(leaf);
-        if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf)) {
+        if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf, schema, fileIdx)) {
             return null;
         }
         int projected = projection.applyAsInt(fileIdx);
@@ -258,7 +267,7 @@ public final class BatchFilterCompiler {
     /// The switch is exhaustive over the hierarchy rather than closed with a `default`, so a new
     /// [ResolvedPredicate] cannot reach the batch path — or silently fall off it — without an
     /// answer here.
-    private static boolean isSupported(ResolvedPredicate leaf) {
+    private static boolean isSupported(ResolvedPredicate leaf, FileSchema schema, int columnIndex) {
         return switch (leaf) {
             case ResolvedPredicate.LongPredicate ignored -> true;
             case ResolvedPredicate.DoublePredicate ignored -> true;
@@ -279,11 +288,23 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate ignored -> true;
             case ResolvedPredicate.Float16Predicate ignored -> false;
             case ResolvedPredicate.Float16InPredicate ignored -> false;
-            case ResolvedPredicate.BinaryPredicate ignored -> false;
-            case ResolvedPredicate.BinaryInPredicate ignored -> false;
+            case ResolvedPredicate.BinaryPredicate ignored -> isByteArrayColumn(schema, columnIndex);
+            case ResolvedPredicate.BinaryInPredicate ignored -> isByteArrayColumn(schema, columnIndex);
             case ResolvedPredicate.GeospatialPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
             case ResolvedPredicate.Or ignored -> false;
+        };
+    }
+
+    /// The two physical types a [BinaryBatchMatcher] can compare: both reach the batch as a
+    /// `BinaryBatchValues` holding the value bytes, one variable-length and one fixed-width. The
+    /// resolver only builds binary leaves on these today, but `BatchExchange` hands an `INT96`
+    /// column the same `BinaryBatchValues`, so a binary leaf there would compile and compare the
+    /// timestamp bytes rather than fall back.
+    private static boolean isByteArrayColumn(FileSchema schema, int columnIndex) {
+        return switch (schema.getColumn(columnIndex).type()) {
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> true;
+            default -> false;
         };
     }
 
@@ -346,6 +367,21 @@ public final class BatchFilterCompiler {
                 case EQ -> new LongEqBatchMatcher(p.value());
                 case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
             };
+            case ResolvedPredicate.BinaryPredicate p -> switch (p.op()) {
+                case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
+                case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
+                case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
+                case GT_EQ -> new BinaryGtEqBatchMatcher(p.value(), p.comparison());
+                case EQ -> BinaryShortInBatchMatcher.supports(p.comparison(), p.value())
+                        ? new BinaryShortInBatchMatcher(new byte[][]{p.value()}, p.comparison(), false)
+                        : new BinaryEqBatchMatcher(p.value(), p.comparison());
+                case NOT_EQ -> BinaryShortInBatchMatcher.supports(p.comparison(), p.value())
+                        ? new BinaryShortInBatchMatcher(new byte[][]{p.value()}, p.comparison(), true)
+                        : new BinaryNotEqBatchMatcher(p.value(), p.comparison());
+            };
+            case ResolvedPredicate.BinaryInPredicate p -> BinaryShortInBatchMatcher.supports(p.comparison(), p.values())
+                    ? new BinaryShortInBatchMatcher(p.values(), p.comparison(), false)
+                    : new BinaryInBatchMatcher(p.values(), p.comparison());
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
             case ResolvedPredicate.UnsignedIntInPredicate p -> new IntInBatchMatcher(p.values());

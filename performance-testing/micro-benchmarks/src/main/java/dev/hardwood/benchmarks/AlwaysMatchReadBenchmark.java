@@ -55,8 +55,9 @@ import dev.hardwood.reader.RowReader;
 /// Each selectivity runs on three read paths, one per way a filter reaches the
 /// rows: `rowReaderLong` filters on `id`, which the batch compiler accepts, so
 /// the row reader iterates the drain-side survivor bitmap; `rowReaderString`
-/// filters on the string column, which it does not, so the row reader falls back
-/// to the record-matcher path (where per-row evaluation is most expensive);
+/// filters on the string column through a shape the batch compiler rejects — two
+/// conjunctions over `label` and `id` — so the row reader falls back to the
+/// record-matcher path (where per-row evaluation is most expensive);
 /// `columnReaderLong` filters on `id` while draining `value`. The last reads
 /// through `SelectionEngine`, which does not yet consume the always-match proof
 /// (a #795 follow-up), so it stands as a control rather than a scenario expected
@@ -113,8 +114,13 @@ public class AlwaysMatchReadBenchmark {
         };
         if (cutoff >= 0) {
             longFilter = FilterPredicate.gtEq("id", cutoff);
-            stringFilter = FilterPredicate.gtEq("label",
-                    String.format("%0" + LABEL_WIDTH + "d", cutoff));
+            // `label >= cutoff`, spelled as two conjunctions over `label` and `id` so the batch
+            // compiler rejects it and the reader takes the record-matcher path. `id` is never
+            // negative, so the second conjunction matches nothing.
+            FilterPredicate label = FilterPredicate.gtEq("label", String.format("%0" + LABEL_WIDTH + "d", cutoff));
+            stringFilter = FilterPredicate.or(
+                    FilterPredicate.and(label, FilterPredicate.gtEq("id", 0L)),
+                    FilterPredicate.and(label, FilterPredicate.lt("id", 0L)));
         }
     }
 
@@ -142,8 +148,8 @@ public class AlwaysMatchReadBenchmark {
         }
     }
 
-    /// The record-matcher path: a string comparison the batch filter compiler
-    /// rejects, so the reader evaluates the predicate a record at a time.
+    /// The record-matcher path: a string comparison in a shape the batch filter
+    /// compiler rejects, so the reader evaluates the predicate a record at a time.
     @Benchmark
     public void rowReaderString(Blackhole blackhole) throws IOException {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {

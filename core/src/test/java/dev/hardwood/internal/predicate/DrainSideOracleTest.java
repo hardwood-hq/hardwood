@@ -8,6 +8,8 @@
 package dev.hardwood.internal.predicate;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,7 +27,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -43,15 +47,23 @@ import dev.hardwood.schema.FileSchema;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-/// Two-way equivalence: compiled [RecordFilterCompiler] and drain-side [BatchFilterCompiler]
-/// + per-column [ColumnBatchMatcher] agree on which rows survive a given predicate. Constitutes
-/// the load-bearing correctness gate for the drain-side prototype.
+/// Equivalence: compiled [RecordFilterCompiler] and drain-side [BatchFilterCompiler] + per-column
+/// [ColumnBatchMatcher] agree on which rows survive a given predicate. Constitutes the load-bearing
+/// correctness gate for the drain-side path. A single byte-array leaf is also checked against a
+/// reference that does not go through [BinaryComparator] — decimals as `BigInteger`s, byte strings
+/// through `Arrays.compareUnsigned` — since both paths compare through it and a shared bug would
+/// otherwise leave them agreeing on the wrong rows.
 ///
 /// The workload carries one column per supported primitive type — `id: long`, `value: double`,
-/// `tag: int`, `score: float`, `flag: boolean` — each with its own scattered-null profile and
-/// boundary-heavy values. Tests exercise every `(type, op)` pair listed in the design doc's
-/// eligibility section plus `IntIn` / `LongIn` / `IsNull` / `IsNotNull`, both as single leaves
-/// and in cross-type `And` compounds.
+/// `tag: int`, `score: float`, `flag: boolean` — plus two byte-array columns: `name` (`BYTE_ARRAY`,
+/// values of differing widths on both sides of eight bytes) and `amount` (`FIXED_LEN_BYTE_ARRAY(4)`, every value padded to the
+/// width). Each has its own scattered-null profile and boundary-heavy values. Tests exercise every
+/// `(type, op)` pair listed in the design doc's eligibility section plus `IntIn` / `LongIn` /
+/// `IsNull` / `IsNotNull`, both as single leaves and in cross-type `And` compounds.
+///
+/// The byte-array leaves run under each [Comparison]: `BYTE_STRING` over `name`, `FIXED_DECIMAL`
+/// over the equal-width `amount`, and `VARIABLE_DECIMAL` over `name`, whose differing widths are
+/// where byte order and value order disagree.
 class DrainSideOracleTest {
 
     // 200 = 3 full 64-bit words + an 8-bit tail. Not a multiple of 64, so every
@@ -65,6 +77,12 @@ class DrainSideOracleTest {
     private static final int COL_TAG = 2;    // int
     private static final int COL_SCORE = 3;  // float
     private static final int COL_FLAG = 4;   // boolean
+    private static final int COL_NAME = 5;   // BYTE_ARRAY, widths differ
+    private static final int COL_AMOUNT = 6; // FIXED_LEN_BYTE_ARRAY(4)
+
+    /// Width of `amount`: every value is padded to it, so a [Comparison#FIXED_DECIMAL] comparison
+    /// always sees equal widths and the sign byte decides first.
+    private static final int AMOUNT_WIDTH = 4;
 
     // ---------- Single-leaf coverage, all supported (type, op) pairs ----------
 
@@ -309,6 +327,132 @@ class DrainSideOracleTest {
         assertSurvivorsAgree(p, w);
     }
 
+    // ---------- Byte-array leaves, one test per comparison ----------
+
+    private static byte[] utf8(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /// Big-endian two's complement in [#AMOUNT_WIDTH] bytes — how a fixed-width DECIMAL stores its
+    /// unscaled value.
+    private static byte[] int32(int v) {
+        byte[] out = new byte[AMOUNT_WIDTH];
+        for (int i = AMOUNT_WIDTH - 1; i >= 0; i--) {
+            out[i] = (byte) v;
+            v >>= 8;
+        }
+        return out;
+    }
+
+    @Test
+    void singleBinaryLeaf_allOps_bothWaysAgree() {
+        // Literals: a value in the pool, the empty string, a high byte whose unsigned order
+        // differs from its signed one, and values past eight bytes — one exactly nine, one
+        // sharing a prefix with a shorter pool value.
+        Workload w = workload(0x0B1A);
+        for (byte[] literal : new byte[][]{utf8("apple"), utf8(""), {(byte) 0xFF}, utf8("abcdefghi"),
+                utf8("applesauce")}) {
+            for (Operator op : Operator.values()) {
+                assertSurvivorsAgree(
+                        new ResolvedPredicate.BinaryPredicate(COL_NAME, op, literal, Comparison.BYTE_STRING), w);
+            }
+        }
+    }
+
+    @Test
+    void singleFixedDecimalLeaf_allOps_bothWaysAgree() {
+        Workload w = workload(0x0F1D);
+        for (int literal : new int[]{0, 100, -100}) {
+            for (Operator op : Operator.values()) {
+                assertSurvivorsAgree(
+                        new ResolvedPredicate.BinaryPredicate(COL_AMOUNT, op, int32(literal),
+                                Comparison.FIXED_DECIMAL), w);
+            }
+        }
+    }
+
+    /// `name` holds values of differing widths, so a `VARIABLE_DECIMAL` comparison over it is the
+    /// sign-extending one: `0x7F` must not outrank `0x00 0x80`, and equality must accept a padded
+    /// spelling of the literal's own value.
+    @Test
+    void singleVariableDecimalLeaf_allOps_bothWaysAgree() {
+        Workload w = workload(0x0A21);
+        for (byte[] literal : new byte[][]{{0x7F}, {0x00, (byte) 0x80}, {(byte) 0x9C}}) {
+            for (Operator op : Operator.values()) {
+                assertSurvivorsAgree(
+                        new ResolvedPredicate.BinaryPredicate(COL_NAME, op, literal,
+                                Comparison.VARIABLE_DECIMAL), w);
+            }
+        }
+    }
+
+    /// Members include a value in the pool, the empty string, a high byte, one the pool never
+    /// holds, and values past eight bytes. `name` holds values of differing widths, so it carries the two comparisons a
+    /// variable-width column can have — `VARIABLE_DECIMAL` has to accept a padded spelling of a member.
+    @Test
+    void binaryIn_variableWidthComparisons_bothWaysAgree() {
+        Workload w = workload(0x0B5);
+        byte[][] values = {utf8("apple"), utf8(""), {(byte) 0xFF}, utf8("absent"), {0x7F},
+                utf8("applesauce"), utf8("applesaucer")};
+        for (Comparison comparison : new Comparison[]{Comparison.BYTE_STRING, Comparison.VARIABLE_DECIMAL}) {
+            assertSurvivorsAgree(new ResolvedPredicate.BinaryInPredicate(COL_NAME, values, comparison), w);
+        }
+    }
+
+    /// `FIXED_DECIMAL` only ever reaches a fixed-width column, so it runs over `amount`.
+    @Test
+    void binaryIn_fixedDecimal_bothWaysAgree() {
+        Workload w = workload(0x0B6);
+        byte[][] values = {int32(0), int32(100), int32(-100), int32(Integer.MIN_VALUE)};
+        assertSurvivorsAgree(new ResolvedPredicate.BinaryInPredicate(COL_AMOUNT, values,
+                Comparison.FIXED_DECIMAL), w);
+    }
+
+    /// `negate` expands `IN` to a conjunction of `NOT_EQ` leaves on one column, which folds into a
+    /// single per-column composite rather than reaching the `IN` matcher.
+    @Test
+    void notBinaryIn_bothWaysAgree() {
+        Workload w = workload(0x0B2);
+        // A member past eight bytes compiles to the byte-wise `NOT_EQ`, the others to the
+        // short-value matcher, so the conjunction chains both kinds.
+        byte[][] values = {utf8("apple"), utf8("cherry"), utf8("applesauce")};
+        assertSurvivorsAgree(ResolvedPredicate.negate(
+                new ResolvedPredicate.BinaryInPredicate(COL_NAME, values, Comparison.BYTE_STRING)), w);
+    }
+
+    @Test
+    void andOfBinaryAndFixedDecimal_bothWaysAgree() {
+        Workload w = workload(0x0B3);
+        ResolvedPredicate p = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.BinaryPredicate(COL_NAME, Operator.GT_EQ, utf8("b"),
+                        Comparison.BYTE_STRING),
+                new ResolvedPredicate.BinaryPredicate(COL_AMOUNT, Operator.LT, int32(0),
+                        Comparison.FIXED_DECIMAL)));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void orOfBinaryAndFixedDecimal_bothWaysAgree() {
+        Workload w = workload(0x0B4);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.BinaryPredicate(COL_NAME, Operator.EQ, utf8("cherry"),
+                        Comparison.BYTE_STRING),
+                new ResolvedPredicate.BinaryPredicate(COL_AMOUNT, Operator.LT, int32(-100),
+                        Comparison.FIXED_DECIMAL)));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void orOfBinaryInAndFixedDecimal_bothWaysAgree() {
+        Workload w = workload(0x07B1A7);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.BinaryInPredicate(COL_NAME, new byte[][]{utf8("cherry"), utf8("")},
+                        Comparison.BYTE_STRING),
+                new ResolvedPredicate.BinaryPredicate(COL_AMOUNT, Operator.LT, int32(-100),
+                        Comparison.FIXED_DECIMAL)));
+        assertSurvivorsAgree(p, w);
+    }
+
     private static Stream<Arguments> opPairs() {
         Operator[] ops = Operator.values();
         List<Arguments> pairs = new ArrayList<>();
@@ -330,8 +474,85 @@ class DrainSideOracleTest {
         // it used to handle — that's a regression we want to catch loudly, not skip.
         // Ineligibility tests live in BatchFilterCompilerTest.IneligibleShapes.
         assertNotNull(drainSide,
-                () -> "BatchFilterCompiler.tryCompile returned null for an expected-eligible predicate: " + predicate);
-        assertEquals(compiled, drainSide, () -> "compiled/drain-side diverged for " + predicate);
+                () -> "BatchFilterCompiler.tryCompile returned null for an expected-eligible predicate: "
+                        + describe(predicate));
+        assertEquals(compiled, drainSide, () -> "compiled/drain-side diverged for " + describe(predicate));
+        BitSet reference = binaryLeafReference(predicate, w);
+        if (reference != null) {
+            assertEquals(reference, drainSide, () -> "reference/drain-side diverged for " + describe(predicate));
+        }
+    }
+
+    /// Survivors of a single byte-array leaf, computed without [BinaryComparator]: both paths above
+    /// compare through it, so a bug there would leave them agreeing on the wrong rows. A decimal
+    /// compares as the number its bytes spell, a byte string as unsigned bytes. `null` for any other
+    /// predicate.
+    private static BitSet binaryLeafReference(ResolvedPredicate predicate, Workload w) {
+        return switch (predicate) {
+            case ResolvedPredicate.BinaryPredicate p -> referenceSurvivors(p.columnIndex(), w,
+                    value -> holds(p.op(), referenceCompare(value, p.value(), p.comparison())));
+            case ResolvedPredicate.BinaryInPredicate p -> referenceSurvivors(p.columnIndex(), w, value -> {
+                for (byte[] member : p.values()) {
+                    if (referenceCompare(value, member, p.comparison()) == 0) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+            default -> null;
+        };
+    }
+
+    private interface ValueTest {
+        boolean test(byte[] value);
+    }
+
+    private static BitSet referenceSurvivors(int column, Workload w, ValueTest test) {
+        byte[][] values = column == COL_NAME ? w.names : w.amounts;
+        BitSet nulls = column == COL_NAME ? w.nameNulls : w.amountNulls;
+        BitSet out = new BitSet(N);
+        for (int i = 0; i < N; i++) {
+            if (!nulls.get(i) && test.test(values[i])) {
+                out.set(i);
+            }
+        }
+        return out;
+    }
+
+    private static int referenceCompare(byte[] value, byte[] literal, Comparison comparison) {
+        if (!comparison.signed()) {
+            return Arrays.compareUnsigned(value, literal);
+        }
+        return asNumber(value).compareTo(asNumber(literal));
+    }
+
+    /// Big-endian two's complement, the empty array being zero.
+    private static BigInteger asNumber(byte[] bytes) {
+        return bytes.length == 0 ? BigInteger.ZERO : new BigInteger(bytes);
+    }
+
+    private static boolean holds(Operator op, int cmp) {
+        return switch (op) {
+            case EQ -> cmp == 0;
+            case NOT_EQ -> cmp != 0;
+            case LT -> cmp < 0;
+            case LT_EQ -> cmp <= 0;
+            case GT -> cmp > 0;
+            case GT_EQ -> cmp >= 0;
+        };
+    }
+
+    /// The predicate with byte-array literals spelled out, which `toString` prints as identity hashes.
+    private static String describe(ResolvedPredicate predicate) {
+        return switch (predicate) {
+            case ResolvedPredicate.BinaryPredicate p -> "BinaryPredicate[column=" + p.columnIndex() + ", " + p.op()
+                    + " " + Arrays.toString(p.value()) + ", " + p.comparison() + "]";
+            case ResolvedPredicate.BinaryInPredicate p -> "BinaryInPredicate[column=" + p.columnIndex() + ", IN "
+                    + Arrays.deepToString(p.values()) + ", " + p.comparison() + "]";
+            case ResolvedPredicate.And and -> "And" + and.children().stream().map(DrainSideOracleTest::describe).toList();
+            case ResolvedPredicate.Or or -> "Or" + or.children().stream().map(DrainSideOracleTest::describe).toList();
+            default -> predicate.toString();
+        };
     }
 
     private static BitSet compiledSurvivors(ResolvedPredicate predicate, Workload w) {
@@ -396,11 +617,15 @@ class DrainSideOracleTest {
         int[] tags = new int[N];
         float[] scores = new float[N];
         boolean[] flags = new boolean[N];
+        byte[][] names = new byte[N][];
+        byte[][] amounts = new byte[N][];
         BitSet idNulls = new BitSet(N);
         BitSet valueNulls = new BitSet(N);
         BitSet tagNulls = new BitSet(N);
         BitSet scoreNulls = new BitSet(N);
         BitSet flagNulls = new BitSet(N);
+        BitSet nameNulls = new BitSet(N);
+        BitSet amountNulls = new BitSet(N);
 
         // Boundary-heavy values to cover NaN, infinities, type extremes, and
         // equal-to-literal cases. The first few rows of each column carry these.
@@ -413,6 +638,17 @@ class DrainSideOracleTest {
                 Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY,
                 Float.MIN_VALUE, Float.MAX_VALUE};
         int[] boundaryInts = {100, -100, 0, Integer.MIN_VALUE, Integer.MAX_VALUE};
+        // Proper prefixes and extensions of the literals, the empty value, and high bytes whose
+        // unsigned order differs from their signed one — plus the widths that make a
+        // sign-extending comparison disagree with a byte-wise one.
+        // Values past eight bytes take the long-value side of the short-value matcher and the
+        // byte-wise matchers' long literals; `applesauce` shares its first five bytes with `apple`
+        // and `abcdefghi` sits one byte past the boundary.
+        byte[][] namePool = {utf8(""), utf8("a"), utf8("app"), utf8("apple"), utf8("apples"),
+                utf8("b"), utf8("banana"), utf8("cherry"), {0}, {(byte) 0x7F},
+                {0x00, (byte) 0x80}, {(byte) 0x9C}, {(byte) 0xFF}, {(byte) 0xFF, 0},
+                utf8("abcdefghi"), utf8("applesauce"), utf8("applesauces")};
+        int[] boundaryAmounts = {100, -50, 0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE};
 
         for (int i = 0; i < N; i++) {
             ids[i] = r.nextInt(300) - 50; // straddles literal 100
@@ -426,6 +662,10 @@ class DrainSideOracleTest {
                     ? boundaryFloats[i]
                     : (float) (r.nextDouble() * 2.0 - 1.0); // straddles literal 0.5
             flags[i] = r.nextBoolean();
+            names[i] = namePool[r.nextInt(namePool.length)];
+            amounts[i] = int32((i < boundaryAmounts.length)
+                    ? boundaryAmounts[i]
+                    : r.nextInt(400) - 200); // straddles literals -100, -50, 0 and 100
             if (r.nextInt(10) == 0) {
                 idNulls.set(i);
             }
@@ -441,9 +681,16 @@ class DrainSideOracleTest {
             if (r.nextInt(14) == 0) {
                 flagNulls.set(i);
             }
+            if (r.nextInt(11) == 0) {
+                nameNulls.set(i);
+            }
+            if (r.nextInt(9) == 0) {
+                amountNulls.set(i);
+            }
         }
         return new Workload(ids, idNulls, values, valueNulls,
-                tags, tagNulls, scores, scoreNulls, flags, flagNulls);
+                tags, tagNulls, scores, scoreNulls, flags, flagNulls,
+                names, nameNulls, amounts, amountNulls);
     }
 
     private static final class Workload {
@@ -457,6 +704,10 @@ class DrainSideOracleTest {
         final BitSet scoreNulls;
         final boolean[] flags;
         final BitSet flagNulls;
+        final byte[][] names;
+        final BitSet nameNulls;
+        final byte[][] amounts;
+        final BitSet amountNulls;
         final FileSchema schema;
         final ProjectedSchema projection;
 
@@ -464,7 +715,9 @@ class DrainSideOracleTest {
                  double[] values, BitSet valueNulls,
                  int[] tags, BitSet tagNulls,
                  float[] scores, BitSet scoreNulls,
-                 boolean[] flags, BitSet flagNulls) {
+                 boolean[] flags, BitSet flagNulls,
+                 byte[][] names, BitSet nameNulls,
+                 byte[][] amounts, BitSet amountNulls) {
             this.ids = ids;
             this.idNulls = idNulls;
             this.values = values;
@@ -475,13 +728,19 @@ class DrainSideOracleTest {
             this.scoreNulls = scoreNulls;
             this.flags = flags;
             this.flagNulls = flagNulls;
-            SchemaElement root = SchemaElement.root("root", 5);
+            this.names = names;
+            this.nameNulls = nameNulls;
+            this.amounts = amounts;
+            this.amountNulls = amountNulls;
+            SchemaElement root = SchemaElement.root("root", 7);
             SchemaElement c1 = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
             SchemaElement c2 = SchemaElement.primitive("value", PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
             SchemaElement c3 = SchemaElement.primitive("tag", PhysicalType.INT32, RepetitionType.OPTIONAL);
             SchemaElement c4 = SchemaElement.primitive("score", PhysicalType.FLOAT, RepetitionType.OPTIONAL);
             SchemaElement c5 = SchemaElement.primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL);
-            this.schema = FileSchema.fromSchemaElements(List.of(root, c1, c2, c3, c4, c5));
+            SchemaElement c6 = SchemaElement.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL);
+            SchemaElement c7 = SchemaElement.fixedLengthPrimitive("amount", AMOUNT_WIDTH, RepetitionType.OPTIONAL);
+            this.schema = FileSchema.fromSchemaElements(List.of(root, c1, c2, c3, c4, c5, c6, c7));
             this.projection = ProjectedSchema.create(schema, ColumnProjection.all());
         }
 
@@ -491,7 +750,9 @@ class DrainSideOracleTest {
                     values[i], valueNulls.get(i),
                     tags[i], tagNulls.get(i),
                     scores[i], scoreNulls.get(i),
-                    flags[i], flagNulls.get(i));
+                    flags[i], flagNulls.get(i),
+                    names[i], nameNulls.get(i),
+                    amounts[i], amountNulls.get(i));
         }
 
         BatchExchange.Batch batch(int projectedIdx) {
@@ -517,10 +778,35 @@ class DrainSideOracleTest {
                     b.values = flags;
                     b.validity = nullsToValidity(flagNulls);
                 }
+                case COL_NAME -> {
+                    b.values = binaryValues(names, nameNulls, true);
+                    b.validity = nullsToValidity(nameNulls);
+                }
+                case COL_AMOUNT -> {
+                    b.values = binaryValues(amounts, amountNulls, false);
+                    b.validity = nullsToValidity(amountNulls);
+                }
                 default -> throw new IllegalArgumentException("col " + projectedIdx);
             }
             b.recordCount = N;
             return b;
+        }
+
+        /// Packs `values` back to back the way `FlatColumnWorker` assembles a byte-array batch.
+        /// With `emptyNulls` a null row occupies an empty slice (`BYTE_ARRAY`); otherwise its bytes
+        /// stay in place, the scratch a null `FIXED_LEN_BYTE_ARRAY` slot keeps — so a matcher that
+        /// ignored validity would compare them and diverge from the oracle.
+        private static BinaryBatchValues binaryValues(byte[][] values, BitSet nulls, boolean emptyNulls) {
+            int[] offsets = new int[N + 1];
+            for (int i = 0; i < N; i++) {
+                int length = emptyNulls && nulls.get(i) ? 0 : values[i].length;
+                offsets[i + 1] = offsets[i] + length;
+            }
+            byte[] bytes = new byte[offsets[N]];
+            for (int i = 0; i < N; i++) {
+                System.arraycopy(values[i], 0, bytes, offsets[i], offsets[i + 1] - offsets[i]);
+            }
+            return new BinaryBatchValues(bytes, offsets);
         }
 
         private static long[] nullsToValidity(BitSet nulls) {
@@ -547,12 +833,18 @@ class DrainSideOracleTest {
         private final boolean scoreNull;
         private final boolean flagValue;
         private final boolean flagNull;
+        private final byte[] nameValue;
+        private final boolean nameNull;
+        private final byte[] amountValue;
+        private final boolean amountNull;
 
         SyntheticRow(long idValue, boolean idNull,
                      double valueValue, boolean valueNull,
                      int tagValue, boolean tagNull,
                      float scoreValue, boolean scoreNull,
-                     boolean flagValue, boolean flagNull) {
+                     boolean flagValue, boolean flagNull,
+                     byte[] nameValue, boolean nameNull,
+                     byte[] amountValue, boolean amountNull) {
             this.idValue = idValue;
             this.idNull = idNull;
             this.valueValue = valueValue;
@@ -563,6 +855,10 @@ class DrainSideOracleTest {
             this.scoreNull = scoreNull;
             this.flagValue = flagValue;
             this.flagNull = flagNull;
+            this.nameValue = nameValue;
+            this.nameNull = nameNull;
+            this.amountValue = amountValue;
+            this.amountNull = amountNull;
         }
 
         @Override public boolean isNull(int idx) {
@@ -572,6 +868,8 @@ class DrainSideOracleTest {
                 case COL_TAG -> tagNull;
                 case COL_SCORE -> scoreNull;
                 case COL_FLAG -> flagNull;
+                case COL_NAME -> nameNull;
+                case COL_AMOUNT -> amountNull;
                 default -> throw new IndexOutOfBoundsException(idx);
             };
         }
@@ -583,6 +881,8 @@ class DrainSideOracleTest {
                 case "tag" -> tagNull;
                 case "score" -> scoreNull;
                 case "flag" -> flagNull;
+                case "name" -> nameNull;
+                case "amount" -> amountNull;
                 default -> throw new IllegalArgumentException(name);
             };
         }
@@ -598,7 +898,7 @@ class DrainSideOracleTest {
         @Override public boolean getBoolean(int idx) { return flagValue; }
         @Override public boolean getBoolean(String name) { return flagValue; }
 
-        @Override public int getFieldCount() { return 5; }
+        @Override public int getFieldCount() { return 7; }
         @Override public String getFieldName(int idx) {
             return switch (idx) {
                 case COL_ID -> "id";
@@ -606,6 +906,8 @@ class DrainSideOracleTest {
                 case COL_TAG -> "tag";
                 case COL_SCORE -> "score";
                 case COL_FLAG -> "flag";
+                case COL_NAME -> "name";
+                case COL_AMOUNT -> "amount";
                 default -> throw new IndexOutOfBoundsException(idx);
             };
         }
@@ -616,8 +918,21 @@ class DrainSideOracleTest {
         @Override public void close() {}
         @Override public String getString(int idx) { throw new UnsupportedOperationException(); }
         @Override public String getString(String name) { throw new UnsupportedOperationException(); }
-        @Override public byte[] getBinary(int idx) { throw new UnsupportedOperationException(); }
-        @Override public byte[] getBinary(String name) { throw new UnsupportedOperationException(); }
+        @Override public byte[] getBinary(int idx) {
+            return switch (idx) {
+                case COL_NAME -> nameValue;
+                case COL_AMOUNT -> amountValue;
+                default -> throw new IndexOutOfBoundsException(idx);
+            };
+        }
+
+        @Override public byte[] getBinary(String name) {
+            return switch (name) {
+                case "name" -> nameValue;
+                case "amount" -> amountValue;
+                default -> throw new IllegalArgumentException(name);
+            };
+        }
         @Override public LocalDate getDate(int idx) { throw new UnsupportedOperationException(); }
         @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
         @Override public LocalTime getTime(int idx) { throw new UnsupportedOperationException(); }

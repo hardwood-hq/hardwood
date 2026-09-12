@@ -40,6 +40,65 @@ public final class BinaryComparator {
         return Arrays.compareUnsigned(a, b);
     }
 
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` lexicographically (unsigned).
+    ///
+    /// @return negative if the slice < b, zero if equal, positive if the slice > b
+    public static int compareUnsigned(byte[] a, int aFrom, int aTo, byte[] b) {
+        return Arrays.compareUnsigned(a, aFrom, aTo, b, 0, b.length);
+    }
+
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` as big-endian two's complement values,
+    /// sign-extending the shorter to the longer exactly as [#compareSigned(byte[], byte[])] does: a
+    /// `BYTE_ARRAY` `DECIMAL` stores each value in the fewest bytes that hold it, so the widths
+    /// legitimately differ. An empty slice is the value zero.
+    ///
+    /// @return negative if the slice < b, zero if equal, positive if the slice > b
+    public static int compareSigned(byte[] a, int aFrom, int aTo, byte[] b) {
+        int aLength = aTo - aFrom;
+        boolean aNegative = aLength > 0 && a[aFrom] < 0;
+        boolean bNegative = b.length > 0 && b[0] < 0;
+        if (aNegative != bNegative) {
+            return aNegative ? -1 : 1;
+        }
+        if (aLength == b.length) {
+            if (aLength == 0) {
+                return 0;
+            }
+            return Arrays.compareUnsigned(a, aFrom, aTo, b, 0, b.length);
+        }
+        int length = Math.max(aLength, b.length);
+        int aPad = aNegative ? 0xFF : 0x00;
+        int bPad = bNegative ? 0xFF : 0x00;
+        int aOffset = length - aLength;
+        int bOffset = length - b.length;
+        for (int i = 0; i < length; i++) {
+            int aByte = i < aOffset ? aPad : a[aFrom + i - aOffset] & 0xFF;
+            int bByte = i < bOffset ? bPad : b[i - bOffset] & 0xFF;
+            if (aByte != bByte) {
+                return aByte - bByte;
+            }
+        }
+        return 0;
+    }
+
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` in the column's order: signed when
+    /// `signed`, otherwise unsigned.
+    ///
+    /// @return negative if the slice < b, zero if equal, positive if the slice > b
+    public static int compare(byte[] a, int aFrom, int aTo, byte[] b, boolean signed) {
+        return signed ? compareSigned(a, aFrom, aTo, b) : compareUnsigned(a, aFrom, aTo, b);
+    }
+
+    /// Whether the slice `a[aFrom, aTo)` holds exactly the bytes of `b`.
+    ///
+    /// Sound as an equality test only where the column encodes a value as exactly one byte string —
+    /// see [ResolvedPredicate.BinaryPredicate.Comparison#byteExact()]. Where it does not, equality
+    /// must go through [#compare(byte[], int, int, byte[], boolean)] instead, because a padded
+    /// spelling of the literal's value holds different bytes.
+    public static boolean sliceEquals(byte[] a, int aFrom, int aTo, byte[] b) {
+        return Arrays.equals(a, aFrom, aTo, b, 0, b.length);
+    }
+
     /// Compare two byte arrays as big-endian two's complement signed values, the order a
     /// `DECIMAL`'s unscaled value sorts in.
     ///
@@ -53,32 +112,7 @@ public final class BinaryComparator {
     ///
     /// @return negative if a < b, zero if equal, positive if a > b
     public static int compareSigned(byte[] a, byte[] b) {
-        boolean aNegative = a.length > 0 && a[0] < 0;
-        boolean bNegative = b.length > 0 && b[0] < 0;
-        if (aNegative != bNegative) {
-            return aNegative ? -1 : 1;
-        }
-        if (a.length == b.length) {
-            if (a.length == 0) {
-                return 0;
-            }
-            // Same sign and same width: the leading bytes carry the same weight, so the whole
-            // string compares unsigned.
-            return Arrays.compareUnsigned(a, b);
-        }
-        int length = Math.max(a.length, b.length);
-        int aPad = aNegative ? 0xFF : 0x00;
-        int bPad = bNegative ? 0xFF : 0x00;
-        int aOffset = length - a.length;
-        int bOffset = length - b.length;
-        for (int i = 0; i < length; i++) {
-            int aByte = i < aOffset ? aPad : a[i - aOffset] & 0xFF;
-            int bByte = i < bOffset ? bPad : b[i - bOffset] & 0xFF;
-            if (aByte != bByte) {
-                return aByte - bByte;
-            }
-        }
-        return 0;
+        return compareSigned(a, 0, a.length, b);
     }
 
     /// Compare two legacy `INT96` timestamps by the instants they encode.
