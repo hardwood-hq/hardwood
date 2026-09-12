@@ -16,7 +16,7 @@ output is correct.
 
 This holds for every predicate shape the `RowReader` supports — self-column,
 cross-column, a predicate column absent from the projection, eligible
-(drain-side) and ineligible (nested paths, unsupported `(type, op)`, binary,
+(drain-side) and ineligible (nested paths, unsupported `(type, op)`,
 geospatial) alike — and for flat **and** nested payload and predicate columns.
 
 The guarantee is **exact post-decode filtering**: payload columns are fully
@@ -101,7 +101,8 @@ itself, into buffers it owns, before combining them with the `MergePlan`. That
 mode is the only thing the two readers do differently at the merge.
 
 **Fallback backend (parity).** When `tryCompile` returns `null` — nested
-predicate paths, binary, geospatial, unsupported `(type, op)` — the engine
+predicate paths, geospatial, unsupported `(type, op)`, or a column read by two
+independent subtrees — the engine
 evaluates the compiled `RowMatcher` (`RecordFilterCompiler`) per record over a
 **batch-backed `StructAccessor`** view of the aligned predicate-column batches,
 setting one selection bit per matching record. Flat predicate columns are served
@@ -172,8 +173,8 @@ result over the same file and predicate.
 **Predicate eligibility**
 
 - Eligible / drain-side (flat top-level `(type, op)`), including `AND`/`OR`.
-- Ineligible / fallback: nested-path predicate, binary, an unsupported
-  `(type, op)`, and a `NOT` lowering.
+- Ineligible / fallback: nested-path predicate, an unsupported `(type, op)`, a
+  column read by two independent subtrees, and a `NOT` lowering.
 
 **Column shape**
 

@@ -8,12 +8,18 @@
 package dev.hardwood.perf;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
+import org.apache.avro.Conversions;
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
-import org.apache.avro.SchemaBuilder;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.hadoop.conf.Configuration;
@@ -52,15 +58,66 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// - **Page+record**: id range that prunes ~99% of pages via column-index min/max,
 ///   then a per-row `value<500` filter on the survivors.
 ///
+/// - **Binary**: `eq`, range, compound, `inStrings` and negated `inStrings` leaves on the
+///   `category` string column, which the byte-array matchers decide by comparing each value's
+///   bytes in place; and `eq`, `inStrings` and negated `inStrings` on two columns whose values are
+///   all longer than eight bytes.
+///
 /// Schema: `id` (long, sequential 0..N), `value` (double uniform 0..1000),
-/// `tag` (int uniform 0..99), `flag` (boolean uniform).
+/// `tag` (int uniform 0..99), `flag` (boolean uniform),
+/// `category` (string uniform over `cat_00`..`cat_99`),
+/// `url_tail` / `url_head` (the category spelled in 32 bytes, last or first),
+/// `amount_fixed` (`DECIMAL(18, 2)` over `FIXED_LEN_BYTE_ARRAY(8)`),
+/// `amount_var` (`DECIMAL(18, 2)` over `BYTE_ARRAY`).
+///
+/// The two decimal columns hold the same numbers and separate the byte-array matchers' two signed
+/// modes. `amount_fixed` pads every value to the column width, so a comparison sees equal widths
+/// and equality may test bytes. `amount_var` stores each value in the fewest bytes that hold it, so
+/// widths differ per row, ordering has to sign-extend, and equality has to compare values — the
+/// mode where a padded spelling of a number is still that number.
 ///
 /// Run:
 ///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
 ///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=5
 class RecordFilterBenchmarkTest {
 
-    private static final Path BENCHMARK_FILE = Path.of("target/record_filter_benchmark.parquet");
+    private static final Path BENCHMARK_FILE = Path.of("target/record_filter_benchmark_with_long_strings.parquet");
+    private static final int CATEGORY_COUNT = 100;
+    /// Width of `amount_fixed`, enough for `DECIMAL(18, 2)`.
+    private static final int DECIMAL_BYTES = 8;
+    private static final int DECIMAL_PRECISION = 18;
+    private static final int DECIMAL_SCALE = 2;
+    /// Unscaled values run `-500_000 .. 500_000` cyclically, so the sign boundary falls mid-column
+    /// and a signed comparison is the only one that orders them correctly.
+    private static final int DECIMAL_SPAN = 1_000_001;
+    private static final int DECIMAL_OFFSET = 500_000;
+    /// Half the span sorts below zero, so the range contenders keep ~50% of rows.
+    private static final BigDecimal DECIMAL_MID = BigDecimal.ZERO.setScale(DECIMAL_SCALE);
+    /// One unscaled value out of the span — matches the ~10 rows per value at 10M rows.
+    private static final BigDecimal DECIMAL_EQ =
+            BigDecimal.valueOf(123_45, DECIMAL_SCALE);
+    /// Five values of the span, negative and positive, one to three bytes in minimal encoding.
+    private static final BigDecimal[] DECIMAL_IN = {BigDecimal.valueOf(123_45, DECIMAL_SCALE),
+            BigDecimal.valueOf(-123_45, DECIMAL_SCALE), BigDecimal.valueOf(1, DECIMAL_SCALE),
+            BigDecimal.valueOf(-4_000_00, DECIMAL_SCALE), BigDecimal.valueOf(4_999_99, DECIMAL_SCALE)};
+    /// Written through Avro's own decimal encoding: padded to the width for `fixed`, minimal for `bytes`.
+    private static final Conversions.DecimalConversion DECIMAL_CONVERSION = new Conversions.DecimalConversion();
+    /// What every contender reads besides its filter's columns, and all the no-filter baseline reads.
+    /// Fixing it keeps a contender's numbers comparable when the file gains a column.
+    private static final String[] BASE_COLUMNS = {"id", "value", "tag", "flag"};
+    /// Its own stream, so adding `category` left the other columns' values as they were.
+    private static final int CATEGORY_SEED = 43;
+    private static final String[] CATEGORIES = categories();
+    /// One of the 100 categories — ~1% of rows.
+    private static final String EQ_CATEGORY = CATEGORIES[42];
+    /// Splits the pool in half, so the range contender keeps ~50% of rows. Zero-padded names sort
+    /// in the same order as their numbers.
+    private static final String RANGE_CATEGORY = CATEGORIES[CATEGORY_COUNT / 2];
+    /// Five of the 100 categories, for the `inStrings` contender.
+    private static final String[] IN_CATEGORIES = {
+            CATEGORIES[1], CATEGORIES[5], CATEGORIES[10], CATEGORIES[25], CATEGORIES[50]};
+    /// Three of the 100 categories — excluding them keeps ~97% of rows.
+    private static final String[] NOT_IN_CATEGORIES = {CATEGORIES[7], CATEGORIES[42], CATEGORIES[91]};
     private static final int TOTAL_ROWS = 10_000_000;
     private static final int DEFAULT_RUNS = 5;
 
@@ -191,6 +248,68 @@ class RecordFilterBenchmarkTest {
                 FilterPredicate.in("tag", new int[] {1, 5, 10, 25, 50}),
                 runs);
 
+        Run binaryEq = timeFilter(
+                FilterPredicate.eq("category", EQ_CATEGORY),
+                runs);
+
+        Run binaryRange = timeFilter(
+                FilterPredicate.lt("category", RANGE_CATEGORY),
+                runs);
+
+        Run binaryCompound = timeFilter(
+                // Two independent ~50% leaves on distinct columns — ~25%.
+                FilterPredicate.and(
+                        FilterPredicate.lt("value", 500.0),
+                        FilterPredicate.lt("category", RANGE_CATEGORY)),
+                runs);
+
+        Run binaryIn = timeFilter(
+                // 5 of 100 categories — ~5% kept, so most rows scan every member before missing.
+                FilterPredicate.inStrings("category", IN_CATEGORIES),
+                runs);
+
+        Run notBinaryIn = timeFilter(
+                // Negation expands to an AND of `notEq` leaves on one column — 3 of 100 categories
+                // out, ~97% kept.
+                FilterPredicate.not(FilterPredicate.inStrings("category", NOT_IN_CATEGORIES)),
+                runs);
+
+        // The same three filters over 32-byte spellings of the category, so every literal and every
+        // value is longer than eight bytes. `url_tail` shares its first eight bytes across all rows;
+        // `url_head` differs within them.
+        EqualityRuns urlTail = timeEqualityShapes("url_tail", RecordFilterBenchmarkTest::urlTail, runs);
+        EqualityRuns urlHead = timeEqualityShapes("url_head", RecordFilterBenchmarkTest::urlHead, runs);
+
+        Run fixedDecimalRange = timeFilter(
+                // Equal widths throughout, so the sign byte decides and the rest compares unsigned.
+                FilterPredicate.lt("amount_fixed", DECIMAL_MID),
+                runs);
+
+        Run fixedDecimalEq = timeFilter(
+                // Byte equality is sound here: one spelling per number in a fixed-width column.
+                FilterPredicate.eq("amount_fixed", DECIMAL_EQ),
+                runs);
+
+        Run variableDecimalRange = timeFilter(
+                // Widths differ per row, so every comparison sign-extends the shorter side first.
+                FilterPredicate.lt("amount_var", DECIMAL_MID),
+                runs);
+
+        Run variableDecimalEq = timeFilter(
+                // Equality cannot test bytes here — it compares the value the bytes stand for.
+                FilterPredicate.eq("amount_var", DECIMAL_EQ),
+                runs);
+
+        Run fixedDecimalIn = timeFilter(
+                // Padded to the column width, so membership is byte equality.
+                FilterPredicate.in("amount_fixed", decimalLiterals()),
+                runs);
+
+        Run variableDecimalIn = timeFilter(
+                // Not byte equality: every row compares each member by value, sign-extending first.
+                FilterPredicate.in("amount_var", decimalLiterals()),
+                runs);
+
         // ----- Print results ------------------------------------------------
         System.out.println("\nResults:");
         System.out.printf("  %-50s %-26s %10s %15s %12s%n",
@@ -226,6 +345,31 @@ class RecordFilterBenchmarkTest {
         printResults("Range+value (id BETWEEN 1M..2M)", rangeDup, runs);
         System.out.println();
         printResults("intIn (tag IN [1,5,10,25,50])", intIn, runs);
+        System.out.println();
+        printResults("Binary eq (category=" + EQ_CATEGORY + ")", binaryEq, runs);
+        System.out.println();
+        printResults("Binary range (category<" + RANGE_CATEGORY + ")", binaryRange, runs);
+        System.out.println();
+        printResults("Binary compound (value<500 AND category<" + RANGE_CATEGORY + ")", binaryCompound, runs);
+        System.out.println();
+        printResults("binaryIn (category IN " + IN_CATEGORIES.length + " values)", binaryIn, runs);
+        System.out.println();
+        printResults("Not binary in (category NOT IN " + Arrays.toString(NOT_IN_CATEGORIES) + ")",
+                notBinaryIn, runs);
+        System.out.println();
+        printEqualityShapes("url_tail", urlTail, runs);
+        printEqualityShapes("url_head", urlHead, runs);
+        printResults("Fixed decimal range (amount_fixed<0)", fixedDecimalRange, runs);
+        System.out.println();
+        printResults("Fixed decimal eq (amount_fixed=" + DECIMAL_EQ + ")", fixedDecimalEq, runs);
+        System.out.println();
+        printResults("Variable decimal range (amount_var<0)", variableDecimalRange, runs);
+        System.out.println();
+        printResults("Variable decimal eq (amount_var=" + DECIMAL_EQ + ")", variableDecimalEq, runs);
+        System.out.println();
+        printResults("Fixed decimal IN (amount_fixed, " + DECIMAL_IN.length + " values)", fixedDecimalIn, runs);
+        System.out.println();
+        printResults("Variable decimal IN (amount_var, " + DECIMAL_IN.length + " values)", variableDecimalIn, runs);
 
         // ----- Derived ratios vs no-filter baseline -------------------------
         double avgNoFilter = avg(noFilter.times) / 1_000_000.0;
@@ -266,7 +410,80 @@ class RecordFilterBenchmarkTest {
         assertThat(rangeDup.rows[0]).isEqualTo(1_000_000L);
         // intIn: 5 of 100 values, expect ~5%.
         assertThat(intIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.03), (long) (TOTAL_ROWS * 0.07));
+        // Binary eq: 1 of 100 categories, expect ~1%.
+        assertThat(binaryEq.rows[0]).isBetween((long) (TOTAL_ROWS * 0.005), (long) (TOTAL_ROWS * 0.015));
+        // Both decimal columns hold the same numbers, so the two encodings must agree row for row —
+        // which is the point of running them as a pair rather than measuring either alone.
+        assertThat(fixedDecimalRange.rows[0])
+                .isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6))
+                .isEqualTo(variableDecimalRange.rows[0]);
+        assertThat(fixedDecimalEq.rows[0]).isPositive().isEqualTo(variableDecimalEq.rows[0]);
+        assertThat(fixedDecimalIn.rows[0]).isPositive().isEqualTo(variableDecimalIn.rows[0]);
+        assertThat(fixedDecimalIn.path()).isEqualTo(PATH_DRAIN);
+        assertThat(variableDecimalIn.path()).isEqualTo(PATH_DRAIN);
+        // Binary range: half the pool sorts below the literal.
+        assertThat(binaryRange.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
+        // Binary compound: two independent ~50% leaves.
+        assertThat(binaryCompound.rows[0]).isBetween((long) (TOTAL_ROWS * 0.2), (long) (TOTAL_ROWS * 0.3));
+        // binaryIn: 5 of 100 categories, expect ~5%, and it must stay drain-side.
+        assertThat(binaryIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.035), (long) (TOTAL_ROWS * 0.065));
+        assertThat(binaryIn.path()).isEqualTo(PATH_DRAIN);
+        // Not binary in: the complement of three ~1% categories, and it must stay drain-side.
+        assertThat(notBinaryIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.955), (long) (TOTAL_ROWS * 0.985));
+        assertThat(notBinaryIn.path()).isEqualTo(PATH_DRAIN);
+        // The long spellings are one-to-one with the categories, so they keep the same rows.
+        for (EqualityRuns longRuns : List.of(urlTail, urlHead)) {
+            assertThat(longRuns.eq().rows[0]).isEqualTo(binaryEq.rows[0]);
+            assertThat(longRuns.in().rows[0]).isEqualTo(binaryIn.rows[0]);
+            assertThat(longRuns.notIn().rows[0]).isEqualTo(notBinaryIn.rows[0]);
+            assertThat(longRuns.in().path()).isEqualTo(PATH_DRAIN);
+        }
     }
+
+    private record EqualityRuns(Run eq, Run in, Run notIn) {}
+
+    private interface Spelling {
+        String of(String category);
+    }
+
+    /// `eq`, `inStrings` and negated `inStrings` on `column`, with the category literals the
+    /// `category` contenders use, spelled as `column` holds them.
+    private EqualityRuns timeEqualityShapes(String column, Spelling spelling, int runs) throws Exception {
+        return new EqualityRuns(
+                timeFilter(FilterPredicate.eq(column, spelling.of(EQ_CATEGORY)), runs),
+                timeFilter(FilterPredicate.inStrings(column, spelled(IN_CATEGORIES, spelling)), runs),
+                timeFilter(FilterPredicate.not(FilterPredicate.inStrings(column, spelled(NOT_IN_CATEGORIES, spelling))),
+                        runs));
+    }
+
+    private static void printEqualityShapes(String column, EqualityRuns longRuns, int runs) {
+        printResults("Long eq (" + column + ")", longRuns.eq(), runs);
+        System.out.println();
+        printResults("Long IN (" + column + ", " + IN_CATEGORIES.length + " values)", longRuns.in(), runs);
+        System.out.println();
+        printResults("Long NOT IN (" + column + ", " + NOT_IN_CATEGORIES.length + " values)", longRuns.notIn(), runs);
+        System.out.println();
+    }
+
+    private static String[] spelled(String[] categories, Spelling spelling) {
+        String[] out = new String[categories.length];
+        for (int i = 0; i < categories.length; i++) {
+            out[i] = spelling.of(categories[i]);
+        }
+        return out;
+    }
+
+    /// 32 bytes, the category last: every value starts with the same eight bytes (`https://`).
+    private static String urlTail(String category) {
+        return "https://example.com/items/" + category;
+    }
+
+    /// 32 bytes, the category first: values differ within their first eight bytes.
+    private static String urlHead(String category) {
+        return category + "/https://example.com/items";
+    }
+
+    private FileSchema fileSchema;
 
     private Run timeNoFilter(int runs) throws Exception {
         long[] times = new long[runs];
@@ -282,28 +499,51 @@ class RecordFilterBenchmarkTest {
     private Run timeFilter(FilterPredicate filter, int runs) throws Exception {
         // Probe the actual path the reader will take, **outside** the timing loop, so
         // the resolve + tryCompile work is not counted in the numbers.
-        String path = probePath(filter);
+        ColumnProjection projection = projectionFor(filter);
+        String path = probePath(filter, projection);
         long[] times = new long[runs];
         long[] rows = new long[runs];
         for (int i = 0; i < runs; i++) {
             long start = System.nanoTime();
-            rows[i] = runFilter(filter);
+            rows[i] = runFilter(filter, projection);
             times[i] = System.nanoTime() - start;
         }
         return new Run(times, rows, path);
     }
 
-    /// Probes whether `filter` is drain-eligible by calling [BatchFilterCompiler.tryCompile]
-    /// once against the file schema. Mirrors the gate in [dev.hardwood.internal.reader.FlatRowReader]:
-    /// `tryCompile` returns `null` → consumer-side; all-null matcher array → consumer-side;
-    /// otherwise → drain-side.
-    private String probePath(FilterPredicate filter) throws IOException {
-        FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE))) {
-            schema = reader.getFileSchema();
+    /// [#BASE_COLUMNS] plus the columns `filter` reads.
+    private ColumnProjection projectionFor(FilterPredicate filter) throws IOException {
+        FileSchema schema = fileSchema();
+        Set<String> columns = new LinkedHashSet<>(List.of(BASE_COLUMNS));
+        collectColumns(FilterPredicateResolver.resolve(filter, schema), schema, columns);
+        return ColumnProjection.columns(columns.toArray(String[]::new));
+    }
+
+    private static void collectColumns(ResolvedPredicate predicate, FileSchema schema, Set<String> out) {
+        switch (predicate) {
+            case ResolvedPredicate.And and -> and.children().forEach(child -> collectColumns(child, schema, out));
+            case ResolvedPredicate.Or or -> or.children().forEach(child -> collectColumns(child, schema, out));
+            default -> out.add(schema.getColumn(ResolvedPredicate.leafColumnIndex(predicate)).name());
         }
+    }
+
+    private FileSchema fileSchema() throws IOException {
+        if (fileSchema == null) {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE))) {
+                fileSchema = reader.getFileSchema();
+            }
+        }
+        return fileSchema;
+    }
+
+    /// Probes whether `filter` is drain-eligible by calling [BatchFilterCompiler.tryCompile]
+    /// once against the file schema and the contender's projection. Mirrors the gate in
+    /// [dev.hardwood.internal.reader.FlatRowReader]: `tryCompile` returns `null` → consumer-side;
+    /// all-null matcher array → consumer-side; otherwise → drain-side.
+    private String probePath(FilterPredicate filter, ColumnProjection projection) throws IOException {
+        FileSchema schema = fileSchema();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        ProjectedSchema projected = ProjectedSchema.create(schema, projection);
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
                 resolved, schema, projected::toProjectedIndex);
         if (compiled == null) {
@@ -320,7 +560,7 @@ class RecordFilterBenchmarkTest {
     private long runNoFilter() throws Exception {
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.rowReader()) {
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns(BASE_COLUMNS)).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -329,10 +569,10 @@ class RecordFilterBenchmarkTest {
         return count;
     }
 
-    private long runFilter(FilterPredicate filter) throws Exception {
+    private long runFilter(FilterPredicate filter, ColumnProjection projection) throws Exception {
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.buildRowReader().filter(filter).build()) {
+             RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -346,15 +586,9 @@ class RecordFilterBenchmarkTest {
             return;
         }
 
-        System.out.println("Generating benchmark file (" + TOTAL_ROWS / 1_000_000 + "M rows, 4 columns)...");
+        System.out.println("Generating benchmark file (" + TOTAL_ROWS / 1_000_000 + "M rows, 9 columns)...");
 
-        Schema schema = SchemaBuilder.record("benchmark")
-                .fields()
-                .requiredLong("id")
-                .requiredDouble("value")
-                .requiredInt("tag")
-                .requiredBoolean("flag")
-                .endRecord();
+        Schema schema = benchmarkSchema();
 
         Configuration conf = new Configuration();
         conf.set("parquet.writer.version", "v2");
@@ -365,25 +599,78 @@ class RecordFilterBenchmarkTest {
                 .withSchema(schema)
                 .withConf(conf)
                 .withCompressionCodec(CompressionCodecName.SNAPPY)
-                // Byte budget (not a row count): TOTAL_ROWS * 16 bytes/row is a generous
-                // ceiling that forces a single row group for the whole dataset.
-                .withRowGroupSize((long) TOTAL_ROWS * 16)
+                // Byte budget (not a row count): TOTAL_ROWS * 256 bytes/row is a generous
+                // ceiling that forces a single row group for the whole dataset, the string,
+                // long-string and decimal columns included.
+                .withRowGroupSize((long) TOTAL_ROWS * 256)
                 .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
                 .withPageWriteChecksumEnabled(false)
                 .build()) {
 
             Random rng = new Random(42);
+            Random categoryRng = new Random(CATEGORY_SEED);
             for (int i = 0; i < TOTAL_ROWS; i++) {
                 GenericRecord record = new GenericData.Record(schema);
                 record.put("id", (long) i);
                 record.put("value", rng.nextDouble() * 1000.0);
                 record.put("tag", rng.nextInt(100));
                 record.put("flag", rng.nextBoolean());
+                String category = CATEGORIES[categoryRng.nextInt(CATEGORY_COUNT)];
+                record.put("category", category);
+                record.put("url_tail", urlTail(category));
+                record.put("url_head", urlHead(category));
+                BigDecimal amount = BigDecimal.valueOf(i % DECIMAL_SPAN - DECIMAL_OFFSET, DECIMAL_SCALE);
+                Schema fixedSchema = schema.getField("amount_fixed").schema();
+                Schema varSchema = schema.getField("amount_var").schema();
+                record.put("amount_fixed", DECIMAL_CONVERSION.toFixed(amount, fixedSchema, fixedSchema.getLogicalType()));
+                // The minimal encoding, which is the form the format asks a writer for — so these
+                // values are 1 to 3 bytes wide and the widths differ down the column.
+                record.put("amount_var", DECIMAL_CONVERSION.toBytes(amount, varSchema, varSchema.getLogicalType()));
                 writer.write(record);
             }
         }
 
         System.out.println("Generated " + BENCHMARK_FILE + " (" + Files.size(BENCHMARK_FILE) / (1024 * 1024) + " MB)");
+    }
+
+    /// Built field by field rather than through `SchemaBuilder`, which cannot annotate a `fixed`
+    /// with a logical type. `fixed` + `DECIMAL` becomes a `FIXED_LEN_BYTE_ARRAY` column and `bytes`
+    /// + `DECIMAL` a `BYTE_ARRAY` one, which is the pair this benchmark needs.
+    private static Schema benchmarkSchema() {
+        Schema fixedDecimal = LogicalTypes.decimal(DECIMAL_PRECISION, DECIMAL_SCALE)
+                .addToSchema(Schema.createFixed("amount_fixed_t", null, "dev.hardwood.perf", DECIMAL_BYTES));
+        Schema variableDecimal = LogicalTypes.decimal(DECIMAL_PRECISION, DECIMAL_SCALE)
+                .addToSchema(Schema.create(Schema.Type.BYTES));
+
+        Schema schema = Schema.createRecord("benchmark", null, "dev.hardwood.perf", false);
+        schema.setFields(List.of(
+                new Schema.Field("id", Schema.create(Schema.Type.LONG), null, null),
+                new Schema.Field("value", Schema.create(Schema.Type.DOUBLE), null, null),
+                new Schema.Field("tag", Schema.create(Schema.Type.INT), null, null),
+                new Schema.Field("flag", Schema.create(Schema.Type.BOOLEAN), null, null),
+                new Schema.Field("category", Schema.create(Schema.Type.STRING), null, null),
+                new Schema.Field("url_tail", Schema.create(Schema.Type.STRING), null, null),
+                new Schema.Field("url_head", Schema.create(Schema.Type.STRING), null, null),
+                new Schema.Field("amount_fixed", fixedDecimal, null, null),
+                new Schema.Field("amount_var", variableDecimal, null, null)));
+        return schema;
+    }
+
+    /// [#DECIMAL_IN] as unscaled two's complement bytes, the literal form a decimal `IN` takes.
+    private static byte[][] decimalLiterals() {
+        byte[][] literals = new byte[DECIMAL_IN.length][];
+        for (int i = 0; i < DECIMAL_IN.length; i++) {
+            literals[i] = DECIMAL_IN[i].unscaledValue().toByteArray();
+        }
+        return literals;
+    }
+
+    private static String[] categories() {
+        String[] names = new String[CATEGORY_COUNT];
+        for (int i = 0; i < CATEGORY_COUNT; i++) {
+            names[i] = String.format("cat_%02d", i);
+        }
+        return names;
     }
 
     private static void printResults(String name, Run run, int runs) {

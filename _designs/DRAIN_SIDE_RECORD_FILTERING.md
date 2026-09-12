@@ -32,9 +32,9 @@ A leaf is **column-local** iff:
 
 - Its `FieldPath` is top-level (length 1), and
 - Its column maps to a non-negative projected index, and
-- Its `(type, op)` is one of: `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn` / `DoubleIn` (the last on a `DOUBLE` or a `FLOAT` column, whose stored values are widened before comparison), `IsNull` / `IsNotNull`.
+- Its `(type, op)` is one of: `long` / `double` / `int` / `float` / `binary` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn` / `DoubleIn` (the last on a `DOUBLE` or a `FLOAT` column, whose stored values are widened before comparison), `IsNull` / `IsNotNull`, `BinaryIn`. `binary` and `BinaryIn` cover a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column — strings, UUIDs, and decimals of either byte-array type.
 
-`Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible.
+`Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial and `Float16` predicates, and any leaf on a fragment-less column make the entire query non-eligible.
 
 The compiler walks the predicate tree bottom-up:
 
@@ -77,6 +77,34 @@ Key shape choices in the typed inner loop:
 NULL semantics: each fragment writes "definitely matches" — false on NULL. Word-wise AND of per-column matches gives SQL three-valued AND because any `unknown` conjunct unsets the bit; the same contract handles OR cleanly via word-wise OR (see the truth table under [Why `Or` is safe](#why-or-is-safe-under-definitely-matches-semantics)).
 
 `Null*BatchMatcher` short-circuits the per-bit loop entirely — `IsNotNullBatchMatcher.test` bulk-copies the validity words; `IsNullBatchMatcher.test` bulk-inverts them. Like the typed matchers, bits past `recordCount` are left as-is and filtered by the consumer's `bit < limit` check.
+
+### Byte-array matchers
+
+`Binary{Eq,NotEq,Lt,LtEq,Gt,GtEq,In}BatchMatcher` read the column's `BinaryBatchValues` and compare each value's `bytes[offsets[i], offsets[i + 1])` slice against the literal in place, through the slice overloads on `BinaryComparator` — no `byte[]` is materialised per row. They walk only the live rows of each word rather than comparing every slot and masking afterwards: a null slot holds no value (an empty slice for `BYTE_ARRAY`, undefined scratch for `FIXED_LEN_BYTE_ARRAY`), so comparing one would answer against bytes the row does not have. The compiler admits a binary leaf only on a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column: `BatchExchange` hands an `INT96` column the same `BinaryBatchValues`, and comparing its timestamp bytes would give wrong rows rather than a fallback.
+
+The literal's `ResolvedPredicate.BinaryPredicate.Comparison` decides both the order and what equality means, and each matcher takes it at construction:
+
+| `Comparison` | Order | Equality |
+|---|---|---|
+| `BYTE_STRING` | unsigned lexicographic | byte equality |
+| `FIXED_DECIMAL` | signed; every value is padded to the column width, so widths always match | byte equality |
+| `VARIABLE_DECIMAL` | signed, sign-extending the shorter value to the longer — a `BYTE_ARRAY` decimal stores each value in the fewest bytes that hold it, so `0x7F` must not outrank `0x00 0x80` | `compare(...) == 0`, because the same number may be spelled with padding and `0x00 0x7F` is another `0x7F` |
+
+That last row is why equality is not unconditionally a byte comparison: `Comparison.byteExact()` reports whether a value has exactly one encoding in the column, and only then may equality test bytes. `BinaryInBatchMatcher` applies the same equality to each member.
+
+#### Short-value equality
+
+Below eight bytes, `Arrays.equals` compares byte by byte, so an `eq` or `IN` over short values — codes, statuses, categories — spends most of its time in that loop, once per member. A value of at most eight bytes fits in one big-endian `long` once the bytes past its length are masked off, and equals a member of the same length exactly when the two masked `long`s are equal. `BinaryShortInBatchMatcher` decides rows that way, through `ShortValueEquality`:
+
+- For each row, a length of more than eight bytes takes `sliceEquals` against the members longer than eight bytes; from eight bytes up `Arrays.equals` already compares a word at a time.
+- A shorter row reads eight bytes at its start as one `long`, masks it to its length, and compares length and value against every short member without a branch. Reading eight bytes runs past a short value, which inside the byte array only picks up the next value or unused capacity; a row starting within eight bytes of the array's end compares byte by byte instead, which also covers an array shorter than eight bytes.
+- Every slot is compared, nulls included, and the null rows' bits are cleared afterwards, one word at a time.
+
+The compiler builds it for `EQ`, `NOT_EQ` and `BinaryIn` leaves whose `Comparison` is byte-exact and where at least one literal is at most eight bytes long; `EQ` and `NOT_EQ` are the one-member case, `NOT_EQ` negated. Every other binary equality keeps the byte-wise matchers. Literals must be spelled as the column holds them — padded to the width for a `FIXED_LEN_BYTE_ARRAY` decimal — which the resolver does.
+
+The short-value path lives in its own class, and the byte-wise matchers carry no branch for it: C2 profiles per class, so calls that return before the byte loop would make that loop's call site look cold, and C2 inlines a cold call site only up to `MaxInlineSize` bytes, which the per-row comparison exceeds.
+
+Evaluating the predicate in dictionary space — one comparison per dictionary entry, rows answered by index lookup — is tracked separately in #859 and is not part of this path; it would have to respect the same distinction, since a padded value hash-probes to a miss.
 
 ---
 
@@ -319,7 +347,7 @@ while (combined != 0) { emit(base + Long.numberOfTrailingZeros(combined)); combi
 
 ### Bloom-filter / dictionary-aware matchers
 
-**Why.** Dictionary-encoded pages let you evaluate the predicate **in dictionary space** — one compare per dictionary entry (typically 100s), then a gather over the per-row dictionary indices. For `IN`-list and equality predicates on high-cardinality columns this is asymptotically faster than per-row. Bloom filters give a cheap pre-check for `EQ`/`IN` shapes before any decode work.
+**Why.** Dictionary-encoded pages let you evaluate the predicate **in dictionary space** — one compare per dictionary entry (typically 100s), then a gather over the per-row dictionary indices. For `IN`-list and equality predicates on high-cardinality columns this is asymptotically faster than per-row. Bloom filters give a cheap pre-check for `EQ`/`IN` shapes before any decode work. Tracked as #859; note that an equality shortcut testing bytes (a dictionary or bloom probe for the literal's own spelling) is sound only where `Comparison.byteExact()` holds, so a `BYTE_ARRAY` decimal needs the ordering comparison even there.
 
 **Difficulty.** Medium-high, but **independent of the drain-side architecture**. Lives at the page-decoder layer, not the matcher layer. Mentioned for completeness; tracked separately.
 
