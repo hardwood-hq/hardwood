@@ -151,9 +151,11 @@ public interface PqMap {
 
         // ==================== Key Accessors - Objects ====================
 
-        /// Get the key as a STRING.
+        /// Get the key as a String, decoded from UTF-8.
         ///
         /// @return the string key value
+        /// @throws IllegalArgumentException if the key column does not hold text, as
+        ///         [FieldAccessor#getString(String)] describes
         String getStringKey();
 
         /// Get the key as a BINARY.
@@ -216,9 +218,11 @@ public interface PqMap {
 
         // ==================== Value Accessors - Objects ====================
 
-        /// Get the value as a STRING.
+        /// Get the value as a String, decoded from UTF-8.
         ///
         /// @return the string value, or null if the value is null
+        /// @throws IllegalArgumentException if the value column does not hold text, as
+        ///         [FieldAccessor#getString(String)] describes
         String getStringValue();
 
         /// Get the value as a BINARY.

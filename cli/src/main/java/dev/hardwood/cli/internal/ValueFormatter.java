@@ -141,7 +141,10 @@ public final class ValueFormatter {
             case LogicalType.StringType s -> text(reader.getString(fieldIndex), style);
             case LogicalType.EnumType e -> text(reader.getString(fieldIndex), style);
             case LogicalType.JsonType j -> text(reader.getString(fieldIndex), style);
-            case LogicalType.BsonType b -> text(reader.getString(fieldIndex), style);
+            // `getString` reads text columns only, so the BSON payload is read as bytes
+            // and decoded here, the same rendering the materialised path gives it.
+            case LogicalType.BsonType b ->
+                    text(LogicalTypeConverter.bytesToString(reader.getBinary(fieldIndex)), style);
             case LogicalType.IntType it when !it.isSigned() -> formatUnsignedInt(reader, fieldIndex, prim);
             case LogicalType.IntType it -> formatPhysical(reader, fieldIndex, budget);
             case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));

@@ -65,10 +65,15 @@ public interface FieldAccessor {
 
     // ==================== Object Types ====================
 
-    /// Get a STRING, ENUM or JSON field value by name, decoded from UTF-8.
+    /// Get a text field value by name, decoded from UTF-8.
+    ///
+    /// The field has to hold text: a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one
+    /// carrying no annotation. Read any other binary field with [#getBinary(String)] or the
+    /// accessor for its annotation.
     ///
     /// @param name the field name
     /// @return the string value, or null if the field is null
+    /// @throws IllegalArgumentException if the field does not hold text
     String getString(String name);
 
     /// Get a BINARY field value by name.

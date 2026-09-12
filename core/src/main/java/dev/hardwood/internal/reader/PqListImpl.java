@@ -224,6 +224,7 @@ final class PqListImpl implements PqList {
     @Override
     public List<String> strings() {
         int projCol = listDesc.firstLeafProjCol();
+        LogicalAccessorKind.requireText(batch.fileName, requirePrimitiveElement());
         return new LeafList<>(pos -> batch.getString(projCol, pos));
     }
 

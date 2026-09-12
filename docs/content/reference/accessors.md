@@ -28,12 +28,12 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | Method | Physical Type | Logical Type | Java Type |
 |--------|--------------|-------------|-----------|
 | `getBoolean` | BOOLEAN | | `boolean` |
-| `getInt` | INT32 | | `int` |
-| `getLong` | INT64 | | `long` |
+| `getInt` | INT32 | any | `int` |
+| `getLong` | INT64 | any | `long` |
 | `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | FLOAT16 (optional) | `float` |
 | `getDouble` | DOUBLE | | `double` |
-| `getBinary` | BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY | BSON (optional) | `byte[]` |
-| `getString` | BYTE_ARRAY | STRING, ENUM, or JSON | `String` |
+| `getBinary` | BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, or INT96 | any | `byte[]` |
+| `getString` | BYTE_ARRAY | STRING, ENUM, JSON, or none | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
 | `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
@@ -49,6 +49,37 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 
 All methods are available as both `method(name)` and `method(index)`.
 
+## Physical accessors
+
+`getInt`, `getLong` and `getBinary` read the stored value of any column their physical type
+holds, whatever it is annotated with. `getInt` reads a `DATE`, a `TIME(MILLIS)` and an `INT32`
+`DECIMAL` as well as a bare `INT32`; `getLong` reads a `TIMESTAMP`, a `TIME(MICROS)` or
+`TIME(NANOS)` and an `INT64` `DECIMAL`; `getBinary` reads every `BYTE_ARRAY`,
+`FIXED_LEN_BYTE_ARRAY` and `INT96` column, including a `DECIMAL`, a `UUID`, an `INTERVAL`, a
+`FLOAT16`, a `BSON` and a `GEOMETRY` or `GEOGRAPHY` payload. Use them to skip the logical-type
+decode — see [Reading the physical value](../how-to/row-reader.md#reading-the-physical-value).
+
+## Text columns
+
+`getString` reads a column whose stored bytes are the UTF-8 encoding of a string: a
+`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation, which older
+writers used for text before the annotation existed. On any other column — a `DECIMAL`, a
+`UUID`, an `INTERVAL`, a `FLOAT16`, a `BSON`, a `GEOMETRY` or `GEOGRAPHY`, an `INT96`, a
+fixed-width `FIXED_LEN_BYTE_ARRAY`, or a column not held as bytes at all — it throws
+`IllegalArgumentException` naming the column and its type; read those through `getBinary` or the
+accessor for their annotation.
+
+The same columns are the ones a `String` filter literal applies to; see
+[Query Controls](query-controls.md#binary-columns). The rule holds for every string accessor:
+`getString` on `RowReader` and `PqStruct`, `strings()` on `PqList`, `getStringKey` /
+`getStringValue` on `PqMap.Entry`, and `ColumnReader.getStrings`.
+
+Where the refusal falls depends on the accessor. The per-value ones — `getString`,
+`getStringKey`, `getStringValue` — answer the null test first, so a null value reads as `null`
+whatever its column holds and the refusal comes on the first present value. `PqList.strings()`
+and `ColumnReader.getStrings()` ask about the column once for a whole run of values, and refuse
+one that does not hold text whatever its values are.
+
 ## Null handling
 
 Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw
@@ -61,7 +92,9 @@ Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`)
 Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING`
 column) is a programming error; the call fails at runtime with an unchecked exception. The
 specific exception type is unspecified and may change between releases — do not catch it as part of
-normal control flow. If the column type isn't known statically, check it up front via
+normal control flow. Reading a column that does not hold text as a string is specified: the string
+accessors listed under [Text columns](#text-columns) throw `IllegalArgumentException`, as their
+`@throws` records. If the column type isn't known statically, check it up front via
 `reader.getFileSchema().getColumn(name)` and inspect the returned `ColumnSchema`'s `type()` /
 `logicalType()` — see [Inspect File Metadata](../how-to/metadata.md).
 

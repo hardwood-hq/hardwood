@@ -94,6 +94,13 @@ final class NestedLeafDecoder {
                 ((LogicalType.DecimalType) leaf.logicalType()).scale());
     }
 
+    /// The text a leaf holds, once [LogicalAccessorKind] has established that its stored
+    /// bytes are the UTF-8 encoding of a string rather than a payload read as something else.
+    static String readString(NestedBatchIndex batch, int projCol, int idx, SchemaNode.PrimitiveNode leaf) {
+        LogicalAccessorKind.requireText(batch.fileName, leaf);
+        return batch.getString(projCol, idx);
+    }
+
     static UUID readUuid(NestedBatchIndex batch, int projCol, int idx, SchemaNode.PrimitiveNode leaf) {
         LogicalAccessorKind.requireUuid(batch.fileName, leaf);
         return uuidAt(batch, projCol, idx);

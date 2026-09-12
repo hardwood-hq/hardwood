@@ -23,6 +23,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Every `FilterPredicate` factory rejects a null literal with a `NullPointerException` naming the argument ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
 
+- `getString` and `ColumnReader.getStrings` throw `IllegalArgumentException` on a column that does not hold text, where they used to decode its stored bytes as characters ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
+
 - An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
 
 - An ordered predicate whose literal the column cannot hold is answered exactly, where several such literals used to throw `ArithmeticException` ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).

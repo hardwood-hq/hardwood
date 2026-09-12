@@ -405,6 +405,11 @@ final class PqMapImpl implements PqMap {
         return (SchemaNode.PrimitiveNode) valueSchema;
     }
 
+    /// The key column's leaf schema, on the same terms as [#requirePrimitiveValue].
+    private SchemaNode.PrimitiveNode requirePrimitiveKey() {
+        return (SchemaNode.PrimitiveNode) keySchema;
+    }
+
     /// `valueIdx` if the value at that position is present, -1 if it is null.
     private int valueIndexOrNull(int valueIdx) {
         return batch.isElementNull(mapDesc.valueProjCol(), valueIdx) ? -1 : valueIdx;
@@ -535,7 +540,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            return batch.getString(keyProjCol, valueIdx);
+            return NestedLeafDecoder.readString(batch, keyProjCol, valueIdx, requirePrimitiveKey());
         }
 
         @Override
@@ -621,7 +626,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            return batch.getString(valueProjCol, valueIdx);
+            return NestedLeafDecoder.readString(batch, valueProjCol, valueIdx, requirePrimitiveValue());
         }
 
         @Override

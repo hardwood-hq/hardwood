@@ -350,6 +350,7 @@ public final class NestedBatchDataView {
         if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             return null;
         }
+        LogicalAccessorKind.requireText(currentFileName, lookupPrimitiveByIndex(projectedIndex).schema());
         return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).stringAt(valueIdx);
     }
 
@@ -483,7 +484,7 @@ public final class NestedBatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        return batchIndex.getString(projCol, valueIdx);
+        return NestedLeafDecoder.readString(batchIndex, projCol, valueIdx, p.schema());
     }
 
     private byte[] getBinary(TopLevelFieldMap.FieldDesc.Primitive p) {

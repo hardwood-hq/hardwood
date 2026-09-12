@@ -144,7 +144,10 @@ public interface PqList {
 
     // ==================== Object Type Accessors ====================
 
-    /// View the elements as a [List] of String values.
+    /// View the elements as a [List] of String values, decoded from UTF-8.
+    ///
+    /// @throws IllegalArgumentException if the element does not hold text, as
+    ///         [FieldAccessor#getString(String)] describes
     List<String> strings();
 
     /// View the elements as a [List] of binary (`byte[]`) values.

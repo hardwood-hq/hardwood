@@ -363,7 +363,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return batch.getString(projCol, idx);
+        return NestedLeafDecoder.readString(batch, projCol, idx, child.schema());
     }
 
     private byte[] readBinary(TopLevelFieldMap.FieldDesc.Primitive child) {

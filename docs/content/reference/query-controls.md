@@ -119,9 +119,10 @@ encodes. `in(double...)` on a `FLOAT16` compares against the decoded half as it 
 `FLOAT`'s widened value, so a probe no half represents, such as `0.1`, matches nothing.
 
 A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` and an unannotated
-`BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. On any other binary column
-it throws `IllegalArgumentException` at reader creation, naming the literals the column does
-take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
+`BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. These are the columns
+[`getString`](accessors.md#text-columns) reads. On any other binary column a `String`
+literal throws `IllegalArgumentException` at reader creation, naming the literals the column
+does take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
 no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built.
 
 Every factory rejects a null literal with a `NullPointerException` naming the argument.
