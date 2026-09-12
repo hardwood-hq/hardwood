@@ -13,6 +13,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -44,8 +45,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Pruning compares a literal against recorded bounds, which answers only in the order those
-/// bounds were written in. Two shapes arrive where that order is not knowable, neither of them
-/// produced by this writer, so both reach the reader only on a file written elsewhere.
+/// bounds were written in. Three shapes arrive where that order is not knowable, none of them
+/// produced by this writer, so each reaches the reader only on a file written elsewhere.
 class UnreadableSortOrderTest {
 
     @TempDir
@@ -100,6 +101,28 @@ class UnreadableSortOrderTest {
         Statistics stats = new Statistics(bytes("N"), bytes("Z"), 0L, null, false);
 
         assertThat(MinMaxStats.of(stats, leaf, readability(string)).canDrop(leaf)).isTrue();
+    }
+
+    /// An `INT96` compares as the instant it encodes, which no order a writer records its bounds
+    /// in follows on every value, so its bounds prune nothing even under the type-defined order.
+    /// These are the bounds parquet-java writes for a chunk holding 00:00, 00:00:00.000000255 on
+    /// the 13th and 00:00:00.000000016 on the 14th: it orders the stored bytes as a big-endian
+    /// integer, which the low byte of the nanoseconds leads, so the 14th falls between the two.
+    @Test
+    void int96BoundsDoNotPrune() {
+        FileSchema int96 = FileSchema.builder("s")
+                .addColumn("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
+                .build();
+        ResolvedPredicate leaf = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("ts", Instant.parse("2023-11-13T12:00:00Z")), int96);
+        Statistics byteOrdered = new Statistics(int96Bytes(0, 2_460_262), int96Bytes(255, 2_460_262),
+                0L, null, false);
+
+        assertThat(MinMaxStats.of(byteOrdered, leaf,
+                BoundsReadability.of(int96, List.of(ColumnOrder.TYPE_DEFINED_ORDER))).canDrop(leaf)).isFalse();
+        assertThat(MinMaxStats.of(byteOrdered, leaf, BoundsReadability.ALL).canDrop(leaf))
+                .as("as instants the bounds end before the literal, which is what must not be acted on")
+                .isTrue();
     }
 
     /// `parquet.thrift` on the `ColumnOrder` union: "If the reader does not support the value of
@@ -307,6 +330,10 @@ class UnreadableSortOrderTest {
 
     private static byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] int96Bytes(long nanosOfDay, int julianDay) {
+        return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putLong(nanosOfDay).putInt(julianDay).array();
     }
 
     private static byte[] intBytes(int value) {

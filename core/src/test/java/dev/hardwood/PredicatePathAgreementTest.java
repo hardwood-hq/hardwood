@@ -36,6 +36,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
@@ -73,6 +74,8 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /// `predicate_nested` adds a struct whose leaf is null under a present struct, and a leaf below a
 /// repeated path. `predicate_opaque` carries the `BSON` and `INTERVAL` columns, which DuckDB
 /// cannot open and which therefore stay out of the corpus the differential tests read.
+/// `predicate_int96` carries `INT96` columns in the same three layouts, one value stored under a
+/// non-canonical encoding, and bounds recorded in byte order rather than in time order.
 class PredicatePathAgreementTest {
 
     private static final Path RES = Paths.get("src/test/resources/predicate");
@@ -125,8 +128,14 @@ class PredicatePathAgreementTest {
     private static final Layout OPAQUE_DICTIONARY = new Layout("opaque-dictionary",
             RES.resolve("predicate_opaque_dict.parquet"));
 
-    private static final List<Layout> LAYOUTS =
-            List.of(SINGLE, MULTI, DICTIONARY, NESTED, NESTED_MULTI, OPAQUE, OPAQUE_DICTIONARY);
+    private static final Layout INT96_SINGLE = new Layout("int96", RES.resolve("predicate_int96_single.parquet"));
+    private static final Layout INT96_MULTI = new Layout("int96-multi-rg",
+            RES.resolve("predicate_int96_multi.parquet"));
+    private static final Layout INT96_DICTIONARY = new Layout("int96-dictionary",
+            RES.resolve("predicate_int96_dict.parquet"));
+
+    private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, NESTED, NESTED_MULTI,
+            OPAQUE, OPAQUE_DICTIONARY, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY);
 
     // ==================== Read paths ====================
 
@@ -298,6 +307,10 @@ class PredicatePathAgreementTest {
                 matching(eq("😀"))));
         cases.add(new Case("str", "gt(full-width tilde at row 398)", FilterPredicate.gt("str", "～"),
                 matching(cmp(Operator.GT, "～"))));
+
+        // --- INT96 ---
+        int96Cases(cases, "ts96");
+        int96Cases(cases, "s.ts96");
 
         // --- UUID ---
         UUID uuidAt200 = uuidOfRow(200);
@@ -659,6 +672,61 @@ class PredicatePathAgreementTest {
                 new Rejected(noOrder)));
     }
 
+    /// An `INT96` holds an instant, which its two literals denote: the [Instant] `getTimestamp`
+    /// returns and the twelve stored bytes. Both compare as the instant, in every order, whatever
+    /// encoding of it the file stores.
+    private static void int96Cases(List<Case> cases, String column) {
+        Instant atRow200 = int96Instant(200);
+        instantCases(cases, column, atRow200);
+        cases.add(new Case(column, "notEq(" + atRow200 + ")", FilterPredicate.notEq(column, atRow200),
+                matching(notEq(atRow200))));
+        cases.add(new Case(column, "ltEq(" + atRow200 + ")", FilterPredicate.ltEq(column, atRow200),
+                matching(cmp(Operator.LT_EQ, atRow200))));
+        cases.add(new Case(column, "gt(" + atRow200 + ")", FilterPredicate.gt(column, atRow200),
+                matching(cmp(Operator.GT, atRow200))));
+        cases.add(new Case(column, "lt(the epoch)", FilterPredicate.lt(column, Instant.EPOCH),
+                matching(cmp(Operator.LT, Instant.EPOCH))));
+        binaryCases(cases, column, int96Bytes(atRow200));
+
+        // Row 250 is stored with its day one lower and its nanoseconds of the day one day longer.
+        Instant nonCanonical = int96Instant(NON_CANONICAL_ROW);
+        cases.add(new Case(column, "eq(the instant stored non-canonically at row 250)",
+                FilterPredicate.eq(column, nonCanonical), matching(eq(nonCanonical))));
+        cases.add(new Case(column, "eq(the canonical bytes of row 250)",
+                binary(column, Operator.EQ, int96Bytes(nonCanonical)),
+                matching(eqPhysical(int96Bytes(nonCanonical)))));
+        cases.add(new Case(column, "in(the canonical bytes of row 250)",
+                FilterPredicate.in(column, int96Bytes(nonCanonical)),
+                matching(eqPhysical(int96Bytes(nonCanonical)))));
+
+        String wrongWidth = "Column '" + column + "' is an INT96, whose literal is 12 bytes, not 11";
+        cases.add(new Case(column, "eq(an eleven-byte literal)", binary(column, Operator.EQ, new byte[11]),
+                new Rejected(wrongWidth)));
+        cases.add(new Case(column, "lt(an eleven-byte literal)", binary(column, Operator.LT, new byte[11]),
+                new Rejected(wrongWidth)));
+        cases.add(new Case(column, "in(an eleven-byte literal)", FilterPredicate.in(column, new byte[11]),
+                new Rejected(wrongWidth)));
+        cases.add(new Case(column, "eq(a LocalDateTime), an INT96 column",
+                FilterPredicate.eq(column, LocalDateTime.ofEpochSecond(1_700_000_000L, 200, ZoneOffset.UTC)),
+                new Rejected("Column '" + column + "' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field),"
+                        + " which takes Instant and byte[] literals, not a LocalDateTime")));
+        cases.add(new Case(column, "eq(a long), an INT96 column", FilterPredicate.eq(column, 0L),
+                new Rejected("Column '" + column + "' has physical type INT96; "
+                        + "given filter predicate type INT64 is incompatible")));
+
+        // Instant.MAX lies millions of years past the last Julian day an INT96 stores.
+        cases.add(new Case(column, "eq(Instant.MAX), past the INT32 Julian day",
+                FilterPredicate.eq(column, Instant.MAX),
+                new Rejected("Column '" + column + "' holds an instant whose Julian day is within the INT32 range; "
+                        + "the equality literal +1000000000-12-31T23:59:59.999999999Z is not a value it can hold")));
+        cases.add(new Case(column, "lt(Instant.MAX)", FilterPredicate.lt(column, Instant.MAX),
+                matching(everyNonNullRow())));
+        cases.add(new Case(column, "gt(Instant.MAX)", FilterPredicate.gt(column, Instant.MAX),
+                matching(never())));
+        cases.add(new Case(column, "not(lt(Instant.MIN))",
+                FilterPredicate.not(FilterPredicate.lt(column, Instant.MIN)), matching(everyNonNullRow())));
+    }
+
     // ==================== The test ====================
 
     static Stream<Arguments> cells() {
@@ -934,13 +1002,17 @@ class PredicatePathAgreementTest {
     }
 
     /// A byte literal stands for what the column's annotation decodes it to: a number for a
-    /// `DECIMAL`, a half for a `FLOAT16`, and the bytes themselves everywhere else.
+    /// `DECIMAL`, a half for a `FLOAT16`, an instant for an `INT96`, and the bytes themselves
+    /// everywhere else.
     private static int compareBytes(ColumnSchema column, byte[] value, byte[] literal) {
         if (column.logicalType() instanceof LogicalType.DecimalType) {
             return unscaled(value).compareTo(unscaled(literal));
         }
         if (column.logicalType() instanceof LogicalType.Float16Type) {
             return Float.compare(half(value), half(literal));
+        }
+        if (column.type() == PhysicalType.INT96) {
+            return int96Instant(value).compareTo(int96Instant(literal));
         }
         return Arrays.compareUnsigned(value, literal);
     }
@@ -991,6 +1063,36 @@ class PredicatePathAgreementTest {
                 .putInt(Math.toIntExact(interval.days()))
                 .putInt(Math.toIntExact(interval.milliseconds()));
         return bytes;
+    }
+
+    /// The row `predicate_int96` stores under a non-canonical encoding.
+    private static final int NON_CANONICAL_ROW = 250;
+
+    private static final long NANOS_PER_DAY = 86_400_000_000_000L;
+    private static final long JULIAN_DAY_OF_EPOCH = 2_440_588L;
+
+    /// The `ts96` column's value in `row`, as the fixture writes it; the three special rows
+    /// before 200 stay clear of the cases.
+    private static Instant int96Instant(int row) {
+        return Instant.ofEpochSecond(0, 1_700_000_000_000_000_000L + (row - 200) * 3_600_000_000_123L + row);
+    }
+
+    /// The instant twelve `INT96` bytes encode: nanoseconds of the day, then the Julian day, both
+    /// little-endian, and neither bounded by the other.
+    private static Instant int96Instant(byte[] bytes) {
+        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        long nanosOfDay = buffer.getLong();
+        long julianDay = buffer.getInt();
+        return Instant.ofEpochSecond((julianDay - JULIAN_DAY_OF_EPOCH) * 86_400L, nanosOfDay);
+    }
+
+    /// The canonical twelve bytes of `instant`, whose nanoseconds of the day are less than a day.
+    private static byte[] int96Bytes(Instant instant) {
+        long nanos = Math.addExact(Math.multiplyExact(instant.getEpochSecond(), 1_000_000_000L), instant.getNano());
+        return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+                .putLong(Math.floorMod(nanos, NANOS_PER_DAY))
+                .putInt(Math.toIntExact(Math.floorDiv(nanos, NANOS_PER_DAY) + JULIAN_DAY_OF_EPOCH))
+                .array();
     }
 
     /// The `uuid` column's value in `row`, as the fixture writes it.

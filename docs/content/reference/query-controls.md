@@ -38,7 +38,7 @@ not compose this way: it filters a `STRING`, an `ENUM`, a `JSON` and an unannota
 and no other binary column. Where both rows apply, the annotation names the order: a `UINT_32`
 column matches the `INT32` row and the `INT(32, isSigned = false)` row, and compares by unsigned
 magnitude. Set membership follows the same mapping: `in` on the
-`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns and on every binary column, `inStrings`
+`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, on every binary column and on `INT96`, `inStrings`
 on those taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
 reader creation.
 
@@ -63,6 +63,7 @@ express every set of two values.
 | `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = true)`, and the legacy `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` | `Instant` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime` | the wall clock, in the column's time unit |
+| `INT96` | | `Instant`, `byte[]` of 12 bytes | the instant the value encodes |
 | `INT32` up to 9 digits, `INT64` up to 18 | `DECIMAL` | `BigDecimal`; `int` / `long` unscaled | the represented value |
 | `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `byte[]` | the represented value |
 | `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | unsigned lexicographic |
@@ -90,6 +91,17 @@ more scale than the literal pads it, so `99.99` against a `DECIMAL(scale = 4)` c
 as `99.9900`, and trailing zeros drop the same way. A literal carrying a digit the column's
 scale cannot hold follows the rule under
 [Literals the column cannot hold](#literals-the-column-cannot-hold).
+
+An `INT96` column is a legacy timestamp, which [`getTimestamp`](accessors.md) reads as an
+`Instant`. Its literals are that `Instant` and the 12 stored bytes that `getBinary` returns, and
+both compare as the instant the value encodes rather than as bytes. The format lets one instant be
+stored under more than one encoding, since the nanoseconds of the day are not bounded by one day,
+and every encoding of an instant matches a literal of it. A `byte[]` literal of any other length
+throws `IllegalArgumentException` at reader creation.
+
+```java
+FilterPredicate filter = FilterPredicate.gtEq("event_time", Instant.parse("2015-06-01T00:00:00Z"));
+```
 
 An unsigned column's literal is the stored two's-complement bit pattern, the same form
 [the accessors](accessors.md) hand back for it: `4_000_000_000` in a `UINT_32` column is the `int`
@@ -147,8 +159,9 @@ Every factory rejects a null literal with a `NullPointerException` naming the ar
 A literal can be a value of the column's literal type that the column itself cannot store: finer
 than the time unit of a `TIMESTAMP` or `TIME`, carrying more decimal places than a `DECIMAL`'s
 scale, past the range of the `INT32` or `INT64` that holds the column's values, of a width a
-fixed-width column does not have, a `float` no IEEE half represents, or a `PqInterval` with a
-component outside `[0, 4294967295]`.
+fixed-width column does not have, a `float` no IEEE half represents, a `PqInterval` with a
+component outside `[0, 4294967295]`, or an `Instant` whose Julian day is outside the `INT32`
+range of an `INT96` column.
 
 Equality (`eq`, `notEq`, a set form and its negation) asks whether a stored value *is* the
 literal. Against a value the column cannot store, `eq` could never match and `notEq` always
@@ -187,7 +200,7 @@ row of a file that keeps to its annotation.
 Pruning compares a unit's `min` / `max` bounds. A pair a reader cannot compare against is
 ignored rather than trusted, so the row group or page is kept and its rows are read and filtered
 one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored for
-one of five reasons:
+one of six reasons:
 
 | Reason | Bounds |
 |---|---|
@@ -195,6 +208,7 @@ one of five reasons:
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
 | The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
+| The column is `INT96` | Its values compare as the instants they encode, which neither the Parquet spec's order nor the byte order writers record bounds in follows on every value |
 | The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |
 
 The bounds themselves are still reported as the file carries them, by `Statistics` on the metadata

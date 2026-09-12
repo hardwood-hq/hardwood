@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
 import dev.hardwood.internal.schema.FixedWidthValidator;
@@ -82,6 +83,9 @@ public class FilterPredicateResolver {
     private static final BigInteger NANOS_PER_MILLI = BigInteger.valueOf(1_000_000L);
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
     private static final BigInteger NANOS_PER_SECOND = BigInteger.valueOf(1_000_000_000L);
+    private static final BigInteger NANOS_PER_DAY = BigInteger.valueOf(86_400_000_000_000L);
+
+    private static final long SECONDS_PER_DAY = 86_400L;
 
     private static final HexFormat HEX = HexFormat.of();
 
@@ -124,12 +128,20 @@ public class FilterPredicateResolver {
             }
             case InstantColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
+                if (isLegacyInt96(cs)) {
+                    yield int96Instant(p.column(), cs, p.op(), p.value());
+                }
                 LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, true);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield timestamp(p.column(), cs, p.op(), unit, nanosSinceEpoch(p.value()), p.value().toString());
             }
             case LocalDateTimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
+                if (isLegacyInt96(cs)) {
+                    throw new IllegalArgumentException("Column '" + p.column() + "' is "
+                            + TimestampAccessorKind.describeLegacyInt96()
+                            + ", which takes Instant and byte[] literals, not a LocalDateTime");
+                }
                 LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, false);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 // A local timestamp stores its wall clock as though it were a UTC instant.
@@ -232,6 +244,11 @@ public class FilterPredicateResolver {
             }
             case BinaryColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
+                if (cs.type() == PhysicalType.INT96) {
+                    requireInt96Width(p.column(), p.value());
+                    yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
+                            Comparison.INT96_INSTANT);
+                }
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 if (cs.logicalType() instanceof LogicalType.Float16Type) {
                     yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(),
@@ -296,6 +313,13 @@ public class FilterPredicateResolver {
             }
             case BinaryInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
+                if (cs.type() == PhysicalType.INT96) {
+                    for (byte[] value : p.values()) {
+                        requireInt96Width(p.column(), value);
+                    }
+                    yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values(),
+                            Comparison.INT96_INSTANT);
+                }
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 if (cs.logicalType() instanceof LogicalType.Float16Type) {
                     yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(),
@@ -735,6 +759,14 @@ public class FilterPredicateResolver {
         return Float.float16ToFloat((short) ((value[1] & 0xFF) << 8 | value[0] & 0xFF));
     }
 
+    /// Refuses a byte literal on an `INT96` column that is not the twelve bytes of a value.
+    private static void requireInt96Width(String columnName, byte[] value) {
+        if (value.length != LogicalTypeConverter.INT96_BYTES) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is an INT96, whose literal is "
+                    + LogicalTypeConverter.INT96_BYTES + " bytes, not " + value.length);
+        }
+    }
+
     /// The two-byte probes of a `FLOAT16` membership test, as the halves they encode. See
     /// [#float16ToFloat].
     private static double[] float16Probes(String columnName, byte[][] values) {
@@ -908,6 +940,52 @@ public class FilterPredicateResolver {
     /// sits in the column's order.
     private static boolean isEquality(FilterPredicate.Operator op) {
         return op == FilterPredicate.Operator.EQ || op == FilterPredicate.Operator.NOT_EQ;
+    }
+
+    /// Whether the column is the legacy `INT96` timestamp, which `getTimestamp` reads as an
+    /// [Instant]. An `INT96` carrying an annotation is read as that annotation instead.
+    private static boolean isLegacyInt96(ColumnSchema columnSchema) {
+        return columnSchema.type() == PhysicalType.INT96 && columnSchema.logicalType() == null;
+    }
+
+    /// An [Instant] literal on an `INT96` column, as the twelve bytes of that instant: its
+    /// nanoseconds of the day, then its Julian day.
+    ///
+    /// The column holds an instant whose Julian day is an `INT32`, and every [Instant]'s
+    /// nanoseconds fit, so an equality literal is refused only past that day. A stored value's
+    /// nanoseconds are not bounded by one day, though, so a value can still lie past the last
+    /// day, up to the day an `INT64` of nanoseconds reaches. An order literal there keeps the
+    /// extreme day and carries the days beyond it in its nanoseconds, which
+    /// [BinaryComparator#compareInt96] reads as the same instant. Past even that, no stored value
+    /// lies on its far side.
+    private static ResolvedPredicate int96Instant(String columnName, ColumnSchema cs, Operator op,
+            Instant value) {
+        long julianDay = Math.floorDiv(value.getEpochSecond(), SECONDS_PER_DAY)
+                + LogicalTypeConverter.JULIAN_EPOCH_OFFSET_DAYS;
+        long nanosOfDay = Math.floorMod(value.getEpochSecond(), SECONDS_PER_DAY) * 1_000_000_000L
+                + value.getNano();
+        int day = Math.clamp(julianDay, Integer.MIN_VALUE, Integer.MAX_VALUE);
+        if (day != julianDay && isEquality(op)) {
+            throw cannotHold(columnName, "an instant whose Julian day is within the INT32 range",
+                    value.toString());
+        }
+        BigInteger nanos = BigInteger.valueOf(julianDay - day).multiply(NANOS_PER_DAY)
+                .add(BigInteger.valueOf(nanosOfDay));
+        if (nanos.compareTo(INT64_MAX) > 0) {
+            return op == Operator.LT || op == Operator.LT_EQ
+                    ? new ResolvedPredicate.EveryNonNullRowPredicate(cs.columnIndex())
+                    : new ResolvedPredicate.NoRowPredicate(cs.columnIndex());
+        }
+        if (nanos.compareTo(INT64_MIN) < 0) {
+            return op == Operator.GT || op == Operator.GT_EQ
+                    ? new ResolvedPredicate.EveryNonNullRowPredicate(cs.columnIndex())
+                    : new ResolvedPredicate.NoRowPredicate(cs.columnIndex());
+        }
+        byte[] literal = ByteBuffer.allocate(LogicalTypeConverter.INT96_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+                .putLong(nanos.longValueExact())
+                .putInt(day)
+                .array();
+        return new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), op, literal, Comparison.INT96_INSTANT);
     }
 
     /// A timestamp literal, `nanos` since the epoch, on an `INT64` column counting `unit`.
