@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
@@ -103,6 +104,7 @@ public sealed interface FilterPredicate
                 FilterPredicate.StringInPredicate,
                 FilterPredicate.DateColumnPredicate,
                 FilterPredicate.InstantColumnPredicate,
+                FilterPredicate.LocalDateTimeColumnPredicate,
                 FilterPredicate.TimeColumnPredicate,
                 FilterPredicate.DecimalColumnPredicate,
                 FilterPredicate.IntervalColumnPredicate,
@@ -414,8 +416,9 @@ public sealed interface FilterPredicate
 
     // ==================== Instant (TIMESTAMP) Predicates ====================
 
-    /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type).
-    /// The column's time unit is determined from the schema at reader creation.
+    /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type with
+    /// `isAdjustedToUTC = true`). The column's time unit is determined from the schema at reader
+    /// creation.
     static FilterPredicate eq(String column, Instant value) {
         return new InstantColumnPredicate(column, Operator.EQ, value);
     }
@@ -443,6 +446,40 @@ public sealed interface FilterPredicate
     /// Creates a greater-than-or-equal predicate for an [Instant] column.
     static FilterPredicate gtEq(String column, Instant value) {
         return new InstantColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== LocalDateTime (local TIMESTAMP) Predicates ====================
+
+    /// Creates an equals predicate for a [LocalDateTime] column (Parquet TIMESTAMP logical type
+    /// with `isAdjustedToUTC = false`). The column's time unit is determined from the schema at
+    /// reader creation.
+    static FilterPredicate eq(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for a [LocalDateTime] column.
+    static FilterPredicate notEq(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a [LocalDateTime] column.
+    static FilterPredicate lt(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a [LocalDateTime] column.
+    static FilterPredicate ltEq(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a [LocalDateTime] column.
+    static FilterPredicate gt(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a [LocalDateTime] column.
+    static FilterPredicate gtEq(String column, LocalDateTime value) {
+        return new LocalDateTimeColumnPredicate(column, Operator.GT_EQ, value);
     }
 
     // ==================== LocalTime (TIME) Predicates ====================
@@ -834,11 +871,22 @@ public sealed interface FilterPredicate
         }
     }
 
-    /// Predicate for TIMESTAMP columns. The [Instant] value is converted to the column's time unit
-    /// (MILLIS, MICROS, or NANOS) at reader creation using the schema's `TimestampType`.
+    /// Predicate for TIMESTAMP columns with `isAdjustedToUTC = true`. The [Instant] value is
+    /// converted to the column's time unit (MILLIS, MICROS, or NANOS) at reader creation using the
+    /// schema's `TimestampType`.
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
 
         public InstantColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
+    }
+
+    /// Predicate for TIMESTAMP columns with `isAdjustedToUTC = false`. The [LocalDateTime] value
+    /// is converted to the column's time unit at reader creation, reading the wall clock as UTC.
+    record LocalDateTimeColumnPredicate(String column, Operator op, LocalDateTime value)
+            implements FilterPredicate {
+
+        public LocalDateTimeColumnPredicate {
             Objects.requireNonNull(value, "value");
         }
     }

@@ -17,7 +17,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -265,6 +267,17 @@ class PredicatePathAgreementTest {
         instantCases(cases, "ts_ms_utc", Instant.ofEpochMilli(1_700_000_000_000L));
         instantCases(cases, "ts_us_utc", Instant.ofEpochSecond(1_700_000_000L, 200_000L));
         instantCases(cases, "ts_ns_utc", Instant.ofEpochSecond(1_700_000_000L, 200L));
+        localDateTimeCases(cases, "ts_us_local", LocalDateTime.ofEpochSecond(1_700_000_000L, 200_000, ZoneOffset.UTC));
+        cases.add(new Case("ts_us_local", "eq(an Instant), a local timestamp",
+                FilterPredicate.eq("ts_us_local", Instant.ofEpochSecond(1_700_000_000L, 200_000L)),
+                new Rejected("Column 'ts_us_local' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false),"
+                        + " which takes LocalDateTime and long literals, not an Instant")));
+        cases.add(new Case("ts_us_utc", "eq(a LocalDateTime), a UTC timestamp",
+                FilterPredicate.eq("ts_us_utc", LocalDateTime.ofEpochSecond(1_700_000_000L, 200_000, ZoneOffset.UTC)),
+                new Rejected("Column 'ts_us_utc' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
+                        + " which takes Instant and long literals, not a LocalDateTime")));
+        cases.add(new Case("ts_us_local", "eq(stored microseconds as long)",
+                FilterPredicate.eq("ts_us_local", 1_700_000_000_000_200L), matching(eqPhysical(1_700_000_000_000_200L))));
 
         // --- DECIMAL over INT32, INT64 and FIXED_LEN_BYTE_ARRAY ---
         decimalCases(cases, "dec_i32", new BigDecimal("0.00"));
@@ -378,6 +391,17 @@ class PredicatePathAgreementTest {
                 FilterPredicate.lt("ts_us_utc", subMicrosecond), matching(cmp(Operator.LT, subMicrosecond))));
         cases.add(new Case("ts_us_utc", "gt(a sub-microsecond instant)",
                 FilterPredicate.gt("ts_us_utc", subMicrosecond), matching(cmp(Operator.GT, subMicrosecond))));
+        LocalDateTime subMicrosecondWallClock = LocalDateTime.ofEpochSecond(1_700_000_000L, 200_500, ZoneOffset.UTC);
+        cases.add(new Case("ts_us_local", "eq(a sub-microsecond wall clock)",
+                FilterPredicate.eq("ts_us_local", subMicrosecondWallClock),
+                new Rejected("Column 'ts_us_local' holds a whole number of microseconds within the INT64 range; "
+                        + "the equality literal " + subMicrosecondWallClock + " is not a value it can hold")));
+        cases.add(new Case("ts_us_local", "lt(a sub-microsecond wall clock)",
+                FilterPredicate.lt("ts_us_local", subMicrosecondWallClock),
+                matching(cmp(Operator.LT, subMicrosecondWallClock))));
+        cases.add(new Case("ts_us_local", "gt(a sub-microsecond wall clock)",
+                FilterPredicate.gt("ts_us_local", subMicrosecondWallClock),
+                matching(cmp(Operator.GT, subMicrosecondWallClock))));
 
         LocalTime subMillisecond = LocalTime.ofNanoOfDay(3_600_000_000_000L + 200 * 60_000_000_000L + 1);
         cases.add(new Case("time_ms", "eq(a sub-millisecond time)",
@@ -539,6 +563,22 @@ class PredicatePathAgreementTest {
         cases.add(new Case(column, "eq(" + literal + ")", FilterPredicate.eq(column, literal), matching(eq(literal))));
         cases.add(new Case(column, "lt(" + literal + ")", FilterPredicate.lt(column, literal),
                 matching(cmp(Operator.LT, literal))));
+        cases.add(new Case(column, "gtEq(" + literal + ")", FilterPredicate.gtEq(column, literal),
+                matching(cmp(Operator.GT_EQ, literal))));
+        cases.add(new Case(column, "not(lt(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+    }
+
+    private static void localDateTimeCases(List<Case> cases, String column, LocalDateTime literal) {
+        cases.add(new Case(column, "eq(" + literal + ")", FilterPredicate.eq(column, literal), matching(eq(literal))));
+        cases.add(new Case(column, "notEq(" + literal + ")", FilterPredicate.notEq(column, literal),
+                matching(notEq(literal))));
+        cases.add(new Case(column, "lt(" + literal + ")", FilterPredicate.lt(column, literal),
+                matching(cmp(Operator.LT, literal))));
+        cases.add(new Case(column, "ltEq(" + literal + ")", FilterPredicate.ltEq(column, literal),
+                matching(cmp(Operator.LT_EQ, literal))));
+        cases.add(new Case(column, "gt(" + literal + ")", FilterPredicate.gt(column, literal),
+                matching(cmp(Operator.GT, literal))));
         cases.add(new Case(column, "gtEq(" + literal + ")", FilterPredicate.gtEq(column, literal),
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
@@ -884,6 +924,7 @@ class PredicatePathAgreementTest {
             case byte[] l -> compareBytes(column, (byte[]) value, l);
             case LocalDate l -> ((LocalDate) value).compareTo(l);
             case Instant l -> ((Instant) value).compareTo(l);
+            case LocalDateTime l -> ((LocalDateTime) value).compareTo(l);
             case LocalTime l -> ((LocalTime) value).compareTo(l);
             case BigDecimal l -> ((BigDecimal) value).compareTo(l);
             case UUID l -> Arrays.compareUnsigned(uuidBytes((UUID) value), uuidBytes(l));

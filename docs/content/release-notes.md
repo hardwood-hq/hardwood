@@ -33,6 +33,10 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `FilterPredicate.eq` and `notEq` take a `PqInterval` literal on an `INTERVAL` column ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
 
+- `FilterPredicate` takes a `LocalDateTime` literal on a `TIMESTAMP` column with `isAdjustedToUTC = false`, through `eq`, `notEq`, `lt`, `ltEq`, `gt` and `gtEq` ([#1194](https://github.com/hardwood-hq/hardwood/issues/1194)).
+
+- An `Instant` literal on a `TIMESTAMP` column with `isAdjustedToUTC = false` throws `IllegalArgumentException`, where it used to compare the instant against the stored wall clock as though that were UTC ([#1194](https://github.com/hardwood-hq/hardwood/issues/1194)).
+
 - `getString` and `ColumnReader.getStrings` throw `IllegalArgumentException` on a column that does not hold text, where they used to decode its stored bytes as characters ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
 
 - An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).

@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
@@ -535,6 +536,8 @@ class FilterPredicateTest {
                 .isInstanceOf(NullPointerException.class).hasMessage("value");
         assertThatThrownBy(() -> FilterPredicate.ltEq("c", (Instant) null))
                 .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.gt("c", (LocalDateTime) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
         assertThatThrownBy(() -> FilterPredicate.gtEq("c", (LocalTime) null))
                 .isInstanceOf(NullPointerException.class).hasMessage("value");
         assertThatThrownBy(() -> FilterPredicate.notEq("c", (BigDecimal) null))
@@ -789,6 +792,25 @@ class FilterPredicateTest {
         assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.ltEq("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
         assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.gt("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.GT);
         assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.gtEq("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    // ==================== LocalDateTime Factory Tests ====================
+
+    @Test
+    void testLocalDateTimeAllOperators() {
+        LocalDateTime wallClock = LocalDateTime.of(2024, 6, 15, 12, 30);
+        assertThat(FilterPredicate.eq("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.EQ, wallClock));
+        assertThat(FilterPredicate.notEq("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.NOT_EQ, wallClock));
+        assertThat(FilterPredicate.lt("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.LT, wallClock));
+        assertThat(FilterPredicate.ltEq("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.LT_EQ, wallClock));
+        assertThat(FilterPredicate.gt("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.GT, wallClock));
+        assertThat(FilterPredicate.gtEq("ts", wallClock))
+                .isEqualTo(new FilterPredicate.LocalDateTimeColumnPredicate("ts", FilterPredicate.Operator.GT_EQ, wallClock));
     }
 
     // ==================== LocalTime Factory Tests ====================
