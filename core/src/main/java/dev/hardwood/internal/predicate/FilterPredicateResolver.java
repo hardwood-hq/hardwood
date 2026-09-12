@@ -14,10 +14,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.reader.TimestampAccessorKind;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.schema.TextColumns;
@@ -39,6 +42,7 @@ import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntInPredicate;
 import dev.hardwood.reader.FilterPredicate.IntersectsPredicate;
 import dev.hardwood.reader.FilterPredicate.IntervalColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.LocalDateTimeColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
@@ -120,14 +124,17 @@ public class FilterPredicateResolver {
             }
             case InstantColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs);
+                LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, true);
                 validateType(p.column(), PhysicalType.INT64, cs);
-                yield carried(p.column(), cs.columnIndex(), p.op(),
-                        inUnit(nanosSinceEpoch(p.value()), unit, INT64_MIN, INT64_MAX),
-                        "a whole number of " + unitName(unit) + " within the INT64 range",
-                        p.value().toString(),
-                        (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
-                                value.longValueExact()));
+                yield timestamp(p.column(), cs, p.op(), unit, nanosSinceEpoch(p.value()), p.value().toString());
+            }
+            case LocalDateTimeColumnPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
+                LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, false);
+                validateType(p.column(), PhysicalType.INT64, cs);
+                // A local timestamp stores its wall clock as though it were a UTC instant.
+                yield timestamp(p.column(), cs, p.op(), unit,
+                        nanosSinceEpoch(p.value().toInstant(ZoneOffset.UTC)), p.value().toString());
             }
             case TimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -757,12 +764,21 @@ public class FilterPredicateResolver {
 
     // ==================== Value conversion helpers ====================
 
-    private static LogicalType.TimeUnit getTimestampUnit(String columnName, ColumnSchema columnSchema) {
-        if (columnSchema.logicalType() instanceof LogicalType.TimestampType timestampType) {
-            return timestampType.unit();
+    /// The unit of a `TIMESTAMP` column of the kind the literal denotes: an [Instant] a
+    /// UTC-adjusted one, a [LocalDateTime] a local wall clock.
+    private static LogicalType.TimeUnit getTimestampUnit(String columnName, ColumnSchema columnSchema,
+            boolean literalIsInstant) {
+        if (!(columnSchema.logicalType() instanceof LogicalType.TimestampType timestampType)) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' does not have a TIMESTAMP logical type");
         }
-        throw new IllegalArgumentException(
-                "Column '" + columnName + "' does not have a TIMESTAMP logical type");
+        if (timestampType.isAdjustedToUTC() != literalIsInstant) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is "
+                    + TimestampAccessorKind.describe(timestampType.isAdjustedToUTC()) + ", which takes "
+                    + (literalIsInstant ? "LocalDateTime and long literals, not an Instant"
+                            : "Instant and long literals, not a LocalDateTime"));
+        }
+        return timestampType.unit();
     }
 
     private static LogicalType.TimeUnit getTimeUnit(String columnName, ColumnSchema columnSchema) {
@@ -892,6 +908,15 @@ public class FilterPredicateResolver {
     /// sits in the column's order.
     private static boolean isEquality(FilterPredicate.Operator op) {
         return op == FilterPredicate.Operator.EQ || op == FilterPredicate.Operator.NOT_EQ;
+    }
+
+    /// A timestamp literal, `nanos` since the epoch, on an `INT64` column counting `unit`.
+    private static ResolvedPredicate timestamp(String columnName, ColumnSchema cs, Operator op,
+            LogicalType.TimeUnit unit, BigInteger nanos, String shown) {
+        return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit, INT64_MIN, INT64_MAX),
+                "a whole number of " + unitName(unit) + " within the INT64 range", shown,
+                (resolvedOp, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), resolvedOp,
+                        value.longValueExact()));
     }
 
     /// `nanos` measured in `unit`, narrowed to `[min, max]`.

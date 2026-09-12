@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -19,6 +21,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
@@ -130,6 +133,95 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("col", Instant.now()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' does not have a TIMESTAMP logical type");
+    }
+
+    @Test
+    void resolveInstantOnLocalTimestampColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
+                LogicalType.timestamp(false, LogicalType.TimeUnit.MICROS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.gt("ts", Instant.EPOCH), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false),"
+                        + " which takes LocalDateTime and long literals, not an Instant");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ConvertedType.class, names = { "TIMESTAMP_MILLIS", "TIMESTAMP_MICROS" })
+    void resolveInstantOnLegacyTimestampColumn(ConvertedType convertedType) {
+        FileSchema schema = schemaWithConvertedType("ts", PhysicalType.INT64, convertedType);
+        Instant instant = Instant.parse("2024-06-15T12:30:00.123Z");
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(FilterPredicate.eq("ts", instant), schema);
+
+        long expected = convertedType == ConvertedType.TIMESTAMP_MILLIS
+                ? instant.toEpochMilli()
+                : Math.multiplyExact(instant.toEpochMilli(), 1_000L);
+        assertThat(((ResolvedPredicate.LongPredicate) resolved).value()).isEqualTo(expected);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("ts", LocalDateTime.ofInstant(instant, ZoneOffset.UTC)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
+                        + " which takes Instant and long literals, not a LocalDateTime");
+    }
+
+    // ==================== LocalDateTime ====================
+
+    static Stream<Arguments> localDateTimeUnits() {
+        LocalDateTime wallClock = LocalDateTime.parse("2024-06-15T12:30:00.123456789");
+        long epochSecond = wallClock.toEpochSecond(ZoneOffset.UTC);
+        return Stream.of(
+                Arguments.of(LogicalType.TimeUnit.MILLIS, LocalDateTime.parse("2024-06-15T12:30:00.123"),
+                        epochSecond * 1_000L + 123L),
+                Arguments.of(LogicalType.TimeUnit.MICROS, LocalDateTime.parse("2024-06-15T12:30:00.123456"),
+                        epochSecond * 1_000_000L + 123_456L),
+                Arguments.of(LogicalType.TimeUnit.NANOS, wallClock, epochSecond * 1_000_000_000L + 123_456_789L),
+                Arguments.of(LogicalType.TimeUnit.MICROS, LocalDateTime.parse("1969-12-31T23:59:59.999999"), -1L));
+    }
+
+    @ParameterizedTest
+    @MethodSource("localDateTimeUnits")
+    void resolveLocalDateTimeToWallClockInColumnUnit(LogicalType.TimeUnit unit, LocalDateTime wallClock,
+            long expected) {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64, LogicalType.timestamp(false, unit));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.ltEq("ts", wallClock), schema);
+
+        assertThat(resolved).isEqualTo(new ResolvedPredicate.LongPredicate(0, FilterPredicate.Operator.LT_EQ,
+                expected));
+    }
+
+    @Test
+    void resolveLocalDateTimeOnUtcTimestampColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("ts", LocalDateTime.of(2024, 6, 15, 12, 30)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
+                        + " which takes Instant and long literals, not a LocalDateTime");
+    }
+
+    @Test
+    void resolveLocalDateTimeOnNonTimestampColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT64, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("col", LocalDateTime.of(2024, 6, 15, 12, 30)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' does not have a TIMESTAMP logical type");
+    }
+
+    @Test
+    void resolveSubUnitLocalDateTime() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT64,
+                LogicalType.timestamp(false, LogicalType.TimeUnit.MILLIS));
+        LocalDateTime subMilli = LocalDateTime.parse("1970-01-01T00:00:00.0015");
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("ts", subMilli), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' holds a whole number of milliseconds within the INT64 range;"
+                        + " the equality literal 1970-01-01T00:00:00.001500 is not a value it can hold");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("ts", subMilli), schema))
+                .isEqualTo(new ResolvedPredicate.LongPredicate(0, FilterPredicate.Operator.LT_EQ, 1L));
     }
 
     // ==================== LocalTime ====================
@@ -1437,6 +1529,14 @@ class FilterPredicateResolverTest {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REQUIRED,
                 null, null, null, null, null, logicalType);
+        return FileSchema.fromSchemaElements(List.of(root, col));
+    }
+
+    private static FileSchema schemaWithConvertedType(String columnName, PhysicalType type,
+            ConvertedType convertedType) {
+        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement col = new SchemaElement(columnName, type, null, RepetitionType.REQUIRED,
+                null, convertedType, null, null, null, null);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 

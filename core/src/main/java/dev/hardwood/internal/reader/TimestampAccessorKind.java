@@ -19,7 +19,7 @@ import dev.hardwood.schema.SchemaNode;
 /// requires local. Each impl funnels through [#require] so the rejection
 /// message is identical everywhere and the INT96 fallthrough is handled in
 /// one place.
-final class TimestampAccessorKind {
+public final class TimestampAccessorKind {
 
     private TimestampAccessorKind() {
     }
@@ -56,6 +56,11 @@ final class TimestampAccessorKind {
         if (lt == null) {
             return "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)";
         }
+        return describe(utcAdjusted);
+    }
+
+    /// The kind of a column annotated TIMESTAMP, as a rejection names it.
+    public static String describe(boolean utcAdjusted) {
         return utcAdjusted
                 ? "a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true)"
                 : "a local-wall-clock TIMESTAMP (isAdjustedToUTC=false)";

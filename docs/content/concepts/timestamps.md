@@ -41,6 +41,11 @@ requires, the exception thrown) lives in [Typed Accessors](../reference/accessor
 column's kind isn't known statically, branching on the flag — or the generic `getValue` accessor,
 which returns `Instant` or `LocalDateTime` per the flag — recovers the right type without a guess.
 
+Filter predicates follow the same split. A `FilterPredicate` literal on a UTC-adjusted column is an
+`Instant` and on a local one a `LocalDateTime`, so a predicate compares the same kind of value the
+column's accessor returns; the other kind is rejected when the reader is built, for the same reason
+the other accessor throws (see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type)).
+
 ## TIME's informational flag
 
 The TIME logical type carries the same `isAdjustedToUTC` flag, but the situation is different:
