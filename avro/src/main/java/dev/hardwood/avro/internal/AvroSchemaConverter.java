@@ -8,7 +8,9 @@
 package dev.hardwood.avro.internal;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
@@ -56,11 +58,21 @@ public final class AvroSchemaConverter {
     private final ProjectedSchema projected;
 
     private final AvroNames names;
+    private final Naming naming;
 
-    private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected) {
+    /// Whether an `INT96` column converts to a 12-byte Avro `fixed`. Native
+    /// conversion always does. The parquet-avro compatibility path reads it from the
+    /// caller: parquet-avro `1.17.1` only converts `INT96` when `READ_INT96_AS_FIXED`
+    /// is set and otherwise rejects it, and the compatibility path mirrors that.
+    private final boolean int96AsFixed;
+
+    private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected, Naming naming,
+            boolean int96AsFixed) {
         this.fileSchema = fileSchema;
         this.projected = projected;
         this.names = AvroNames.forSchema(fileSchema);
+        this.naming = naming;
+        this.int96AsFixed = int96AsFixed;
     }
 
     /// Convert a Hardwood FileSchema to a decode plan, narrowed to the given column
@@ -77,20 +89,57 @@ public final class AvroSchemaConverter {
     /// @param projection the columns to retain
     /// @return the root of the decode plan, restricted to projected fields
     public static AvroPlanNode plan(FileSchema fileSchema, ColumnProjection projection) {
+        return converter(fileSchema, projection, Naming.nativeNaming(), true).convertRoot();
+    }
+
+    /// Convert a Hardwood [FileSchema] using parquet-avro `1.17.1` generated
+    /// named-type resolution. Each invocation has fresh counter state.
+    ///
+    /// Rejects `INT96` the way parquet-avro does by default — with an
+    /// `IllegalArgumentException` — since parquet-avro converts `INT96` only when
+    /// `READ_INT96_AS_FIXED` is enabled. Use
+    /// [#planForParquetAvroCompatibility(FileSchema, ColumnProjection, boolean)] to
+    /// read `INT96` as a `fixed` instead.
+    ///
+    /// @param fileSchema the Parquet file schema
+    /// @param projection the columns to retain
+    /// @return the compatibility decode plan
+    public static AvroPlanNode planForParquetAvroCompatibility(FileSchema fileSchema,
+            ColumnProjection projection) {
+        return planForParquetAvroCompatibility(fileSchema, projection, false);
+    }
+
+    /// Convert a Hardwood [FileSchema] using parquet-avro `1.17.1` generated
+    /// named-type resolution, choosing how `INT96` is handled. Each invocation has
+    /// fresh counter state.
+    ///
+    /// @param fileSchema the Parquet file schema
+    /// @param projection the columns to retain
+    /// @param readInt96AsFixed convert `INT96` to a 12-byte `fixed` when `true`,
+    ///        mirroring parquet-avro's `READ_INT96_AS_FIXED`; reject it when `false`
+    /// @return the compatibility decode plan
+    public static AvroPlanNode planForParquetAvroCompatibility(FileSchema fileSchema,
+            ColumnProjection projection, boolean readInt96AsFixed) {
+        return converter(fileSchema, projection, Naming.parquetAvroNaming(), readInt96AsFixed).convertRoot();
+    }
+
+    private static AvroSchemaConverter converter(FileSchema fileSchema, ColumnProjection projection,
+            Naming naming, boolean int96AsFixed) {
         ProjectedSchema projected = projection.projectsAll()
                 ? null
                 : ProjectedSchema.create(fileSchema, projection);
-        return new AvroSchemaConverter(fileSchema, projected).convertRoot();
+        return new AvroSchemaConverter(fileSchema, projected, naming, int96AsFixed);
     }
 
     private AvroPlanNode convertRoot() {
         rejectCanonicalRootConflict();
-        return convertGroup(fileSchema.getRootNode(), "");
+        return convertGroup(fileSchema.getRootNode(), fileSchema.getName(), "");
     }
 
     /// Convert a struct group (or the schema root) to an Avro record, retaining
     /// only children that contain a projected leaf when a projection is active.
-    private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String path) {
+    private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String recordName, String path) {
+        NamedType name = naming.resolve(recordName, names.typeName(group));
         List<Schema.Field> fields = new ArrayList<>();
         List<AvroPlanNode> children = new ArrayList<>();
         for (SchemaNode child : group.children()) {
@@ -103,8 +152,7 @@ public final class AvroSchemaConverter {
             fields.add(field);
             children.add(childNode);
         }
-        AvroNames.TypeName typeName = names.typeName(group);
-        Schema record = Schema.createRecord(typeName.name(), null, typeName.namespace(), false, fields);
+        Schema record = Schema.createRecord(name.name(), null, name.namespace(), false, fields);
         applyParquetName(record, group);
         return AvroPlanNode.record(record, group, children);
     }
@@ -172,7 +220,7 @@ public final class AvroSchemaConverter {
                     + groupAnnotation(group));
         }
         // Plain struct — prune unprojected children recursively.
-        return convertGroup(group, path);
+        return convertGroup(group, group.name(), path);
     }
 
     private static String groupAnnotation(SchemaNode.GroupNode group) {
@@ -196,9 +244,8 @@ public final class AvroSchemaConverter {
         List<Schema.Field> fields = List.of(
                 new Schema.Field("metadata", Schema.create(Schema.Type.BYTES), null, null),
                 new Schema.Field("value", Schema.create(Schema.Type.BYTES), null, null));
-        AvroNames.TypeName typeName = names.typeName(group);
-        Schema schema = Schema.createRecord(typeName.name(), null, typeName.namespace(),
-                false, new ArrayList<>(fields));
+        NamedType name = naming.resolve(group.name(), names.typeName(group));
+        Schema schema = Schema.createRecord(name.name(), null, name.namespace(), false, new ArrayList<>(fields));
         applyParquetName(schema, group);
         return AvroPlanNode.leaf(schema, Kind.VARIANT, group);
     }
@@ -309,9 +356,9 @@ public final class AvroSchemaConverter {
             case LogicalType.DecimalType d -> convertDecimalType(physicalType, d, prim);
             case LogicalType.IntType i -> convertIntType(i, prim);
             case LogicalType.IntervalType iv -> AvroPlanNode.leaf(
-                    Schema.createFixed("interval", null, null, 12), Kind.FIXED, prim);
+                    fixed(prim.name(), new AvroNames.TypeName("interval", null), 12), Kind.FIXED, prim);
             case LogicalType.Float16Type f -> AvroPlanNode.leaf(
-                    Schema.createFixed("float16", null, null, 2), Kind.FIXED, prim);
+                    fixed(prim.name(), new AvroNames.TypeName("float16", null), 2), Kind.FIXED, prim);
             case LogicalType.ListType l -> convertPhysicalType(physicalType, prim);
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.VariantType v -> throw new IllegalStateException(
@@ -364,8 +411,8 @@ public final class AvroSchemaConverter {
             SchemaNode.PrimitiveNode prim) {
         org.apache.avro.LogicalType decimal = LogicalTypes.decimal(d.precision(), d.scale());
         if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return AvroPlanNode.leaf(decimal.addToSchema(fixedSchema(prim, fixedByteLength(prim))),
-                    Kind.FIXED, prim);
+            return AvroPlanNode.leaf(decimal.addToSchema(
+                    fixed(prim, fixedByteLength(prim))), Kind.FIXED, prim);
         }
         return AvroPlanNode.leaf(decimal.addToSchema(Schema.create(Schema.Type.BYTES)), Kind.DECIMAL, prim);
     }
@@ -391,17 +438,32 @@ public final class AvroSchemaConverter {
             case DOUBLE -> AvroPlanNode.leaf(Schema.create(Schema.Type.DOUBLE), Kind.DOUBLE, prim);
             case BYTE_ARRAY -> binary(prim);
             case FIXED_LEN_BYTE_ARRAY -> AvroPlanNode.leaf(
-                    fixedSchema(prim, fixedByteLength(prim)), Kind.FIXED, prim);
-            // INT96 has a fixed 12-byte width that the schema does not carry a length for.
-            case INT96 -> AvroPlanNode.leaf(fixedSchema(prim, 12), Kind.FIXED, prim);
+                    fixed(prim, fixedByteLength(prim)), Kind.FIXED, prim);
+            case INT96 -> convertInt96(prim);
         };
     }
 
-    private Schema fixedSchema(SchemaNode.PrimitiveNode prim, int size) {
-        AvroNames.TypeName typeName = names.typeName(prim);
-        Schema schema = Schema.createFixed(typeName.name(), null, typeName.namespace(), size);
+    /// Convert an `INT96` column. Native conversion and the parquet-avro
+    /// compatibility path with `READ_INT96_AS_FIXED` enabled read it as a 12-byte
+    /// `fixed` — the width the schema does not carry a length for. The compatibility
+    /// path with the flag disabled rejects it with parquet-avro `1.17.1`'s own
+    /// message, since parquet-avro converts `INT96` only when the flag is set.
+    private AvroPlanNode convertInt96(SchemaNode.PrimitiveNode prim) {
+        if (!int96AsFixed) {
+            throw new IllegalArgumentException(
+                    "INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.");
+        }
+        return AvroPlanNode.leaf(fixed(prim, 12), Kind.FIXED, prim);
+    }
+    private Schema fixed(SchemaNode.PrimitiveNode prim, int size) {
+        Schema schema = fixed(prim.name(), names.typeName(prim), size);
         applyParquetName(schema, prim);
         return schema;
+    }
+
+    private Schema fixed(String sourceName, AvroNames.TypeName nativeType, int size) {
+        NamedType name = naming.resolve(sourceName, nativeType);
+        return Schema.createFixed(name.name(), null, name.namespace(), size);
     }
 
     private void applyParquetName(Schema schema, SchemaNode node) {
@@ -443,7 +505,6 @@ public final class AvroSchemaConverter {
         }
         return false;
     }
-
     /// Resolve the declared byte length of a [PhysicalType#FIXED_LEN_BYTE_ARRAY]
     /// column, looked up from its [dev.hardwood.schema.ColumnSchema] by leaf index.
     /// A fixed-length column with no `type_length` is malformed; fail early rather
@@ -460,5 +521,25 @@ public final class AvroSchemaConverter {
 
     private static Schema nullable(Schema schema) {
         return Schema.createUnion(Schema.create(Schema.Type.NULL), schema);
+    }
+
+    private interface Naming {
+
+        NamedType resolve(String sourceName, AvroNames.TypeName nativeType);
+
+        static Naming nativeNaming() {
+            return (sourceName, nativeType) -> new NamedType(nativeType.name(), nativeType.namespace());
+        }
+
+        static Naming parquetAvroNaming() {
+            Map<String, Integer> counts = new HashMap<>();
+            return (sourceName, nativeType) -> {
+                int occurrence = counts.merge(sourceName, 1, Integer::sum);
+                return new NamedType(sourceName, occurrence == 1 ? null : sourceName + occurrence);
+            };
+        }
+    }
+
+    private record NamedType(String name, String namespace) {
     }
 }
