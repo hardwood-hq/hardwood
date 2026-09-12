@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /// A predicate for filtering row groups based on column statistics.
@@ -91,11 +92,13 @@ public sealed interface FilterPredicate
                 FilterPredicate.DoubleColumnPredicate,
                 FilterPredicate.BooleanColumnPredicate,
                 FilterPredicate.BinaryColumnPredicate,
+                FilterPredicate.StringColumnPredicate,
                 FilterPredicate.UUIDColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
                 FilterPredicate.DoubleInPredicate,
                 FilterPredicate.BinaryInPredicate,
+                FilterPredicate.StringInPredicate,
                 FilterPredicate.DateColumnPredicate,
                 FilterPredicate.InstantColumnPredicate,
                 FilterPredicate.TimeColumnPredicate,
@@ -243,62 +246,110 @@ public sealed interface FilterPredicate
         return new BooleanColumnPredicate(column, Operator.NOT_EQ, value);
     }
 
-    // ==================== STRING (BYTE_ARRAY) Predicates ====================
+    // ==================== String Predicates ====================
 
+    /// Creates an equals predicate for a text column, one of `STRING`, `ENUM`, `JSON` and an
+    /// unannotated `BYTE_ARRAY`. The value compares as its UTF-8 bytes, which is what such a
+    /// column stores. Any other column rejects a `String` with `IllegalArgumentException` at
+    /// reader creation.
     static FilterPredicate eq(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.EQ, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.EQ, value);
     }
 
+    /// Creates a not-equals predicate for a text column. See [#eq(String,String)].
     static FilterPredicate notEq(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.NOT_EQ, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.NOT_EQ, value);
     }
 
+    /// Creates a less-than predicate for a text column. See [#eq(String,String)].
     static FilterPredicate lt(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.LT, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.LT, value);
     }
 
+    /// Creates a less-than-or-equal predicate for a text column. See [#eq(String,String)].
     static FilterPredicate ltEq(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.LT_EQ, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.LT_EQ, value);
     }
 
+    /// Creates a greater-than predicate for a text column. See [#eq(String,String)].
     static FilterPredicate gt(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.GT, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.GT, value);
     }
 
+    /// Creates a greater-than-or-equal predicate for a text column. See [#eq(String,String)].
     static FilterPredicate gtEq(String column, String value) {
-        return new BinaryColumnPredicate(column, Operator.GT_EQ, value.getBytes(StandardCharsets.UTF_8));
+        return new StringColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== Binary (BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY) Predicates ====================
+
+    /// Creates an equals predicate for a binary column, whose literal is the stored bytes —
+    /// the value [RowReader#getBinary] returns for it.
+    ///
+    /// The column's annotation decides what the bytes stand for and how they compare: a
+    /// `DECIMAL` reads them as the number they encode, a `FLOAT16` as the half its two bytes
+    /// encode, and every other binary column compares them unsigned lexicographically. A
+    /// fixed-width column takes an equality literal of its own width only, and a fixed-width
+    /// `DECIMAL` any length whose value fits that width.
+    ///
+    /// The array is copied, so a caller reusing it does not change the predicate.
+    static FilterPredicate eq(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for a binary column. See [#eq(String,byte[])].
+    static FilterPredicate notEq(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a binary column. See [#eq(String,byte[])].
+    static FilterPredicate lt(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a binary column. See [#eq(String,byte[])].
+    static FilterPredicate ltEq(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a binary column. See [#eq(String,byte[])].
+    static FilterPredicate gt(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a binary column. See [#eq(String,byte[])].
+    static FilterPredicate gtEq(String column, byte[] value) {
+        return new BinaryColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    /// Creates a set-membership predicate for a binary column, matching a row whose value is any
+    /// of `values`. Each probe is an equality literal and compares as [#eq(String,byte[])]
+    /// describes. The arrays are copied.
+    static FilterPredicate in(String column, byte[]... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new BinaryInPredicate(column, values);
     }
 
     static FilterPredicate in(String column, int... values) {
-        if (values.length == 0) {
-            throw new IllegalArgumentException("IN predicate requires at least one value");
-        }
+        requireValues(Objects.requireNonNull(values, "values").length);
         return new IntInPredicate(column, values);
     }
 
     static FilterPredicate in(String column, long... values) {
-        if (values.length == 0) {
-            throw new IllegalArgumentException("IN predicate requires at least one value");
-        }
+        requireValues(Objects.requireNonNull(values, "values").length);
         return new LongInPredicate(column, values);
     }
 
     static FilterPredicate in(String column, double... values) {
-        if (values.length == 0) {
-            throw new IllegalArgumentException("IN predicate requires at least one value");
-        }
+        requireValues(Objects.requireNonNull(values, "values").length);
         return new DoubleInPredicate(column, values);
     }
 
+    /// Creates a set-membership predicate for a text column, matching a row whose value is any of
+    /// `values`. Each probe compares as [#eq(String,String)] describes.
     static FilterPredicate inStrings(String column, String... values) {
-        if (values.length == 0) {
-            throw new IllegalArgumentException("IN predicate requires at least one value");
-        }
-        byte[][] encoded = new byte[values.length][];
-        for (int i = 0; i < values.length; i++) {
-            encoded[i] = values[i].getBytes(StandardCharsets.UTF_8);
-        }
-        return new BinaryInPredicate(column, encoded);
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new StringInPredicate(column, values);
     }
 
     // ==================== LocalDate (DATE) Predicates ====================
@@ -471,7 +522,29 @@ public sealed interface FilterPredicate
 
     // ==================== Conversion Helpers ====================
 
+    /// Rejects a set form with no probe to test against.
+    private static void requireValues(int count) {
+        if (count == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
+    }
+
+    /// Rejects a `String` literal that is not well-formed UTF-16, which is one holding an
+    /// unpaired surrogate. Such a literal has no UTF-8 encoding: encoding it replaces the
+    /// surrogate with `?`, and the predicate would silently be one on a different value.
+    ///
+    /// `argument` names the offending literal the way the message reads it back, so a set form
+    /// says which probe is at fault.
+    private static void requireWellFormed(String column, String value, String argument) {
+        if (!StandardCharsets.UTF_8.newEncoder().canEncode(value)) {
+            throw new IllegalArgumentException("Column '" + column
+                    + "' compares a String literal as its UTF-8 bytes; " + argument + " is not"
+                    + " well-formed UTF-16 and has no UTF-8 encoding");
+        }
+    }
+
     private static byte[] uuidToBytes(UUID value) {
+        Objects.requireNonNull(value, "value");
         ByteBuffer buffer = ByteBuffer.allocate(16);
         buffer.putLong(value.getMostSignificantBits());
         buffer.putLong(value.getLeastSignificantBits());
@@ -537,7 +610,15 @@ public sealed interface FilterPredicate
     record BooleanColumnPredicate(String column, Operator op, boolean value) implements FilterPredicate {
     }
 
+    /// Predicate for a binary column, comparing the stored bytes as the column's annotation reads
+    /// them. Built by the `byte[]` factories and by `parquet-java-compat`'s filter conversion.
     record BinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
+
+        public BinaryColumnPredicate(String column, Operator op, byte[] value) {
+            this.column = column;
+            this.op = op;
+            this.value = Objects.requireNonNull(value, "value").clone();
+        }
 
         @Override
         public boolean equals(Object o) {
@@ -552,6 +633,16 @@ public sealed interface FilterPredicate
             result = 31 * result + op.hashCode();
             result = 31 * result + Arrays.hashCode(value);
             return result;
+        }
+    }
+
+    /// Predicate for a text column, comparing the literal's UTF-8 bytes. The value is held as
+    /// given and encoded at reader creation, where the column is also checked to be one a
+    /// `String` reads.
+    record StringColumnPredicate(String column, Operator op, String value) implements FilterPredicate {
+
+        public StringColumnPredicate {
+            requireWellFormed(column, Objects.requireNonNull(value, "value"), "the literal");
         }
     }
 
@@ -576,7 +667,7 @@ public sealed interface FilterPredicate
 
         public IntInPredicate(String column, int[] values) {
             this.column = column;
-            this.values = values.clone();
+            this.values = Objects.requireNonNull(values, "values").clone();
         }
 
         @Override
@@ -596,7 +687,7 @@ public sealed interface FilterPredicate
 
         public LongInPredicate(String column, long[] values) {
             this.column = column;
-            this.values = values.clone();
+            this.values = Objects.requireNonNull(values, "values").clone();
         }
 
         @Override
@@ -616,7 +707,7 @@ public sealed interface FilterPredicate
 
         public DoubleInPredicate(String column, double[] values) {
             this.column = column;
-            this.values = values.clone();
+            this.values = Objects.requireNonNull(values, "values").clone();
         }
 
         @Override
@@ -632,11 +723,16 @@ public sealed interface FilterPredicate
         }
     }
 
+    /// Set-membership predicate for a binary column. Each probe compares as a
+    /// [BinaryColumnPredicate] literal does.
     record BinaryInPredicate(String column, byte[][] values) implements FilterPredicate {
 
         public BinaryInPredicate(String column, byte[][] values) {
             this.column = column;
-            this.values = values.clone();
+            this.values = new byte[Objects.requireNonNull(values, "values").length][];
+            for (int i = 0; i < values.length; i++) {
+                this.values[i] = Objects.requireNonNull(values[i], "values[" + i + "]").clone();
+            }
         }
 
         @Override
@@ -652,25 +748,67 @@ public sealed interface FilterPredicate
         }
     }
 
+    /// Set-membership predicate for a text column. Each probe compares as a
+    /// [StringColumnPredicate] literal does.
+    record StringInPredicate(String column, String[] values) implements FilterPredicate {
+
+        public StringInPredicate(String column, String[] values) {
+            this.column = column;
+            this.values = Objects.requireNonNull(values, "values").clone();
+            for (int i = 0; i < this.values.length; i++) {
+                String argument = "values[" + i + "]";
+                requireWellFormed(column, Objects.requireNonNull(this.values[i], argument), argument);
+            }
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof StringInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
     // ==================== Logical-Type Predicate Records ====================
 
     /// Predicate for DATE columns. The [LocalDate] value is converted to epoch days at reader creation.
     record DateColumnPredicate(String column, Operator op, LocalDate value) implements FilterPredicate {
+
+        public DateColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
     }
 
     /// Predicate for TIMESTAMP columns. The [Instant] value is converted to the column's time unit
     /// (MILLIS, MICROS, or NANOS) at reader creation using the schema's `TimestampType`.
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
+
+        public InstantColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
     }
 
     /// Predicate for TIME columns. The [LocalTime] value is converted to the column's time unit
     /// at reader creation using the schema's `TimeType`.
     record TimeColumnPredicate(String column, Operator op, LocalTime value) implements FilterPredicate {
+
+        public TimeColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
     }
 
     /// Predicate for DECIMAL columns. The [BigDecimal] value is converted to the column's physical
     /// representation at reader creation using the schema's `DecimalType`.
     record DecimalColumnPredicate(String column, Operator op, BigDecimal value) implements FilterPredicate {
+
+        public DecimalColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
     }
 
     // ==================== NULL Predicate Records ====================

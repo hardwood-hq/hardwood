@@ -15,6 +15,14 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in` ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+
+- A `String` literal filters a column that holds text — a `STRING`, an `ENUM`, a `JSON` or an unannotated `BYTE_ARRAY` — and throws `IllegalArgumentException` on every other binary column, where a `byte[]` or the annotation's own literal type filters instead ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+
+- A `String` literal that is not well-formed UTF-16 throws `IllegalArgumentException` when the predicate is built ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+
+- Every `FilterPredicate` factory rejects a null literal with a `NullPointerException` naming the argument ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+
 - An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
 
 - An ordered predicate whose literal the column cannot hold is answered exactly, where several such literals used to throw `ArithmeticException` ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).

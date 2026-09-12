@@ -20,7 +20,7 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Category | Supported |
 |---|---|
 | Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
-| Set operators | `in` (int, long, double), `inStrings` |
+| Set operators | `in` (int, long, double, `byte[]`), `inStrings` |
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
@@ -33,11 +33,14 @@ skipping. Filters work with all reader types — `RowReader`, `ColumnReader`,
 ## Predicate literals by column type
 
 A column takes the literal types listed for its physical type, and — where it carries an
-annotation — those listed for that annotation as well. Where both rows apply, the annotation
-names the order: a `UINT_32` column matches the `INT32` row and the `INT(32, isSigned = false)`
-row, and compares by unsigned magnitude. Set membership follows the same mapping: `in` on the
-`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, `inStrings` on those taking a `String`. A
-literal a column does not take throws `IllegalArgumentException` at reader creation.
+annotation — those listed for that annotation as well. A `String` is the one literal that does
+not compose this way: it filters a `STRING`, an `ENUM`, a `JSON` and an unannotated `BYTE_ARRAY`,
+and no other binary column. Where both rows apply, the annotation names the order: a `UINT_32`
+column matches the `INT32` row and the `INT(32, isSigned = false)` row, and compares by unsigned
+magnitude. Set membership follows the same mapping: `in` on the
+`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns and on every binary column, `inStrings`
+on those taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
+reader creation.
 
 | Physical type | Logical type | Literal | Compared as |
 |---|---|---|---|
@@ -46,18 +49,21 @@ literal a column does not take throws `IllegalArgumentException` at reader creat
 | `INT64` | | `long` | signed |
 | `FLOAT` | | `float` | numeric |
 | `DOUBLE` | | `double` | numeric |
-| `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY(n)` | | `String` | unsigned lexicographic |
+| `BYTE_ARRAY` | | `byte[]`; `String` where the column carries no annotation | unsigned lexicographic |
+| `FIXED_LEN_BYTE_ARRAY(n)` | | `byte[]` of `n` bytes | unsigned lexicographic |
 | `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = true)` | `int` / `long` | signed |
 | `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = false)` | `int` / `long` | unsigned magnitude |
 | `INT32` | `DATE` | `LocalDate` | days since the Unix epoch |
 | `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
 | `INT64` | `TIMESTAMP` | `Instant` | the column's time unit |
-| `INT32` up to 9 digits, `INT64` up to 18, `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `String` | the represented value, under all four physical types |
-| `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON`, `BSON` | `String` | unsigned lexicographic |
+| `INT32` up to 9 digits, `INT64` up to 18 | `DECIMAL` | `BigDecimal`; `int` / `long` unscaled | the represented value |
+| `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `byte[]` | the represented value |
+| `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | unsigned lexicographic |
+| `BYTE_ARRAY` | `BSON` | `byte[]` | unsigned lexicographic |
 | `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | four `double` bounds | bounding-box overlap |
-| `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `String` | the 16 bytes, unsigned |
-| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `String` | numeric, widened to `float` |
-| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `String`, `inStrings` | the 12 bytes, unsigned; the format defines no order for `INTERVAL`, so only equality is meaningful |
+| `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
+| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float` |
+| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `byte[]` of 12 bytes | the 12 bytes, unsigned; the format defines no order for `INTERVAL`, so only equality is meaningful |
 | any | `NULL` | the literal for the physical type | nothing — every value is null, so no comparison matches |
 | group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
 
@@ -87,22 +93,38 @@ zero.
 A column that carries an annotation also takes the literal for its physical type, comparing the
 value as it is stored: an `int` against a `DATE` column tests the epoch day directly.
 
+### Binary columns
+
+The literal of a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column is a `byte[]`, the stored bytes
+that [`getBinary`](accessors.md) returns. The factories copy the array, so a caller reusing it
+does not change a predicate already built.
+
+```java
+FilterPredicate filter = FilterPredicate.eq("code", new byte[] { 0x00, (byte) 0xC8 });
+FilterPredicate members = FilterPredicate.in("code",
+        new byte[] { 0x00, (byte) 0xC8 }, new byte[] { 0x00, (byte) 0xC9 });
+```
+
 `DECIMAL` and `FLOAT16` are the exceptions to *how* the bytes compare. Both order by the value
 their bytes stand for rather than by the bytes themselves, and their statistics are written in
-that order, so a `String` literal against either compares as the column does — a `DECIMAL` by its
+that order, so a `byte[]` literal against either compares as the column does — a `DECIMAL` by its
 unscaled value, a `FLOAT16` by the number its two little-endian bytes encode — rather than as a
 byte string. A `FLOAT16` literal must be exactly two bytes. On a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`,
 a literal of any length stands for the value it encodes and is brought to the column width:
 sign-extended when it is shorter, its leading sign-extension bytes dropped when it is longer.
 
-`inStrings` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe is
-still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
+`in(byte[]...)` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe
+is still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
 encodes. `in(double...)` on a `FLOAT16` compares against the decoded half as it does against a
 `FLOAT`'s widened value, so a probe no half represents, such as `0.1`, matches nothing.
 
-Note that a `String` literal is encoded as UTF-8, which reproduces a byte one-for-one only below
-`0x80`. A `DECIMAL`'s unscaled value sets the high bit for every negative number, so those are
-not expressible this way; reach for the `BigDecimal` factory instead.
+A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` and an unannotated
+`BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. On any other binary column
+it throws `IllegalArgumentException` at reader creation, naming the literals the column does
+take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
+no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built.
+
+Every factory rejects a null literal with a `NullPointerException` naming the argument.
 
 ## Literals the column cannot hold
 

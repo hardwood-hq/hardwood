@@ -101,7 +101,17 @@ class FilterPredicateTest {
     @Test
     void testStringPredicateCreation() {
         FilterPredicate p = FilterPredicate.eq("name", "hello");
-        assertThat(p).isInstanceOf(FilterPredicate.BinaryColumnPredicate.class);
+        assertThat(p).isInstanceOf(FilterPredicate.StringColumnPredicate.class);
+    }
+
+    @Test
+    void testBinaryPredicateCreation() {
+        FilterPredicate p = FilterPredicate.eq("code", new byte[] { 0x01, (byte) 0xC8 });
+        assertThat(p).isInstanceOfSatisfying(FilterPredicate.BinaryColumnPredicate.class, binary -> {
+            assertThat(binary.column()).isEqualTo("code");
+            assertThat(binary.op()).isEqualTo(FilterPredicate.Operator.EQ);
+            assertThat(binary.value()).containsExactly(0x01, 0xC8);
+        });
     }
 
     @Test
@@ -418,7 +428,124 @@ class FilterPredicateTest {
     @Test
     void testStringInPredicateCreation() {
         FilterPredicate p = FilterPredicate.inStrings("city", "NYC", "LA");
-        assertThat(p).isInstanceOf(FilterPredicate.BinaryInPredicate.class);
+        assertThat(p).isInstanceOf(FilterPredicate.StringInPredicate.class);
+    }
+
+    @Test
+    void testBinaryInPredicateCreation() {
+        FilterPredicate p = FilterPredicate.in("code", new byte[] { 0x01 }, new byte[] { 0x02 });
+        assertThat(p).isInstanceOfSatisfying(FilterPredicate.BinaryInPredicate.class, in -> {
+            assertThat(in.column()).isEqualTo("code");
+            assertThat(in.values()).hasDimensions(2, 1);
+            assertThat(in.values()[0]).containsExactly(0x01);
+            assertThat(in.values()[1]).containsExactly(0x02);
+        });
+    }
+
+    /// A caller reusing its array to build a second predicate must not change the first.
+    @Test
+    void byteLiteralsAreCopiedWhenThePredicateIsBuilt() {
+        byte[] literal = { 0x01, 0x02 };
+        FilterPredicate.BinaryColumnPredicate scalar =
+                (FilterPredicate.BinaryColumnPredicate) FilterPredicate.eq("code", literal);
+        FilterPredicate.BinaryInPredicate set =
+                (FilterPredicate.BinaryInPredicate) FilterPredicate.in("code", literal);
+
+        literal[1] = 0x03;
+
+        assertThat(scalar.value()).containsExactly(0x01, 0x02);
+        assertThat(set.values()[0]).containsExactly(0x01, 0x02);
+    }
+
+    /// Two predicates on the same bytes are the same predicate, whichever arrays they were
+    /// built from.
+    @Test
+    void byteLiteralsCompareByContent() {
+        assertThat(FilterPredicate.eq("code", new byte[] { 0x01, 0x02 }))
+                .isEqualTo(FilterPredicate.eq("code", new byte[] { 0x01, 0x02 }))
+                .hasSameHashCodeAs(FilterPredicate.eq("code", new byte[] { 0x01, 0x02 }))
+                .isNotEqualTo(FilterPredicate.eq("code", new byte[] { 0x01, 0x03 }));
+        assertThat(FilterPredicate.in("code", new byte[] { 0x01 }, new byte[] { 0x02 }))
+                .isEqualTo(FilterPredicate.in("code", new byte[] { 0x01 }, new byte[] { 0x02 }))
+                .hasSameHashCodeAs(FilterPredicate.in("code", new byte[] { 0x01 }, new byte[] { 0x02 }))
+                .isNotEqualTo(FilterPredicate.in("code", new byte[] { 0x01 }));
+    }
+
+    /// A `String` literal is compared as its UTF-8 bytes, and an unpaired surrogate has no UTF-8
+    /// encoding: encoding it would silently substitute `?` and filter on a different value.
+    @Test
+    void aStringLiteralThatIsNotWellFormedUtf16IsRejected() {
+        assertThatThrownBy(() -> FilterPredicate.eq("name", "\uD800"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'name' compares a String literal as its UTF-8 bytes;"
+                        + " the literal is not well-formed UTF-16 and has no UTF-8 encoding");
+        assertThatThrownBy(() -> FilterPredicate.inStrings("name", "ok", "\uDC00"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'name' compares a String literal as its UTF-8 bytes;"
+                        + " values[1] is not well-formed UTF-16 and has no UTF-8 encoding");
+    }
+
+    /// Two predicates on the same text are the same predicate, which the set form spells out
+    /// itself because an array does not compare by content.
+    @Test
+    void stringLiteralsCompareByContent() {
+        assertThat(FilterPredicate.eq("city", "NYC"))
+                .isEqualTo(FilterPredicate.eq("city", "NYC"))
+                .hasSameHashCodeAs(FilterPredicate.eq("city", "NYC"))
+                .isNotEqualTo(FilterPredicate.eq("city", "LA"))
+                .isNotEqualTo(FilterPredicate.notEq("city", "NYC"));
+        assertThat(FilterPredicate.inStrings("city", "NYC", "LA"))
+                .isEqualTo(FilterPredicate.inStrings("city", "NYC", "LA"))
+                .hasSameHashCodeAs(FilterPredicate.inStrings("city", "NYC", "LA"))
+                .isNotEqualTo(FilterPredicate.inStrings("city", "NYC"))
+                .isNotEqualTo(FilterPredicate.inStrings("town", "NYC", "LA"));
+    }
+
+    /// Every set form needs a value to test against: an empty one would be a predicate matching
+    /// nothing, which `not(isNull(...))` already says.
+    @Test
+    void everySetFormRejectsAnEmptyList() {
+        assertThatThrownBy(() -> FilterPredicate.in("c", new int[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new long[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new double[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new byte[0][]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+        assertThatThrownBy(() -> FilterPredicate.inStrings("c"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+    }
+
+    /// A null literal is a mistake at the call site, and it is caught there rather than at
+    /// reader creation or, worse, in a comparison.
+    @Test
+    void everyFactoryRejectsANullLiteral() {
+        assertThatThrownBy(() -> FilterPredicate.eq("c", (String) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.gt("c", (byte[]) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.lt("c", (LocalDate) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.ltEq("c", (Instant) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.gtEq("c", (LocalTime) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.notEq("c", (BigDecimal) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.eq("c", (UUID) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.in("c", (byte[][]) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new byte[] { 0x01 }, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.inStrings("c", "a", null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
     }
 
     @Test

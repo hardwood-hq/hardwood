@@ -32,7 +32,7 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getLong` | INT64 | | `long` |
 | `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | FLOAT16 (optional) | `float` |
 | `getDouble` | DOUBLE | | `double` |
-| `getBinary` | BYTE_ARRAY | BSON (optional) | `byte[]` |
+| `getBinary` | BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY | BSON (optional) | `byte[]` |
 | `getString` | BYTE_ARRAY | STRING, ENUM, or JSON | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |

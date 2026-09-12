@@ -49,9 +49,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// dictionary read in the wrong order shows up as a missing or extra row.
 ///
 /// An unsigned literal is the stored bit pattern, the form the accessors return. Binary literals
-/// go through the public [FilterPredicate.BinaryColumnPredicate] and
-/// [FilterPredicate.BinaryInPredicate] records, the form a filter converted from parquet-java
-/// takes.
+/// go through the `byte[]` factories, which take the stored bytes as a filter converted from
+/// parquet-java does.
 @Tag("differential")
 class DifferentialColumnOrderTest {
 
@@ -234,10 +233,17 @@ class DifferentialColumnOrderTest {
     }
 
     private static FilterPredicate bytes(String column, Operator op, byte[] value) {
-        return new FilterPredicate.BinaryColumnPredicate(column, op, value);
+        return switch (op) {
+            case EQ -> FilterPredicate.eq(column, value);
+            case NOT_EQ -> FilterPredicate.notEq(column, value);
+            case LT -> FilterPredicate.lt(column, value);
+            case LT_EQ -> FilterPredicate.ltEq(column, value);
+            case GT -> FilterPredicate.gt(column, value);
+            case GT_EQ -> FilterPredicate.gtEq(column, value);
+        };
     }
 
     private static FilterPredicate bytesIn(String column, byte[]... values) {
-        return new FilterPredicate.BinaryInPredicate(column, values);
+        return FilterPredicate.in(column, values);
     }
 }

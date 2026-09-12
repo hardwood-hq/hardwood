@@ -10,6 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -46,7 +47,7 @@ class ByteStringOrderFilterTest {
     @Test
     void aFloat16ColumnComparesABinaryLiteralNumerically() {
         assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.lt("h", asString(half(1.5f))), float16Schema()))
+                FilterPredicate.lt("h", half(1.5f)), float16Schema()))
                 .isInstanceOfSatisfying(ResolvedPredicate.Float16Predicate.class,
                         p -> assertThat(p.value()).isEqualTo(1.5f));
     }
@@ -58,14 +59,14 @@ class ByteStringOrderFilterTest {
         byte[] oneAndABit = { 0x01, 0x3C };
         byte[] file = writeFloat16(new byte[][] { half(1.0f), oneAndABit, half(1.5f) });
 
-        assertThat(filteredFloat16(file, FilterPredicate.eq("h", asString(oneAndABit))))
+        assertThat(filteredFloat16(file, FilterPredicate.eq("h", oneAndABit)))
                 .containsExactly(oneAndABit);
     }
 
     @Test
     void aFloat16LiteralOfTheWrongWidthIsRejected() {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.eq("h", "abc"), float16Schema()))
+                FilterPredicate.eq("h", new byte[] { 0x01, 0x02, 0x03 }), float16Schema()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'h' is a FLOAT16, whose literal is 2 bytes, not 3");
     }
@@ -76,7 +77,7 @@ class ByteStringOrderFilterTest {
     @Test
     void aByteArrayDecimalComparesABinaryLiteralAsItsValue() {
         assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.gt("amount", asString(new byte[] { 0x7F })), decimalSchema()))
+                FilterPredicate.gt("amount", new byte[] { 0x7F }), decimalSchema()))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL));
     }
@@ -89,7 +90,7 @@ class ByteStringOrderFilterTest {
                 .build();
 
         assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.gt("amount", asString(new byte[] { 0x7F })), fixed))
+                FilterPredicate.gt("amount", new byte[] { 0x7F }), fixed))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.FIXED_DECIMAL));
     }
@@ -101,7 +102,7 @@ class ByteStringOrderFilterTest {
         byte[] file = writeDecimals(new BigDecimal[] {
                 new BigDecimal("1.27"), new BigDecimal("3.00"), new BigDecimal("-1.00") });
 
-        assertThat(filteredDecimals(file, FilterPredicate.gt("amount", asString(new byte[] { 0x7F }))))
+        assertThat(filteredDecimals(file, FilterPredicate.gt("amount", new byte[] { 0x7F })))
                 .containsExactly(new BigDecimal("3.00"));
     }
 
@@ -112,7 +113,7 @@ class ByteStringOrderFilterTest {
     @Test
     void aDecimalSetTakesTheColumnsComparison() {
         assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.inStrings("amount", "a"), decimalSchema()))
+                FilterPredicate.in("amount", new byte[] { 0x61 }), decimalSchema()))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
                     assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL);
                     assertThat(p.byteExact()).isFalse();
@@ -122,7 +123,7 @@ class ByteStringOrderFilterTest {
                 .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4,
                         LogicalType.decimal(9, 2))
                 .build();
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("amount", "a"), fixed))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("amount", new byte[] { 0x61 }), fixed))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
                     assertThat(p.comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
                     assertThat(p.byteExact()).isTrue();
@@ -152,10 +153,10 @@ class ByteStringOrderFilterTest {
         byte[] oneAndABit = { 0x01, 0x3C };
         byte[] file = writeFloat16(new byte[][] { half(1.0f), oneAndABit, half(1.5f) });
 
-        assertThat(filteredFloat16(file, FilterPredicate.inStrings("h", asString(oneAndABit))))
+        assertThat(filteredFloat16(file, FilterPredicate.in("h", oneAndABit)))
                 .containsExactly(oneAndABit);
         assertThat(filteredFloat16(file, FilterPredicate.not(
-                FilterPredicate.inStrings("h", asString(oneAndABit)))))
+                FilterPredicate.in("h", oneAndABit))))
                 .containsExactly(half(1.0f), half(1.5f));
     }
 
@@ -176,7 +177,7 @@ class ByteStringOrderFilterTest {
     @Test
     void aFloat16SetProbeOfTheWrongWidthIsRejected() {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.inStrings("h", "abc"), float16Schema()))
+                FilterPredicate.in("h", new byte[] { 0x01, 0x02, 0x03 }), float16Schema()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'h' is a FLOAT16, whose literal is 2 bytes, not 3");
     }
@@ -186,7 +187,7 @@ class ByteStringOrderFilterTest {
     @Test
     void aFloat16SetPrunesInTheColumnsOrder() {
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.inStrings("h", asString(new byte[] { 0x01, 0x3C })), float16Schema());
+                FilterPredicate.in("h", new byte[] { 0x01, 0x3C }), float16Schema());
         Statistics stats = new Statistics(half(1.0f), half(1.5f), 0L, null, false);
 
         assertThat(MinMaxStats.of(stats, leaf, BoundsReadability.ALL).canDrop(leaf)).isFalse();
@@ -214,12 +215,13 @@ class ByteStringOrderFilterTest {
     /// only byte strings of that width and refuses an equality literal of any other.
     private static void assertByteString(FileSchema schema) {
         Integer width = schema.getColumn("c").typeLength();
-        String literal = "a".repeat(width == null ? 1 : width);
+        byte[] literal = new byte[width == null ? 1 : width];
+        Arrays.fill(literal, (byte) 0x61);
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("c", literal), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING));
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", literal), schema))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", literal), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class,
                         p -> assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING));
     }
@@ -227,16 +229,6 @@ class ByteStringOrderFilterTest {
     private static byte[] half(float value) {
         short bits = Float.floatToFloat16(value);
         return new byte[] { (byte) bits, (byte) (bits >>> 8) };
-    }
-
-    /// The literal as the byte-string factories take it. Every byte here is below `0x80`, which
-    /// is what UTF-8 round-trips one-for-one.
-    private static String asString(byte[] bytes) {
-        char[] chars = new char[bytes.length];
-        for (int i = 0; i < bytes.length; i++) {
-            chars[i] = (char) (bytes[i] & 0xFF);
-        }
-        return new String(chars);
     }
 
     private static FileSchema float16Schema() {
