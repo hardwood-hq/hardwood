@@ -49,6 +49,10 @@ public final class RowGroupsScreen {
                     state.selection(), ScreenState.RowGroupDetail.Pane.MENU, 0));
             return true;
         }
+        if (Keys.isOpenDataPreview(event)
+                && DataPreviewScreen.openAtRowGroup(model, stack, state.selection())) {
+            return true;
+        }
         return false;
     }
 
@@ -122,6 +126,7 @@ public final class RowGroupsScreen {
         return new Keys.Hints()
                 .add(true, CursorPane.hints(count))
                 .add(count > 0, "[Enter] open")
+                .add(DataPreviewScreen.hasRows(model, state.selection()), "[d] data")
                 .add(true, "[Esc] back")
                 .build();
     }

@@ -69,6 +69,12 @@ public class PrintCommand implements Command<CommandInvocation> {
     @Option(shortName = 'c', name = "columns", description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
+    @Option(name = "skip", description = "Number of rows to skip before printing, counted from 0. Cannot be combined with --row-group.")
+    Long skip;
+
+    @Option(name = "row-group", description = "Print the rows of a single row group, counted from 0. Cannot be combined with --skip.")
+    Integer rowGroup;
+
     @Override
     public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
@@ -78,13 +84,16 @@ public class PrintCommand implements Command<CommandInvocation> {
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             validateMaxWidth();
-            int rowLimit = RowLimits.parse(n);
+            RowLimits.RowWindow window = RowLimits.resolveWindow(
+                    reader.getFileMetaData(), skip, rowGroup, RowLimits.parse(n));
             ColumnProjection projection = parseColumnProjection();
             FileSchema fileSchema = reader.getFileSchema();
-            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
+            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, window)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
                 List<SchemaNode> fields = projectedFields(fileSchema, projection);
-                AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
+                // The row index names the row in the file, so it counts from where
+                // the read starts, not from the first row printed.
+                AtomicLong rowIndex = addRowIndex ? new AtomicLong(window.skip()) : null;
                 Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, headers.length));
                 if (transpose) {
                     printTransposed(stream, headers, fields, rowIndex);

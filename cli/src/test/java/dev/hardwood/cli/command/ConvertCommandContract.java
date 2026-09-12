@@ -279,6 +279,38 @@ interface ConvertCommandContract {
     }
 
     @Test
+    default void skipStartsAtTheGivenRow() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "--skip", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value
+                3,300""");
+    }
+
+    @Test
+    default void rowGroupConvertsThatGroupOnly() {
+        // filter_pushdown_int.parquet holds three row groups of 100 rows each.
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv",
+                "-c", "id", "--row-group", "2", "-n", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id
+                201
+                202""");
+    }
+
+    @Test
+    default void skipAndRowGroupAreRefusedTogether() {
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv",
+                "--skip", "1", "--row-group", "1");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("--skip and --row-group cannot be combined");
+    }
+
+    @Test
     default void rejectsNonIntegerRowLimit() {
         Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "abc");
 
