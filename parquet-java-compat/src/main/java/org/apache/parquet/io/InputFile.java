@@ -14,7 +14,6 @@ import java.io.IOException;
 /// In real parquet-java this interface also declares `newStream()`, but
 /// Hardwood does not use seekable input streams — it uses range reads via
 /// [dev.hardwood.InputFile]. This shim exists purely so that
-/// `HadoopInputFile.fromPath()` returns the correct upstream type and
 /// `ParquetReader.builder(ReadSupport, InputFile)` compiles.
 public interface InputFile {
 
