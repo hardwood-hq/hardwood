@@ -29,6 +29,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -825,14 +826,266 @@ class FilterPredicateResolverTest {
                 ;
     }
 
+    /// A bounding-box overlap has no inverse, so `not` over one is refused where every other
+    /// predicate the rule does not admit is: at reader creation, naming the column.
     @Test
     void resolveNotIntersectsThrows() {
         FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
                 LogicalType.geometry("OGC:CRS84"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)), schema))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Negation of spatial intersects predicate is not supported");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'loc' is tested by intersects, which has no inverse and cannot"
+                        + " appear below not");
+    }
+
+    /// `not` is lowered by inverting each leaf below it, so an `intersects` anywhere in that
+    /// subtree is the one that has no inverse.
+    @Test
+    void resolveNotOverACompoundHoldingIntersectsThrows() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 2),
+                new SchemaElement("loc", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, LogicalType.geometry("OGC:CRS84")),
+                new SchemaElement("id", PhysicalType.INT32, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, null)));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.and(
+                        FilterPredicate.eq("id", 1),
+                        FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)))),
+                schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'loc' is tested by intersects, which has no inverse and cannot"
+                        + " appear below not");
+    }
+
+    // ==================== Ordered operators ====================
+
+    /// parquet-format defines no order over these values, so comparing them answers in an order
+    /// nobody wrote: an `INTERVAL`'s little-endian components sort 256 months below 1 month.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void anOrderedOperatorIsRefusedOnAColumnWithNoOrder(String name, FileSchema schema,
+            FilterPredicate ordered, String annotation) {
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(ordered, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' is annotated " + annotation + ", whose values"
+                        + " parquet-format puts in no order; it takes equality and set membership only");
+    }
+
+    static Stream<Arguments> anOrderedOperatorIsRefusedOnAColumnWithNoOrder() {
+        FileSchema interval = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                new LogicalType.IntervalType());
+        FileSchema geometry = schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                LogicalType.geometry("OGC:CRS84"));
+        FileSchema geography = schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                LogicalType.geography("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
+        FileSchema nullColumn = schemaWithLogicalType("c", PhysicalType.INT32, new LogicalType.NullType());
+        return Stream.of(
+                Arguments.of("INTERVAL, byte literal", interval,
+                        FilterPredicate.lt("c", new byte[12]), "INTERVAL"),
+                Arguments.of("INTERVAL, PqInterval literal", interval,
+                        new FilterPredicate.IntervalColumnPredicate("c", FilterPredicate.Operator.GT,
+                                new PqInterval(1, 0, 0)), "INTERVAL"),
+                Arguments.of("GEOMETRY", geometry, FilterPredicate.gtEq("c", new byte[] { 1 }),
+                        "GEOMETRY(OGC:CRS84)"),
+                Arguments.of("GEOGRAPHY", geography, FilterPredicate.ltEq("c", new byte[] { 1 }),
+                        "GEOGRAPHY(OGC:CRS84, SPHERICAL)"),
+                Arguments.of("NULL", nullColumn, FilterPredicate.lt("c", 1), "NULL"));
+    }
+
+    /// Equality asks whether a stored value *is* the literal, which the stored bytes answer
+    /// whether or not the values order.
+    @Test
+    void anEqualityLiteralResolvesOnAColumnWithNoOrder() {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                LogicalType.geometry("OGC:CRS84"));
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("c", new byte[] { 1 }), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class, p -> {
+                    assertThat(p.op()).isEqualTo(FilterPredicate.Operator.EQ);
+                    assertThat(p.value()).containsExactly(1);
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                });
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", new byte[] { 1 }), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).hasDimensions(1, 1);
+                    assertThat(p.values()[0]).containsExactly(1);
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                });
+    }
+
+    // ==================== BOOLEAN ====================
+
+    /// `false` orders before `true` and the column holds nothing else, so every ordered operator
+    /// is an equality against one of the two or a constant.
+    @ParameterizedTest(name = "{0} {1}")
+    @MethodSource
+    void anOrderedBooleanPredicateResolvesToTheValuesItAdmits(FilterPredicate.Operator op,
+            boolean literal, ResolvedPredicate expected) {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.BOOLEAN, null);
+
+        assertThat(FilterPredicateResolver.resolve(
+                new FilterPredicate.BooleanColumnPredicate("c", op, literal), schema))
+                .isEqualTo(expected);
+    }
+
+    static Stream<Arguments> anOrderedBooleanPredicateResolvesToTheValuesItAdmits() {
+        ResolvedPredicate isFalse = new ResolvedPredicate.BooleanPredicate(0,
+                FilterPredicate.Operator.EQ, false);
+        ResolvedPredicate isTrue = new ResolvedPredicate.BooleanPredicate(0,
+                FilterPredicate.Operator.EQ, true);
+        ResolvedPredicate none = new ResolvedPredicate.NoRowPredicate(0);
+        ResolvedPredicate every = new ResolvedPredicate.EveryNonNullRowPredicate(0);
+        return Stream.of(
+                Arguments.of(FilterPredicate.Operator.LT, false, none),
+                Arguments.of(FilterPredicate.Operator.LT, true, isFalse),
+                Arguments.of(FilterPredicate.Operator.LT_EQ, false, isFalse),
+                Arguments.of(FilterPredicate.Operator.LT_EQ, true, every),
+                Arguments.of(FilterPredicate.Operator.GT, false, isTrue),
+                Arguments.of(FilterPredicate.Operator.GT, true, none),
+                Arguments.of(FilterPredicate.Operator.GT_EQ, false, every),
+                Arguments.of(FilterPredicate.Operator.GT_EQ, true, isTrue));
+    }
+
+    /// A constant negates to the other constant, so `not(ltEq(c, true))` keeps out the null rows
+    /// the comparison leaves unknown.
+    @Test
+    void negatingAnOrderedBooleanPredicateKeepsNullsOut() {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.BOOLEAN, null);
+
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.ltEq("c", true)), schema))
+                .isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.gt("c", false)), schema))
+                .isEqualTo(new ResolvedPredicate.BooleanPredicate(0, FilterPredicate.Operator.NOT_EQ,
+                        true));
+    }
+
+    // ==================== PqInterval ====================
+
+    @Test
+    void resolveIntervalToItsTwelveStoredBytes() {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                new LogicalType.IntervalType());
+
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.eq("c", new PqInterval(1, 2, 0x0102_0304L)), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class, p -> {
+                    assertThat(p.op()).isEqualTo(FilterPredicate.Operator.EQ);
+                    assertThat(p.value())
+                            .containsExactly(1, 0, 0, 0, 2, 0, 0, 0, 0x04, 0x03, 0x02, 0x01);
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                });
+    }
+
+    /// Each component is stored as an unsigned 32-bit value, so one outside that range is a value
+    /// the column cannot hold.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void anIntervalComponentOutsideTheUnsignedRangeThrows(String name, PqInterval literal) {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                new LogicalType.IntervalType());
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("c", literal), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' holds an interval whose months, days and milliseconds are"
+                        + " each within [0, 4294967295]; the equality literal " + literal
+                        + " is not a value it can hold");
+    }
+
+    static Stream<Arguments> anIntervalComponentOutsideTheUnsignedRangeThrows() {
+        return Stream.of(
+                Arguments.of("negative months", new PqInterval(-1, 0, 0)),
+                Arguments.of("days above 2^32 - 1", new PqInterval(0, 4_294_967_296L, 0)),
+                Arguments.of("milliseconds above 2^32 - 1", new PqInterval(0, 0, 4_294_967_296L)));
+    }
+
+    @Test
+    void resolveIntervalOnANonIntervalColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, null);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("c", new PqInterval(1, 0, 0)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' is not a IntervalType column (logical type: null)");
+    }
+
+    // ==================== VARIANT ====================
+
+    /// The `metadata` and `value` leaves of a `VARIANT` group hold the encoded variant, which
+    /// `getVariant` reads off the group. No literal stands for one, so they take null tests only.
+    @Test
+    void aPredicateOnALeafBelowAVariantGroupThrows() {
+        FileSchema schema = variantSchema();
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("v.value", new byte[] { 1 }), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'v.value' is a leaf of the VARIANT group 'v', which holds an"
+                        + " encoded variant; it takes isNull and isNotNull predicates only");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("v.metadata", new byte[] { 1 }), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'v.metadata' is a leaf of the VARIANT group 'v', which holds an"
+                        + " encoded variant; it takes isNull and isNotNull predicates only");
+    }
+
+    @Test
+    void aNullPredicateOnALeafBelowAVariantGroupResolves() {
+        FileSchema schema = variantSchema();
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNotNull("v.value"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNotNullPredicate(1, 2, 2));
+        // Answered from `metadata`, the one leaf below the group that is required.
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("v"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 1));
+    }
+
+    /// A shredded variant's `typed_value` fields sit deeper than the group's own two leaves, and
+    /// they hold the shredding rather than the variant: a row whose payload stayed in `value` has
+    /// them null. The group above the leaf is named however far down it is.
+    @Test
+    void aPredicateOnAShreddedVariantFieldThrows() {
+        FileSchema schema = shreddedVariantSchema();
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.gt("v.typed_value.age", 30), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'v.typed_value.age' is a leaf of the VARIANT group 'v', which"
+                        + " holds an encoded variant; it takes isNull and isNotNull predicates only");
+    }
+
+    /// `optional group v (VARIANT) { required binary metadata; optional binary value; }`
+    private static FileSchema variantSchema() {
+        return FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 1),
+                new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 2, null, null, null,
+                        null, LogicalType.variant(1)),
+                new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED,
+                        null, null, null, null, null, null),
+                new SchemaElement("value", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, null)));
+    }
+
+    /// `optional group v (VARIANT) { required binary metadata; optional binary value;
+    /// optional group typed_value { optional int32 age; } }`
+    private static FileSchema shreddedVariantSchema() {
+        return FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 1),
+                new SchemaElement("v", null, null, RepetitionType.OPTIONAL, 3, null, null, null,
+                        null, LogicalType.variant(1)),
+                new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, RepetitionType.REQUIRED,
+                        null, null, null, null, null, null),
+                new SchemaElement("value", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, null),
+                new SchemaElement("typed_value", null, null, RepetitionType.OPTIONAL, 1, null, null,
+                        null, null, null),
+                new SchemaElement("age", PhysicalType.INT32, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, null)));
     }
 
     // ==================== Column order propagation (#595) ====================

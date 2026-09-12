@@ -23,6 +23,16 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Every `FilterPredicate` factory rejects a null literal with a `NullPointerException` naming the argument ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
 
+- `lt`, `ltEq`, `gt` and `gtEq` throw `IllegalArgumentException` on an `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` or `NULL` column, whose values parquet-format puts in no order ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
+
+- A comparison or set predicate on a leaf below a `VARIANT` group throws `IllegalArgumentException`; those leaves hold the encoded variant and take `isNull` and `isNotNull` only ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
+
+- `not` over a predicate holding an `intersects` throws `IllegalArgumentException` at reader creation, where it used to throw `UnsupportedOperationException` ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
+
+- A `BOOLEAN` column takes `lt`, `ltEq`, `gt` and `gtEq`, ordering `false` before `true`; they used to be answerable only through the record constructor and returned every non-null row ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
+
+- `FilterPredicate.eq` and `notEq` take a `PqInterval` literal on an `INTERVAL` column ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
+
 - `getString` and `ColumnReader.getStrings` throw `IllegalArgumentException` on a column that does not hold text, where they used to decode its stored bytes as characters ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
 
 - An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).

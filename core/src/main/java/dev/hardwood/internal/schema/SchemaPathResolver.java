@@ -31,7 +31,11 @@ public final class SchemaPathResolver {
     ///        or `-1` when the root has no child of that name
     /// @param blockedByPrimitive `true` when the walk stopped because a segment would have had to
     ///        descend into a primitive column
-    public record Resolution(SchemaNode node, int topLevelChildIndex, boolean blockedByPrimitive) {
+    /// @param variantAncestor the path of the innermost `VARIANT` group the walk descended into on
+    ///        the way to the node, or `null` when it passed through none. A node below one holds a
+    ///        variant's encoded payload rather than a value of its own
+    public record Resolution(SchemaNode node, int topLevelChildIndex, boolean blockedByPrimitive,
+            String variantAncestor) {
     }
 
     /// Resolves `path` against the root node of `schema`.
@@ -44,10 +48,11 @@ public final class SchemaPathResolver {
         SchemaNode current = root;
         int topLevelChildIndex = -1;
         int start = 0;
+        String variantAncestor = null;
 
         while (true) {
             if (!(current instanceof SchemaNode.GroupNode group)) {
-                return new Resolution(null, topLevelChildIndex, true);
+                return new Resolution(null, topLevelChildIndex, true, variantAncestor);
             }
 
             int dot = path.indexOf('.', start);
@@ -55,7 +60,7 @@ public final class SchemaPathResolver {
 
             int childIndex = indexOfChild(group, path, start, end);
             if (childIndex < 0) {
-                return new Resolution(null, topLevelChildIndex, false);
+                return new Resolution(null, topLevelChildIndex, false, variantAncestor);
             }
             if (topLevelChildIndex < 0) {
                 topLevelChildIndex = childIndex;
@@ -63,7 +68,10 @@ public final class SchemaPathResolver {
             current = group.children().get(childIndex);
 
             if (dot < 0) {
-                return new Resolution(current, topLevelChildIndex, false);
+                return new Resolution(current, topLevelChildIndex, false, variantAncestor);
+            }
+            if (current instanceof SchemaNode.GroupNode child && child.isVariant()) {
+                variantAncestor = path.substring(0, end);
             }
             start = dot + 1;
         }

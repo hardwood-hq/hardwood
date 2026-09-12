@@ -40,6 +40,7 @@ import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -188,11 +189,6 @@ class PredicatePathAgreementTest {
     /// A [Rejected] case disagrees by being answered rather than refused, which is how a
     /// predicate the rule does not admit but a factory still builds is recorded.
     private static final Map<String, String> EXCLUDED = Map.of(
-            "bool: lt(true)", "#1183",
-            "bool: ltEq(false)", "#1183",
-            "bool: gt(false)", "#1183",
-            "bool: gtEq(true)", "#1183",
-            "bool: not(gt(false))", "#1183",
             "f16: in(0.1), a double on a FLOAT16 column", "#1195");
 
     // ==================== Cases ====================
@@ -203,14 +199,23 @@ class PredicatePathAgreementTest {
         // --- BOOLEAN: false before true ---
         cases.add(new Case("bool", "eq(true)", FilterPredicate.eq("bool", true), matching(eq(true))));
         cases.add(new Case("bool", "notEq(true)", FilterPredicate.notEq("bool", true), matching(notEq(true))));
-        cases.add(new Case("bool", "lt(true)", new FilterPredicate.BooleanColumnPredicate("bool", Operator.LT, true), matching(cmp(Operator.LT, true))));
-        cases.add(new Case("bool", "ltEq(false)", new FilterPredicate.BooleanColumnPredicate("bool", Operator.LT_EQ, false),
+        cases.add(new Case("bool", "lt(true)", FilterPredicate.lt("bool", true), matching(cmp(Operator.LT, true))));
+        cases.add(new Case("bool", "ltEq(false)", FilterPredicate.ltEq("bool", false),
                 matching(cmp(Operator.LT_EQ, false))));
-        cases.add(new Case("bool", "gt(false)", new FilterPredicate.BooleanColumnPredicate("bool", Operator.GT, false), matching(cmp(Operator.GT, false))));
-        cases.add(new Case("bool", "gtEq(true)", new FilterPredicate.BooleanColumnPredicate("bool", Operator.GT_EQ, true),
+        cases.add(new Case("bool", "gt(false)", FilterPredicate.gt("bool", false), matching(cmp(Operator.GT, false))));
+        cases.add(new Case("bool", "gtEq(true)", FilterPredicate.gtEq("bool", true),
                 matching(cmp(Operator.GT_EQ, true))));
-        cases.add(new Case("bool", "not(gt(false))", FilterPredicate.not(new FilterPredicate.BooleanColumnPredicate("bool", Operator.GT, false)),
+        cases.add(new Case("bool", "not(gt(false))", FilterPredicate.not(FilterPredicate.gt("bool", false)),
                 matching(cmp(Operator.LT_EQ, false))));
+        // The two values leave each of the other ordered operators a constant.
+        cases.add(new Case("bool", "lt(false)", FilterPredicate.lt("bool", false), matching(never())));
+        cases.add(new Case("bool", "ltEq(true)", FilterPredicate.ltEq("bool", true),
+                matching(everyNonNullRow())));
+        cases.add(new Case("bool", "gt(true)", FilterPredicate.gt("bool", true), matching(never())));
+        cases.add(new Case("bool", "gtEq(false)", FilterPredicate.gtEq("bool", false),
+                matching(everyNonNullRow())));
+        cases.add(new Case("bool", "not(ltEq(true))", FilterPredicate.not(FilterPredicate.ltEq("bool", true)),
+                matching(never())));
         cases.add(new Case("bool", "isNull", FilterPredicate.isNull("bool"), new MatchingNulls()));
         cases.add(new Case("bool", "isNotNull", FilterPredicate.isNotNull("bool"), matching(everyNonNullRow())));
 
@@ -275,7 +280,7 @@ class PredicatePathAgreementTest {
         binaryCases(cases, "ba", new byte[] { 0, (byte) 200 });
         binaryCases(cases, "flba5", new byte[] { 100, 0, 0, 0, (byte) 200 });
         binaryCases(cases, "bson", new byte[] { 0, (byte) 200, 0 });
-        intervalCases(cases, "iv", interval(200 % 13, 200 % 29, 200 * 1000));
+        intervalCases(cases, "iv", new PqInterval(200 % 13, 200 % 29, 200 * 1000));
         cases.add(new Case("str", "eq(emoji at row 399)", FilterPredicate.eq("str", "😀"),
                 matching(eq("😀"))));
         cases.add(new Case("str", "gt(full-width tilde at row 398)", FilterPredicate.gt("str", "～"),
@@ -583,18 +588,35 @@ class PredicatePathAgreementTest {
                 matching(notEqPhysical(literal))));
     }
 
-    /// An `INTERVAL` defines no order, so it takes equality and the set form only.
-    private static void intervalCases(List<Case> cases, String column, byte[] literal) {
-        String shown = HEX.formatHex(literal);
-        cases.add(new Case(column, "eq(" + shown + ")", binary(column, Operator.EQ, literal),
-                matching(eqPhysical(literal))));
-        cases.add(new Case(column, "notEq(" + shown + ")", binary(column, Operator.NOT_EQ, literal),
-                matching(notEqPhysical(literal))));
-        cases.add(new Case(column, "in(" + shown + ")", FilterPredicate.in(column, literal),
-                matching(eqPhysical(literal))));
+    /// An `INTERVAL` defines no order, so it takes equality and the set form only, over either of
+    /// its two literals: the [PqInterval] its accessor returns and the twelve stored bytes.
+    private static void intervalCases(List<Case> cases, String column, PqInterval literal) {
+        byte[] bytes = intervalBytes(literal);
+        String shown = HEX.formatHex(bytes);
+        cases.add(new Case(column, "eq(" + shown + ")", binary(column, Operator.EQ, bytes),
+                matching(eqPhysical(bytes))));
+        cases.add(new Case(column, "notEq(" + shown + ")", binary(column, Operator.NOT_EQ, bytes),
+                matching(notEqPhysical(bytes))));
+        cases.add(new Case(column, "in(" + shown + ")", FilterPredicate.in(column, bytes),
+                matching(eqPhysical(bytes))));
         cases.add(new Case(column, "not(in(" + shown + "))",
-                FilterPredicate.not(FilterPredicate.in(column, literal)),
-                matching(notEqPhysical(literal))));
+                FilterPredicate.not(FilterPredicate.in(column, bytes)),
+                matching(notEqPhysical(bytes))));
+        cases.add(new Case(column, "eq(" + literal + ")", FilterPredicate.eq(column, literal),
+                matching(eqPhysical(bytes))));
+        cases.add(new Case(column, "notEq(" + literal + ")", FilterPredicate.notEq(column, literal),
+                matching(notEqPhysical(bytes))));
+        cases.add(new Case(column, "not(eq(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.eq(column, literal)),
+                matching(notEqPhysical(bytes))));
+
+        String noOrder = "Column '" + column + "' is annotated INTERVAL, whose values"
+                + " parquet-format puts in no order; it takes equality and set membership only";
+        cases.add(new Case(column, "lt(" + shown + "), an ordered operator on an INTERVAL column",
+                binary(column, Operator.LT, bytes), new Rejected(noOrder)));
+        cases.add(new Case(column, "gtEq(" + literal + "), an ordered operator on an INTERVAL column",
+                new FilterPredicate.IntervalColumnPredicate(column, Operator.GT_EQ, literal),
+                new Rejected(noOrder)));
     }
 
     // ==================== The test ====================
@@ -921,10 +943,12 @@ class PredicatePathAgreementTest {
 
     /// The twelve bytes an `INTERVAL` column stores: months, days and milliseconds, each an
     /// unsigned little-endian 32-bit value.
-    private static byte[] interval(int months, int days, int millis) {
+    private static byte[] intervalBytes(PqInterval interval) {
         byte[] bytes = new byte[12];
         ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(months).putInt(days).putInt(millis);
+                .putInt(Math.toIntExact(interval.months()))
+                .putInt(Math.toIntExact(interval.days()))
+                .putInt(Math.toIntExact(interval.milliseconds()));
         return bytes;
     }
 

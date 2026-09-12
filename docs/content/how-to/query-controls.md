@@ -122,6 +122,8 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.row.PqInterval;
+
 // DATE columns
 FilterPredicate filter = FilterPredicate.gt("birth_date", LocalDate.of(2000, 1, 1));
 
@@ -141,6 +143,9 @@ FilterPredicate filter = FilterPredicate.eq("request_id",
 
 // Binary columns — the literal is the stored bytes, whatever the annotation reads them as
 FilterPredicate filter = FilterPredicate.gt("amount_bytes", new byte[] { 0x01, 0x2C });
+
+// INTERVAL columns — column must carry the INTERVAL logical type
+FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600_000));
 ```
 
 A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an unannotated
@@ -149,6 +154,8 @@ A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an 
 or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`.
 
 A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
+
+`lt`, `ltEq`, `gt` and `gtEq` need a column whose type defines an order. An `INTERVAL`, a `GEOMETRY`, a `GEOGRAPHY` and a `NULL` column define none, and take `eq`, `notEq` and the set form only. A `BOOLEAN` column orders `false` before `true` and takes every operator but the set form, which `eq`, `notEq` and `isNotNull` already express.
 
 A literal the column cannot store — an `Instant` finer than its time unit, a `BigDecimal` past its scale, a value outside the range of the `INT32` or `INT64` behind it — is rejected for `eq`, `notEq` and the set forms, and answered exactly for `lt`, `ltEq`, `gt` and `gtEq`. See [Literals the column cannot hold](../reference/query-controls.md#literals-the-column-cannot-hold).
 

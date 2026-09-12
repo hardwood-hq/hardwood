@@ -68,11 +68,16 @@ public interface BoundsReadability {
 
     /// Whether the annotation names an order for the values beneath it.
     ///
+    /// Two callers ask: this one, to decide whether bounds already recorded can be trusted, and
+    /// [FilterPredicateResolver], to decide whether a column takes `lt`, `ltEq`, `gt` and `gtEq`
+    /// at all. Both questions are the one the format answers, so they share an answer and cannot
+    /// drift apart.
+    ///
     /// The switch is exhaustive rather than a list of the types without one, so an annotation
     /// added later has to say which side it falls on. It mirrors
     /// `StatisticsOrder#supportsBounds` on the write side without delegating to it: that asks
-    /// whether to record bounds, this whether to trust bounds already recorded.
-    private static boolean namesAnOrder(LogicalType logicalType) {
+    /// whether to record bounds, this whether the values themselves have an order.
+    static boolean namesAnOrder(LogicalType logicalType) {
         if (logicalType == null) {
             return true; // the physical type's own order
         }

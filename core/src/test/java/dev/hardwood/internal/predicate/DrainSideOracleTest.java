@@ -106,8 +106,8 @@ class DrainSideOracleTest {
 
     @Test
     void singleBooleanLeaf_eqAndNotEq_bothWaysAgree() {
-        // BatchFilterCompiler.isSupported permits boolean only for EQ / NOT_EQ; other
-        // operators force a drain-side fallback and the oracle assertion is skipped.
+        // A BooleanPredicate carries EQ / NOT_EQ alone: the resolver answers every ordered
+        // operator on a boolean column as an equality or a constant.
         Workload w = workload(0xB001EA1);
         for (Operator op : new Operator[]{Operator.EQ, Operator.NOT_EQ}) {
             for (boolean lit : new boolean[]{true, false}) {

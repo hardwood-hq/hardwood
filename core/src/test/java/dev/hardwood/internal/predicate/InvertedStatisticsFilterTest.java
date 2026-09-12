@@ -94,7 +94,7 @@ class InvertedStatisticsFilterTest {
     /// The same columns with their bounds the right way round: a probe below the range still
     /// drops on `GT_EQ`, so the guard has not disabled pruning wholesale.
     @ParameterizedTest(name = "{0}")
-    @MethodSource("columns")
+    @MethodSource("orderedColumns")
     void orderedBoundsStillPrune(Column column) {
         // Every probe sits strictly inside [low, high], so "everything is >= the probe" is
         // false for the low end and the unit cannot match "< probe".
@@ -172,6 +172,15 @@ class InvertedStatisticsFilterTest {
             return leaf.apply(op);
         }
 
+        /// The operators a leaf of this column carries. A `BOOLEAN` leaf carries `EQ` and
+        /// `NOT_EQ` alone: the column's two values leave every ordered operator an equality or a
+        /// constant, which [FilterPredicateResolver] resolves it to.
+        Operator[] operators() {
+            return leaf.apply(Operator.EQ) instanceof ResolvedPredicate.BooleanPredicate
+                    ? new Operator[]{ Operator.EQ, Operator.NOT_EQ }
+                    : Operator.values();
+        }
+
         @Override
         public String toString() {
             return name;
@@ -218,8 +227,14 @@ class InvertedStatisticsFilterTest {
                         new double[]{ 15.0 }, false, false), doubleBytes(10.0), doubleBytes(20.0)));
     }
 
+    /// The columns whose leaf carries an ordered operator, which is every one but `BOOLEAN`: its
+    /// two values leave no comparison to prune with beyond an equality.
+    static Stream<Column> orderedColumns() {
+        return columns().filter(column -> column.operators().length == Operator.values().length);
+    }
+
     static Stream<Arguments> columnsAndOperators() {
-        return columns().flatMap(column -> Stream.of(Operator.values())
+        return columns().flatMap(column -> Stream.of(column.operators())
                 .map(op -> Arguments.of(column, op)));
     }
 

@@ -56,7 +56,6 @@ import dev.hardwood.internal.predicate.matcher.longs.UnsignedLongLtEqBatchMatche
 import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.NoRowBatchMatcher;
-import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.FileSchema;
 
 /// Compiles an eligible [ResolvedPredicate] into a [CompiledBatchFilter]:
@@ -276,8 +275,7 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
             case ResolvedPredicate.EveryNonNullRowPredicate ignored -> true;
             case ResolvedPredicate.NoRowPredicate ignored -> true;
-            case ResolvedPredicate.BooleanPredicate p ->
-                    p.op() == FilterPredicate.Operator.EQ || p.op() == FilterPredicate.Operator.NOT_EQ;
+            case ResolvedPredicate.BooleanPredicate ignored -> true;
             case ResolvedPredicate.Float16Predicate ignored -> false;
             case ResolvedPredicate.Float16InPredicate ignored -> false;
             case ResolvedPredicate.BinaryPredicate ignored -> false;
@@ -327,7 +325,7 @@ public final class BatchFilterCompiler {
                 case NOT_EQ -> new BooleanNotEqBatchMatcher(p.value());
                 default -> throw new IllegalStateException(
                         "Unsupported boolean operator reached leafMatcher: " + p.op()
-                                + " — isSupported should have rejected this");
+                                + " — BooleanPredicate takes EQ and NOT_EQ only");
             };
             // An ordered comparison reads the column's own order; equality and membership are bit
             // equality, which reads the same either way, so they reuse the signed matchers.
