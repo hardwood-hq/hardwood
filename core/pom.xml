@@ -213,4 +213,48 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Mutation analysis over the bloom filter I/O classes. Opt-in because it recompiles
+         and re-runs the bloom suites once per planted fault: `./mvnw -pl core
+         -Pmutation-test test-compile org.pitest:pitest-maven:mutationCoverage`. -->
+    <profile>
+      <id>mutation-test</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-maven</artifactId>
+            <configuration>
+              <mutationThreshold>89</mutationThreshold>
+              <maxSurviving>13</maxSurviving>
+              <targetClasses>
+                <param>dev.hardwood.internal.predicate.BloomFilterPrefetcher</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterReadPlanner</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterProbe</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterPrefetch*</param>
+                <param>dev.hardwood.internal.predicate.RowGroupBloomFilterSource</param>
+              </targetClasses>
+              <targetTests>
+                <param>dev.hardwood.internal.predicate.BloomFilterIoCoalescingTest</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterReadPlannerTest</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterPushDownTest</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterSignedZeroPushDownTest</param>
+                <param>dev.hardwood.BloomFilterEndToEndTest</param>
+              </targetTests>
+              <outputFormats>
+                <param>HTML</param>
+                <param>CSV</param>
+              </outputFormats>
+              <timestampedReports>false</timestampedReports>
+              <jvmArgs>
+                <value>--add-modules</value>
+                <value>jdk.incubator.vector</value>
+              </jvmArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

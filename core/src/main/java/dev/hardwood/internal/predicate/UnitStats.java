@@ -75,7 +75,9 @@ sealed interface UnitStats {
     ///
     /// @param leaf a leaf predicate; `AND` and `OR` are folded by the evaluators
     /// @param logContext the position enclosing this unit, which the unit narrows to itself to
-    ///        report bounds it had to discard
+    ///        report bounds it had to discard, or `null` to decide without reporting — for a dry
+    ///        run whose only purpose is to record which sources a real decision would consult,
+    ///        so that the real decision raises each warning once
     default FilterDecision decide(ResolvedPredicate leaf, LogContext logContext) {
         return switch (leaf) {
             case ResolvedPredicate.IsNullPredicate p -> {
@@ -122,7 +124,9 @@ sealed interface UnitStats {
             return FilterDecision.CANNOT_MATCH;
         }
         MinMaxStats minMax = minMax(leaf);
-        minMax.reportIfDiscarded(locate(logContext));
+        if (logContext != null) {
+            minMax.reportIfDiscarded(locate(logContext));
+        }
         return minMax.decideLeaf(leaf);
     }
 
