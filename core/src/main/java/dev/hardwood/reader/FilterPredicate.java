@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import dev.hardwood.row.PqInterval;
+
 /// A predicate for filtering row groups based on column statistics.
 ///
 /// Filter predicates enable predicate push-down: row groups whose statistics
@@ -103,6 +105,7 @@ public sealed interface FilterPredicate
                 FilterPredicate.InstantColumnPredicate,
                 FilterPredicate.TimeColumnPredicate,
                 FilterPredicate.DecimalColumnPredicate,
+                FilterPredicate.IntervalColumnPredicate,
                 FilterPredicate.IsNullPredicate,
                 FilterPredicate.IsNotNullPredicate,
                 FilterPredicate.And,
@@ -244,6 +247,29 @@ public sealed interface FilterPredicate
 
     static FilterPredicate notEq(String column, boolean value) {
         return new BooleanColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a `BOOLEAN` column, which orders `false` before `true`:
+    /// `lt(column, true)` matches the rows holding `false`, and `lt(column, false)` matches none.
+    static FilterPredicate lt(String column, boolean value) {
+        return new BooleanColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a `BOOLEAN` column. See
+    /// [#lt(String,boolean)].
+    static FilterPredicate ltEq(String column, boolean value) {
+        return new BooleanColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a `BOOLEAN` column. See [#lt(String,boolean)].
+    static FilterPredicate gt(String column, boolean value) {
+        return new BooleanColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a `BOOLEAN` column. See
+    /// [#lt(String,boolean)].
+    static FilterPredicate gtEq(String column, boolean value) {
+        return new BooleanColumnPredicate(column, Operator.GT_EQ, value);
     }
 
     // ==================== String Predicates ====================
@@ -520,6 +546,26 @@ public sealed interface FilterPredicate
         return new UUIDColumnPredicate(column, Operator.GT_EQ, uuidToBytes(value));
     }
 
+    // ==================== INTERVAL Predicates ====================
+
+    /// Creates an equals predicate for an `INTERVAL` column, whose literal is the
+    /// [PqInterval] [RowReader#getInterval] returns for it. The column must carry the `INTERVAL`
+    /// annotation.
+    ///
+    /// The format defines no order over intervals — there is no fixed conversion between months,
+    /// days and milliseconds — so `lt`, `ltEq`, `gt` and `gtEq` on an `INTERVAL` column throw
+    /// `IllegalArgumentException` at reader creation. Each component is stored as an unsigned
+    /// 32-bit value, so one outside `[0, 4294967295]` throws there as well.
+    static FilterPredicate eq(String column, PqInterval value) {
+        return new IntervalColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for an `INTERVAL` column. See
+    /// [#eq(String,PqInterval)].
+    static FilterPredicate notEq(String column, PqInterval value) {
+        return new IntervalColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
     // ==================== Conversion Helpers ====================
 
     /// Rejects a set form with no probe to test against.
@@ -566,6 +612,10 @@ public sealed interface FilterPredicate
     // ==================== GEOSPATIAL Predicates ====================
 
     ///  Creates a predicate that matches column chunks whose bounding box intersects the given bounding box.
+    ///
+    /// The rows a bounding box does not cover are not a bounding box, so the predicate has no
+    /// inverse: `not` over it, or over any predicate holding one, throws
+    /// `IllegalArgumentException` at reader creation.
     static FilterPredicate intersects(String column, double xmin, double ymin,
                                       double xmax, double ymax) {
         return new IntersectsPredicate(column, xmin, ymin, xmax, ymax);
@@ -798,6 +848,16 @@ public sealed interface FilterPredicate
     record TimeColumnPredicate(String column, Operator op, LocalTime value) implements FilterPredicate {
 
         public TimeColumnPredicate {
+            Objects.requireNonNull(value, "value");
+        }
+    }
+
+    /// Predicate for an `INTERVAL` column, comparing the twelve stored bytes as the three
+    /// unsigned 32-bit components they encode.
+    record IntervalColumnPredicate(String column, Operator op, PqInterval value)
+            implements FilterPredicate {
+
+        public IntervalColumnPredicate {
             Objects.requireNonNull(value, "value");
         }
     }

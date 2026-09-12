@@ -18,6 +18,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ResolvedPredicateTest {
 
+    /// A boolean column holds two values and nothing between them, so the resolver answers every
+    /// ordered operator on one as an equality or a constant. Nothing downstream reads an ordered
+    /// boolean leaf, so building one is a wiring error rather than a filter.
+    @Test
+    void anOrderedBooleanPredicateCannotBeBuilt() {
+        assertThatThrownBy(() -> new ResolvedPredicate.BooleanPredicate(3,
+                FilterPredicate.Operator.GT_EQ, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A boolean column takes EQ and NOT_EQ; GT_EQ on column 3 resolves to"
+                        + " an equality or a constant");
+    }
+
     @Test
     void testAndWithEmptyChildrenThrows() {
         assertThatThrownBy(() -> new ResolvedPredicate.And(List.of()))

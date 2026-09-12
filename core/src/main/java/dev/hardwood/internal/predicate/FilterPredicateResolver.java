@@ -10,6 +10,8 @@ package dev.hardwood.internal.predicate;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
@@ -36,11 +38,14 @@ import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntInPredicate;
 import dev.hardwood.reader.FilterPredicate.IntersectsPredicate;
+import dev.hardwood.reader.FilterPredicate.IntervalColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
+import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.reader.FilterPredicate.TimeColumnPredicate;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -58,6 +63,12 @@ public class FilterPredicateResolver {
 
     /// A `FLOAT16` value is two little-endian bytes of an IEEE half.
     private static final int FLOAT16_BYTES = 2;
+
+    /// An `INTERVAL` value is three unsigned little-endian 32-bit components.
+    private static final int INTERVAL_BYTES = 12;
+
+    /// The largest value one of those components holds.
+    private static final long UNSIGNED_INT_MAX = 0xFFFF_FFFFL;
 
     private static final BigInteger INT32_MIN = BigInteger.valueOf(Integer.MIN_VALUE);
     private static final BigInteger INT32_MAX = BigInteger.valueOf(Integer.MAX_VALUE);
@@ -98,8 +109,7 @@ public class FilterPredicateResolver {
             List<ColumnOrder> columnOrders) {
         return switch (predicate) {
             case DateColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.INT32, cs);
                 validateLogicalType(p.column(), LogicalType.DateType.class, cs);
                 BigInteger epochDay = BigInteger.valueOf(p.value().toEpochDay());
@@ -109,8 +119,7 @@ public class FilterPredicateResolver {
                         (op, day) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op, day.intValueExact()));
             }
             case InstantColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield carried(p.column(), cs.columnIndex(), p.op(),
@@ -121,8 +130,7 @@ public class FilterPredicateResolver {
                                 value.longValueExact()));
             }
             case TimeColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 LogicalType.TimeUnit unit = getTimeUnit(p.column(), cs);
                 BigInteger nanoOfDay = BigInteger.valueOf(p.value().toNanoOfDay());
                 String holds = "a whole number of " + unitName(unit);
@@ -140,8 +148,7 @@ public class FilterPredicateResolver {
                                 value.longValueExact()));
             }
             case DecimalColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 LogicalType.DecimalType dt = getDecimalType(p.column(), cs);
                 BigInteger floor = p.value().setScale(dt.scale(), RoundingMode.FLOOR).unscaledValue();
                 BigInteger ceiling = p.value().setScale(dt.scale(), RoundingMode.CEILING).unscaledValue();
@@ -180,24 +187,21 @@ public class FilterPredicateResolver {
                 }
             }
             case IntColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.INT32, cs);
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedIntPredicate(cs.columnIndex(), p.op(), p.value())
                         : new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case LongColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedLongPredicate(cs.columnIndex(), p.op(), p.value())
                         : new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case FloatColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
                     rejectUnholdableHalf(p.column(), p.op(), p.value());
@@ -209,21 +213,18 @@ public class FilterPredicateResolver {
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case DoubleColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.DOUBLE, cs);
                 yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value(),
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case BooleanColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.BOOLEAN, cs);
-                yield new ResolvedPredicate.BooleanPredicate(cs.columnIndex(), p.op(), p.value());
+                yield booleanLeaf(cs.columnIndex(), p.op(), p.value());
             }
             case BinaryColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 if (cs.logicalType() instanceof LogicalType.Float16Type) {
                     yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(),
@@ -240,16 +241,14 @@ public class FilterPredicateResolver {
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), comparison);
             }
             case FilterPredicate.StringColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 requireTextColumn(p.column(), cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
                         p.value().getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
             }
             case FilterPredicate.StringInPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 requireTextColumn(p.column(), cs);
                 byte[][] probes = new byte[p.values().length][];
@@ -260,32 +259,36 @@ public class FilterPredicateResolver {
                         Comparison.BYTE_STRING);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.UuidType.class, cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
                         Comparison.BYTE_STRING);
             }
+            case IntervalColumnPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
+                validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
+                validateLogicalType(p.column(), LogicalType.IntervalType.class, cs);
+                byte[] literal = intervalBytes(p.column(), p.value());
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), literal,
+                        Comparison.BYTE_STRING);
+            }
             case IntInPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.INT32, cs);
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedIntInPredicate(cs.columnIndex(), p.values())
                         : new ResolvedPredicate.IntInPredicate(cs.columnIndex(), p.values());
             }
             case LongInPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedLongInPredicate(cs.columnIndex(), p.values())
                         : new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
             }
             case BinaryInPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 if (cs.logicalType() instanceof LogicalType.Float16Type) {
                     yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(),
@@ -297,8 +300,7 @@ public class FilterPredicateResolver {
                         probeBytes(p.column(), p.values(), comparison, cs), comparison);
             }
             case DoubleInPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
                     yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
@@ -334,10 +336,11 @@ public class FilterPredicateResolver {
                     .toList());
             case Not n -> {
                 ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema, columnOrders);
+                rejectNegatedIntersects(n.delegate());
                 yield ResolvedPredicate.negate(resolvedDelegate);
             }
             case IntersectsPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
+                ColumnSchema cs = leafColumn(p.column(), schema);
                 if (!(cs.logicalType() instanceof LogicalType.GeometryType) &&
                         !(cs.logicalType() instanceof LogicalType.GeographyType)) {
                     throw new IllegalArgumentException(
@@ -389,20 +392,23 @@ public class FilterPredicateResolver {
         return new NullTarget(cs.columnIndex(), cs.maxDefinitionLevel(), cs.maxDefinitionLevel());
     }
 
-    /// The schema node `columnName` denotes, whether leaf or group.
-    ///
-    /// The walk answers what the name denotes directly, so a caller branches on the node it gets
-    /// back rather than on whether a leaf lookup threw.
+    /// The walk of `columnName` over the schema, which answers what the name denotes directly, so
+    /// a caller branches on the node it gets back rather than on whether a leaf lookup threw.
     ///
     /// @throws IllegalArgumentException if the name reaches no node in the schema
-    private static SchemaNode resolveNode(String columnName, FileSchema schema) {
-        SchemaNode node = SchemaPathResolver.resolve(schema, columnName).node();
+    private static SchemaPathResolver.Resolution resolvePath(String columnName, FileSchema schema) {
+        SchemaPathResolver.Resolution resolution = SchemaPathResolver.resolve(schema, columnName);
 
-        if (node == null) {
+        if (resolution.node() == null) {
             throw new IllegalArgumentException("Column '" + columnName + "' not found in schema");
         }
 
-        return node;
+        return resolution;
+    }
+
+    /// The schema node `columnName` denotes, whether leaf or group.
+    private static SchemaNode resolveNode(String columnName, FileSchema schema) {
+        return resolvePath(columnName, schema).node();
     }
 
     /// Rejects a group that occurs more than once per row, which is a group below a repeated path.
@@ -447,26 +453,80 @@ public class FilterPredicateResolver {
         return firstLeaf;
     }
 
-    /// Resolves a column name to its [ColumnSchema].
+    /// The leaf column a comparison, set or spatial predicate names, checked against what such a
+    /// predicate can be answered on at all.
     ///
-    /// Only leaf columns can carry a predicate. A name denoting a group — a struct, a `LIST`, or a
-    /// `MAP` — is rejected rather than resolved to one of the group's leaves, which would answer a
-    /// different question than the one that was asked.
+    /// Only a leaf carries a predicate. A name denoting a group — a struct, a `LIST`, or a `MAP` —
+    /// is rejected rather than resolved to one of the group's leaves, which would answer a
+    /// different question than the one that was asked. A leaf below a repeated path holds many
+    /// values per row, and one below a `VARIANT` group holds an encoded payload no accessor reads
+    /// as a value; both take `isNull` / `isNotNull` only, which [#resolveNullTarget] answers
+    /// without coming here.
     ///
     /// @return the resolved column schema
-    /// @throws IllegalArgumentException if the column is not found, or names a group rather than a
-    ///         leaf column
-    private static ColumnSchema resolveColumn(String columnName, FileSchema schema) {
-        SchemaNode node = resolveNode(columnName, schema);
+    /// @throws IllegalArgumentException if the column is not found, or is one no predicate of this
+    ///         shape reaches
+    private static ColumnSchema leafColumn(String columnName, FileSchema schema) {
+        SchemaPathResolver.Resolution resolution = resolvePath(columnName, schema);
 
-        if (node instanceof SchemaNode.GroupNode group) {
+        if (resolution.node() instanceof SchemaNode.GroupNode group) {
             rejectRepeatedGroup(columnName, group);
             throw new IllegalArgumentException(
                     "Filter predicates require a leaf column. "
                             + "Column '" + columnName + "' is a group.");
         }
+        if (resolution.variantAncestor() != null) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is a leaf of the VARIANT "
+                    + "group '" + resolution.variantAncestor() + "', which holds an encoded variant; "
+                    + "it takes isNull and isNotNull predicates only");
+        }
 
-        return schema.getColumn(columnName);
+        ColumnSchema columnSchema = schema.getColumn(columnName);
+        rejectRepeated(columnName, columnSchema);
+
+        return columnSchema;
+    }
+
+    /// The leaf column a predicate comparing with `op` names, refusing an ordered operator on a
+    /// column whose type puts its values in no order.
+    private static ColumnSchema leafColumn(String columnName, FileSchema schema, Operator op) {
+        ColumnSchema columnSchema = leafColumn(columnName, schema);
+        requireOrder(columnName, columnSchema, op);
+        return columnSchema;
+    }
+
+    /// Refuses `lt`, `ltEq`, `gt` and `gtEq` on a column whose annotation defines no order.
+    ///
+    /// parquet-format defines a sort order for most annotations and none for `INTERVAL`,
+    /// `GEOMETRY`, `GEOGRAPHY` and `NULL`: an interval's months, days and milliseconds have no
+    /// fixed conversion between them, and a geometry is a shape. Comparing their stored bytes
+    /// would answer in an order nobody defined — for an `INTERVAL`, one that sorts 256 months
+    /// below 1 month, since the components are little-endian. Equality and the set form stay:
+    /// those ask whether a stored value *is* the literal, which the bytes answer.
+    private static void requireOrder(String columnName, ColumnSchema columnSchema, Operator op) {
+        if (isEquality(op) || BoundsReadability.namesAnOrder(columnSchema.logicalType())) {
+            return;
+        }
+        throw new IllegalArgumentException("Column '" + columnName + "' is annotated "
+                + columnSchema.logicalType() + ", whose values parquet-format puts in no order; "
+                + "it takes equality and set membership only");
+    }
+
+    /// Refuses `not` over a predicate holding an `intersects`.
+    ///
+    /// `intersects` asks whether a bounding box overlaps the one a unit records, which has no
+    /// inverse: the rows a box does not cover are not a box. `not` is lowered by inverting each
+    /// leaf, so the whole tree below it is walked rather than the leaf alone.
+    private static void rejectNegatedIntersects(FilterPredicate predicate) {
+        switch (predicate) {
+            case IntersectsPredicate p -> throw new IllegalArgumentException("Column '" + p.column()
+                    + "' is tested by intersects, which has no inverse and cannot appear below not");
+            case And a -> a.filters().forEach(FilterPredicateResolver::rejectNegatedIntersects);
+            case Or o -> o.filters().forEach(FilterPredicateResolver::rejectNegatedIntersects);
+            case Not n -> rejectNegatedIntersects(n.delegate());
+            default -> {
+            }
+        }
     }
 
     // ==================== Type validation ====================
@@ -599,6 +659,57 @@ public class FilterPredicateResolver {
             String literals) {
         return new IllegalArgumentException("Column '" + columnName + "' is " + description
                 + ", which takes " + literals + " literals, not a String");
+    }
+
+    /// A `BOOLEAN` predicate, as one of the four answers a two-valued column has.
+    ///
+    /// `false` orders before `true` and a column holds nothing besides the two, so every ordered
+    /// operator is an equality against one of them or a constant: `ltEq(true)` admits every value
+    /// the column holds, `lt(false)` none. Reducing them here is what "Literals the column cannot
+    /// hold" does on any other carrier, and it leaves every evaluator — statistics, dictionary,
+    /// batch and record — the one boolean comparison it already answers.
+    private static ResolvedPredicate booleanLeaf(int columnIndex, Operator op, boolean value) {
+        return switch (op) {
+            case EQ, NOT_EQ -> new ResolvedPredicate.BooleanPredicate(columnIndex, op, value);
+            case LT -> value
+                    ? booleanEquals(columnIndex, false)
+                    : new ResolvedPredicate.NoRowPredicate(columnIndex);
+            case LT_EQ -> value
+                    ? new ResolvedPredicate.EveryNonNullRowPredicate(columnIndex)
+                    : booleanEquals(columnIndex, false);
+            case GT -> value
+                    ? new ResolvedPredicate.NoRowPredicate(columnIndex)
+                    : booleanEquals(columnIndex, true);
+            case GT_EQ -> value
+                    ? booleanEquals(columnIndex, true)
+                    : new ResolvedPredicate.EveryNonNullRowPredicate(columnIndex);
+        };
+    }
+
+    private static ResolvedPredicate booleanEquals(int columnIndex, boolean value) {
+        return new ResolvedPredicate.BooleanPredicate(columnIndex, Operator.EQ, value);
+    }
+
+    /// The twelve bytes an `INTERVAL` column stores for `value`: its months, its days and its
+    /// milliseconds, each an unsigned 32-bit little-endian integer.
+    private static byte[] intervalBytes(String columnName, PqInterval value) {
+        byte[] bytes = new byte[INTERVAL_BYTES];
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(unsignedComponent(columnName, value, value.months()))
+                .putInt(unsignedComponent(columnName, value, value.days()))
+                .putInt(unsignedComponent(columnName, value, value.milliseconds()));
+        return bytes;
+    }
+
+    /// One component of an interval literal, as the four bytes the column stores it in. The cast
+    /// takes the low 32 bits of a value measured against the unsigned range just above, which is
+    /// the bit pattern the column holds.
+    private static int unsignedComponent(String columnName, PqInterval literal, long component) {
+        if (component < 0 || component > UNSIGNED_INT_MAX) {
+            throw cannotHold(columnName, "an interval whose months, days and milliseconds are each "
+                    + "within [0, " + UNSIGNED_INT_MAX + "]", literal.toString());
+        }
+        return (int) component;
     }
 
     /// The two bytes of a `FLOAT16` literal, as the value they encode.

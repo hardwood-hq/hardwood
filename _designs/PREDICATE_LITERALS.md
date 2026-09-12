@@ -220,7 +220,9 @@ Where the conversion is not exact, it rounds as "Literals the column cannot hold
 literal past the column's range resolves to the "no row" constant on the side whose bound is
 missing, and to a comparison against the carrier's extreme on the other. `ResolvedPredicate.negate`
 maps that constant to "every non-null row", which a membership test also negates to when no probe
-is a value the column holds.
+is a value the column holds. A `BOOLEAN` column holds two values and nothing between them, so each
+ordered operator on one resolves the same way: to an equality against `false` or `true`, or to a
+constant. Every evaluator therefore answers a boolean column through one comparison.
 
 A `StringColumnPredicate` / `StringInPredicate` resolves in two steps. First, `requireTextColumn`
 decides whether the column takes a `String`. It is an exhaustive `switch` over `LogicalType`, the
@@ -268,7 +270,7 @@ express get the same answer; the differences are listed below.
 |---|---|
 | Fixed-width `DECIMAL` byte literal resolved to the column width | [#1190](https://github.com/hardwood-hq/hardwood/issues/1190) (done) |
 | `byte[]` literals and factories; `String` only where `getString` reads; `String` records; null literals and malformed `String`s rejected when built | [#1181](https://github.com/hardwood-hq/hardwood/issues/1181) (done) |
-| Ordered operators exactly on ordered types: `BOOLEAN` gains them, with record-level and batch matchers; `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL` lose them. `PqInterval` literal; leaves below a `VARIANT` group take null tests only; `not` over `intersects` rejected | [#1183](https://github.com/hardwood-hq/hardwood/issues/1183) |
+| Ordered operators exactly on ordered types: `BOOLEAN` gains them; `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL` lose them. `PqInterval` literal; leaves below a `VARIANT` group take null tests only; `not` over `intersects` rejected | [#1183](https://github.com/hardwood-hq/hardwood/issues/1183) (done) |
 | `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) |
 | Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) |

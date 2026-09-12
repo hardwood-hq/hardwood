@@ -19,10 +19,10 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 
 | Category | Supported |
 |---|---|
-| Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
+| Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
 | Set operators | `in` (int, long, double, `byte[]`), `inStrings` |
 | Null operators | `isNull`, `isNotNull` (any type) |
-| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column |
+| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
 | Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
 
@@ -42,9 +42,15 @@ magnitude. Set membership follows the same mapping: `in` on the
 on those taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
 reader creation.
 
+`eq`, `notEq` and the set form are available on every column below. The ordered operators `lt`,
+`ltEq`, `gt` and `gtEq` are available on the types that define an order, which is every one except
+`INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL`; on those four they throw `IllegalArgumentException`
+at reader creation. `BOOLEAN` is the one type with no set form, since `eq`, `notEq` and `isNotNull`
+express every set of two values.
+
 | Physical type | Logical type | Literal | Compared as |
 |---|---|---|---|
-| `BOOLEAN` | | `boolean` | equality only (`eq`, `notEq`) |
+| `BOOLEAN` | | `boolean` | `false` before `true` |
 | `INT32` | | `int` | signed |
 | `INT64` | | `long` | signed |
 | `FLOAT` | | `float` | numeric |
@@ -60,18 +66,19 @@ reader creation.
 | `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `byte[]` | the represented value |
 | `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | unsigned lexicographic |
 | `BYTE_ARRAY` | `BSON` | `byte[]` | unsigned lexicographic |
-| `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | four `double` bounds | bounding-box overlap |
+| `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; four `double` bounds for `intersects` | the WKB bytes, unsigned; `intersects` by bounding-box overlap |
 | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
 | `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float` |
-| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `byte[]` of 12 bytes | the 12 bytes, unsigned; the format defines no order for `INTERVAL`, so only equality is meaningful |
+| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
 | any | `NULL` | the literal for the physical type | nothing — every value is null, so no comparison matches |
 | group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
 
-A predicate on a `VARIANT` column reaches the group's presence, not the values inside it.
-Filtering on a shredded variant's sub-paths is in progress, tracked by
-[#309](https://github.com/hardwood-hq/hardwood/issues/309); the `metadata` and `value` leaves below
-the group take `BYTE_ARRAY` predicates as any leaf does, but they hold the encoded payload rather
-than the values a caller would filter on.
+A predicate on a `VARIANT` column reaches the group's presence, not the values inside it. The
+`metadata` and `value` leaves below the group, and a shredded variant's `typed_value` leaves, hold
+the encoded variant, which [`getVariant`](accessors.md) reads off the group; they take `isNull` and
+`isNotNull` only, and any other predicate on one throws `IllegalArgumentException` at reader
+creation. Filtering on a shredded variant's sub-paths is in progress, tracked by
+[#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
 A `FLOAT` or `DOUBLE` column compares by the `Double.compare` total order, so all `NaN` values
 equal each other and `-0.0` differs from `+0.0`. A `FLOAT` column's stored values widen to
@@ -125,6 +132,13 @@ literal throws `IllegalArgumentException` at reader creation, naming the literal
 does take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
 no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built.
 
+An `INTERVAL` column's other literal is the `PqInterval` that [`getInterval`](accessors.md)
+returns. Each of its three components is stored as an unsigned 32-bit value.
+
+```java
+FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600_000));
+```
+
 Every factory rejects a null literal with a `NullPointerException` naming the argument.
 
 ## Literals the column cannot hold
@@ -132,7 +146,8 @@ Every factory rejects a null literal with a `NullPointerException` naming the ar
 A literal can be a value of the column's literal type that the column itself cannot store: finer
 than the time unit of a `TIMESTAMP` or `TIME`, carrying more decimal places than a `DECIMAL`'s
 scale, past the range of the `INT32` or `INT64` that holds the column's values, of a width a
-fixed-width column does not have, or a `float` no IEEE half represents.
+fixed-width column does not have, a `float` no IEEE half represents, or a `PqInterval` with a
+component outside `[0, 4294967295]`.
 
 Equality (`eq`, `notEq`, a set form and its negation) asks whether a stored value *is* the
 literal. Against a value the column cannot store, `eq` could never match and `notEq` always

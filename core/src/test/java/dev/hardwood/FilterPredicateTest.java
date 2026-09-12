@@ -46,6 +46,7 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -539,6 +540,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicate.notEq("c", (BigDecimal) null))
                 .isInstanceOf(NullPointerException.class).hasMessage("value");
         assertThatThrownBy(() -> FilterPredicate.eq("c", (UUID) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("value");
+        assertThatThrownBy(() -> FilterPredicate.notEq("c", (PqInterval) null))
                 .isInstanceOf(NullPointerException.class).hasMessage("value");
         assertThatThrownBy(() -> FilterPredicate.in("c", (byte[][]) null))
                 .isInstanceOf(NullPointerException.class).hasMessage("values");

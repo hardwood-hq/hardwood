@@ -71,7 +71,21 @@ public sealed interface ResolvedPredicate {
             this(columnIndex, op, value, false);
         }
     }
-    record BooleanPredicate(int columnIndex, FilterPredicate.Operator op, boolean value) implements ResolvedPredicate {}
+    /// A comparison against a `BOOLEAN` column, which carries `EQ` or `NOT_EQ` and nothing else.
+    ///
+    /// The column holds two values and nothing between them, so
+    /// [FilterPredicateResolver#booleanLeaf] answers each ordered operator on one as an equality
+    /// against `false` or `true`, or as a constant. Stating that here keeps every evaluator's
+    /// boolean arm — statistics, dictionary, batch and record — reading one comparison, and names
+    /// the wiring error at the point it is made rather than at whichever evaluator sees it first.
+    record BooleanPredicate(int columnIndex, FilterPredicate.Operator op, boolean value) implements ResolvedPredicate {
+        public BooleanPredicate {
+            if (op != FilterPredicate.Operator.EQ && op != FilterPredicate.Operator.NOT_EQ) {
+                throw new IllegalArgumentException("A boolean column takes EQ and NOT_EQ; " + op
+                        + " on column " + columnIndex + " resolves to an equality or a constant");
+            }
+        }
+    }
 
     /// A comparison against a byte string.
     ///
@@ -540,8 +554,9 @@ public sealed interface ResolvedPredicate {
                 }
                 yield new And(notEqs);
             }
-            case GeospatialPredicate p -> throw new UnsupportedOperationException(
-                    "Negation of spatial intersects predicate is not supported");
+            case GeospatialPredicate p -> throw new IllegalStateException(
+                    "A spatial intersects predicate on column " + p.columnIndex() + " reached"
+                            + " negation; the resolver refuses one below not");
         };
     }
 

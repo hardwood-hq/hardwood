@@ -7,10 +7,14 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -93,4 +97,34 @@ class SchemaPathResolverTest {
         assertThat(SchemaPathResolver.resolve(SCHEMA, "").node()).isNull();
         assertThat(SchemaPathResolver.resolve(SCHEMA, "address.").node()).isNull();
     }
+
+    @Test
+    void aPathThroughNoVariantGroupNamesNoVariantAncestor() {
+        assertThat(SchemaPathResolver.resolve(SCHEMA, "id").variantAncestor()).isNull();
+        assertThat(SchemaPathResolver.resolve(SCHEMA, "address.city").variantAncestor()).isNull();
+    }
+
+    /// A node below a `VARIANT` group holds the encoded variant rather than a value of its own,
+    /// so the walk names the group it descended into, however far above the node it sits. The
+    /// group itself is not below one.
+    @Test
+    void aNodeBelowAVariantGroupNamesTheGroupItDescendedInto() {
+        assertThat(SchemaPathResolver.resolve(VARIANT_SCHEMA, "v").variantAncestor()).isNull();
+        assertThat(SchemaPathResolver.resolve(VARIANT_SCHEMA, "v.value").variantAncestor())
+                .isEqualTo("v");
+        assertThat(SchemaPathResolver.resolve(VARIANT_SCHEMA, "v.typed_value").variantAncestor())
+                .isEqualTo("v");
+        assertThat(SchemaPathResolver.resolve(VARIANT_SCHEMA, "v.typed_value.age").variantAncestor())
+                .isEqualTo("v");
+    }
+
+    /// `optional group v (VARIANT) { required binary metadata; optional binary value;
+    /// optional group typed_value { optional int32 age; } }`
+    private static final FileSchema VARIANT_SCHEMA = FileSchema.fromSchemaElements(List.of(
+            SchemaElement.root("root", 1),
+            SchemaElement.group("v", RepetitionType.OPTIONAL, 3, LogicalType.variant(1)),
+            SchemaElement.primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+            SchemaElement.primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL),
+            SchemaElement.group("typed_value", RepetitionType.OPTIONAL, 1),
+            SchemaElement.primitive("age", PhysicalType.INT32, RepetitionType.OPTIONAL)));
 }
