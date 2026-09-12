@@ -11,6 +11,7 @@ import java.util.List;
 
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -24,7 +25,12 @@ import dev.hardwood.schema.FileSchema;
 ///   `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` and `MAP`, and asks that `INTERVAL` record no
 ///   bounds at all;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
-///   as a column whose `min` / `max` are to be ignored.
+///   as a column whose `min` / `max` are to be ignored;
+/// - the column is a legacy `INT96` timestamp. Its values are compared as the instants they
+///   encode, and no order a writer records bounds in is that order on every value:
+///   `parquet.thrift` says to ignore `INT96` bounds under the type-defined order, parquet-java
+///   writes them in the byte order of a big-endian integer, and `Int96TimestampOrder` compares
+///   the day before the nanoseconds of the day, which the format does not bound by one day.
 ///
 /// Bloom filters and dictionaries are unaffected: both test exact stored values, which does not
 /// depend on how those values order.
@@ -55,7 +61,8 @@ public interface BoundsReadability {
             ColumnSchema column = schema.getColumn(i);
             boolean orderRecognized = columnOrders.size() <= i
                     || columnOrders.get(i) != ColumnOrder.UNKNOWN;
-            readable[i] = orderRecognized && namesAnOrder(column.logicalType());
+            readable[i] = orderRecognized && column.type() != PhysicalType.INT96
+                    && namesAnOrder(column.logicalType());
         }
         return columnIndex -> {
             if (columnIndex < 0 || columnIndex >= readable.length) {

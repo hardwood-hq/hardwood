@@ -9,6 +9,8 @@ package dev.hardwood.internal.predicate;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -162,6 +164,138 @@ class FilterPredicateResolverTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'ts' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
                         + " which takes Instant and long literals, not a LocalDateTime");
+    }
+
+    // ==================== INT96 ====================
+
+    /// The last Julian day an `INT96` stores, as an epoch second at its midnight.
+    private static final long LAST_INT96_DAY_EPOCH_SECOND = (Integer.MAX_VALUE - 2_440_588L) * 86_400L;
+
+    @ParameterizedTest
+    @EnumSource(FilterPredicate.Operator.class)
+    void resolveInstantOnInt96ToItsCanonicalBytes(FilterPredicate.Operator op) {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        // 2023-11-14 is Julian day 2460263.
+        Instant instant = Instant.parse("2023-11-14T12:00:00.000000001Z");
+
+        assertThat(FilterPredicateResolver.resolve(instantPredicate("ts", op, instant), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, op,
+                        int96(43_200_000_000_001L, 2_460_263), Comparison.INT96_INSTANT));
+    }
+
+    @Test
+    void resolveInstantBeforeTheEpochOnInt96() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("ts", Instant.ofEpochSecond(-1, 5)), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.LT,
+                        int96(86_399_000_000_005L, 2_440_587), Comparison.INT96_INSTANT));
+    }
+
+    @Test
+    void resolveEqualityPastTheLastInt96DayThrows() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        Instant past = Instant.ofEpochSecond(LAST_INT96_DAY_EPOCH_SECOND + 86_400L);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.notEq("ts", past), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' holds an instant whose Julian day is within the INT32 range; "
+                        + "the equality literal " + past + " is not a value it can hold");
+    }
+
+    /// A stored value's nanoseconds may run past one day, so a value can lie beyond the last Julian
+    /// day. An order literal there keeps that day and carries the rest in its nanoseconds.
+    @Test
+    void resolveOrderPastTheLastInt96DayIntoItsNanoseconds() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        Instant past = Instant.ofEpochSecond(LAST_INT96_DAY_EPOCH_SECOND + 2 * 86_400L + 5);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.gt("ts", past), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.GT,
+                        int96(2 * 86_400_000_000_000L + 5_000_000_000L, Integer.MAX_VALUE),
+                        Comparison.INT96_INSTANT));
+    }
+
+    @Test
+    void resolveOrderBeforeTheFirstInt96DayIntoItsNanoseconds() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        long firstDayEpochSecond = (Integer.MIN_VALUE - 2_440_588L) * 86_400L;
+        Instant before = Instant.ofEpochSecond(firstDayEpochSecond - 86_400L + 5);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.ltEq("ts", before), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.LT_EQ,
+                        int96(-86_400_000_000_000L + 5_000_000_000L, Integer.MIN_VALUE),
+                        Comparison.INT96_INSTANT));
+    }
+
+    /// Past the day an `INT64` of nanoseconds reaches, no stored value lies on the far side.
+    @Test
+    void resolveOrderPastEveryInt96ValueToAConstant() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("ts", Instant.MAX), schema))
+                .isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.gtEq("ts", Instant.MAX), schema))
+                .isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.ltEq("ts", Instant.MIN), schema))
+                .isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.gt("ts", Instant.MIN), schema))
+                .isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
+    }
+
+    @Test
+    void resolveByteLiteralOnInt96ComparesAsTheInstant() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        byte[] nonCanonical = int96(86_400_000_000_000L, 2_460_262);
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.gtEq("ts", nonCanonical), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.GT_EQ,
+                        nonCanonical, Comparison.INT96_INSTANT));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("ts", nonCanonical), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] { nonCanonical });
+                    assertThat(p.comparison()).isEqualTo(Comparison.INT96_INSTANT);
+                });
+    }
+
+    @Test
+    void resolveByteLiteralOfAnotherWidthOnInt96Throws() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.lt("ts", new byte[13]), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is an INT96, whose literal is 12 bytes, not 13");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", new byte[12], new byte[4]), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is an INT96, whose literal is 12 bytes, not 4");
+    }
+
+    @Test
+    void resolveLocalDateTimeOnInt96Throws() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("ts", LocalDateTime.parse("2023-11-14T12:00:00")), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field),"
+                        + " which takes Instant and byte[] literals, not a LocalDateTime");
+    }
+
+    private static FilterPredicate instantPredicate(String column, FilterPredicate.Operator op, Instant value) {
+        return switch (op) {
+            case EQ -> FilterPredicate.eq(column, value);
+            case NOT_EQ -> FilterPredicate.notEq(column, value);
+            case LT -> FilterPredicate.lt(column, value);
+            case LT_EQ -> FilterPredicate.ltEq(column, value);
+            case GT -> FilterPredicate.gt(column, value);
+            case GT_EQ -> FilterPredicate.gtEq(column, value);
+        };
+    }
+
+    /// Twelve `INT96` bytes: nanoseconds of the day, then the Julian day, both little-endian.
+    private static byte[] int96(long nanosOfDay, int julianDay) {
+        return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putLong(nanosOfDay).putInt(julianDay).array();
     }
 
     // ==================== LocalDateTime ====================
@@ -395,7 +529,7 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("amount", new BigDecimal("1.00")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
-        assertThat(bp.signed()).isTrue();
+        assertThat(bp.comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
         // 1.00 with scale 2 → unscaled 100 → padded to 16 bytes
         byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
                 new BigDecimal("1.00").setScale(2).unscaledValue(), 16);
@@ -431,7 +565,7 @@ class FilterPredicateResolverTest {
                 new FilterPredicate.BinaryColumnPredicate("amount", FilterPredicate.Operator.GT, value),
                 schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
-        assertThat(((ResolvedPredicate.BinaryPredicate) resolved).signed()).isTrue();
+        assertThat(((ResolvedPredicate.BinaryPredicate) resolved).comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
     }
 
     @Test
@@ -442,7 +576,7 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("amount", new BigDecimal("-1.50")), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
-        assertThat(bp.signed()).isTrue();
+        assertThat(bp.comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
         // -1.50 with scale 2 → unscaled -150 → sign-extended to 8 bytes
         byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
                 new BigDecimal("-1.50").setScale(2).unscaledValue(), 8);
@@ -589,7 +723,7 @@ class FilterPredicateResolverTest {
 
         assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
         ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
-        assertThat(bp.signed()).isFalse();
+        assertThat(bp.comparison()).isEqualTo(Comparison.BYTE_STRING);
         assertThat(bp.op()).isEqualTo(FilterPredicate.Operator.EQ);
         assertThat(bp.columnIndex()).isEqualTo(0);
     }

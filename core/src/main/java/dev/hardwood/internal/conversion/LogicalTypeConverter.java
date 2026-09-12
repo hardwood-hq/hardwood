@@ -33,10 +33,10 @@ public final class LogicalTypeConverter {
     private static final int UUID_BYTES = 16;
     private static final int INTERVAL_BYTES = 12;
     private static final int FLOAT16_BYTES = 2;
-    private static final int INT96_BYTES = 12;
+    public static final int INT96_BYTES = 12;
 
     /// Julian day number of the Unix epoch (1970-01-01).
-    private static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
+    public static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
 
     private LogicalTypeConverter() {
     }

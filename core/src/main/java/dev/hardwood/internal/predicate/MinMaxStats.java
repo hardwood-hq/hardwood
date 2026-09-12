@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.Statistics;
 
@@ -47,8 +48,9 @@ sealed interface MinMaxStats {
     /// pruning directions at once (#1172).
     String INVERTED = "the minimum sorts above the maximum";
 
-    /// The column's annotation names no ordering, or the file names one this build does not
-    /// recognize, so there is no reading of the pair that the file vouches for (#1179).
+    /// The column's annotation names no ordering, the file names one this build does not
+    /// recognize, or the column is an `INT96`, whose values no recorded order follows, so there
+    /// is no reading of the pair that the file vouches for (#1179).
     String UNKNOWN_SORT_ORDER =
             "the order they were written in is one this reader cannot read";
 
@@ -195,8 +197,8 @@ sealed interface MinMaxStats {
             case ResolvedPredicate.DoublePredicate p -> DoubleStats.of(
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
                     p.ieee754TotalOrder(), nanFree, nullCount);
-            case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
-            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
+            case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.comparison(), nullCount);
+            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.comparison(), nullCount);
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
@@ -513,20 +515,16 @@ sealed interface MinMaxStats {
         }
     }
 
-    /// Byte-string bounds, compared unsigned or as big-endian two's complement according to
-    /// the column's order.
-    record BinaryStats(byte[] min, byte[] max, boolean signed, Long nullCount) implements MinMaxStats {
+    /// Byte-string bounds, compared in the column's order.
+    record BinaryStats(byte[] min, byte[] max, Comparison comparison, Long nullCount) implements MinMaxStats {
 
-        static MinMaxStats of(byte[] min, byte[] max, boolean signed, Long nullCount) {
+        static MinMaxStats of(byte[] min, byte[] max, Comparison comparison, Long nullCount) {
             // -100 sorts below +100 as a two's complement number and above it as a byte
             // string, so only the column's own order tells a decimal's bounds apart from an
             // inverted pair.
-            int comparison = signed
-                    ? BinaryComparator.compareSigned(min, max)
-                    : BinaryComparator.compareUnsigned(min, max);
-            return comparison > 0
+            return comparison.compare(min, max) > 0
                     ? new NullCountOnlyStats(nullCount, INVERTED)
-                    : new BinaryStats(min, max, signed, nullCount);
+                    : new BinaryStats(min, max, comparison, nullCount);
         }
 
         @Override
@@ -535,7 +533,7 @@ sealed interface MinMaxStats {
                 case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.canDropCompared(
                         p.op(), compare(p.value(), min), compare(p.value(), max), compare(min, max));
                 case ResolvedPredicate.BinaryInPredicate p ->
-                        StatisticsFilterSupport.canDropBinaryIn(p.values(), min, max, signed);
+                        StatisticsFilterSupport.canDropBinaryIn(p.values(), min, max, comparison);
                 default -> throw wrongWidth("BYTE_ARRAY", leaf);
             };
         }
@@ -546,15 +544,13 @@ sealed interface MinMaxStats {
                 case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.alwaysMatchesCompared(
                         p.op(), compare(p.value(), min), compare(p.value(), max), compare(min, max));
                 case ResolvedPredicate.BinaryInPredicate p ->
-                        StatisticsFilterSupport.alwaysMatchesBinaryIn(p.values(), min, max, signed);
+                        StatisticsFilterSupport.alwaysMatchesBinaryIn(p.values(), min, max, comparison);
                 default -> throw wrongWidth("BYTE_ARRAY", leaf);
             };
         }
 
         private int compare(byte[] left, byte[] right) {
-            return signed
-                    ? BinaryComparator.compareSigned(left, right)
-                    : BinaryComparator.compareUnsigned(left, right);
+            return comparison.compare(left, right);
         }
     }
 }

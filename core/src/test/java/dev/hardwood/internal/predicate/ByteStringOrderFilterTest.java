@@ -139,8 +139,8 @@ class ByteStringOrderFilterTest {
         byte[] min = { (byte) 0x9C };
         byte[] max = { 0x01, 0x2C };
 
-        assertThat(StatisticsFilterSupport.canDropBinaryIn(probe, min, max, true)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropBinaryIn(probe, min, max, false))
+        assertThat(StatisticsFilterSupport.canDropBinaryIn(probe, min, max, Comparison.VARIABLE_DECIMAL)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropBinaryIn(probe, min, max, Comparison.BYTE_STRING))
                 .as("byte-wise the probe sorts below the minimum, which must not be acted on")
                 .isTrue();
     }

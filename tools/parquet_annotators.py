@@ -348,6 +348,35 @@ def falsify_int64_row_group_minmax(path: str, column_name: str, row_group_index:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def set_row_group_min_max(path: str, column_name: str, row_group_index: int,
+                          min_value: bytes, max_value: bytes) -> None:
+    """Rewrite `path` so the named column's statistics in one row group record
+    `min_value` and `max_value`, adding the statistics where the writer wrote none.
+
+    Supplies bounds a writer would record but PyArrow does not, such as the
+    byte-ordered bounds parquet-java writes for an `INT96` column. The values
+    are stored as given, already encoded as the column's plain bytes.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    if row_group_index >= len(file_metadata.row_groups):
+        raise ValueError(f"{path} has no row group at index {row_group_index}")
+    columns = file_metadata.row_groups[row_group_index].columns
+    chunk = next((c for c in columns
+                  if c.meta_data is not None and c.meta_data.path_in_schema == [column_name]), None)
+    if chunk is None:
+        raise ValueError(f"Column {column_name!r} not found in row group {row_group_index} of {path}")
+    if chunk.meta_data.statistics is None:
+        chunk.meta_data.statistics = _parquet.Statistics()
+    stats = chunk.meta_data.statistics
+    stats.min_value = min_value
+    stats.max_value = max_value
+    stats.is_min_value_exact = True
+    stats.is_max_value_exact = True
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def drop_dictionary_page_offset(path: str, column_name: str) -> None:
     """Rewrite `path` so the named column chunk omits `dictionary_page_offset`, with
     `data_page_offset` naming the dictionary page at the chunk start rather than the

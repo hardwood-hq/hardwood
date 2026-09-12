@@ -39,6 +39,7 @@ from parquet_annotators import (
     strip_converted_type,
     corrupt_data_page_offset_negative,
     falsify_int64_row_group_minmax,
+    set_row_group_min_max,
     remove_map_value_field,
     drop_dictionary_page_offset,
 )
@@ -6096,7 +6097,99 @@ for pred_name, pred_rg_size in [('predicate_nested_single', PRED_ROWS), ('predic
         store_decimal_as_integer=True,
     )
 
+# INT96 in a corpus of its own, since PyArrow writes every timestamp of a file as INT96 once asked
+# to. `ts96` crosses day boundaries and the epoch; `s.ts96` is null under a present struct.
+#
+# Row 250 is re-encoded after writing as the same instant under a day one lower and a
+# nanoseconds-of-day field one day longer, which the format can express and a conforming writer
+# does not produce. An equality shortcut testing exact bytes misses it.
+#
+# PyArrow writes no INT96 statistics. The multi-row-group and dictionary layouts get the bounds
+# parquet-java writes, which order the stored bytes as a big-endian signed integer rather than as
+# instants, so pruning against them drops rows that match.
+_PRED_DAY_NS = 86_400 * 10**9
+_PRED_JULIAN_EPOCH_DAY = 2_440_588
+_PRED_NON_CANONICAL_ROW = 250
+
+
+def _pred_ts96_ns(r):
+    if r == 3:
+        return -1                                   # 1969-12-31T23:59:59.999999999Z
+    if r == 4:
+        return -2_208_988_800 * 10**9               # 1900-01-01T00:00:00Z
+    if r == 6:
+        return 1_699_920_000 * 10**9                # 2023-11-14T00:00:00Z, a midnight
+    return _PRED_BASE_MS * 10**6 + (r - 200) * 3_600_000_000_123 + r
+
+
+def _pred_int96_bytes(nanos_of_day, julian_day):
+    return nanos_of_day.to_bytes(8, 'little', signed=True) + julian_day.to_bytes(4, 'little', signed=True)
+
+
+def _pred_int96_canonical(ns):
+    return _pred_int96_bytes(ns % _PRED_DAY_NS, ns // _PRED_DAY_NS + _PRED_JULIAN_EPOCH_DAY)
+
+
+def _pred_int96_stored(r):
+    ns = _pred_ts96_ns(r)
+    if r == _PRED_NON_CANONICAL_ROW:
+        return _pred_int96_bytes(ns % _PRED_DAY_NS + _PRED_DAY_NS, ns // _PRED_DAY_NS + _PRED_JULIAN_EPOCH_DAY - 1)
+    return _pred_int96_canonical(ns)
+
+
+def _pred_ts96_values():
+    return _pred_opt([_pred_ts96_ns(r) for r in _pred_range])
+
+
+pred_int96_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('zz', pa.binary(), False),
+    ('ts96', pa.timestamp('ns', tz='UTC')),
+    ('s', pa.struct([('ts96', pa.timestamp('ns', tz='UTC'))])),
+])
+pred_int96_table = pa.table({
+    '__row__': _pred_range,
+    'zz': [b'z'] * PRED_ROWS,
+    'ts96': pa.array(_pred_ts96_values(), pa.timestamp('ns', tz='UTC')),
+    's': pa.array([None if r % 41 == 7 else {'ts96': None if r % 43 == 9 else _pred_ts96_ns(r)}
+                   for r in _pred_range],
+                  pa.struct([('ts96', pa.timestamp('ns', tz='UTC'))])),
+}, schema=pred_int96_schema)
+for pred_name, pred_rg_size, pred_dictionary in [
+        ('predicate_int96_single', PRED_ROWS, False),
+        ('predicate_int96_multi', 100, False),
+        ('predicate_int96_dict', 100, True)]:
+    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+    pq.write_table(
+        pred_int96_table,
+        pred_path,
+        use_dictionary=pred_dictionary,
+        compression=None,
+        data_page_version='1.0',
+        row_group_size=pred_rg_size,
+        data_page_size=512,
+        write_batch_size=40,
+        write_statistics=True,
+        use_deprecated_int96_timestamps=True,
+    )
+    with open(pred_path, 'rb') as f:
+        pred_raw = f.read()
+    canonical = _pred_int96_canonical(_pred_ts96_ns(_PRED_NON_CANONICAL_ROW))
+    # Once in `ts96` and once in `s.ts96`, as a value in a page or as a dictionary entry.
+    if pred_raw.count(canonical) != 2:
+        raise ValueError(f"{pred_path}: expected row {_PRED_NON_CANONICAL_ROW}'s INT96 value twice, "
+                         f"found it {pred_raw.count(canonical)} times")
+    with open(pred_path, 'wb') as f:
+        f.write(pred_raw.replace(canonical, _pred_int96_stored(_PRED_NON_CANONICAL_ROW)))
+    if pred_rg_size < PRED_ROWS:
+        for rg in range(PRED_ROWS // pred_rg_size):
+            stored = [_pred_int96_stored(r) for r in range(rg * pred_rg_size, (rg + 1) * pred_rg_size)
+                      if not _pred_null(r)]
+            by_bytes = sorted(stored, key=lambda b: int.from_bytes(b, 'big', signed=True))
+            set_row_group_min_max(pred_path, 'ts96', rg, by_bytes[0], by_bytes[-1])
+
 print("\nGenerated predicate/*.parquet:")
 print(f"  - predicate_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")
 print(f"  - predicate_nested_{{single,multi}}.parquet: {PRED_ROWS} rows, struct with a nullable leaf, and a list")
 print(f"  - predicate_opaque_{{single,dict}}.parquet: {PRED_ROWS} rows, the BSON and INTERVAL columns")
+print(f"  - predicate_int96_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, INT96 timestamps, one non-canonical")
