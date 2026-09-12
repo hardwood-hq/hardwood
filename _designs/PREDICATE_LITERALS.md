@@ -273,7 +273,7 @@ express get the same answer; the differences are listed below.
 | Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) |
 | Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) |
-| `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) |
+| `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) (done) |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | [#921](https://github.com/hardwood-hq/hardwood/issues/921) |
 
 The floating-point rows depend on NaN-aware pruning

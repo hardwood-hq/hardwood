@@ -26,6 +26,7 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -73,6 +74,10 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// column's fixed `(physicalType, logicalType)` so the hot path is a single
     /// table lookup instead of re-deriving the branch on every value.
     private final LeafKind[] kinds;
+    /// Whether [#getString(int)] reads each column, precomputed on the same terms as
+    /// [#kinds]: the answer is the column's alone, and [TextColumns] derives it from a
+    /// switch too wide to run per value on the accessor the read path leans on most.
+    private final boolean[] textColumns;
 
     // Hot fields — directly owned, no inheritance.
     // `flatValidity[col]` is a packed bitmap (set bit = leaf is present); the
@@ -162,6 +167,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.physicalTypes = new PhysicalType[columnCount];
         this.columnSchemas = new ColumnSchema[columnCount];
         this.kinds = new LeafKind[columnCount];
+        this.textColumns = new boolean[columnCount];
         for (int i = 0; i < columnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
             ColumnSchema col = fileSchema.getColumn(originalIndex);
@@ -169,6 +175,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
             kinds[i] = LeafKind.of(col.type(), col.logicalType());
+            textColumns[i] = TextColumns.holdsText(col.type(), col.logicalType());
         }
     }
 
@@ -576,6 +583,10 @@ public final class FlatRowReader implements FileAwareRowReader {
     public String getString(int columnIndex) {
         if (isNull(columnIndex)) {
             return null;
+        }
+        if (!textColumns[columnIndex]) {
+            ColumnSchema col = columnSchemas[columnIndex];
+            throw LogicalAccessorKind.notText(currentFileName, col.name(), col.type(), col.logicalType());
         }
         return ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
     }

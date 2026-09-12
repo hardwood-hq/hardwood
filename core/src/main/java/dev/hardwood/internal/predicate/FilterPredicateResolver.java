@@ -18,6 +18,7 @@ import java.util.List;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -575,13 +576,11 @@ public class FilterPredicateResolver {
 
     /// Refuses a `String` literal on a column that does not hold text.
     ///
-    /// A `String` is the literal exactly where `getString` reads the column: a `STRING`, an
-    /// `ENUM`, a `JSON` and an unannotated `BYTE_ARRAY`, whose stored bytes are the literal's
-    /// UTF-8 encoding. Every other binary column stores bytes its annotation reads as something
-    /// else, which a caller writes as a `byte[]` or as the annotation's own literal type.
-    ///
-    /// The switch is exhaustive rather than a list of exceptions, the shape [#byteComparison]
-    /// has, so an annotation added later has to state whether a `String` reads it.
+    /// A `String` is the literal exactly where `getString` reads the column, which
+    /// [TextColumns] decides for both: a `STRING`, an `ENUM`, a `JSON` and an unannotated
+    /// `BYTE_ARRAY`, whose stored bytes are the literal's UTF-8 encoding. Every other binary
+    /// column stores bytes its annotation reads as something else, which a caller writes as a
+    /// `byte[]` or as the annotation's own literal type.
     private static void requireTextColumn(String columnName, ColumnSchema columnSchema) {
         LogicalType logicalType = columnSchema.logicalType();
         if (logicalType == null) {
@@ -590,39 +589,10 @@ public class FilterPredicateResolver {
             }
             throw notTextColumn(columnName, "an unannotated " + columnSchema.type(), "byte[]");
         }
-        String literals = nonTextLiterals(logicalType);
+        String literals = TextColumns.nonTextLiterals(logicalType);
         if (literals != null) {
             throw notTextColumn(columnName, "annotated " + logicalType, literals);
         }
-    }
-
-    /// The literals a binary column takes in place of a `String`, or `null` where a `String`
-    /// reads the column.
-    ///
-    /// The annotations that reach an arm returning `byte[]` alone read the stored bytes as an
-    /// opaque payload, or annotate a physical type no binary column has —
-    /// [dev.hardwood.schema.FileSchema] drops the latter before a predicate sees it.
-    private static String nonTextLiterals(LogicalType logicalType) {
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> null;
-            case LogicalType.EnumType ignored -> null;
-            case LogicalType.JsonType ignored -> null;
-            case LogicalType.DecimalType ignored -> "BigDecimal and byte[]";
-            case LogicalType.Float16Type ignored -> "float and byte[]";
-            case LogicalType.UuidType ignored -> "UUID and byte[]";
-            case LogicalType.BsonType ignored -> "byte[]";
-            case LogicalType.IntervalType ignored -> "byte[]";
-            case LogicalType.GeometryType ignored -> "byte[]";
-            case LogicalType.GeographyType ignored -> "byte[]";
-            case LogicalType.NullType ignored -> "byte[]";
-            case LogicalType.VariantType ignored -> "byte[]";
-            case LogicalType.ListType ignored -> "byte[]";
-            case LogicalType.MapType ignored -> "byte[]";
-            case LogicalType.IntType ignored -> "byte[]";
-            case LogicalType.DateType ignored -> "byte[]";
-            case LogicalType.TimeType ignored -> "byte[]";
-            case LogicalType.TimestampType ignored -> "byte[]";
-        };
     }
 
     private static IllegalArgumentException notTextColumn(String columnName, String description,

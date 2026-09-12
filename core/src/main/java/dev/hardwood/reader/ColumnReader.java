@@ -19,6 +19,7 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
+import dev.hardwood.internal.reader.LogicalAccessorKind;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
@@ -468,19 +469,28 @@ public class ColumnReader implements Closeable {
 
     /// Convenience: materialises one `String` per leaf value by UTF-8 decoding
     /// the slice of [#getBinaryValues()] for each entry. Returns `null` at
-    /// indexes where [#getLeafValidity()] is unset. BSON columns are not
-    /// string-decoded; use [#getBinaries()] / [#getBinaryValues()] for those.
+    /// indexes where [#getLeafValidity()] is unset.
+    ///
+    /// The column has to hold text: a `BYTE_ARRAY` annotated `STRING`, `ENUM` or
+    /// `JSON`, or one carrying no annotation. Every other binary column — a
+    /// `DECIMAL`, a `UUID`, a `BSON`, an `INT96` — stores bytes that stand for
+    /// something other than characters, and reading them as text is refused with
+    /// an `IllegalArgumentException`; use [#getBinaries()] / [#getBinaryValues()]
+    /// for those.
     ///
     /// The returned array has length [#getValueCount()] — i.e. the **real
     /// leaf count**, not [#getRecordCount()]. For a flat column the two
     /// coincide; for `list<string>` and similar nested chains they
     /// differ, and lookups must go through the appropriate layer offsets
     /// rather than indexing by record.
+    ///
+    /// @throws IllegalArgumentException if the column does not hold text
     public String[] getStrings() {
         checkBatchAvailable();
         if (cachedStrings != null) {
             return cachedStrings;
         }
+        LogicalAccessorKind.requireText(currentFileName, column.name(), column.type(), column.logicalType());
         BinaryBatchValues bbv = realLeafBinary();
         int n = getValueCount();
         Validity validity = getLeafValidity();

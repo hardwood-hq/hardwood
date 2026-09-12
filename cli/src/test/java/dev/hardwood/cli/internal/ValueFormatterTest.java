@@ -1083,6 +1083,43 @@ class ValueFormatterTest {
                 null, 0, 1, 0, logical);
     }
 
+    // ==================== BSON ====================
+
+    /// A `BSON` column holds a payload rather than text, so the string accessor refuses it
+    /// and the formatter reads the bytes and decodes them itself. Both value sources render
+    /// the same characters: the text verbatim in `EXPORT`, its control bytes as `·` in the
+    /// display styles.
+    @Test
+    void bsonRendersAsItsUtf8TextFromEverySource(@TempDir Path tempDir) throws IOException {
+        Path file = tempDir.resolve("bson.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("doc", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.bson())
+                .build();
+        // The BSON document { "n": "hi" }.
+        byte[] payload = HexFormat.of().parseHex("0f000000026e000300000068690000");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setBinary("doc", payload));
+        }
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.rowReader()) {
+            FileSchema fileSchema = fileReader.getFileSchema();
+            SchemaNode field = fileSchema.getField("doc");
+            int index = fileSchema.getColumn("doc").columnIndex();
+            rowReader.next();
+
+            String text = new String(payload, StandardCharsets.UTF_8);
+            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
+                    ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(text);
+            assertThat(ValueFormatter.formatValue(rowReader.getValue(index), field,
+                    ValueFormatter.Style.EXPORT, NO_LIMIT)).isEqualTo(text);
+            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
+                    ValueFormatter.Style.COMPACT, NO_LIMIT))
+                    .isEqualTo(display(rowReader.getValue(index), field))
+                    .isEqualTo("·····n·····hi··");
+        }
+    }
+
     // ==================== one walker, every style ====================
 
     /// Core hands an unsigned leaf inside a struct or list back as its signed
