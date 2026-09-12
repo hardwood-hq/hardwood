@@ -267,7 +267,7 @@ express get the same answer; the differences are listed below.
 | Part | Issue |
 |---|---|
 | Fixed-width `DECIMAL` byte literal resolved to the column width | [#1190](https://github.com/hardwood-hq/hardwood/issues/1190) (done) |
-| `byte[]` literals and factories; `String` only where `getString` reads; `String` records; null literals and malformed `String`s rejected when built | [#1181](https://github.com/hardwood-hq/hardwood/issues/1181) |
+| `byte[]` literals and factories; `String` only where `getString` reads; `String` records; null literals and malformed `String`s rejected when built | [#1181](https://github.com/hardwood-hq/hardwood/issues/1181) (done) |
 | Ordered operators exactly on ordered types: `BOOLEAN` gains them, with record-level and batch matchers; `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL` lose them. `PqInterval` literal; leaves below a `VARIANT` group take null tests only; `not` over `intersects` rejected | [#1183](https://github.com/hardwood-hq/hardwood/issues/1183) |
 | `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) |
 | Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |

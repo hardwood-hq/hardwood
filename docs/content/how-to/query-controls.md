@@ -41,6 +41,9 @@ FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
 FilterPredicate filter = FilterPredicate.in("temperature", 20.5, 21.0, 22.5);
 FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
 
+// Binary filter, on the bytes the column stores
+FilterPredicate filter = FilterPredicate.eq("checksum", new byte[] { 0x00, (byte) 0xC8 });
+
 // NULL checks
 FilterPredicate filter = FilterPredicate.isNull("middle_name");
 FilterPredicate filter = FilterPredicate.isNotNull("email");
@@ -135,7 +138,15 @@ FilterPredicate filter = FilterPredicate.gtEq("amount", new BigDecimal("99.99"))
 // UUID columns — column must carry the UUID logical type
 FilterPredicate filter = FilterPredicate.eq("request_id",
     UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
+
+// Binary columns — the literal is the stored bytes, whatever the annotation reads them as
+FilterPredicate filter = FilterPredicate.gt("amount_bytes", new byte[] { 0x01, 0x2C });
 ```
+
+A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an unannotated
+`BYTE_ARRAY`, where its UTF-8 encoding is the stored bytes. On any other binary column — a
+`DECIMAL`, a `FLOAT16`, a `UUID`, an `INTERVAL`, a `BSON`, a `GEOMETRY`, a `GEOGRAPHY`, a `NULL`
+or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`.
 
 A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 
@@ -155,7 +166,7 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   decided from the null count alone.
 - **Two equality probes cannot use either.** `eq(NaN)`, or an `in` list holding one, is not
   Bloom-pruned: raw-bit hashing distinguishes NaN payloads that `Double.compare` treats as equal,
-  so a miss cannot prove a NaN absent. An `eq` or `inStrings` on a `DECIMAL` stored as
+  so a miss cannot prove a NaN absent. An `eq` or `in` on a `DECIMAL` stored as
   `BYTE_ARRAY` is pruned by neither, since such a column may hold the same number under more than
   one byte string, so a miss on a probe's own bytes does not prove the value absent.
 

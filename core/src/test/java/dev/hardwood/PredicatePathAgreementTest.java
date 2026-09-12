@@ -76,8 +76,7 @@ class PredicatePathAgreementTest {
 
     /// A comparison no batch matcher takes, on a required column whose every value is `z`, so it
     /// matches no row and pushes the filter it is `or`-ed into onto the record-level path.
-    private static final FilterPredicate NEVER =
-            new FilterPredicate.BinaryColumnPredicate("zz", Operator.LT, new byte[0]);
+    private static final FilterPredicate NEVER = FilterPredicate.lt("zz", new byte[0]);
 
     private static final ReaderConfig METADATA_FILTERING_OFF = ReaderConfig.builder()
             .option("hardwood.metadata-filtering", "false")
@@ -316,8 +315,47 @@ class PredicatePathAgreementTest {
                 new Rejected("Column 'f16' has physical type FIXED_LEN_BYTE_ARRAY; "
                         + "given filter predicate type DOUBLE/FLOAT is incompatible")));
 
+        stringLiteralsOnlyWhereGetStringReads(cases);
         literalsTheColumnCannotHold(cases);
         return cases;
+    }
+
+    /// A `String` is the literal where `getString` reads the column, and a `byte[]` is the
+    /// literal of every binary column. On a column whose annotation reads the stored bytes as
+    /// something other than text, a `String` says nothing about the values: it would be taken as
+    /// the bytes it encodes rather than as the text a caller wrote.
+    private static void stringLiteralsOnlyWhereGetStringReads(List<Case> cases) {
+        cases.add(new Case("str", "eq(the bytes of k0200)",
+                binary("str", Operator.EQ, "k0200".getBytes(StandardCharsets.UTF_8)),
+                matching(eqPhysical("k0200".getBytes(StandardCharsets.UTF_8)))));
+        cases.add(new Case("enum", "gt(the bytes of E3)",
+                binary("enum", Operator.GT, "E3".getBytes(StandardCharsets.UTF_8)),
+                matching(cmpPhysical(Operator.GT, "E3".getBytes(StandardCharsets.UTF_8)))));
+
+        cases.add(new Case("dec_flba", "eq(\"1.25\"), a String on a DECIMAL column",
+                FilterPredicate.eq("dec_flba", "1.25"),
+                new Rejected("Column 'dec_flba' is annotated DECIMAL(20, 2), "
+                        + "which takes BigDecimal and byte[] literals, not a String")));
+        cases.add(new Case("f16", "lt(\"6.25\"), a String on a FLOAT16 column",
+                FilterPredicate.lt("f16", "6.25"),
+                new Rejected("Column 'f16' is annotated FLOAT16, "
+                        + "which takes float and byte[] literals, not a String")));
+        cases.add(new Case("uuid", "eq(a String on a UUID column)",
+                FilterPredicate.eq("uuid", "0123456789abcdef"),
+                new Rejected("Column 'uuid' is annotated UUID, "
+                        + "which takes UUID and byte[] literals, not a String")));
+        cases.add(new Case("flba5", "eq(a String on an unannotated FIXED_LEN_BYTE_ARRAY)",
+                FilterPredicate.eq("flba5", "abcde"),
+                new Rejected("Column 'flba5' is an unannotated FIXED_LEN_BYTE_ARRAY, "
+                        + "which takes byte[] literals, not a String")));
+        cases.add(new Case("bson", "inStrings(a String on a BSON column)",
+                FilterPredicate.inStrings("bson", "abc"),
+                new Rejected("Column 'bson' is annotated BSON, "
+                        + "which takes byte[] literals, not a String")));
+        cases.add(new Case("iv", "eq(a String on an INTERVAL column)",
+                FilterPredicate.eq("iv", "months days ms"),
+                new Rejected("Column 'iv' is annotated INTERVAL, "
+                        + "which takes byte[] literals, not a String")));
     }
 
     /// A literal of the column's literal type that the column cannot hold: finer than its time
@@ -538,11 +576,10 @@ class PredicatePathAgreementTest {
                 matching(cmpPhysical(Operator.LT, literal))));
         cases.add(new Case(column, "gtEq(" + shown + ")", binary(column, Operator.GT_EQ, literal),
                 matching(cmpPhysical(Operator.GT_EQ, literal))));
-        cases.add(new Case(column, "in(" + shown + ")",
-                new FilterPredicate.BinaryInPredicate(column, new byte[][] { literal }),
+        cases.add(new Case(column, "in(" + shown + ")", FilterPredicate.in(column, literal),
                 matching(eqPhysical(literal))));
         cases.add(new Case(column, "not(in(" + shown + "))",
-                FilterPredicate.not(new FilterPredicate.BinaryInPredicate(column, new byte[][] { literal })),
+                FilterPredicate.not(FilterPredicate.in(column, literal)),
                 matching(notEqPhysical(literal))));
     }
 
@@ -553,11 +590,10 @@ class PredicatePathAgreementTest {
                 matching(eqPhysical(literal))));
         cases.add(new Case(column, "notEq(" + shown + ")", binary(column, Operator.NOT_EQ, literal),
                 matching(notEqPhysical(literal))));
-        cases.add(new Case(column, "in(" + shown + ")",
-                new FilterPredicate.BinaryInPredicate(column, new byte[][] { literal }),
+        cases.add(new Case(column, "in(" + shown + ")", FilterPredicate.in(column, literal),
                 matching(eqPhysical(literal))));
         cases.add(new Case(column, "not(in(" + shown + "))",
-                FilterPredicate.not(new FilterPredicate.BinaryInPredicate(column, new byte[][] { literal })),
+                FilterPredicate.not(FilterPredicate.in(column, literal)),
                 matching(notEqPhysical(literal))));
     }
 
@@ -867,7 +903,14 @@ class PredicatePathAgreementTest {
     private static final HexFormat HEX = HexFormat.of();
 
     private static FilterPredicate binary(String column, Operator op, byte[] value) {
-        return new FilterPredicate.BinaryColumnPredicate(column, op, value);
+        return switch (op) {
+            case EQ -> FilterPredicate.eq(column, value);
+            case NOT_EQ -> FilterPredicate.notEq(column, value);
+            case LT -> FilterPredicate.lt(column, value);
+            case LT_EQ -> FilterPredicate.ltEq(column, value);
+            case GT -> FilterPredicate.gt(column, value);
+            case GT_EQ -> FilterPredicate.gtEq(column, value);
+        };
     }
 
     /// The two little-endian bytes a `FLOAT16` column stores for `value`.

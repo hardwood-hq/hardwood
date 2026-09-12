@@ -8,6 +8,7 @@
 package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -73,17 +74,22 @@ class DictionaryFixedLenByteArrayPushDownTest {
 
     @Test
     void absentCodeIsDroppedOnlyByTheDictionary() throws IOException {
-        FilterPredicate absent = FilterPredicate.eq("code", "aa05");
+        FilterPredicate absent = FilterPredicate.eq("code", code("aa05"));
 
         assertThat(statisticsDrop(absent)).as("aa05 sorts within [aa00, aa09]").isFalse();
         assertThat(dictionaryDrop(absent)).isTrue();
-        assertThat(dictionaryDrop(FilterPredicate.eq("code", "aa06"))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.eq("code", code("aa06")))).isFalse();
     }
 
     @Test
     void codeInListDropsOnlyWhenEveryValueIsAbsent() throws IOException {
-        assertThat(dictionaryDrop(FilterPredicate.inStrings("code", "aa05", "aa07"))).isTrue();
-        assertThat(dictionaryDrop(FilterPredicate.inStrings("code", "aa05", "aa06"))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.in("code", code("aa05"), code("aa07")))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("code", code("aa05"), code("aa06")))).isFalse();
+    }
+
+    /// A `code` literal, which the column stores as the four bytes of its ASCII spelling.
+    private static byte[] code(String value) {
+        return value.getBytes(StandardCharsets.US_ASCII);
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {

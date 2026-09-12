@@ -185,14 +185,14 @@ class BinaryDecimalFilterTest {
         }
     }
 
-    /// The bytes of `1.27` are in the file, and a byte-string `eq` for exactly those bytes came
+    /// The bytes of `1.27` are in the file, and a byte `eq` for exactly those bytes came
     /// back empty: the row group's statistics are written in the column's signed order
     /// (`min = FF 00`, `max = 01 2C`) and pruning them unsigned sorts the literal `7F` below the
     /// minimum. The literal now takes the column's own comparison, which is the one those bounds
     /// were written in, so the row is found.
     @Test
     void aByteStringPredicateComparesAsTheColumnDoes() throws Exception {
-        assertThat(filtered(FilterPredicate.eq("amount", "\u007F")))
+        assertThat(filtered(FilterPredicate.eq("amount", new byte[] { 0x7F })))
                 .containsExactly(new BigDecimal("1.27"));
     }
 
@@ -200,7 +200,7 @@ class BinaryDecimalFilterTest {
     /// number, so the ordering is visible in the rows that come back.
     @Test
     void aByteStringRangePredicateOrdersByValue() throws Exception {
-        assertThat(filtered(FilterPredicate.gt("amount", "\u007F")))
+        assertThat(filtered(FilterPredicate.gt("amount", new byte[] { 0x7F })))
                 .containsExactly(new BigDecimal("1.28"), new BigDecimal("3.00"));
     }
 
@@ -213,7 +213,7 @@ class BinaryDecimalFilterTest {
         byte[] file = writeRawBinaryDecimals(paddedRows());
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
                 RowReader rows = reader.buildRowReader()
-                        .filter(FilterPredicate.inStrings("amount", "\u007F"))
+                        .filter(FilterPredicate.in("amount", new byte[] { 0x7F }))
                         .build()) {
             assertThat(collect(rows)).hasSize(PADDED_ROWS / 2)
                     .allMatch(value -> value.compareTo(new BigDecimal("1.27")) == 0);
@@ -221,7 +221,7 @@ class BinaryDecimalFilterTest {
     }
 
     /// A `BYTE_ARRAY` column that is not a `DECIMAL` orders as its bytes, so the same predicates
-    /// stay available on it.
+    /// stay available on it, a `String` literal among them.
     @Test
     void aByteStringPredicateStaysAvailableOnAPlainBinaryColumn() {
         FileSchema plain = FileSchema.builder("schema")

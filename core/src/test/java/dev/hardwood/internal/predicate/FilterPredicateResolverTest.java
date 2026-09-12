@@ -21,6 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
@@ -438,7 +439,7 @@ class FilterPredicateResolverTest {
         FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.inStrings("code", "aaaa", "aa"), schema))
+                FilterPredicate.in("code", byteLiteral(0x61, 0x61, 0x61, 0x61), byteLiteral(0x61, 0x61)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'code' holds a byte string of 4 bytes; "
                         + "the equality literal 6161 (2 bytes) is not a value it can hold");
@@ -451,12 +452,12 @@ class FilterPredicateResolverTest {
     void resolveByteLiteralOfAnotherWidthOnUnannotatedFixedLenColumn() {
         FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
 
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("code", "aa"), schema))
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("code", byteLiteral(0x61, 0x61)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'code' holds a byte string of 4 bytes; "
                         + "the equality literal 6161 (2 bytes) is not a value it can hold");
 
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("code", "aa"), schema))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.lt("code", byteLiteral(0x61, 0x61)), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
                         p -> assertThat(p.value()).containsExactly('a', 'a'));
     }
@@ -1060,7 +1061,111 @@ class FilterPredicateResolverTest {
         assertThat(bytes).containsExactly(0, 0, 0, 0);
     }
 
+    // ==================== String literals ====================
+
+    /// A `String` is the literal where `getString` reads the column, and it compares as its
+    /// UTF-8 bytes, which is what such a column stores.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void aStringLiteralResolvesOnATextColumn(String name, FileSchema schema) {
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("c", "hé"), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class, p -> {
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                    assertThat(p.value()).containsExactly(0x68, 0xC3, 0xA9);
+                });
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", "hé"), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                    assertThat(p.values()[0]).containsExactly(0x68, 0xC3, 0xA9);
+                });
+    }
+
+    static Stream<Arguments> aStringLiteralResolvesOnATextColumn() {
+        return Stream.of(
+                Arguments.of("STRING", schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                        LogicalType.string())),
+                Arguments.of("ENUM", schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                        LogicalType.enumType())),
+                Arguments.of("JSON", schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                        LogicalType.json())),
+                Arguments.of("unannotated BYTE_ARRAY", schemaWithLogicalType("c",
+                        PhysicalType.BYTE_ARRAY, null)));
+    }
+
+    /// Every other binary column stores bytes its annotation reads as something else, and a
+    /// `String` on one would be taken as the bytes it encodes rather than as the text that was
+    /// written. It is refused, naming the literals the column does take.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void aStringLiteralIsRefusedOnAColumnThatDoesNotHoldText(String name, FileSchema schema,
+            String message) {
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", "a"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.inStrings("c", "a"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
+    static Stream<Arguments> aStringLiteralIsRefusedOnAColumnThatDoesNotHoldText() {
+        return Stream.of(
+                Arguments.of("DECIMAL over BYTE_ARRAY",
+                        schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, LogicalType.decimal(9, 2)),
+                        notText("annotated DECIMAL(9, 2)", "BigDecimal and byte[]")),
+                Arguments.of("DECIMAL over FIXED_LEN_BYTE_ARRAY",
+                        schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                                LogicalType.decimal(9, 2)),
+                        notText("annotated DECIMAL(9, 2)", "BigDecimal and byte[]")),
+                Arguments.of("FLOAT16",
+                        schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                                LogicalType.float16()),
+                        notText("annotated FLOAT16", "float and byte[]")),
+                Arguments.of("UUID",
+                        schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16,
+                                LogicalType.uuid()),
+                        notText("annotated UUID", "UUID and byte[]")),
+                Arguments.of("INTERVAL",
+                        schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                                new LogicalType.IntervalType()),
+                        notText("annotated INTERVAL", "byte[]")),
+                Arguments.of("BSON",
+                        schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, LogicalType.bson()),
+                        notText("annotated BSON", "byte[]")),
+                Arguments.of("GEOMETRY",
+                        schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                                new LogicalType.GeometryType(null)),
+                        notText("annotated GEOMETRY", "byte[]")),
+                Arguments.of("GEOGRAPHY",
+                        schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY,
+                                new LogicalType.GeographyType(null, null)),
+                        notText("annotated GEOGRAPHY", "byte[]")),
+                Arguments.of("NULL",
+                        schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, new LogicalType.NullType()),
+                        notText("annotated NULL", "byte[]")),
+                Arguments.of("unannotated FIXED_LEN_BYTE_ARRAY",
+                        schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null),
+                        notText("an unannotated FIXED_LEN_BYTE_ARRAY", "byte[]")));
+    }
+
+    /// The same column takes the bytes themselves, which is what its accessor returns for it.
+    @Test
+    void aByteLiteralResolvesOnAColumnThatDoesNotHoldText() {
+        FileSchema schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.eq("c", byteLiteral(0x61, 0x61, 0x61, 0x61)), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
+                        p -> assertThat(p.value()).containsExactly(0x61, 0x61, 0x61, 0x61));
+    }
+
     // ==================== Helpers ====================
+
+    /// The message a `String` literal raises on a column that does not hold text.
+    private static String notText(String description, String literals) {
+        return "Column 'c' is " + description + ", which takes " + literals
+                + " literals, not a String";
+    }
 
     /// The message `validateType` raises when a column's physical type does not admit the
     /// predicate's value type.

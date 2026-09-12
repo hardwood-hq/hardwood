@@ -10,6 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
@@ -236,6 +237,26 @@ public class FilterPredicateResolver {
                 }
                 rejectUnholdableWidth(p.column(), cs, p.op(), p.value());
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), comparison);
+            }
+            case FilterPredicate.StringColumnPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                requireTextColumn(p.column(), cs);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
+                        p.value().getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
+            }
+            case FilterPredicate.StringInPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                requireTextColumn(p.column(), cs);
+                byte[][] probes = new byte[p.values().length][];
+                for (int i = 0; i < probes.length; i++) {
+                    probes[i] = p.values()[i].getBytes(StandardCharsets.UTF_8);
+                }
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes,
+                        Comparison.BYTE_STRING);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -550,6 +571,64 @@ public class FilterPredicateResolver {
             case LogicalType.TimeType ignored -> Comparison.BYTE_STRING;
             case LogicalType.TimestampType ignored -> Comparison.BYTE_STRING;
         };
+    }
+
+    /// Refuses a `String` literal on a column that does not hold text.
+    ///
+    /// A `String` is the literal exactly where `getString` reads the column: a `STRING`, an
+    /// `ENUM`, a `JSON` and an unannotated `BYTE_ARRAY`, whose stored bytes are the literal's
+    /// UTF-8 encoding. Every other binary column stores bytes its annotation reads as something
+    /// else, which a caller writes as a `byte[]` or as the annotation's own literal type.
+    ///
+    /// The switch is exhaustive rather than a list of exceptions, the shape [#byteComparison]
+    /// has, so an annotation added later has to state whether a `String` reads it.
+    private static void requireTextColumn(String columnName, ColumnSchema columnSchema) {
+        LogicalType logicalType = columnSchema.logicalType();
+        if (logicalType == null) {
+            if (columnSchema.type() == PhysicalType.BYTE_ARRAY) {
+                return;
+            }
+            throw notTextColumn(columnName, "an unannotated " + columnSchema.type(), "byte[]");
+        }
+        String literals = nonTextLiterals(logicalType);
+        if (literals != null) {
+            throw notTextColumn(columnName, "annotated " + logicalType, literals);
+        }
+    }
+
+    /// The literals a binary column takes in place of a `String`, or `null` where a `String`
+    /// reads the column.
+    ///
+    /// The annotations that reach an arm returning `byte[]` alone read the stored bytes as an
+    /// opaque payload, or annotate a physical type no binary column has —
+    /// [dev.hardwood.schema.FileSchema] drops the latter before a predicate sees it.
+    private static String nonTextLiterals(LogicalType logicalType) {
+        return switch (logicalType) {
+            case LogicalType.StringType ignored -> null;
+            case LogicalType.EnumType ignored -> null;
+            case LogicalType.JsonType ignored -> null;
+            case LogicalType.DecimalType ignored -> "BigDecimal and byte[]";
+            case LogicalType.Float16Type ignored -> "float and byte[]";
+            case LogicalType.UuidType ignored -> "UUID and byte[]";
+            case LogicalType.BsonType ignored -> "byte[]";
+            case LogicalType.IntervalType ignored -> "byte[]";
+            case LogicalType.GeometryType ignored -> "byte[]";
+            case LogicalType.GeographyType ignored -> "byte[]";
+            case LogicalType.NullType ignored -> "byte[]";
+            case LogicalType.VariantType ignored -> "byte[]";
+            case LogicalType.ListType ignored -> "byte[]";
+            case LogicalType.MapType ignored -> "byte[]";
+            case LogicalType.IntType ignored -> "byte[]";
+            case LogicalType.DateType ignored -> "byte[]";
+            case LogicalType.TimeType ignored -> "byte[]";
+            case LogicalType.TimestampType ignored -> "byte[]";
+        };
+    }
+
+    private static IllegalArgumentException notTextColumn(String columnName, String description,
+            String literals) {
+        return new IllegalArgumentException("Column '" + columnName + "' is " + description
+                + ", which takes " + literals + " literals, not a String");
     }
 
     /// The two bytes of a `FLOAT16` literal, as the value they encode.

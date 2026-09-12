@@ -61,7 +61,7 @@ class UnreadableSortOrderTest {
     void boundsOnAnUnorderedAnnotationDoNotPrune() {
         FileSchema geometry = geometrySchema();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("g", "M"), geometry);
+                FilterPredicate.eq("g", bytes("M")), geometry);
         Statistics foreign = new Statistics(bytes("N"), bytes("Z"), 0L, null, false);
 
         MinMaxStats stats = MinMaxStats.of(foreign, leaf, readability(geometry));
@@ -79,7 +79,7 @@ class UnreadableSortOrderTest {
     void anUnorderedAnnotationWithoutBoundsReportsNothing() {
         FileSchema geometry = geometrySchema();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("g", "M"), geometry);
+                FilterPredicate.eq("g", bytes("M")), geometry);
         Statistics boundless = new Statistics(null, null, 0L, null, false);
 
         MinMaxStats stats = MinMaxStats.of(boundless, leaf, readability(geometry));
@@ -187,7 +187,7 @@ class UnreadableSortOrderTest {
     void eachFileOfAMultiFileReadIsJudgedInItsOwnOrdinals() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(
                 InputFile.of(geometryThenValue()), InputFile.of(valueThenGeometry())));
-                RowReader rows = reader.buildRowReader().filter(FilterPredicate.eq("g", "M")).build()) {
+                RowReader rows = reader.buildRowReader().filter(FilterPredicate.eq("g", bytes("M"))).build()) {
             assertThat(values(rows)).containsExactly(1, 2);
         }
     }
