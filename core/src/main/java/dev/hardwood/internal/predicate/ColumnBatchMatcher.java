@@ -22,7 +22,16 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// `(batch.recordCount + 63) >>> 6`.
 public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher, FloatBatchMatcher,
-        BooleanBatchMatcher, NullBatchMatcher, AndBatchMatcher, OrBatchMatcher {
+        BooleanBatchMatcher, BinaryBatchMatcher, NullBatchMatcher, AndBatchMatcher,
+        OrBatchMatcher {
 
     void test(BatchExchange.Batch batch, long[] outWords);
+
+    /// Whether the batch values must retain their dictionary-entry indices for
+    /// this matcher. The reader uses this during batch allocation so ordinary
+    /// reads do not pay for index storage needed only by dictionary-aware
+    /// filters.
+    default boolean requiresDictionaryIndices() {
+        return false;
+    }
 }

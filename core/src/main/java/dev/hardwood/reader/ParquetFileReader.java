@@ -603,7 +603,9 @@ public class ParquetFileReader implements Closeable {
         iterator.initialize(projected, null);
         return ColumnReader.createFromIterator(
                 column, schema, iterator, context, fixedListFastPathEnabled, 0, iterator,
-                resolveBatchSize(batchSize, projected, rowGroups), NestedColumnWorker.IndexMode.REAL_VIEW);
+                resolveBatchSize(batchSize, projected, rowGroups),
+                NestedColumnWorker.IndexMode.REAL_VIEW, false
+        );
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) throws IOException {

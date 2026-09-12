@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.predicate.matcher.binary.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
@@ -28,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BatchFilterCompilerTest {
 
@@ -205,7 +207,7 @@ class BatchFilterCompilerTest {
 
         @Test
         void andWithBinaryChild_returnsNull() {
-            // BinaryPredicate is unsupported. As a child of an otherwise-eligible
+            // Binary range predicates are unsupported. As a child of an otherwise-eligible
             // And, it must poison the whole compile so the query falls back rather
             // than the supported leaves silently running on a partial conjunction.
             FileSchema schema = schema(
@@ -213,16 +215,24 @@ class BatchFilterCompilerTest {
                     leaf("name", PhysicalType.BYTE_ARRAY));
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
-                    new ResolvedPredicate.BinaryPredicate(1, Operator.EQ,
+                    new ResolvedPredicate.BinaryPredicate(1, Operator.GT,
                             new byte[]{'h', 'i'}, Comparison.BYTE_STRING)));
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
         @Test
-        void binaryLeaf_returnsNull() {
+        void binaryRangeLeaf_returnsNull() {
             FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
-            ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
+            ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.GT,
                     new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+        }
+
+        @Test
+        void variableDecimalBinaryEq_returnsNull() {
+            FileSchema schema = schema(leaf("amount", PhysicalType.BYTE_ARRAY));
+            ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
+                    new byte[]{0x7f}, Comparison.VARIABLE_DECIMAL);
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
@@ -245,6 +255,38 @@ class BatchFilterCompilerTest {
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, col -> -1));
         }
 
+    }
+
+    @Test
+    void binaryEqLeaf_returnsDictionaryAwareFragment() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+        ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
+                new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
+
+        ColumnBatchMatcher[] result = compileMatchers(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(BinaryEqBatchMatcher.class, result[0]);
+        assertTrue(result[0].requiresDictionaryIndices());
+    }
+
+    @Test
+    void binaryEqCompositePropagatesDictionaryIndexRequirement() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+        ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
+                        new byte[]{'D', 'E'}, Comparison.BYTE_STRING),
+                new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
+                        new byte[]{'F', 'R'}, Comparison.BYTE_STRING)));
+
+        ColumnBatchMatcher[] result = compileMatchers(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertInstanceOf(OrBatchMatcher.class, result[0]);
+        assertTrue(result[0].requiresDictionaryIndices());
     }
 
     @Test

@@ -74,4 +74,19 @@ class ByteArrayDictionaryInternTest {
             assertThat(value).isEqualTo(entry1);
         }
     }
+
+    @Test
+    void dictionaryAwareFilterRetainsIndicesForANonStringBatch() {
+        byte[] entry0 = {1, 2};
+        byte[] entry1 = {3, 4};
+        Dictionary.ByteArrayDictionary dictionary =
+                new Dictionary.ByteArrayDictionary(new byte[][] {entry0, entry1});
+        BinaryBatchValues values = new BinaryBatchValues(new byte[8], new int[5]);
+        values.retainDictionaryIndices = true;
+
+        values.recordDictIndices(new int[]{1, 0}, dictionary, 0, 1, 2);
+
+        assertThat(values.dictionary).isSameAs(dictionary);
+        assertThat(values.dictIndices).containsExactly(-1, 1, 0, 0);
+    }
 }

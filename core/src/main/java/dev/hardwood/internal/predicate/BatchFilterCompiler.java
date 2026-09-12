@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntUnaryOperator;
 
+import dev.hardwood.internal.predicate.matcher.binary.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
@@ -73,9 +74,9 @@ import dev.hardwood.schema.FileSchema;
 ///   fold into a per-column [AndBatchMatcher] / [OrBatchMatcher] composite — the
 ///   same mechanism that handles `id >= x AND id <= y` today.
 ///
-/// Anything else (intermediate-struct paths, `BinaryPredicate`,
-/// `GeospatialPredicate`, unsupported `(type, op)`) returns `null` and the
-/// caller falls back to the row reader's record-level matcher.
+/// Anything else (intermediate-struct paths, binary operators other than
+/// byte-exact equality, `GeospatialPredicate`, unsupported `(type, op)`) returns
+/// `null` and the caller falls back to the row reader's record-level matcher.
 public final class BatchFilterCompiler {
 
     private BatchFilterCompiler() {}
@@ -133,7 +134,7 @@ public final class BatchFilterCompiler {
     }
 
     private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection) {
-        int fileIdx = leafColumnIndex(leaf);
+        int fileIdx = ResolvedPredicate.leafColumnIndex(leaf);
         if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf)) {
             return null;
         }
@@ -243,13 +244,6 @@ public final class BatchFilterCompiler {
         return out;
     }
 
-    /// The column one leaf reads, or `-1` for a compound that is not a leaf at all. Eligibility
-    /// is [#isSupported]'s question, not this one — a leaf this compiler has no matcher for
-    /// still names its column.
-    private static int leafColumnIndex(ResolvedPredicate leaf) {
-        return ResolvedPredicate.leafColumnIndex(leaf);
-    }
-
     private static boolean isTopLevel(FileSchema schema, int columnIndex) {
         return schema.getColumn(columnIndex).fieldPath().elements().size() == 1;
     }
@@ -280,7 +274,8 @@ public final class BatchFilterCompiler {
                     p.op() == FilterPredicate.Operator.EQ || p.op() == FilterPredicate.Operator.NOT_EQ;
             case ResolvedPredicate.Float16Predicate ignored -> false;
             case ResolvedPredicate.Float16InPredicate ignored -> false;
-            case ResolvedPredicate.BinaryPredicate ignored -> false;
+            case ResolvedPredicate.BinaryPredicate p ->
+                    p.op() == FilterPredicate.Operator.EQ && p.comparison().byteExact();
             case ResolvedPredicate.BinaryInPredicate ignored -> false;
             case ResolvedPredicate.GeospatialPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
@@ -327,6 +322,12 @@ public final class BatchFilterCompiler {
                 case NOT_EQ -> new BooleanNotEqBatchMatcher(p.value());
                 default -> throw new IllegalStateException(
                         "Unsupported boolean operator reached leafMatcher: " + p.op()
+                                + " — isSupported should have rejected this");
+            };
+            case ResolvedPredicate.BinaryPredicate p -> switch (p.op()) {
+                case EQ -> new BinaryEqBatchMatcher(p.value());
+                default -> throw new IllegalStateException(
+                        "Unsupported binary operator reached leafMatcher: " + p.op()
                                 + " — isSupported should have rejected this");
             };
             // An ordered comparison reads the column's own order; equality and membership are bit

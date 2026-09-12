@@ -12,6 +12,9 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedColumnWorker;
@@ -80,7 +83,7 @@ public class ColumnReaders implements Closeable {
 
             ColumnReader reader = ColumnReader.createFromIterator(
                     columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
-                    NestedColumnWorker.IndexMode.REAL_VIEW);
+                    NestedColumnWorker.IndexMode.REAL_VIEW, false);
 
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
@@ -114,11 +117,18 @@ public class ColumnReaders implements Closeable {
         int augCount = augProjected.getProjectedColumnCount();
         ColumnReader[] allReaders = new ColumnReader[augCount];
         Map<String, ColumnReader> byPath = new LinkedHashMap<>(augCount);
+        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
+                resolved, schema, augProjected::toProjectedIndex);
+        ColumnBatchMatcher[] matchers = compiled == null ? null : compiled.columnMatchers();
         for (int i = 0; i < augCount; i++) {
             ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(i));
+            boolean retainDictionaryIndices = matchers != null
+                    && i < matchers.length
+                    && matchers[i] != null
+                    && matchers[i].requiresDictionaryIndices();
             ColumnReader reader = ColumnReader.createFromIterator(
                     columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
-                    NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS);
+                    NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS, retainDictionaryIndices);
             allReaders[i] = reader;
             byPath.put(columnSchema.fieldPath().toString(), reader);
         }
@@ -133,7 +143,8 @@ public class ColumnReaders implements Closeable {
             readersByName.put(columnSchema.fieldPath().toString(), reader);
         }
 
-        SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
+        SelectionEngine engine = SelectionEngine.create(
+                schema, augProjected, resolved, compiled, allReaders, batchSize);
         FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine, rowGroupIterator);
         for (ColumnReader reader : allReaders) {
             reader.setCoordinator(coordinator);
