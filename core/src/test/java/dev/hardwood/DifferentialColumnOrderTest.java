@@ -48,9 +48,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// page index and the dictionary into play alongside the record-level comparison, so a bound or a
 /// dictionary read in the wrong order shows up as a missing or extra row.
 ///
-/// An unsigned literal is the stored bit pattern, the form the accessors return. Binary literals
-/// go through the `byte[]` factories, which take the stored bytes as a filter converted from
-/// parquet-java does.
+/// An unsigned literal is the stored bit pattern, the form the accessors return. Byte literals go
+/// through the `byte[]` factories, which take the stored bytes for equality and membership; each
+/// value in the corpus has one encoding, so the bytes and the value select the same rows.
 @Tag("differential")
 class DifferentialColumnOrderTest {
 
@@ -117,8 +117,6 @@ class DifferentialColumnOrderTest {
                 new Case("h in -0.5, 1.125", FilterPredicate.in("h", -0.5f, 1.125f), "h IN (-0.5, 1.125)"),
                 new Case("not h in -0.5, 1.125",
                         FilterPredicate.not(FilterPredicate.in("h", -0.5f, 1.125f)), "h NOT IN (-0.5, 1.125)"),
-                new Case("h < bytes of 1.5", bytes("h", Operator.LT, half(1.5f)), "h < 1.5"),
-                new Case("h >= bytes of -2.0", bytes("h", Operator.GT_EQ, half(-2.0f)), "h >= -2.0"),
                 new Case("h == bytes of 0.375", bytes("h", Operator.EQ, half(0.375f)), "h = 0.375"),
                 new Case("h in bytes of -0.5, 1.125",
                         bytesIn("h", half(-0.5f), half(1.125f)), "h IN (-0.5, 1.125)"),
@@ -126,22 +124,13 @@ class DifferentialColumnOrderTest {
                 // --- DECIMAL as FIXED_LEN_BYTE_ARRAY: signed, crossing zero ---
                 new Case("dec > 0", FilterPredicate.gt("dec", new BigDecimal("0")), "dec > 0"),
                 new Case("dec < -100", FilterPredicate.lt("dec", new BigDecimal("-100.00")), "dec < -100.00"),
-                new Case("dec > bytes of 1.25", bytes("dec", Operator.GT, decimal("1.25")), "dec > 1.25"),
-                new Case("dec < bytes of -1.25", bytes("dec", Operator.LT, decimal("-1.25")), "dec < -1.25"),
                 new Case("dec in bytes of -1.25, 2.50",
                         bytesIn("dec", decimal("-1.25"), decimal("2.50")), "dec IN (-1.25, 2.50)"),
                 new Case("not dec in bytes of -1.25",
                         FilterPredicate.not(bytesIn("dec", decimal("-1.25"))), "dec NOT IN (-1.25)"),
-                // A literal of any width stands for its value; the dictionary layout probes exact bytes.
+                // The dictionary layout probes exact bytes.
                 new Case("dec == bytes of 1.25", bytes("dec", Operator.EQ, decimal("1.25")), "dec = 1.25"),
-                new Case("dec == minimal bytes of 1.25", bytes("dec", Operator.EQ, minimalDecimal("1.25")), "dec = 1.25"),
-                new Case("dec == minimal bytes of -1.25", bytes("dec", Operator.EQ, minimalDecimal("-1.25")), "dec = -1.25"),
-                new Case("dec == wide bytes of 1.25", bytes("dec", Operator.EQ, wideDecimal("1.25")), "dec = 1.25"),
-                new Case("dec > minimal bytes of 1.25", bytes("dec", Operator.GT, minimalDecimal("1.25")), "dec > 1.25"),
-                new Case("dec in minimal bytes of -1.25, 2.50",
-                        bytesIn("dec", minimalDecimal("-1.25"), minimalDecimal("2.50")), "dec IN (-1.25, 2.50)"),
-                new Case("not dec in minimal bytes of -1.25",
-                        FilterPredicate.not(bytesIn("dec", minimalDecimal("-1.25"))), "dec NOT IN (-1.25)"));
+                new Case("dec != bytes of -1.25", bytes("dec", Operator.NOT_EQ, decimal("-1.25")), "dec <> -1.25"));
     }
 
     static Stream<Arguments> fixtureCases() {
@@ -212,21 +201,6 @@ class DifferentialColumnOrderTest {
         Arrays.fill(padded, 0, DECIMAL_WIDTH - minimal.length, unscaled.signum() < 0 ? (byte) 0xFF : 0);
         System.arraycopy(minimal, 0, padded, DECIMAL_WIDTH - minimal.length, minimal.length);
         return padded;
-    }
-
-    /// The fewest big-endian two's complement bytes that hold `value`'s unscaled form — narrower
-    /// than `dec` for every value in the corpus.
-    private static byte[] minimalDecimal(String value) {
-        return new BigDecimal(value).setScale(2).unscaledValue().toByteArray();
-    }
-
-    /// `value` as `dec` stores it, behind one more sign-extension byte — wider than the column.
-    private static byte[] wideDecimal(String value) {
-        byte[] padded = decimal(value);
-        byte[] wide = new byte[DECIMAL_WIDTH + 1];
-        wide[0] = padded[0] < 0 ? (byte) 0xFF : 0;
-        System.arraycopy(padded, 0, wide, 1, DECIMAL_WIDTH);
-        return wide;
     }
 
     private static FilterPredicate bytes(String column, Operator op, byte[] value) {

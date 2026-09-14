@@ -15,12 +15,16 @@ Which predicates a column takes, with which literals, and what they mean.
    - physical: `boolean`, `int`, `long`, `float`, `double`, or `byte[]` through `getBinary`
 
    Literal types do not widen into each other: an `int` is not a literal for an `INT64` column,
-   nor a `double` for a `FLOAT` column.
+   nor a `double` for a `FLOAT` column. Every column takes both literals for equality and the set
+   form. An ordered operator takes the physical literal only where the physical order is the
+   column's order.
 2. **A literal matches a row when it denotes the value the row holds, and an ordered predicate
-   compares in the order the column's type defines.** Both sides are values of the column's type.
-   A byte literal stands for what the column's annotation decodes it to — a half for `FLOAT16`, a
-   number for `DECIMAL`, an instant for `INT96` — and so does the stored value, whichever of its
-   literals a predicate is given.
+   compares in the order the column's type defines.** A typed literal denotes a value of the
+   column's type. A `byte[]` literal denotes the stored bytes: it matches a row storing exactly
+   those bytes, whatever the column's annotation reads them as. Where the type orders as its
+   bytes, unsigned, a `byte[]` takes every operator. A `DECIMAL`, a `FLOAT16`, an `INT96` and a
+   `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` order by the value their bytes encode, and take a
+   `byte[]` for equality and the set form only.
 3. **Ordered operators exist exactly on types that define an order.**
 4. **Every literal type with `eq` has a set form**, `BOOLEAN` excepted.
 5. **An equality literal is a value the column can hold; an order literal is any value of the
@@ -52,17 +56,17 @@ Every column also takes `isNull` / `isNotNull`.
 | `INT(8/16/32/64)`, unsigned | `int` / `long`, the stored bit pattern | all | unsigned magnitude |
 | `FLOAT` | `float` | all | `Float.compare` |
 | `DOUBLE` | `double` | all | `Double.compare` |
-| `FLOAT16` | `float`; `byte[]` of two bytes | all | the half the value encodes, as `Float.compare` |
+| `FLOAT16` | `float`; `byte[]` of two bytes | all; `byte[]` equality and set form | the half the value encodes, as `Float.compare`; a `byte[]` as the stored bytes |
 | `DATE` | `LocalDate`, `int` | all | epoch day |
 | `TIME` | `LocalTime`, `int` (millis) / `long` (micros, nanos) | all | the column's unit |
 | `TIMESTAMP` over `INT64`, `isAdjustedToUTC = true` | `Instant`, `long` | all | the column's unit |
 | `TIMESTAMP` over `INT64`, `isAdjustedToUTC = false` | `LocalDateTime`, `long` | all | the wall clock in the column's unit |
-| `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, `isAdjustedToUTC = true` | `Instant`; `byte[]` of twelve bytes | all | the signed 96-bit count of the column's unit |
-| `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, `isAdjustedToUTC = false` | `LocalDateTime`; `byte[]` of twelve bytes | all | the signed 96-bit wall-clock count of the column's unit |
-| `INT96` | `Instant`; `byte[]` of twelve bytes | all | the instant the value encodes |
+| `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, `isAdjustedToUTC = true` | `Instant`; `byte[]` of twelve bytes | all; `byte[]` equality and set form | the signed 96-bit count of the column's unit; a `byte[]` as the stored bytes |
+| `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, `isAdjustedToUTC = false` | `LocalDateTime`; `byte[]` of twelve bytes | all; `byte[]` equality and set form | the signed 96-bit wall-clock count of the column's unit; a `byte[]` as the stored bytes |
+| `INT96` | `Instant`; `byte[]` of twelve bytes | all; `byte[]` equality and set form | the instant the value encodes; a `byte[]` as the stored bytes |
 | `DECIMAL` over `INT32` / `INT64` | `BigDecimal`, `int` / `long` unscaled | all | the represented value |
-| `DECIMAL` over `BYTE_ARRAY` | `BigDecimal`, `byte[]` | all | the represented value, any encoding length |
-| `DECIMAL` over `FIXED_LEN_BYTE_ARRAY` | `BigDecimal`, `byte[]` | all | the represented value; a `byte[]` is sign-extended or trimmed to the width |
+| `DECIMAL` over `BYTE_ARRAY` | `BigDecimal`, `byte[]` | all; `byte[]` equality and set form | the represented value, any encoding length; a `byte[]` as the stored bytes |
+| `DECIMAL` over `FIXED_LEN_BYTE_ARRAY` | `BigDecimal`; `byte[]` of the column width | all; `byte[]` equality and set form | the represented value; a `byte[]` as the stored bytes |
 | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | all | unsigned lexicographic |
 | unannotated `BYTE_ARRAY` | `String`, `byte[]` | all | unsigned lexicographic |
 | unannotated `FIXED_LEN_BYTE_ARRAY` | `byte[]` | all | unsigned lexicographic |
@@ -110,7 +114,7 @@ can hold is set by its physical carrier:
 | `LocalTime` | `TIME` | a whole number of the column's unit |
 | `LocalDate` | `DATE` | an epoch day within the `INT32` range |
 | `BigDecimal` | `DECIMAL` | no more fractional digits than the scale, and an unscaled value within the `INT32` / `INT64` range, or within the width of a `FIXED_LEN_BYTE_ARRAY` after sign extension; a `BYTE_ARRAY` holds any unscaled value |
-| `byte[]` | `FIXED_LEN_BYTE_ARRAY`, `UUID`, `INTERVAL` | exactly the width; for a fixed-width `DECIMAL`, any length whose value fits the width after sign extension |
+| `byte[]` | `FIXED_LEN_BYTE_ARRAY`, `UUID`, `INTERVAL`, `DECIMAL` over `FIXED_LEN_BYTE_ARRAY` | exactly the width |
 | `byte[]` | `BYTE_ARRAY` | any length |
 | `float` | `FLOAT16` | a value a half represents |
 | `PqInterval` | `INTERVAL` | each component within `[0, 2^32 − 1]` |
@@ -163,8 +167,17 @@ deprecated spelling of `in(String, String...)`.
 
 ## Binary literals
 
-For `BYTE_ARRAY` and `FIXED_LEN_BYTE_ARRAY` the physical literal is `byte[]`: the stored bytes,
-compared in the column's order.
+For `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` the physical literal is `byte[]`: the stored
+bytes. Equality and the set form match the rows storing exactly those bytes. The ordered operators
+compare them unsigned, on the types whose order that is, and reject them on the others (rule 2),
+naming the typed literal that orders the column.
+
+The bytes and the value part where a type admits more than one encoding of a value: a
+`BYTE_ARRAY` `DECIMAL` padded with sign-extension bytes, a `FLOAT16` `NaN` with another sign or
+payload, an `INT96` whose nanoseconds of the day run past one day. A `byte[]` literal matches its
+own encoding only; the typed literal matches every encoding. A `byte[]` predicate's result depends
+on the bytes alone, so recognising an annotation the reader does not know today can turn an
+answered ordered `byte[]` predicate into a refusal, but never into a different result.
 
 `String` is the literal where `getString` reads the column: `STRING`, `ENUM`, `JSON` and an
 unannotated `BYTE_ARRAY`. Its UTF-8 encoding is exactly the stored bytes. A `String` that is not
@@ -196,10 +209,11 @@ are public only because the sealed `FilterPredicate` permits them.
 The array-valued records compare by content in `equals` / `hashCode` and copy their arrays on
 construction.
 
-The dictionary and Bloom filter shortcuts for equality test exact bytes. They apply only where a
-value has one encoding in the column (`Comparison.byteExact`). They do not apply to a `DECIMAL`
-over `BYTE_ARRAY`, whose writer may pad, nor to `INT96`, whose nanoseconds-of-day field can
-express a value past one day.
+The dictionary and Bloom filter shortcuts for equality test exact bytes. They apply to every
+`byte[]` literal, and to a typed literal only where a value has one encoding in the column
+(`Comparison.byteExact`). They do not apply to a `BigDecimal` on a `DECIMAL` over `BYTE_ARRAY`,
+whose writer may pad, nor to an `Instant` on an `INT96`, whose nanoseconds-of-day field can express
+a value past one day.
 
 ## Nulls and composition
 
@@ -218,6 +232,7 @@ the column and what it takes. That covers:
 - an equality literal it cannot hold
 - a byte literal that does not decode
 - an ordered operator on a type without an order
+- an ordered operator with a `byte[]` on a type that does not order as its bytes
 - a `String` where `getString` does not read
 - a column below a repeated path, or a comparison on a leaf below a `VARIANT` group
 - `not` over `intersects`
@@ -242,16 +257,30 @@ constant. Every evaluator therefore answers a boolean column through one compari
 
 A `StringColumnPredicate` / `StringInPredicate` resolves in two steps. First, `requireTextColumn`
 decides whether the column takes a `String`. It is an exhaustive `switch` over `LogicalType`, the
-shape `byteComparison` has, so an annotation added later has to state whether it takes one; an
+shape `orderingLiteral` has, so an annotation added later has to state whether it takes one; an
 unannotated column takes one only as a `BYTE_ARRAY`. Second, the value is encoded as UTF-8 and
 resolved as the equivalent `byte[]` literal. Every column that passes the first step compares as
 `BYTE_STRING`.
 
-A `BinaryColumnPredicate` / `BinaryInPredicate` resolves through `byteComparison` and
-`comparedBytes`, which carry the `FLOAT16` decoding, the fixed-width `DECIMAL` resize, and the
-`byteExact` gating of the dictionary and Bloom filter shortcuts. `parquet-java-compat`'s
-`FilterConverter` turns a parquet-java `Binary` literal into a `BinaryColumnPredicate`, so a
-migrated filter compares in the column's order on every binary column.
+A `BinaryColumnPredicate` / `BinaryInPredicate` resolves through `orderingLiteral`, an exhaustive
+`switch` over `LogicalType` naming the typed literal of a column that does not order as its bytes,
+so an annotation added later has to state whether it does. A column that orders as its bytes
+resolves to `Comparison.BYTE_STRING`. On the others the ordered operators throw, and equality
+resolves as follows, `notEq` as its negation:
+
+| Column | Equality resolves to |
+|---|---|
+| `DECIMAL` over `FIXED_LEN_BYTE_ARRAY` | `FIXED_DECIMAL`, which one encoding per number makes byte equality |
+| `DECIMAL` over `BYTE_ARRAY` | `VARIABLE_DECIMAL` and `STORED_BYTES` |
+| `FLOAT16` | the `Float16Predicate` of the decoded half and `STORED_BYTES` |
+| `INT96` | `STORED_BYTES` |
+
+`STORED_BYTES` compares the bytes and reads no bounds. The value comparison beside it reads the
+bounds in the order they are written in, which prunes soundly: a row storing the literal's bytes
+holds the value they encode. `parquet-java-compat`'s `FilterConverter` reads the file schema and
+turns a parquet-java `Binary` literal on a `DECIMAL` over a binary type into a
+`DecimalColumnPredicate`, and one of two bytes on a `FLOAT16` into a `FloatColumnPredicate`, which
+compare as parquet-java's comparators do. Every other `Binary` becomes a `BinaryColumnPredicate`.
 
 ## Relation to parquet-java and DuckDB
 
@@ -262,10 +291,12 @@ express get the same answer; the differences are listed below.
   `double`, `boolean`, `Binary`) and compares it through the column's `PrimitiveComparator`, which
   the annotation selects: `UNSIGNED_INT32_COMPARATOR` for `UINT_32`,
   `BINARY_AS_SIGNED_INTEGER_COMPARATOR` for `DECIMAL`, `BINARY_AS_FLOAT16_COMPARATOR` for
-  `FLOAT16`. Its floating-point comparators order as `Float.compare`, as here. It also accepts
-  ordered predicates on types without an order, offers equality and membership only on
-  `BOOLEAN`, and orders `INT96` by its bytes as a signed big-endian integer rather than as the
-  instant it holds.
+  `FLOAT16`. A `Binary` there therefore compares as the value on a `DECIMAL` and a `FLOAT16`, which
+  here is the typed literal's meaning, and the compatibility shim converts it accordingly. Its
+  floating-point comparators order as `Float.compare`, as here. It also accepts ordered predicates
+  on types without an order, offers equality and membership only on `BOOLEAN`, and orders `INT96`
+  by its bytes as a signed big-endian integer rather than as the instant it holds. The shim passes
+  a `Binary` on an `INT96` through as a `byte[]`, so an ordered one throws.
 - **DuckDB.** It takes the literal of the column's SQL type only, which the annotation determines.
   An integer against a `DATE` and a `BLOB` against a `DECIMAL` are conversion errors, and a string
   is parsed as text of the column's type (`dec = '1.25'`). The typed literals here give the same
@@ -294,6 +325,7 @@ express get the same answer; the differences are listed below.
 | `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) (done) |
 | `getValue` narrows a stored signed `INT(8)` / `INT(16)` value past the annotation; the rule follows `getInt` | [#1203](https://github.com/hardwood-hq/hardwood/issues/1203) (done) |
 | A column whose annotation is dropped has no readable bounds | [#1139](https://github.com/hardwood-hq/hardwood/issues/1139) (done) |
+| `byte[]` is the stored bytes; ordered `byte[]` only on types that order as their bytes; `FilterConverter` maps `Binary` on `DECIMAL` / `FLOAT16` to typed literals | [#1142](https://github.com/hardwood-hq/hardwood/issues/1142) (done) |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | [#921](https://github.com/hardwood-hq/hardwood/issues/921) |
 
 The floating-point rows depend on NaN-aware pruning
@@ -320,5 +352,7 @@ the column-reader record view handling `FLOAT16` and struct leaves
   every resolved leaf form, `not(not(p))` resolves to a predicate equivalent to `p`.
 - `FilterPredicateTest`: the `byte[]` factories copy their literal and compare by content, every
   set form rejects an empty list, and every factory rejects a null literal.
-- `DifferentialColumnOrderTest`: byte literals go through the `byte[]` factories.
-- `ParquetReaderCompatTest`: the `binaryColumn` cases on a `DECIMAL` column stay green.
+- `DifferentialColumnOrderTest`: byte equality and membership go through the `byte[]` factories.
+- `ParquetReaderCompatTest`: `binaryColumn` equality and order on a `DECIMAL` over either binary
+  type, with literals narrower and wider than a fixed-width column, and order on a `FLOAT16`
+  answer as parquet-java does; a literal the shim does not convert is refused by the reader.

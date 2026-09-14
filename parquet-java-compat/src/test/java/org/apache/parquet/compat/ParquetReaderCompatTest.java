@@ -7,7 +7,10 @@
  */
 package org.apache.parquet.compat;
 
+import java.io.File;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import org.apache.hadoop.fs.Path;
@@ -22,9 +25,18 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import dev.hardwood.OutputFile;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.apache.parquet.filter2.predicate.FilterApi.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Tests for parquet-java API compatibility.
 class ParquetReaderCompatTest {
@@ -223,8 +235,8 @@ class ParquetReaderCompatTest {
 
     /// A `DECIMAL` column orders by the value its bytes stand for, not by the bytes, and
     /// parquet-java compares a `binaryColumn` literal against it through
-    /// `BINARY_AS_SIGNED_INTEGER`. The shim hands the literal's bytes through verbatim, so the
-    /// same filter has to answer the same way here.
+    /// `BINARY_AS_SIGNED_INTEGER`. The shim converts the literal to the `BigDecimal` it encodes,
+    /// so the same filter answers the same way here.
     @Test
     void testFilterPushdownBinaryLiteralOnDecimalColumn() throws Exception {
         // compat_decimal_10_2.parquet: id 1 -> 123.45, id 2 -> 678.90, as DECIMAL(10, 2)
@@ -269,6 +281,123 @@ class ParquetReaderCompatTest {
             }
             assertThat(records).hasSize(1);
             assertThat(records.get(0).getLong("id", 0)).isEqualTo(2L);
+        }
+    }
+
+    /// parquet-java compares a `binaryColumn` literal on a `FLOAT16` column as the half its two
+    /// little-endian bytes encode, so an ordered filter converts to the `float` predicate.
+    @Test
+    void testFilterPushdownBinaryRangeOnFloat16Column() throws Exception {
+        // f16 holds (row - 200) / 4, with nulls, NaNs and infinities; 6.25 is the half 0x4640.
+        Path path = new Path("../core/src/test/resources/predicate/predicate_single.parquet");
+        Binary sixAndAQuarter = Binary.fromConstantByteArray(new byte[] { 0x40, 0x46 });
+
+        FilterPredicate pred = lt(binaryColumn("f16"), sixAndAQuarter);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Long> rows = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                rows.add(record.getLong("__row__", 0));
+            }
+            assertThat(rows).hasSize(217).allMatch(row -> row < 225);
+        }
+    }
+
+    /// parquet-java reads a `binaryColumn` literal on a fixed-width `DECIMAL` as the number it
+    /// encodes, whatever its length, so a literal narrower or wider than the column still finds
+    /// the rows holding that number, including in a row group other than the first.
+    @Test
+    void testFilterPushdownBinaryLiteralOfAnotherWidthOnDecimalColumn() throws Exception {
+        // dec_flba holds (row - 200) * 1.25 as DECIMAL(20, 2) in a FIXED_LEN_BYTE_ARRAY(9), 100 rows
+        // per row group, null where row % 37 == 5.
+        Path path = new Path("../core/src/test/resources/predicate/predicate_multi.parquet");
+        // 62.50 is unscaled 6250, 18 6A in its fewest bytes.
+        Binary narrow = Binary.fromConstantByteArray(new byte[] { 0x18, 0x6A });
+        // -1.25 is unscaled -125, sign-extended to ten bytes.
+        byte[] wideBytes = new byte[10];
+        Arrays.fill(wideBytes, (byte) 0xFF);
+        wideBytes[9] = (byte) 0x83;
+        Binary wide = Binary.fromConstantByteArray(wideBytes);
+        // -1.25 in its fewest bytes.
+        Binary narrowNegative = Binary.fromConstantByteArray(new byte[] { (byte) 0xFF, (byte) 0x83 });
+
+        assertThat(rows(path, eq(binaryColumn("dec_flba"), narrow), "__row__")).containsExactly(250L);
+        assertThat(rows(path, eq(binaryColumn("dec_flba"), wide), "__row__")).containsExactly(199L);
+        // Rows 0 to 198, less the six nulls among them.
+        assertThat(rows(path, lt(binaryColumn("dec_flba"), narrowNegative), "__row__"))
+                .hasSize(193)
+                .allMatch(row -> row < 199);
+    }
+
+    /// A `DECIMAL` over `BYTE_ARRAY` stores each number in its fewest bytes. parquet-java compares
+    /// a `binaryColumn` literal against it as the number, so a padded encoding matches the
+    /// minimal one stored, and an ordered filter orders by value: `3.00` is `01 2C`, which sorts
+    /// below `7F` byte-wise and above it as a number.
+    @Test
+    void testFilterPushdownBinaryLiteralOnByteArrayDecimalColumn(@TempDir File dir) throws Exception {
+        File file = new File(dir, "byte_array_decimal.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.decimal(18, 2))
+                .build();
+        BigDecimal[] amounts = { new BigDecimal("1.27"), new BigDecimal("3.00"), new BigDecimal("-1.00") };
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file.toPath()), schema)) {
+            for (int i = 0; i < amounts.length; i++) {
+                long id = i;
+                BigDecimal amount = amounts[i];
+                writer.rowWriter().writeRow(row -> row.setLong("id", id).setDecimal("amount", amount));
+            }
+        }
+        Path path = new Path(file.getPath());
+
+        assertThat(rows(path, eq(binaryColumn("amount"), Binary.fromConstantByteArray(new byte[] { 0x00, 0x00, 0x7F })),
+                "id")).containsExactly(0L);
+        assertThat(rows(path, gt(binaryColumn("amount"), Binary.fromConstantByteArray(new byte[] { 0x7F })), "id"))
+                .containsExactly(1L);
+        assertThat(rows(path, lt(binaryColumn("amount"), Binary.fromConstantByteArray(new byte[0])), "id"))
+                .containsExactly(2L);
+    }
+
+    /// A `binaryColumn` literal the shim does not convert reaches the reader as a `byte[]`
+    /// literal, which refuses a `FLOAT16` literal of another width than two bytes.
+    @Test
+    void testFilterPushdownBinaryLiteralOfAnotherWidthOnFloat16ColumnThrows() {
+        Path path = new Path("../core/src/test/resources/predicate/predicate_single.parquet");
+        FilterPredicate pred = eq(binaryColumn("f16"), Binary.fromConstantByteArray(new byte[] { 0x40, 0x46, 0x00 }));
+
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'f16' is a FLOAT16, whose literal is 2 bytes, not 3");
+    }
+
+    @Test
+    void testFilterPushdownBinaryLiteralOnUnknownColumnThrows() {
+        Path path = new Path("../core/src/test/resources/predicate/predicate_single.parquet");
+        FilterPredicate pred = eq(binaryColumn("no_such_column"), Binary.fromConstantByteArray(new byte[] { 0x01 }));
+
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'no_such_column' not found in schema");
+    }
+
+    /// The values of `idColumn` in the rows `pred` selects, in file order.
+    private static List<Long> rows(Path path, FilterPredicate pred, String idColumn) throws Exception {
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Long> rows = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                rows.add(record.getLong(idColumn, 0));
+            }
+            return rows;
         }
     }
 

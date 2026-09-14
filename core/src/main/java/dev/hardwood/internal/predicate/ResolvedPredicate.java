@@ -155,7 +155,21 @@ public sealed interface ResolvedPredicate {
             /// `00 00 4F 91 94 4E 00 00  66 8A 25 00` — the day before and a full day of
             /// nanoseconds — is a legal spelling of midnight on the 14th, which a probe for its
             /// canonical bytes would miss.
-            INT96_INSTANT(false);
+            INT96_INSTANT(false),
+
+            /// The stored bytes of a column whose values do not order as those bytes — a
+            /// `DECIMAL`, a `FLOAT16`, an `INT96` — tested for equality only.
+            ///
+            /// ```text
+            ///  DECIMAL(scale = 2) over BYTE_ARRAY:  7F  and  00 00 00 7F  are both 1.27
+            ///  FLOAT16:                             00 7E  and  00 FE     are both NaN
+            /// ```
+            ///
+            /// Each pair holds one value under two byte strings, and a literal matches the one it
+            /// spells. No bounds are read in this order, since the column's bounds are written in
+            /// the order of its values; the resolver pairs this with the value's own comparison
+            /// where that one reads them.
+            STORED_BYTES(true);
 
             private final boolean byteExact;
 
@@ -169,7 +183,7 @@ public sealed interface ResolvedPredicate {
             ///         positive if `right` sorts first
             public int compare(byte[] left, byte[] right) {
                 return switch (this) {
-                    case BYTE_STRING -> BinaryComparator.compareUnsigned(left, right);
+                    case BYTE_STRING, STORED_BYTES -> BinaryComparator.compareUnsigned(left, right);
                     case FIXED_DECIMAL, VARIABLE_DECIMAL -> BinaryComparator.compareSigned(left, right);
                     case INT96_INSTANT -> BinaryComparator.compareInt96(left, right);
                 };

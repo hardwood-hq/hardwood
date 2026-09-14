@@ -51,8 +51,10 @@ FilterPredicate filter = FilterPredicate.in("placed_at",
 `eq`, `notEq` and the set form are available on every column below. The ordered operators `lt`,
 `ltEq`, `gt` and `gtEq` are available on the types that define an order, which is every one except
 `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL`; on those four they throw `IllegalArgumentException`
-at reader creation. `BOOLEAN` is the one type with no set form, since `eq`, `notEq` and `isNotNull`
-express every set of two values.
+at reader creation. On a `DECIMAL`, `FLOAT16` or `INT96` column they take the typed literal, and a
+`byte[]` literal takes `eq`, `notEq` and the set form only (see [Binary columns](#binary-columns)).
+`BOOLEAN` is the one type with no set form, since `eq`, `notEq` and `isNotNull` express every set
+of two values.
 
 | Physical type | Logical type | Literal | Compared as |
 |---|---|---|---|
@@ -69,14 +71,14 @@ express every set of two values.
 | `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = true)`, and the legacy `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` | `Instant` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime` | the wall clock, in the column's time unit |
-| `INT96` | | `Instant`, `byte[]` of 12 bytes | the instant the value encodes |
+| `INT96` | | `Instant`, `byte[]` of 12 bytes | the instant the value encodes; a `byte[]` as the stored bytes |
 | `INT32` up to 9 digits, `INT64` up to 18 | `DECIMAL` | `BigDecimal`; `int` / `long` unscaled | the represented value |
-| `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`, `byte[]` | the represented value |
+| `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`; `byte[]`, of `n` bytes on a `FIXED_LEN_BYTE_ARRAY(n)` | the represented value; a `byte[]` as the stored bytes |
 | `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | unsigned lexicographic |
 | `BYTE_ARRAY` | `BSON` | `byte[]` | unsigned lexicographic |
 | `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; four `double` bounds for `intersects` | the WKB bytes, unsigned; `intersects` by bounding-box overlap |
 | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
-| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float` |
+| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float`; a `byte[]` as the stored bytes |
 | `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
 | any | `NULL` | the literal for the physical type | nothing — every value is null, so no comparison matches |
 | group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
@@ -98,11 +100,11 @@ scale cannot hold follows the rule under
 [Literals the column cannot hold](#literals-the-column-cannot-hold).
 
 An `INT96` column is a legacy timestamp, which [`getTimestamp`](accessors.md) reads as an
-`Instant`. Its literals are that `Instant` and the 12 stored bytes that `getBinary` returns, and
-both compare as the instant the value encodes rather than as bytes. The format lets one instant be
-stored under more than one encoding, since the nanoseconds of the day are not bounded by one day,
-and every encoding of an instant matches a literal of it. A `byte[]` literal of any other length
-throws `IllegalArgumentException` at reader creation.
+`Instant`. An `Instant` literal compares as the instant the value encodes. The format lets one
+instant be stored under more than one encoding, since the nanoseconds of the day are not bounded by
+one day, and every encoding of an instant matches an `Instant` literal of it. The column also takes
+the 12 stored bytes that `getBinary` returns, which match the rows storing exactly those bytes; a
+`byte[]` literal of any other length throws `IllegalArgumentException` at reader creation.
 
 ```java
 FilterPredicate filter = FilterPredicate.gtEq("event_time", Instant.parse("2015-06-01T00:00:00Z"));
@@ -130,17 +132,22 @@ FilterPredicate members = FilterPredicate.in("code",
         new byte[] { 0x00, (byte) 0xC8 }, new byte[] { 0x00, (byte) 0xC9 });
 ```
 
-`DECIMAL` and `FLOAT16` are the exceptions to *how* the bytes compare. Both order by the value
-their bytes stand for rather than by the bytes themselves, and their statistics are written in
-that order, so a `byte[]` literal against either compares as the column does — a `DECIMAL` by its
-unscaled value, a `FLOAT16` by the number its two little-endian bytes encode — rather than as a
-byte string. A `FLOAT16` literal must be exactly two bytes. On a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`,
-a literal of any length stands for the value it encodes and is brought to the column width:
-sign-extended when it is shorter, its leading sign-extension bytes dropped when it is longer.
+A `byte[]` literal matches the rows storing exactly its bytes, on every binary column. On most
+columns the values order as their bytes, unsigned, and a `byte[]` takes every operator. A
+`DECIMAL`, a `FLOAT16` and an `INT96` order by the value their bytes encode, and there a `byte[]`
+takes `eq`, `notEq` and `in` only; `lt`, `ltEq`, `gt` and `gtEq` with a `byte[]` throw
+`IllegalArgumentException` at reader creation, naming the `BigDecimal`, `float` or `Instant`
+literal that takes them.
 
-`in(byte[]...)` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe
-is still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
-encodes. `in(float...)` on a `FLOAT16` compares each probe against the decoded half.
+| Column | `byte[]` literal | Matches |
+|---|---|---|
+| `DECIMAL` over `BYTE_ARRAY` | any length | the rows storing these bytes; a padded encoding of the same number is a different literal |
+| `DECIMAL` over `FIXED_LEN_BYTE_ARRAY(n)` | `n` bytes | the rows storing these bytes, which is the one encoding of the number |
+| `FLOAT16` | 2 bytes | the rows storing these bytes; each `NaN` encoding is a different literal |
+| `INT96` | 12 bytes | the rows storing these bytes; another encoding of the same instant is a different literal |
+
+A `byte[]` literal of another length than the table gives throws `IllegalArgumentException` at
+reader creation.
 
 A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` and an unannotated
 `BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. These are the columns
@@ -189,10 +196,10 @@ carrier holds, the predicate matches every non-null row or none: `lt("d", LocalD
 never matches a null row, and `not` over one of these does not either.
 
 On a fixed-width column whose bytes compare as a byte string, a byte literal of another width
-compares as given for an ordered predicate, since the comparison is exact on it either way. A
-fixed-width `DECIMAL` instead reads the literal as the number it encodes, and an ordered predicate
-against a number past the column's width compares against the largest or smallest the width
-holds — so `lt` on a literal wider than the column returns every non-null row.
+compares as given for an ordered predicate, since the comparison is exact on it either way. On a
+fixed-width `DECIMAL`, an ordered predicate against a `BigDecimal` past the column's width compares
+against the largest or smallest number the width holds — so `lt` on such a literal returns every
+non-null row.
 
 An annotation's value range does not bound a literal. That covers the bit width of an `INT(8)`,
 the precision of a `DECIMAL` and the single day of a `TIME`: [the physical

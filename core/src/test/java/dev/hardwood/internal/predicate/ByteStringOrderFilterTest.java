@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,26 +30,17 @@ import dev.hardwood.writer.ParquetFileWriter;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// A binary literal compares the stored bytes, and either binary physical type reaches that path
+/// A binary literal is the stored bytes, and either binary physical type reaches that path
 /// whatever it is annotated, because a `BYTE_ARRAY` predicate is accepted on a
 /// `FIXED_LEN_BYTE_ARRAY` column. Two annotations order by the value their bytes stand for
-/// rather than by the bytes, so the literal takes the column's own comparison instead — which is
-/// what parquet-java does through `BINARY_AS_SIGNED_INTEGER` and `BINARY_AS_FLOAT16`, and what
-/// the compatibility shim's callers rely on.
+/// rather than by the bytes, and their bounds are written in that order, so byte equality prunes
+/// as the value the bytes encode.
 ///
 /// A `FLOAT16` is two little-endian bytes, so a byte-string reading sorts the low mantissa byte
 /// first: a chunk running `1.0` (`00 3C`) to `1.5` (`00 3E`) records exactly those bounds, and
 /// `1.0009765625` (`01 3C`) sits inside them numerically while comparing above the maximum
 /// byte-wise.
 class ByteStringOrderFilterTest {
-
-    @Test
-    void aFloat16ColumnComparesABinaryLiteralNumerically() {
-        assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.lt("h", half(1.5f)), float16Schema()))
-                .isInstanceOfSatisfying(ResolvedPredicate.Float16Predicate.class,
-                        p -> assertThat(p.value()).isEqualTo(1.5f));
-    }
 
     /// The row the byte-string reading dropped: inside the bounds numerically, above the maximum
     /// byte-wise.
@@ -71,65 +61,6 @@ class ByteStringOrderFilterTest {
                 .hasMessage("Column 'h' is a FLOAT16, whose literal is 2 bytes, not 3");
     }
 
-    /// A `BYTE_ARRAY` `DECIMAL` compares the value its bytes stand for, so a padded encoding of
-    /// the same number is found — the comparison parquet-java applies, and the one a
-    /// `BigDecimal` literal already resolves to here.
-    @Test
-    void aByteArrayDecimalComparesABinaryLiteralAsItsValue() {
-        assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.gt("amount", new byte[] { 0x7F }), decimalSchema()))
-                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
-                        p -> assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL));
-    }
-
-    @Test
-    void aFixedDecimalComparesABinaryLiteralAsItsValue() {
-        FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4,
-                        LogicalType.decimal(9, 2))
-                .build();
-
-        assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.gt("amount", new byte[] { 0x7F }), fixed))
-                .isInstanceOfSatisfying(ResolvedPredicate.BinaryPredicate.class,
-                        p -> assertThat(p.comparison()).isEqualTo(Comparison.FIXED_DECIMAL));
-    }
-
-    /// Ordering a decimal by its value rather than its bytes, end to end: `3.00` is `01 2C`,
-    /// which sorts below the single byte `7F` byte-wise and above it as a number.
-    @Test
-    void aByteArrayDecimalOrdersABinaryLiteralByValue() throws Exception {
-        byte[] file = writeDecimals(new BigDecimal[] {
-                new BigDecimal("1.27"), new BigDecimal("3.00"), new BigDecimal("-1.00") });
-
-        assertThat(filteredDecimals(file, FilterPredicate.gt("amount", new byte[] { 0x7F })))
-                .containsExactly(new BigDecimal("3.00"));
-    }
-
-    /// Membership takes the column's comparison, as a scalar literal does. The encoding-dependent
-    /// shortcuts are what change: a `BYTE_ARRAY` `DECIMAL` may hold one number under more than one
-    /// byte string, so its Bloom filter and dictionary — which test exact bytes — cannot rule a
-    /// probe out, while a fixed-width one has exactly one encoding per value and keeps them.
-    @Test
-    void aDecimalSetTakesTheColumnsComparison() {
-        assertThat(FilterPredicateResolver.resolve(
-                FilterPredicate.in("amount", new byte[] { 0x61 }), decimalSchema()))
-                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
-                    assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL);
-                    assertThat(p.byteExact()).isFalse();
-                });
-
-        FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4,
-                        LogicalType.decimal(9, 2))
-                .build();
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("amount", new byte[] { 0x61 }), fixed))
-                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
-                    assertThat(p.comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
-                    assertThat(p.byteExact()).isTrue();
-                });
-    }
-
     /// The statistics half, in the column's order: `7F` is `127`, inside bounds of `-100`
     /// (`9C`) to `300` (`01 2C`) as numbers, but below the minimum byte-wise — the reading that
     /// would drop a row group holding it.
@@ -145,9 +76,8 @@ class ByteStringOrderFilterTest {
                 .isTrue();
     }
 
-    /// Membership on a `FLOAT16` decodes each two-byte probe to the half it encodes and compares it
-    /// the way `eq` does, so the row a byte-string reading dropped is a member, and `not(in)` is
-    /// its exact complement.
+    /// Membership on a `FLOAT16` prunes each two-byte probe as the half it encodes, as `eq` does,
+    /// so the row a byte-string reading dropped is a member, and `not(in)` is its exact complement.
     @Test
     void aFloat16SetComparesItsProbesNumerically() throws Exception {
         byte[] oneAndABit = { 0x01, 0x3C };
@@ -160,7 +90,7 @@ class ByteStringOrderFilterTest {
                 .containsExactly(half(1.0f), half(1.5f));
     }
 
-    /// `in(float...)` compares against the decoded half, as the byte form does.
+    /// `in(float...)` compares against the decoded half.
     @Test
     void aFloat16FloatSetComparesAgainstTheDecodedHalf() throws Exception {
         byte[] oneAndABit = { 0x01, 0x3C };
@@ -184,11 +114,12 @@ class ByteStringOrderFilterTest {
     /// a byte-string reading of `01 3C` against `00 3C` .. `00 3E` places it above the maximum.
     @Test
     void aFloat16SetPrunesInTheColumnsOrder() {
-        ResolvedPredicate leaf = FilterPredicateResolver.resolve(
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.in("h", new byte[] { 0x01, 0x3C }), float16Schema());
         Statistics stats = new Statistics(half(1.0f), half(1.5f), 0L, null, false);
 
-        assertThat(MinMaxStats.of(stats, leaf, BoundsReadability.ALL).canDrop(leaf)).isFalse();
+        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.And.class, and -> assertThat(and.children())
+                .noneMatch(leaf -> MinMaxStats.of(stats, leaf, BoundsReadability.ALL).canDrop(leaf)));
     }
 
     /// Every annotation whose order is the bytes themselves keeps the byte-string comparison, as
@@ -236,13 +167,6 @@ class ByteStringOrderFilterTest {
                 .build();
     }
 
-    private static FileSchema decimalSchema() {
-        return FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.decimal(18, 2))
-                .build();
-    }
-
     private static FileSchema binary(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
                 .addColumn("c", type, RepetitionType.REQUIRED, logicalType)
@@ -264,16 +188,6 @@ class ByteStringOrderFilterTest {
         return out.toByteArray();
     }
 
-    private static byte[] writeDecimals(BigDecimal[] values) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, decimalSchema())) {
-            for (BigDecimal value : values) {
-                writer.rowWriter().writeRow(row -> row.setDecimal("amount", value));
-            }
-        }
-        return out.toByteArray();
-    }
-
     private static List<byte[]> filteredFloat16(byte[] file, FilterPredicate predicate)
             throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
@@ -282,19 +196,6 @@ class ByteStringOrderFilterTest {
             while (rows.hasNext()) {
                 rows.next();
                 matched.add(rows.getBinary("h"));
-            }
-            return matched;
-        }
-    }
-
-    private static List<BigDecimal> filteredDecimals(byte[] file, FilterPredicate predicate)
-            throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
-                RowReader rows = reader.buildRowReader().filter(predicate).build()) {
-            List<BigDecimal> matched = new ArrayList<>();
-            while (rows.hasNext()) {
-                rows.next();
-                matched.add(rows.getDecimal("amount"));
             }
             return matched;
         }

@@ -33,11 +33,12 @@ import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A `DECIMAL` stored as `BYTE_ARRAY` holds each unscaled value in the fewest bytes that hold
 /// it, so two values of the same column differ in length and length does not track magnitude:
-/// `127` is `0x7F` and `128` is `0x00 0x80`. Predicates over such a column compare the
-/// represented value, not the byte string.
+/// `127` is `0x7F` and `128` is `0x00 0x80`. A `BigDecimal` predicate over such a column compares
+/// the represented value; a `byte[]` literal is the stored bytes and takes equality only.
 class BinaryDecimalFilterTest {
 
     /// A position with nothing to point at: these cases assert decisions, not diagnostics.
@@ -185,38 +186,56 @@ class BinaryDecimalFilterTest {
         }
     }
 
-    /// The bytes of `1.27` are in the file, and a byte `eq` for exactly those bytes came
-    /// back empty: the row group's statistics are written in the column's signed order
-    /// (`min = FF 00`, `max = 01 2C`) and pruning them unsigned sorts the literal `7F` below the
-    /// minimum. The literal now takes the column's own comparison, which is the one those bounds
-    /// were written in, so the row is found.
+    /// The bytes of `1.27` are in the file. The row group's statistics are written in the
+    /// column's signed order (`min = FF 00`, `max = 01 2C`), where pruning them unsigned would
+    /// sort the literal `7F` below the minimum, so the bytes are pruned as the number they
+    /// encode and the row is found.
     @Test
-    void aByteStringPredicateComparesAsTheColumnDoes() throws Exception {
+    void aByteStringPredicateIsPrunedAsTheNumberItEncodes() throws Exception {
         assertThat(filtered(FilterPredicate.eq("amount", new byte[] { 0x7F })))
                 .containsExactly(new BigDecimal("1.27"));
     }
 
-    /// `3.00` is `01 2C`, which sorts below the single byte `7F` byte-wise and above it as a
-    /// number, so the ordering is visible in the rows that come back.
+    /// The bytes do not order as the numbers they encode, so an ordered predicate takes the
+    /// `BigDecimal` literal.
     @Test
-    void aByteStringRangePredicateOrdersByValue() throws Exception {
-        assertThat(filtered(FilterPredicate.gt("amount", new byte[] { 0x7F })))
-                .containsExactly(new BigDecimal("1.28"), new BigDecimal("3.00"));
+    void anOrderedByteStringPredicateIsRefused() {
+        assertThatThrownBy(() -> filtered(FilterPredicate.gt("amount", new byte[] { 0x7F })))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'amount' is annotated DECIMAL(18, 2), whose values do not order as their "
+                        + "stored bytes; a byte[] literal takes eq, notEq and in there, and an ordered predicate "
+                        + "takes a BigDecimal");
     }
 
-    /// Membership compares each probe in the column's order, as `eq` does, so a probe for `127`
-    /// finds every row holding it — the padded `00 00 00 7F` encodings included, which a
-    /// byte-identity test would miss. parquet-java compares `In` the same way, through the
-    /// column's `PrimitiveComparator` rather than `Binary.equals`.
+    /// A byte literal is the stored bytes, so a probe for `7F` does not match the padded
+    /// `00 00 00 7F` encodings of the same number, and a probe for the padded bytes does.
     @Test
-    void aByteStringSetPredicateFindsPaddedMembers() throws Exception {
+    void aByteStringSetPredicateMatchesTheStoredBytes() throws Exception {
         byte[] file = writeRawBinaryDecimals(paddedRows());
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
-                RowReader rows = reader.buildRowReader()
-                        .filter(FilterPredicate.in("amount", new byte[] { 0x7F }))
-                        .build()) {
-            assertThat(collect(rows)).hasSize(PADDED_ROWS / 2)
-                    .allMatch(value -> value.compareTo(new BigDecimal("1.27")) == 0);
+
+        assertThat(filtered(file, FilterPredicate.in("amount", new byte[] { 0x7F }))).isEmpty();
+        assertThat(filtered(file, FilterPredicate.eq("amount", new byte[] { 0x7F }))).isEmpty();
+        assertThat(filtered(file, FilterPredicate.in("amount", new byte[] { 0x00, 0x00, 0x00, 0x7F })))
+                .hasSize(PADDED_ROWS / 2)
+                .allMatch(value -> value.compareTo(new BigDecimal("1.27")) == 0);
+        assertThat(filtered(file, FilterPredicate.notEq("amount", new byte[] { 0x7F })))
+                .hasSize(PADDED_ROWS);
+    }
+
+    /// Byte equality consults the bloom filter, since the literal's bytes are what a matching row
+    /// stores, while the statistics still decide the row group as the number the bytes encode.
+    @Test
+    void aByteStringEqualityConsultsTheBloomFilter() throws Exception {
+        byte[] file = write(VALUES);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();
+            ResolvedPredicate predicate = FilterPredicateResolver.resolve(
+                    FilterPredicate.eq("amount", new byte[] { 0x7F }), schema());
+
+            assertThat(RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, emptyBloomFilter(), null,
+                    UNNAMED, BoundsReadability.ALL)).isEqualTo(FilterDecision.CANNOT_MATCH);
+            assertThat(RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, null, null,
+                    UNNAMED, BoundsReadability.ALL)).isEqualTo(FilterDecision.MIGHT_MATCH);
         }
     }
 
@@ -289,11 +308,16 @@ class BinaryDecimalFilterTest {
             Comparison comparison) throws IOException {
         ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0,
                 FilterPredicate.Operator.EQ, literal, comparison);
-        BloomFilterSource empty = columnIndex -> new BloomFilter(
+        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, emptyBloomFilter(), null, UNNAMED,
+                BoundsReadability.ALL);
+    }
+
+    /// A bloom filter whose bitset is all zeroes, so every probe misses.
+    private static BloomFilterSource emptyBloomFilter() {
+        return columnIndex -> new BloomFilter(
                 new BloomFilterHeader(BLOOM_FILTER_BYTES, BloomFilterHeader.Algorithm.BLOCK,
                         BloomFilterHeader.Hash.XXHASH, BloomFilterHeader.Compression.UNCOMPRESSED),
                 ByteBuffer.allocate(BLOOM_FILTER_BYTES).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer());
-        return RowGroupFilterEvaluator.decideRowGroup(predicate, rowGroup, empty, null, UNNAMED, BoundsReadability.ALL);
     }
 
     /// Rows alternating a padded `127` with a minimally encoded `300`.

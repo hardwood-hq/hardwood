@@ -9,7 +9,6 @@ package dev.hardwood;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -36,7 +35,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
@@ -258,8 +256,11 @@ class PredicatePathAgreementTest {
         cases.add(new Case("f64", "eq(-0.0)", FilterPredicate.eq("f64", -0.0), matching(eq(-0.0))));
         cases.add(new Case("f16", "eq(bytes of 6.25)",
                 binary("f16", Operator.EQ, half(6.25f)), matching(eqPhysical(half(6.25f)))));
-        cases.add(new Case("f16", "lt(bytes of 6.25)",
-                binary("f16", Operator.LT, half(6.25f)), matching(cmpPhysical(Operator.LT, half(6.25f)))));
+        // A byte literal is the stored bytes, so it matches one NaN encoding rather than every NaN:
+        // rows 10 and 390 store 00 7E, row 150 the NaN with its sign bit set, 00 FE.
+        storedByteCases(cases, "f16", new byte[] { 0x00, 0x7E });
+        cases.add(new Case("f16", "lt(bytes of 6.25)", binary("f16", Operator.LT, half(6.25f)),
+                new Rejected(notByteOrdered("f16", "annotated FLOAT16", "a float"))));
 
         // --- DATE, TIME, TIMESTAMP ---
         cases.add(new Case("date", "eq(row 200)", FilterPredicate.eq("date", LocalDate.ofEpochDay(19000)),
@@ -299,6 +300,14 @@ class PredicatePathAgreementTest {
         decimalCases(cases, "dec_flba", new BigDecimal("0.00"));
         cases.add(new Case("dec_i32", "eq(unscaled 125 as int)", FilterPredicate.eq("dec_i32", 125),
                 matching(eqPhysical(125))));
+        // 1.25 as the nine bytes dec_flba stores it.
+        storedByteCases(cases, "dec_flba", HEX.parseHex("00000000000000007d"));
+        cases.add(new Case("dec_flba", "eq(125 in its fewest bytes)", binary("dec_flba", Operator.EQ, new byte[] { 0x7D }),
+                new Rejected("Column 'dec_flba' holds a byte string of 9 bytes; "
+                        + "the equality literal 7d (1 bytes) is not a value it can hold")));
+        cases.add(new Case("dec_flba", "gt(the stored bytes of 1.25)",
+                binary("dec_flba", Operator.GT, HEX.parseHex("00000000000000007d")),
+                new Rejected(notByteOrdered("dec_flba", "annotated DECIMAL(20, 2)", "a BigDecimal"))));
 
         // --- Text and binary ---
         stringCases(cases, "str", "k0200");
@@ -461,10 +470,11 @@ class PredicatePathAgreementTest {
         byte[] tooWide = HEX.parseHex("01000000000000000000");
         cases.add(new Case("dec_flba", "eq(a literal wider than the column)",
                 binary("dec_flba", Operator.EQ, tooWide),
-                new Rejected("Column 'dec_flba' holds a DECIMAL within 9 bytes; "
-                        + "the equality literal 01000000000000000000 is not a value it can hold")));
+                new Rejected("Column 'dec_flba' holds a byte string of 9 bytes; "
+                        + "the equality literal 01000000000000000000 (10 bytes) is not a value it can hold")));
         cases.add(new Case("dec_flba", "lt(a literal wider than the column)",
-                binary("dec_flba", Operator.LT, tooWide), matching(everyNonNullRow())));
+                binary("dec_flba", Operator.LT, tooWide),
+                new Rejected(notByteOrdered("dec_flba", "annotated DECIMAL(20, 2)", "a BigDecimal"))));
 
         byte[] threeBytes = HEX.parseHex("010203");
         cases.add(new Case("uuid", "eq(a three-byte literal)",
@@ -691,19 +701,32 @@ class PredicatePathAgreementTest {
 
     private static void binaryCases(List<Case> cases, String column, byte[] literal) {
         String shown = HEX.formatHex(literal);
-        cases.add(new Case(column, "eq(" + shown + ")", binary(column, Operator.EQ, literal),
-                matching(eqPhysical(literal))));
-        cases.add(new Case(column, "notEq(" + shown + ")", binary(column, Operator.NOT_EQ, literal),
-                matching(notEqPhysical(literal))));
+        storedByteCases(cases, column, literal);
         cases.add(new Case(column, "lt(" + shown + ")", binary(column, Operator.LT, literal),
                 matching(cmpPhysical(Operator.LT, literal))));
         cases.add(new Case(column, "gtEq(" + shown + ")", binary(column, Operator.GT_EQ, literal),
                 matching(cmpPhysical(Operator.GT_EQ, literal))));
+    }
+
+    /// Equality and membership over the stored bytes, which every binary column takes.
+    private static void storedByteCases(List<Case> cases, String column, byte[] literal) {
+        String shown = HEX.formatHex(literal);
+        cases.add(new Case(column, "eq(" + shown + ")", binary(column, Operator.EQ, literal),
+                matching(eqPhysical(literal))));
+        cases.add(new Case(column, "notEq(" + shown + ")", binary(column, Operator.NOT_EQ, literal),
+                matching(notEqPhysical(literal))));
         cases.add(new Case(column, "in(" + shown + ")", FilterPredicate.in(column, literal),
                 matching(eqPhysical(literal))));
         cases.add(new Case(column, "not(in(" + shown + "))",
                 FilterPredicate.not(FilterPredicate.in(column, literal)),
                 matching(notEqPhysical(literal))));
+    }
+
+    /// The refusal of an ordered operator over a `byte[]` literal on a column whose values do not
+    /// order as their bytes.
+    private static String notByteOrdered(String column, String description, String typedLiteral) {
+        return "Column '" + column + "' is " + description + ", whose values do not order as their stored bytes; "
+                + "a byte[] literal takes eq, notEq and in there, and an ordered predicate takes " + typedLiteral;
     }
 
     /// An `INTERVAL` defines no order, so it takes equality and the set form only, over either of
@@ -742,9 +765,9 @@ class PredicatePathAgreementTest {
                 new Rejected(noOrder)));
     }
 
-    /// An `INT96` holds an instant, which its two literals denote: the [Instant] `getTimestamp`
-    /// returns and the twelve stored bytes. Both compare as the instant, in every order, whatever
-    /// encoding of it the file stores.
+    /// An `INT96` holds an instant, which the [Instant] `getTimestamp` returns denotes in every
+    /// order, whatever encoding of it the file stores. A `byte[]` literal is the twelve stored
+    /// bytes and takes equality and membership only.
     private static void int96Cases(List<Case> cases, String column) {
         Instant atRow200 = int96Instant(200);
         instantCases(cases, column, atRow200);
@@ -756,12 +779,17 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT, atRow200))));
         cases.add(new Case(column, "lt(the epoch)", FilterPredicate.lt(column, Instant.EPOCH),
                 matching(cmp(Operator.LT, Instant.EPOCH))));
-        binaryCases(cases, column, int96Bytes(atRow200));
+        storedByteCases(cases, column, int96Bytes(atRow200));
+        cases.add(new Case(column, "lt(the bytes of row 200)", binary(column, Operator.LT, int96Bytes(atRow200)),
+                new Rejected(notByteOrdered(column, "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)",
+                        "an Instant"))));
 
         // Row 250 is stored with its day one lower and its nanoseconds of the day one day longer.
         Instant nonCanonical = int96Instant(NON_CANONICAL_ROW);
         cases.add(new Case(column, "eq(the instant stored non-canonically at row 250)",
                 FilterPredicate.eq(column, nonCanonical), matching(eq(nonCanonical))));
+        // The stored bytes of row 250 match it; the canonical encoding of the same instant does not.
+        storedByteCases(cases, column, nonCanonicalInt96Bytes(nonCanonical));
         cases.add(new Case(column, "eq(the canonical bytes of row 250)",
                 binary(column, Operator.EQ, int96Bytes(nonCanonical)),
                 matching(eqPhysical(int96Bytes(nonCanonical)))));
@@ -773,7 +801,8 @@ class PredicatePathAgreementTest {
         cases.add(new Case(column, "eq(an eleven-byte literal)", binary(column, Operator.EQ, new byte[11]),
                 new Rejected(wrongWidth)));
         cases.add(new Case(column, "lt(an eleven-byte literal)", binary(column, Operator.LT, new byte[11]),
-                new Rejected(wrongWidth)));
+                new Rejected(notByteOrdered(column, "a legacy INT96 TIMESTAMP (no isAdjustedToUTC field)",
+                        "an Instant"))));
         cases.add(new Case(column, "in(an eleven-byte literal)", FilterPredicate.in(column, new byte[11]),
                 new Rejected(wrongWidth)));
         cases.add(new Case(column, "eq(a LocalDateTime), an INT96 column",
@@ -1059,7 +1088,7 @@ class PredicatePathAgreementTest {
             case Double l -> Double.compare(((Number) value).doubleValue(), l);
             case Boolean l -> Boolean.compare((Boolean) value, l);
             case String l -> Arrays.compareUnsigned(utf8(value), l.getBytes(StandardCharsets.UTF_8));
-            case byte[] l -> compareBytes(column, (byte[]) value, l);
+            case byte[] l -> compareBytes((byte[]) value, l);
             case LocalDate l -> ((LocalDate) value).compareTo(l);
             case Instant l -> ((Instant) value).compareTo(l);
             case LocalDateTime l -> ((LocalDateTime) value).compareTo(l);
@@ -1071,19 +1100,9 @@ class PredicatePathAgreementTest {
         };
     }
 
-    /// A byte literal stands for what the column's annotation decodes it to: a number for a
-    /// `DECIMAL`, a half for a `FLOAT16`, an instant for an `INT96`, and the bytes themselves
-    /// everywhere else.
-    private static int compareBytes(ColumnSchema column, byte[] value, byte[] literal) {
-        if (column.logicalType() instanceof LogicalType.DecimalType) {
-            return unscaled(value).compareTo(unscaled(literal));
-        }
-        if (column.logicalType() instanceof LogicalType.Float16Type) {
-            return Float.compare(half(value), half(literal));
-        }
-        if (column.type() == PhysicalType.INT96) {
-            return int96Instant(value).compareTo(int96Instant(literal));
-        }
+    /// A byte literal is the stored bytes. The ordered cases reach this only on a column whose
+    /// type orders as its bytes.
+    private static int compareBytes(byte[] value, byte[] literal) {
         return Arrays.compareUnsigned(value, literal);
     }
 
@@ -1093,14 +1112,6 @@ class PredicatePathAgreementTest {
 
     private static byte[] utf8(Object value) {
         return value instanceof String text ? text.getBytes(StandardCharsets.UTF_8) : (byte[]) value;
-    }
-
-    private static BigInteger unscaled(byte[] bytes) {
-        return bytes.length == 0 ? BigInteger.ZERO : new BigInteger(bytes);
-    }
-
-    private static float half(byte[] bytes) {
-        return Float.float16ToFloat((short) ((bytes[1] & 0xFF) << 8 | bytes[0] & 0xFF));
     }
 
     // ==================== Literals ====================
@@ -1147,21 +1158,22 @@ class PredicatePathAgreementTest {
         return Instant.ofEpochSecond(0, 1_700_000_000_000_000_000L + (row - 200) * 3_600_000_000_123L + row);
     }
 
-    /// The instant twelve `INT96` bytes encode: nanoseconds of the day, then the Julian day, both
-    /// little-endian, and neither bounded by the other.
-    private static Instant int96Instant(byte[] bytes) {
-        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        long nanosOfDay = buffer.getLong();
-        long julianDay = buffer.getInt();
-        return Instant.ofEpochSecond((julianDay - JULIAN_DAY_OF_EPOCH) * 86_400L, nanosOfDay);
-    }
-
     /// The canonical twelve bytes of `instant`, whose nanoseconds of the day are less than a day.
     private static byte[] int96Bytes(Instant instant) {
         long nanos = Math.addExact(Math.multiplyExact(instant.getEpochSecond(), 1_000_000_000L), instant.getNano());
         return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
                 .putLong(Math.floorMod(nanos, NANOS_PER_DAY))
                 .putInt(Math.toIntExact(Math.floorDiv(nanos, NANOS_PER_DAY) + JULIAN_DAY_OF_EPOCH))
+                .array();
+    }
+
+    /// The twelve bytes the fixture stores for row 250: its Julian day one lower and its
+    /// nanoseconds of the day one day longer.
+    private static byte[] nonCanonicalInt96Bytes(Instant instant) {
+        ByteBuffer canonical = ByteBuffer.wrap(int96Bytes(instant)).order(ByteOrder.LITTLE_ENDIAN);
+        return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
+                .putLong(canonical.getLong() + NANOS_PER_DAY)
+                .putInt(canonical.getInt() - 1)
                 .array();
     }
 

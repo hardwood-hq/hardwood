@@ -19,7 +19,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `FilterPredicate.inStrings` is deprecated in favour of `in(String, String...)`, which builds the same predicate ([#1178](https://github.com/hardwood-hq/hardwood/issues/1178)).
 
-- `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in` ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+- `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq` and `in`, and through `lt`, `ltEq`, `gt` and `gtEq` where the column's values order as their bytes ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
 
 - A `String` literal filters a column that holds text — a `STRING`, an `ENUM`, a `JSON` or an unannotated `BYTE_ARRAY` — and throws `IllegalArgumentException` on every other binary column, where a `byte[]` or the annotation's own literal type filters instead ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
 
@@ -41,7 +41,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - An `Instant` literal on a `TIMESTAMP` column with `isAdjustedToUTC = false` throws `IllegalArgumentException`, where it used to compare the instant against the stored wall clock as though that were UTC ([#1194](https://github.com/hardwood-hq/hardwood/issues/1194)).
 
-- `FilterPredicate` filters a legacy `INT96` timestamp column with an `Instant` or a 12-byte `byte[]` literal, through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in`, compared as the instant the value encodes ([#1192](https://github.com/hardwood-hq/hardwood/issues/1192)).
+- `FilterPredicate` filters a legacy `INT96` timestamp column with an `Instant` literal through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in`, compared as the instant the value encodes, and with its 12 stored bytes through `eq`, `notEq` and `in` ([#1192](https://github.com/hardwood-hq/hardwood/issues/1192)).
 
 - `getString` and `ColumnReader.getStrings` throw `IllegalArgumentException` on a column that does not hold text, where they used to decode its stored bytes as characters ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
 
@@ -57,7 +57,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `ColumnReader` filter on a `FLOAT16` column no longer throws `ClassCastException`, and one on a struct leaf no longer reads a leaf that is null under a present struct as a value ([#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
 
-- A `String`, `inStrings` or parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
+- A parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
 
 - Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
 
@@ -84,7 +84,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `LocalDate` predicate requires the column to carry the `DATE` annotation, as its JavaDoc has always said ([#1141](https://github.com/hardwood-hq/hardwood/issues/1141)). The annotation went unchecked before, so a `LocalDate` against a plain `INT32` column compared epoch days against unrelated integers and returned rows answering a different question, with nothing raised. **What changes for you:** such a call now throws `IllegalArgumentException` at reader creation. A plain `INT32` column that does hold epoch days is filtered by the day itself — `gt("d", (int) date.toEpochDay())`.
 
-- A `String` predicate on a `DECIMAL` or `FLOAT16` column compares as the column does — a `DECIMAL` by its unscaled value, a `FLOAT16` by the number its two bytes encode — rather than as a byte string ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)). Both order by the value their bytes stand for and record their statistics that way, so comparing byte-wise pruned row groups against bounds written in a different order and silently dropped matching rows. This is the comparison parquet-java applies, so a filter carried over through the compatibility shim answers the same. `inStrings` compares its probes the same way — which is also how parquet-java evaluates `In` — so a padded encoding of a `DECIMAL` probe is found; on a `FLOAT16` column each probe is compared as the half it encodes.
+- A parquet-java `binaryColumn` filter on a `DECIMAL` or `FLOAT16` column, through the compatibility shim, compares as the column does — by the number or the half its bytes encode — and no longer drops row groups holding matching rows ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)).
 
 - An ordered predicate on an `INT(bitWidth, isSigned = false)` column compares by unsigned magnitude, the order the column is written in ([#1144](https://github.com/hardwood-hq/hardwood/issues/1144)). The comparison was signed before, so `lt`, `gt` and their siblings returned wrong rows on a column holding values above 2^31, and bounds straddling that point read as inverted and were discarded — costing those columns row-group and page skipping as well.
 

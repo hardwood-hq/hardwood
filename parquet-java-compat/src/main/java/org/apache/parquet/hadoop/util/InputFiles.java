@@ -10,6 +10,8 @@ package org.apache.parquet.hadoop.util;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.io.InputFile;
 
+import dev.hardwood.schema.FileSchema;
+
 /// Bridge between the compat-layer shim types and Hardwood internals.
 ///
 /// This class lives in the same package as [HadoopInputFile] and
@@ -39,8 +41,9 @@ public final class InputFiles {
     /// [dev.hardwood.reader.FilterPredicate].
     ///
     /// @param predicate the compat-layer filter predicate
+    /// @param schema the schema of the file the predicate filters
     /// @return the Hardwood filter predicate
-    public static dev.hardwood.reader.FilterPredicate convertFilter(FilterPredicate predicate) {
-        return FilterConverter.convert(predicate);
+    public static dev.hardwood.reader.FilterPredicate convertFilter(FilterPredicate predicate, FileSchema schema) {
+        return FilterConverter.convert(predicate, schema);
     }
 }

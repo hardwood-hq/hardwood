@@ -14,6 +14,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroup;
 import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.hadoop.util.InputFiles;
 import org.apache.parquet.io.InputFile;
@@ -45,13 +46,25 @@ public class ParquetReader<T> implements AutoCloseable {
     private final RowReader rowReader;
     private final MessageType messageType;
 
-    private ParquetReader(dev.hardwood.InputFile inputFile,
-            dev.hardwood.reader.FilterPredicate filter) throws IOException {
+    private ParquetReader(dev.hardwood.InputFile inputFile, FilterPredicate filter) throws IOException {
         this.hardwoodReader = ParquetFileReader.open(inputFile);
-        this.rowReader = filter != null
-                ? hardwoodReader.buildRowReader().filter(filter).build()
-                : hardwoodReader.rowReader();
-        this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
+        try {
+            this.rowReader = filter != null
+                    ? hardwoodReader.buildRowReader()
+                            .filter(InputFiles.convertFilter(filter, hardwoodReader.getFileSchema()))
+                            .build()
+                    : hardwoodReader.rowReader();
+            this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
+        }
+        catch (RuntimeException | IOException e) {
+            try {
+                hardwoodReader.close();
+            }
+            catch (IOException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
+        }
     }
 
     /// Read the next record.
@@ -150,9 +163,9 @@ public class ParquetReader<T> implements AutoCloseable {
             return InputFiles.unwrap(HadoopInputFile.fromPath(path, c));
         }
 
-        private dev.hardwood.reader.FilterPredicate resolveFilter() {
+        private FilterPredicate resolveFilter() {
             if (filter instanceof FilterCompat.FilterPredicateCompat fpc) {
-                return InputFiles.convertFilter(fpc.getFilterPredicate());
+                return fpc.getFilterPredicate();
             }
             return null;
         }

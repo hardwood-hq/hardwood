@@ -152,8 +152,8 @@ FilterPredicate filter = FilterPredicate.gtEq("amount", new BigDecimal("99.99"))
 FilterPredicate filter = FilterPredicate.eq("request_id",
     UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
 
-// Binary columns — the literal is the stored bytes, whatever the annotation reads them as
-FilterPredicate filter = FilterPredicate.gt("amount_bytes", new byte[] { 0x01, 0x2C });
+// Binary columns — the literal is the stored bytes
+FilterPredicate filter = FilterPredicate.gt("sort_key", new byte[] { 0x01, 0x2C });
 
 // INTERVAL columns — column must carry the INTERVAL logical type
 FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600_000));
@@ -162,7 +162,10 @@ FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600
 A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an unannotated
 `BYTE_ARRAY`, where its UTF-8 encoding is the stored bytes. On any other binary column — a
 `DECIMAL`, a `FLOAT16`, a `UUID`, an `INTERVAL`, a `BSON`, a `GEOMETRY`, a `GEOGRAPHY`, a `NULL`
-or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`.
+or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`. A
+`byte[]` matches the stored bytes; on a `DECIMAL`, `FLOAT16` or `INT96` column it takes `eq`,
+`notEq` and `in`, and `lt`, `ltEq`, `gt` and `gtEq` take the `BigDecimal`, `float` or `Instant`
+literal.
 
 A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID`, a `TIMESTAMP` column an `Instant` or, where `isAdjustedToUTC = false`, a `LocalDateTime`, an `INT96` column an `Instant` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 

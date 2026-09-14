@@ -52,10 +52,6 @@ record CarriedLiteral(BigInteger below, BigInteger above) {
             BigInteger magnitude = BigInteger.ONE.shiftLeft(8 * bytes - 1);
             return new Range(magnitude.negate(), magnitude.subtract(BigInteger.ONE));
         }
-
-        boolean holds(BigInteger value) {
-            return value.compareTo(min) >= 0 && value.compareTo(max) <= 0;
-        }
     }
 
     /// Whether the column holds the literal itself.

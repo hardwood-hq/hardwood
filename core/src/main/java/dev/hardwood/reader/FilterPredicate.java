@@ -326,14 +326,14 @@ public sealed interface FilterPredicate
     // ==================== Binary (BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96) Predicates ====================
 
     /// Creates an equals predicate for a binary column, whose literal is the stored bytes —
-    /// the value [RowReader#getBinary] returns for it.
+    /// the value [RowReader#getBinary] returns for it. A row matches when it stores exactly these
+    /// bytes.
     ///
-    /// The column's annotation decides what the bytes stand for and how they compare: a
-    /// `DECIMAL` reads them as the number they encode, a `FLOAT16` as the half its two bytes
-    /// encode, and every other binary column compares them unsigned lexicographically. A
-    /// fixed-width column takes an equality literal of its own width only, and a fixed-width
-    /// `DECIMAL` any length whose value fits that width. A legacy `INT96` timestamp column takes
-    /// twelve bytes, compared as the instant they encode.
+    /// Ordered predicates compare the bytes unsigned lexicographically. A `DECIMAL`, a `FLOAT16`
+    /// and a legacy `INT96` timestamp column order by the value their bytes encode, and take a
+    /// `byte[]` for `eq`, `notEq` and `in` only; an ordered predicate on one takes a [BigDecimal],
+    /// a `float` or an [Instant]. A fixed-width column takes an equality literal of its own width
+    /// only, a `FLOAT16` two bytes and an `INT96` twelve.
     ///
     /// The array is copied, so a caller reusing it does not change the predicate.
     static FilterPredicate eq(String column, byte[] value) {
@@ -782,8 +782,8 @@ public sealed interface FilterPredicate
     record BooleanColumnPredicate(String column, Operator op, boolean value) implements FilterPredicate {
     }
 
-    /// Predicate for a binary column, comparing the stored bytes as the column's annotation reads
-    /// them. Built by the `byte[]` factories and by `parquet-java-compat`'s filter conversion.
+    /// Predicate for a binary column over its stored bytes. Built by the `byte[]` factories and by
+    /// `parquet-java-compat`'s filter conversion.
     record BinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
 
         public BinaryColumnPredicate(String column, Operator op, byte[] value) {

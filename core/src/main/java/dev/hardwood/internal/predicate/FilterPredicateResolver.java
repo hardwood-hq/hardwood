@@ -289,26 +289,18 @@ public class FilterPredicateResolver {
                 yield booleanLeaf(cs.columnIndex(), p.op(), p.value());
             }
             case BinaryColumnPredicate p -> {
-                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                if (cs.type() == PhysicalType.INT96) {
-                    requireInt96Width(p.column(), p.value());
+                ColumnSchema cs = byteColumn(p.column(), leafColumn(p.column(), schema, p.op()));
+                String orderingLiteral = orderingLiteral(cs);
+                if (orderingLiteral == null) {
+                    rejectUnholdableWidth(p.column(), cs, p.op(), p.value());
                     yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
-                            Comparison.INT96_INSTANT);
+                            Comparison.BYTE_STRING);
                 }
-                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
-                if (cs.logicalType() instanceof LogicalType.Float16Type) {
-                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(),
-                            float16ToFloat(p.column(), p.value()),
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                if (!isEquality(p.op())) {
+                    throw notByteOrdered(p.column(), cs, orderingLiteral);
                 }
-                Comparison comparison = byteComparison(cs);
-                if (comparison == Comparison.FIXED_DECIMAL) {
-                    BigInteger unscaled = unscaledOf(p.value());
-                    yield fixedDecimal(p.column(), cs, p.op(), unscaled, unscaled,
-                            "a DECIMAL", HEX.formatHex(p.value()));
-                }
-                rejectUnholdableWidth(p.column(), cs, p.op(), p.value());
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), comparison);
+                ResolvedPredicate equal = storedBytesEqual(p.column(), cs, p.value(), columnOrders);
+                yield p.op() == Operator.EQ ? equal : ResolvedPredicate.negate(equal);
             }
             case FilterPredicate.StringColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -373,23 +365,15 @@ public class FilterPredicateResolver {
                         : new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
             }
             case BinaryInPredicate p -> {
-                ColumnSchema cs = leafColumn(p.column(), schema);
-                if (cs.type() == PhysicalType.INT96) {
+                ColumnSchema cs = byteColumn(p.column(), leafColumn(p.column(), schema));
+                if (orderingLiteral(cs) == null) {
                     for (byte[] value : p.values()) {
-                        requireInt96Width(p.column(), value);
+                        rejectUnholdableWidth(p.column(), cs, Operator.EQ, value);
                     }
                     yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values(),
-                            Comparison.INT96_INSTANT);
+                            Comparison.BYTE_STRING);
                 }
-                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
-                if (cs.logicalType() instanceof LogicalType.Float16Type) {
-                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(),
-                            float16Probes(p.column(), p.values()),
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
-                }
-                Comparison comparison = byteComparison(cs);
-                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(),
-                        probeBytes(p.column(), p.values(), comparison, cs), comparison);
+                yield storedBytesMember(p.column(), cs, p.values(), columnOrders);
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
@@ -642,75 +626,120 @@ public class FilterPredicateResolver {
         return columnSchema.logicalType() instanceof LogicalType.IntType intType && !intType.isSigned();
     }
 
-    /// The bytes each probe of a binary membership test compares as on this column.
-    ///
-    /// Every probe is an equality literal, so the column has to hold each of them: a fixed-width
-    /// `DECIMAL` brings the probe to the column's own encoding and refuses a value wider than it,
-    /// and a fixed-width column of any other kind refuses a probe of another width.
-    private static byte[][] probeBytes(String columnName, byte[][] probes, Comparison comparison,
-            ColumnSchema columnSchema) {
-        byte[][] resolved = new byte[probes.length][];
-        for (int i = 0; i < probes.length; i++) {
-            if (comparison == Comparison.FIXED_DECIMAL) {
-                resolved[i] = fixedDecimalBytes(columnName, columnSchema, unscaledOf(probes[i]),
-                        HEX.formatHex(probes[i]));
-            }
-            else {
-                rejectUnholdableWidth(columnName, columnSchema, FilterPredicate.Operator.EQ, probes[i]);
-                resolved[i] = probes[i];
-            }
+    // ==================== Byte literals ====================
+
+    /// A column a `byte[]` literal reaches: `INT96`, `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY`,
+    /// whatever it is annotated.
+    private static ColumnSchema byteColumn(String columnName, ColumnSchema columnSchema) {
+        if (columnSchema.type() != PhysicalType.INT96) {
+            validateType(columnName, PhysicalType.BYTE_ARRAY, columnSchema);
         }
-        return resolved;
+        return columnSchema;
     }
 
-    /// The number a binary `DECIMAL` literal stands for. An empty literal is zero, as
-    /// [BinaryComparator#compareSigned] reads it.
-    private static BigInteger unscaledOf(byte[] literal) {
-        return literal.length == 0 ? BigInteger.ZERO : new BigInteger(literal);
-    }
-
-    /// The order a binary literal compares in on this column.
+    /// The literal that orders a byte column whose values do not order as their stored bytes, as
+    /// a refusal names it, or `null` for a column whose values do.
     ///
-    /// Either binary physical type reaches here whatever it is annotated, since [#validateType]
-    /// bridges `BYTE_ARRAY` and `FIXED_LEN_BYTE_ARRAY`. Most annotations order as the bytes
-    /// themselves. A `DECIMAL` orders by the value they stand for, and its statistics are
-    /// written that way, so the literal takes the column's own comparison rather than a
-    /// byte-string one — the same comparison a `BigDecimal` literal resolves to, and the one
-    /// parquet-java applies through `BINARY_AS_SIGNED_INTEGER`.
+    /// A `DECIMAL` orders by the number its bytes encode, a `FLOAT16` by the half, and an `INT96`
+    /// by the instant. On those a `byte[]` literal takes equality and membership only, which the
+    /// bytes answer whatever annotation the reader recognises; the typed literal carries the
+    /// order.
     ///
     /// The switch is exhaustive rather than a list of exceptions, so an annotation added later
-    /// has to name its order instead of inheriting the byte-string one by default.
-    private static Comparison byteComparison(ColumnSchema columnSchema) {
+    /// has to state whether its values order as their bytes.
+    private static String orderingLiteral(ColumnSchema columnSchema) {
+        if (columnSchema.type() == PhysicalType.INT96) {
+            return "an Instant";
+        }
         LogicalType logicalType = columnSchema.logicalType();
         if (logicalType == null) {
-            return Comparison.BYTE_STRING;
+            return null;
         }
         return switch (logicalType) {
-            // Padded to the column's width, so one number has exactly one encoding here.
-            case LogicalType.DecimalType ignored ->
-                    columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                            ? Comparison.FIXED_DECIMAL
-                            : Comparison.VARIABLE_DECIMAL;
-            case LogicalType.StringType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.EnumType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.JsonType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.BsonType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.UuidType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.IntervalType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.GeometryType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.GeographyType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.VariantType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.NullType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.ListType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.MapType ignored -> Comparison.BYTE_STRING;
-            // Handled before this is reached, or rejected by [#validateType] as a non-binary
-            // physical type.
-            case LogicalType.Float16Type ignored -> Comparison.BYTE_STRING;
-            case LogicalType.IntType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.DateType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.TimeType ignored -> Comparison.BYTE_STRING;
-            case LogicalType.TimestampType ignored -> Comparison.BYTE_STRING;
+            case LogicalType.DecimalType ignored -> "a BigDecimal";
+            case LogicalType.Float16Type ignored -> "a float";
+            case LogicalType.StringType ignored -> null;
+            case LogicalType.EnumType ignored -> null;
+            case LogicalType.JsonType ignored -> null;
+            case LogicalType.BsonType ignored -> null;
+            case LogicalType.UuidType ignored -> null;
+            // No order at all, which [#requireOrder] refuses before this is reached.
+            case LogicalType.IntervalType ignored -> null;
+            case LogicalType.GeometryType ignored -> null;
+            case LogicalType.GeographyType ignored -> null;
+            case LogicalType.NullType ignored -> null;
+            // Not a leaf annotation, or dropped off a binary physical type when the schema is read.
+            case LogicalType.VariantType ignored -> null;
+            case LogicalType.ListType ignored -> null;
+            case LogicalType.MapType ignored -> null;
+            case LogicalType.IntType ignored -> null;
+            case LogicalType.DateType ignored -> null;
+            case LogicalType.TimeType ignored -> null;
+            case LogicalType.TimestampType ignored -> null;
         };
+    }
+
+    private static IllegalArgumentException notByteOrdered(String columnName, ColumnSchema columnSchema,
+            String orderingLiteral) {
+        String description = columnSchema.type() == PhysicalType.INT96
+                ? TimestampAccessorKind.describeLegacyInt96()
+                : "annotated " + columnSchema.logicalType();
+        return new IllegalArgumentException("Column '" + columnName + "' is " + description
+                + ", whose values do not order as their stored bytes; a byte[] literal takes eq, notEq and in "
+                + "there, and an ordered predicate takes " + orderingLiteral);
+    }
+
+    /// Whether a row stores exactly `value`, on a column whose values do not order as their bytes.
+    ///
+    /// Those bytes denote one value of the column, so a row storing them holds that value: the
+    /// comparison of the value reads the column's bounds, in the order they are written in, and
+    /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none. A fixed-width
+    /// `DECIMAL` holds each number under one encoding, so there the value alone decides.
+    private static ResolvedPredicate storedBytesEqual(String columnName, ColumnSchema columnSchema, byte[] value,
+            List<ColumnOrder> columnOrders) {
+        int columnIndex = columnSchema.columnIndex();
+        ResolvedPredicate bytes = new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ, value,
+                Comparison.STORED_BYTES);
+        if (columnSchema.type() == PhysicalType.INT96) {
+            requireInt96Width(columnName, value);
+            return bytes;
+        }
+        if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
+            return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16Predicate(columnIndex, Operator.EQ,
+                    float16ToFloat(columnName, value), isIeee754TotalOrder(columnIndex, columnOrders)), bytes));
+        }
+        if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            rejectUnholdableWidth(columnName, columnSchema, Operator.EQ, value);
+            return new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ, value, Comparison.FIXED_DECIMAL);
+        }
+        return new ResolvedPredicate.And(List.of(new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ,
+                value, Comparison.VARIABLE_DECIMAL), bytes));
+    }
+
+    /// Whether a row stores exactly one of `values`, as [#storedBytesEqual] decides it for each.
+    private static ResolvedPredicate storedBytesMember(String columnName, ColumnSchema columnSchema, byte[][] values,
+            List<ColumnOrder> columnOrders) {
+        int columnIndex = columnSchema.columnIndex();
+        ResolvedPredicate bytes = new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
+                Comparison.STORED_BYTES);
+        if (columnSchema.type() == PhysicalType.INT96) {
+            for (byte[] value : values) {
+                requireInt96Width(columnName, value);
+            }
+            return bytes;
+        }
+        if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
+            return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16InPredicate(columnIndex,
+                    float16Probes(columnName, values), isIeee754TotalOrder(columnIndex, columnOrders)), bytes));
+        }
+        if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            for (byte[] value : values) {
+                rejectUnholdableWidth(columnName, columnSchema, Operator.EQ, value);
+            }
+            return new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.FIXED_DECIMAL);
+        }
+        return new ResolvedPredicate.And(List.of(new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
+                Comparison.VARIABLE_DECIMAL), bytes));
     }
 
     /// Refuses a `String` literal on a column that does not hold text.
@@ -791,13 +820,8 @@ public class FilterPredicateResolver {
         return (int) component;
     }
 
-    /// The two bytes of a `FLOAT16` literal, as the value they encode.
-    ///
-    /// A `FLOAT16` is two little-endian bytes of an IEEE half. Comparing them as a byte string
-    /// would order the low mantissa byte first, which is not the column's order and not the
-    /// order its statistics are written in, so the literal is decoded and compared numerically —
-    /// as parquet-java does through `BINARY_AS_FLOAT16`. A literal that is a `NaN` payload
-    /// therefore matches any stored `NaN`, the same widening a `float` literal already carries.
+    /// The half two little-endian bytes of a `FLOAT16` literal encode, which the column's bounds
+    /// are written in the order of.
     private static float float16ToFloat(String columnName, byte[] value) {
         if (value.length != FLOAT16_BYTES) {
             throw new IllegalArgumentException(
@@ -982,17 +1006,6 @@ public class FilterPredicateResolver {
                 scale + " within " + width + " bytes", literal,
                 (resolvedOp, value) -> new ResolvedPredicate.BinaryPredicate(columnSchema.columnIndex(),
                         resolvedOp, toFixedLenDecimalBytes(value, width), Comparison.FIXED_DECIMAL));
-    }
-
-    /// `unscaled` in the column's own encoding, for a probe that has to be a value the column
-    /// holds.
-    private static byte[] fixedDecimalBytes(String columnName, ColumnSchema columnSchema,
-            BigInteger unscaled, String literal) {
-        int width = FixedWidthValidator.requireWidth(null, columnSchema);
-        if (!CarriedLiteral.Range.ofBytes(width).holds(unscaled)) {
-            throw cannotHold(columnName, "a DECIMAL within " + width + " bytes", literal);
-        }
-        return toFixedLenDecimalBytes(unscaled, width);
     }
 
     /// Refuses an equality literal of a width a fixed-width column cannot store. An order literal

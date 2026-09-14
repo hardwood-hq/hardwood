@@ -527,6 +527,12 @@ sealed interface MinMaxStats {
             if (comparison == Comparison.INT96_INSTANT) {
                 return new NullCountOnlyStats(nullCount, null);
             }
+            // Bounds written in the order of the column's values say nothing about the order of
+            // their bytes; the value's own comparison, which the resolver pairs with this one,
+            // reads them instead.
+            if (comparison == Comparison.STORED_BYTES) {
+                return new NullCountOnlyStats(nullCount, null);
+            }
             // -100 sorts below +100 as a two's complement number and above it as a byte
             // string, so only the column's own order tells a decimal's bounds apart from an
             // inverted pair.
