@@ -123,12 +123,14 @@ public final class RecordFilterCompiler {
             case ResolvedPredicate.BinaryInPredicate p ->
                     binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
                             p.comparison());
+            case ResolvedPredicate.FloatInPredicate p ->
+                    floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.DoubleInPredicate p ->
-                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(), p.floatColumn());
+                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             // `getFloat` decodes a FLOAT16 column's two bytes itself, as for Float16Predicate, so
             // membership reads the half through the FLOAT path.
             case ResolvedPredicate.Float16InPredicate p ->
-                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(), true);
+                    floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.IsNullPredicate p -> {
                 if (!p.group()) {
                     int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
@@ -491,18 +493,19 @@ public final class RecordFilterCompiler {
         };
     }
 
-    private static RowMatcher doubleInLeaf(String[] path, String name, double[] values, boolean floatColumn) {
-        if (floatColumn) {
-            return row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                double val = a.getFloat(name);
-                for (double member : values) {
-                    if (Double.compare(val, member) == 0) return true;
-                }
-                return false;
-            };
-        }
+    private static RowMatcher floatInLeaf(String[] path, String name, float[] values) {
+        return row -> {
+            StructAccessor a = resolve(row, path);
+            if (a == null || a.isNull(name)) return false;
+            float val = a.getFloat(name);
+            for (float member : values) {
+                if (Float.compare(val, member) == 0) return true;
+            }
+            return false;
+        };
+    }
+
+    private static RowMatcher doubleInLeaf(String[] path, String name, double[] values) {
         return row -> {
             StructAccessor a = resolve(row, path);
             if (a == null || a.isNull(name)) return false;

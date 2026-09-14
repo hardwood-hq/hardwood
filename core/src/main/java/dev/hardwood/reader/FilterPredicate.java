@@ -70,17 +70,15 @@ import dev.hardwood.row.PqInterval;
 /// matter in practice:
 ///
 /// - `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0`
-///   values; to match either zero, use `or(eq(0.0), eq(-0.0))`.
+///   values; to match either zero, use `in(column, 0.0, -0.0)`.
 /// - `NaN` sorts above every finite value. `eq(NaN)` matches only `NaN`
 ///   (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against
 ///   any value never match `NaN` rows; `gt` and `gtEq` against a finite value
 ///   always include `NaN` rows.
 ///
-/// `in(column, double...)` applies the same [Double#compare] total order to each listed
-/// value. On a `FLOAT` column, stored values are widened to `double` before comparison, so
-/// a probe with no exact `float` representation (e.g. `0.1`) never matches. `FLOAT16`
-/// columns are not supported and throw `IllegalArgumentException` at reader creation;
-/// express such filters as `or(eq(...), eq(...))` instead.
+/// `in(column, float...)` and `in(column, double...)` apply the same total order to each
+/// listed value. `in(column, float...)` takes a `FLOAT` or `FLOAT16` column and
+/// `in(column, double...)` a `DOUBLE` column, as `eq` does.
 ///
 /// Row-group and page pruning never drops a `NaN` row that a predicate
 /// matches. Statistics whose `min` or `max` is `NaN` are not used for pruning.
@@ -99,9 +97,17 @@ public sealed interface FilterPredicate
                 FilterPredicate.UUIDColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
+                FilterPredicate.FloatInPredicate,
                 FilterPredicate.DoubleInPredicate,
                 FilterPredicate.BinaryInPredicate,
                 FilterPredicate.StringInPredicate,
+                FilterPredicate.DateInPredicate,
+                FilterPredicate.InstantInPredicate,
+                FilterPredicate.LocalDateTimeInPredicate,
+                FilterPredicate.TimeInPredicate,
+                FilterPredicate.DecimalInPredicate,
+                FilterPredicate.UUIDInPredicate,
+                FilterPredicate.IntervalInPredicate,
                 FilterPredicate.DateColumnPredicate,
                 FilterPredicate.InstantColumnPredicate,
                 FilterPredicate.LocalDateTimeColumnPredicate,
@@ -213,6 +219,14 @@ public sealed interface FilterPredicate
 
     static FilterPredicate gtEq(String column, float value) {
         return new FloatColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    /// Creates a set-membership predicate for a `FLOAT` or `FLOAT16` column, matching a row whose
+    /// value is any of `values`. Each probe is an equality literal, so on a `FLOAT16` column a
+    /// probe no IEEE half represents throws `IllegalArgumentException` at reader creation.
+    static FilterPredicate in(String column, float... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new FloatInPredicate(column, values);
     }
 
     // ==================== DOUBLE Predicates ====================
@@ -369,6 +383,8 @@ public sealed interface FilterPredicate
         return new LongInPredicate(column, values);
     }
 
+    /// Creates a set-membership predicate for a `DOUBLE` column, matching a row whose value is any
+    /// of `values`.
     static FilterPredicate in(String column, double... values) {
         requireValues(Objects.requireNonNull(values, "values").length);
         return new DoubleInPredicate(column, values);
@@ -424,6 +440,13 @@ public sealed interface FilterPredicate
         return new DateColumnPredicate(column, Operator.GT_EQ, value);
     }
 
+    /// Creates a set-membership predicate for a [LocalDate] column, matching a row whose value is
+    /// any of `values`. Each probe is an equality literal, as for [#eq(String,LocalDate)].
+    static FilterPredicate in(String column, LocalDate... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new DateInPredicate(column, Arrays.asList(values));
+    }
+
     // ==================== Instant (TIMESTAMP) Predicates ====================
 
     /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type with
@@ -456,6 +479,13 @@ public sealed interface FilterPredicate
     /// Creates a greater-than-or-equal predicate for an [Instant] column.
     static FilterPredicate gtEq(String column, Instant value) {
         return new InstantColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    /// Creates a set-membership predicate for an [Instant] column, matching a row whose value is
+    /// any of `values`. Each probe is an equality literal, as for [#eq(String,Instant)].
+    static FilterPredicate in(String column, Instant... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new InstantInPredicate(column, Arrays.asList(values));
     }
 
     // ==================== LocalDateTime (local TIMESTAMP) Predicates ====================
@@ -492,6 +522,13 @@ public sealed interface FilterPredicate
         return new LocalDateTimeColumnPredicate(column, Operator.GT_EQ, value);
     }
 
+    /// Creates a set-membership predicate for a [LocalDateTime] column, matching a row whose value
+    /// is any of `values`. Each probe is an equality literal, as for [#eq(String,LocalDateTime)].
+    static FilterPredicate in(String column, LocalDateTime... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new LocalDateTimeInPredicate(column, Arrays.asList(values));
+    }
+
     // ==================== LocalTime (TIME) Predicates ====================
 
     /// Creates an equals predicate for a [LocalTime] column (Parquet TIME logical type).
@@ -523,6 +560,13 @@ public sealed interface FilterPredicate
     /// Creates a greater-than-or-equal predicate for a [LocalTime] column.
     static FilterPredicate gtEq(String column, LocalTime value) {
         return new TimeColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    /// Creates a set-membership predicate for a [LocalTime] column, matching a row whose value is
+    /// any of `values`. Each probe is an equality literal, as for [#eq(String,LocalTime)].
+    static FilterPredicate in(String column, LocalTime... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new TimeInPredicate(column, Arrays.asList(values));
     }
 
     // ==================== BigDecimal (DECIMAL) Predicates ====================
@@ -560,6 +604,13 @@ public sealed interface FilterPredicate
         return new DecimalColumnPredicate(column, Operator.GT_EQ, value);
     }
 
+    /// Creates a set-membership predicate for a [BigDecimal] column, matching a row whose value is
+    /// any of `values`. Each probe is an equality literal, as for [#eq(String,BigDecimal)].
+    static FilterPredicate in(String column, BigDecimal... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new DecimalInPredicate(column, Arrays.asList(values));
+    }
+
     // ==================== UUID Predicates ====================
 
     /// Creates an equals predicate for a [UUID] column (Parquet UUID logical type).
@@ -593,6 +644,13 @@ public sealed interface FilterPredicate
         return new UUIDColumnPredicate(column, Operator.GT_EQ, uuidToBytes(value));
     }
 
+    /// Creates a set-membership predicate for a [UUID] column, matching a row whose value is any of
+    /// `values`.
+    static FilterPredicate in(String column, UUID... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new UUIDInPredicate(column, Arrays.asList(values));
+    }
+
     // ==================== INTERVAL Predicates ====================
 
     /// Creates an equals predicate for an `INTERVAL` column, whose literal is the
@@ -613,6 +671,13 @@ public sealed interface FilterPredicate
         return new IntervalColumnPredicate(column, Operator.NOT_EQ, value);
     }
 
+    /// Creates a set-membership predicate for an `INTERVAL` column, matching a row whose value is
+    /// any of `values`. Each probe is an equality literal, as for [#eq(String,PqInterval)].
+    static FilterPredicate in(String column, PqInterval... values) {
+        requireValues(Objects.requireNonNull(values, "values").length);
+        return new IntervalInPredicate(column, Arrays.asList(values));
+    }
+
     // ==================== Conversion Helpers ====================
 
     /// Rejects a set form with no probe to test against.
@@ -620,6 +685,16 @@ public sealed interface FilterPredicate
         if (count == 0) {
             throw new IllegalArgumentException("IN predicate requires at least one value");
         }
+    }
+
+    /// Rejects a null probe list or a null probe in it, naming the probe the way a set form over
+    /// an array does.
+    private static <T> List<T> requireProbes(List<T> values) {
+        Objects.requireNonNull(values, "values");
+        for (int i = 0; i < values.size(); i++) {
+            Objects.requireNonNull(values.get(i), "values[" + i + "]");
+        }
+        return values;
     }
 
     /// Rejects a `String` literal that is not well-formed UTF-16, which is one holding an
@@ -800,6 +875,26 @@ public sealed interface FilterPredicate
         }
     }
 
+    record FloatInPredicate(String column, float[] values) implements FilterPredicate {
+
+        public FloatInPredicate(String column, float[] values) {
+            this.column = column;
+            this.values = Objects.requireNonNull(values, "values").clone();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof FloatInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
     record DoubleInPredicate(String column, double[] values) implements FilterPredicate {
 
         public DoubleInPredicate(String column, double[] values) {
@@ -927,6 +1022,70 @@ public sealed interface FilterPredicate
 
         public DecimalColumnPredicate {
             Objects.requireNonNull(value, "value");
+        }
+    }
+
+    // ==================== Logical-Type Set-Membership Records ====================
+
+    /// Set-membership predicate for DATE columns. Each probe resolves as a
+    /// [DateColumnPredicate] equality literal does.
+    record DateInPredicate(String column, List<LocalDate> values) implements FilterPredicate {
+
+        public DateInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for the columns an [InstantColumnPredicate] takes. Each probe
+    /// resolves as its equality literal does.
+    record InstantInPredicate(String column, List<Instant> values) implements FilterPredicate {
+
+        public InstantInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for TIMESTAMP columns with `isAdjustedToUTC = false`. Each probe
+    /// resolves as a [LocalDateTimeColumnPredicate] equality literal does.
+    record LocalDateTimeInPredicate(String column, List<LocalDateTime> values) implements FilterPredicate {
+
+        public LocalDateTimeInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for TIME columns. Each probe resolves as a
+    /// [TimeColumnPredicate] equality literal does.
+    record TimeInPredicate(String column, List<LocalTime> values) implements FilterPredicate {
+
+        public TimeInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for DECIMAL columns. Each probe resolves as a
+    /// [DecimalColumnPredicate] equality literal does.
+    record DecimalInPredicate(String column, List<BigDecimal> values) implements FilterPredicate {
+
+        public DecimalInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for UUID columns, each probe compared as its 16 big-endian bytes.
+    record UUIDInPredicate(String column, List<UUID> values) implements FilterPredicate {
+
+        public UUIDInPredicate {
+            values = List.copyOf(requireProbes(values));
+        }
+    }
+
+    /// Set-membership predicate for an `INTERVAL` column. Each probe resolves as an
+    /// [IntervalColumnPredicate] literal does.
+    record IntervalInPredicate(String column, List<PqInterval> values) implements FilterPredicate {
+
+        public IntervalInPredicate {
+            values = List.copyOf(requireProbes(values));
         }
     }
 

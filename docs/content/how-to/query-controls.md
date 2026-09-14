@@ -36,10 +36,12 @@ FilterPredicate filter = FilterPredicate.and(
     FilterPredicate.lt("age", 65)
 );
 
-// IN filter
+// IN filter, taking the literal type of the column
 FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
 FilterPredicate filter = FilterPredicate.in("temperature", 20.5, 21.0, 22.5);
 FilterPredicate filter = FilterPredicate.in("city", "NYC", "LA", "Chicago");
+FilterPredicate filter = FilterPredicate.in("order_date",
+    LocalDate.of(2025, 1, 1), LocalDate.of(2025, 7, 1));
 
 // Binary filter, on the bytes the column stores
 FilterPredicate filter = FilterPredicate.eq("checksum", new byte[] { 0x00, (byte) 0xC8 });
@@ -94,7 +96,7 @@ FilterPredicate filter = FilterPredicate.or(
 
 Predicates on `float` and `double` columns use the `Float.compare` / `Double.compare` total order, not IEEE 754 equality. Two consequences matter in practice:
 
-- `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0` values; to match either zero, use `or(eq(0.0), eq(-0.0))`.
+- `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0` values; to match either zero, use `in("c", 0.0, -0.0)`.
 - `NaN` sorts above every finite value. `eq(Float.NaN)` matches only `NaN` (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against any value never match `NaN` rows; `gt` and `gtEq` against a finite value always include `NaN` rows.
 
 ```java

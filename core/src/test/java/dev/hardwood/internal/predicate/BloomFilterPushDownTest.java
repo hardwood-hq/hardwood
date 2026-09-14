@@ -231,16 +231,12 @@ class BloomFilterPushDownTest {
     @Test
     void floatInListIsDroppedOnlyWhenEveryValueIsAbsent() throws IOException {
         // `price` holds even multiples of 2; 1.0 and 3.0 are in [0.0, 126.0] but absent.
-        FilterPredicate absent = FilterPredicate.in("price", 1.0, 3.0);
+        FilterPredicate absent = FilterPredicate.in("price", 1.0f, 3.0f);
         assertThat(statisticsDrop(absent)).isFalse();
         assertThat(bloomDrop(absent)).isTrue();
 
-        FilterPredicate present = FilterPredicate.in("price", 1.0, 2.0);
+        FilterPredicate present = FilterPredicate.in("price", 1.0f, 2.0f);
         assertThat(bloomDrop(present)).isFalse();
-
-        // 0.1 is not float-representable (trivially absent); 1.0 is absent in the bloom filter -> drops
-        FilterPredicate absentNonRep = FilterPredicate.in("price", 1.0, 0.1);
-        assertThat(bloomDrop(absentNonRep)).isTrue();
     }
 
     @Test
@@ -249,7 +245,7 @@ class BloomFilterPushDownTest {
         FilterPredicate nanDouble = FilterPredicate.in("ratio", 0.25, Double.NaN);
         assertThat(bloomDrop(nanDouble)).isFalse();
 
-        FilterPredicate nanFloat = FilterPredicate.in("price", 1.0, Double.NaN);
+        FilterPredicate nanFloat = FilterPredicate.in("price", 1.0f, Float.NaN);
         assertThat(bloomDrop(nanFloat)).isFalse();
     }
 

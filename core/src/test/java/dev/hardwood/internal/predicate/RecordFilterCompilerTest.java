@@ -250,7 +250,7 @@ class RecordFilterCompilerTest {
         FileSchema schema = doubleSchema("col");
         double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
         double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, false, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, false);
         assertTrue(matchesRow(in, doubleStub("col", 2.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", 4.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", -0.0, false), schema));
@@ -264,10 +264,10 @@ class RecordFilterCompilerTest {
     }
 
     @Test
-    void testDoubleInOnFloatColumn() {
+    void testFloatInOnFloatColumn() {
         FileSchema schema = floatSchema("col");
         float customFloatNan = Float.intBitsToFloat(0x7fc00001);
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, -0.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, true, false);
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, -0.0f, Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY }, false);
         assertTrue(matchesRow(in, floatStub("col", 0.5f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", -0.0f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", Float.NaN, false), schema));
@@ -284,7 +284,7 @@ class RecordFilterCompilerTest {
         // Row-level complement with pruning out of the picture: the negation of an
         // IN list must accept exactly the non-null rows the IN form rejects.
         FileSchema schema = doubleSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, -0.0, Double.NaN }, false, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, -0.0, Double.NaN }, false);
         ResolvedPredicate notIn = ResolvedPredicate.negate(in);
         // Shapes: width-correct DoublePredicate NOT_EQ leaves.
         assertThat(notIn).isInstanceOf(ResolvedPredicate.And.class);
@@ -300,41 +300,23 @@ class RecordFilterCompilerTest {
     }
 
     @Test
-    void testNotDoubleInOnFloatColumnIsRowLevelComplement() {
+    void testNotFloatInOnFloatColumnIsRowLevelComplement() {
         FileSchema schema = floatSchema("col");
-        // 0.1 has no exact float representation: it matched nothing in the IN form, so the
-        // negation must not gain a conjunct for it; NaN must survive the representability
-        // test (JLS 15.21.1) and reject NaN rows.
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, Double.NaN }, true, false);
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, 0.1f, Float.NaN }, false);
         ResolvedPredicate notIn = ResolvedPredicate.negate(in);
         List<ResolvedPredicate> leaves = ((ResolvedPredicate.And) notIn).children();
-        assertThat(leaves).hasSize(2);
+        assertThat(leaves).hasSize(3);
         assertThat(leaves).allSatisfy(l -> assertThat(l).isInstanceOf(ResolvedPredicate.FloatPredicate.class));
 
         // Rows the IN form matches are rejected by the negation.
         assertFalse(matchesRow(notIn, floatStub("col", 0.5f, false), schema));
+        assertFalse(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
         assertFalse(matchesRow(notIn, floatStub("col", Float.NaN, false), schema));
-        // Rows the IN form rejects are accepted by the negation (including 0.1f, which the
-        // IN form rejected because the probe is not float-representable).
-        assertTrue(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
+        // Rows the IN form rejects are accepted by the negation.
         assertTrue(matchesRow(notIn, floatStub("col", +0.0f, false), schema));
         assertTrue(matchesRow(notIn, floatStub("col", 3.5f, false), schema));
         // Null rows drop in both forms.
         assertFalse(matchesRow(notIn, floatStub("col", 0.5f, true), schema));
-    }
-
-    @Test
-    void testNotDoubleInWithOnlyNonRepresentableProbesMatchesEveryNonNullRow() {
-        // Zero-surviving-probe rule: every FLOAT probe is non-representable, so the negation
-        // matches every non-null row — the exact row-level complement — never an empty And.
-        FileSchema schema = floatSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.1, 0.3 }, true, false);
-        ResolvedPredicate notIn = ResolvedPredicate.negate(in);
-        assertThat(notIn).isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
-        // Every non-null row matches; null rows drop.
-        assertTrue(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
-        assertTrue(matchesRow(notIn, floatStub("col", 3.5f, false), schema));
-        assertFalse(matchesRow(notIn, floatStub("col", 3.5f, true), schema));
     }
 
     // ==================== Null handling ====================

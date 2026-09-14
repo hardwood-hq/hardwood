@@ -163,17 +163,28 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
-            case ResolvedPredicate.DoubleInPredicate p -> {
+            case ResolvedPredicate.FloatInPredicate p -> {
                 FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
                 if (decision != FilterDecision.CANNOT_MATCH
                         // The NaN case is repeated from BloomFilterSupport so the filter is not
                         // read for a list it could not decide either way. The dictionary holds the
                         // chunk's exact values, so it decides a NaN probe and stays in play.
                         && ((!BloomFilterSupport.anyNaN(p.values())
-                                && BloomFilterSupport.absentAll(
-                                        bloom(bloomFilters, p.columnIndex()), p.values(), p.floatColumn()))
+                                && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
                                 || DictionaryFilterSupport.absentAll(
-                                        dictionary(dictionaries, p.columnIndex()), p.values(), p.floatColumn()))) {
+                                        dictionary(dictionaries, p.columnIndex()), p.values()))) {
+                    yield FilterDecision.CANNOT_MATCH;
+                }
+                yield decision;
+            }
+            case ResolvedPredicate.DoubleInPredicate p -> {
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex(), readability);
+                // As for FloatInPredicate.
+                if (decision != FilterDecision.CANNOT_MATCH
+                        && ((!BloomFilterSupport.anyNaN(p.values())
+                                && BloomFilterSupport.absentAll(bloom(bloomFilters, p.columnIndex()), p.values()))
+                                || DictionaryFilterSupport.absentAll(
+                                        dictionary(dictionaries, p.columnIndex()), p.values()))) {
                     yield FilterDecision.CANNOT_MATCH;
                 }
                 yield decision;

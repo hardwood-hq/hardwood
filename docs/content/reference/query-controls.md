@@ -20,7 +20,7 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Category | Supported |
 |---|---|
 | Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
-| Set operators | `in` (int, long, double, `String`, `byte[]`) |
+| Set operators | `in`, over every literal type but `boolean` |
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
@@ -37,10 +37,16 @@ annotation — those listed for that annotation as well. A `String` is the one l
 not compose this way: it filters a `STRING`, an `ENUM`, a `JSON` and an unannotated `BYTE_ARRAY`,
 and no other binary column. Where both rows apply, the annotation names the order: a `UINT_32`
 column matches the `INT32` row and the `INT(32, isSigned = false)` row, and compares by unsigned
-magnitude. Set membership follows the same mapping: `in` on the
-`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, on every binary column, on `INT96`, and
-on the columns taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
-reader creation.
+magnitude. Set membership follows the same mapping: `in` takes each literal type below but
+`boolean`, and each of its values is an equality literal. A literal a column does not take throws
+`IllegalArgumentException` at reader creation.
+
+```java
+FilterPredicate filter = FilterPredicate.in("status", "ACTIVE", "PENDING");
+FilterPredicate filter = FilterPredicate.in("ratio", 0.25f, 0.5f);
+FilterPredicate filter = FilterPredicate.in("placed_at",
+        Instant.parse("2025-01-01T00:00:00Z"), Instant.parse("2025-07-01T00:00:00Z"));
+```
 
 `eq`, `notEq` and the set form are available on every column below. The ordered operators `lt`,
 `ltEq`, `gt` and `gtEq` are available on the types that define an order, which is every one except
@@ -82,9 +88,8 @@ the encoded variant, which [`getVariant`](accessors.md) reads off the group; the
 creation. Filtering on a shredded variant's sub-paths is in progress, tracked by
 [#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
-A `FLOAT` or `DOUBLE` column compares by the `Double.compare` total order, so all `NaN` values
-equal each other and `-0.0` differs from `+0.0`. A `FLOAT` column's stored values widen to
-`double` first, so a probe with no exact `float` representation — `0.1`, say — never matches.
+A `FLOAT` column compares by the `Float.compare` total order and a `DOUBLE` column by
+`Double.compare`, so all `NaN` values equal each other and `-0.0` differs from `+0.0`.
 
 A `BigDecimal` literal is rescaled to the column's scale before it is compared. A column with
 more scale than the literal pads it, so `99.99` against a `DECIMAL(scale = 4)` column compares
@@ -135,8 +140,7 @@ sign-extended when it is shorter, its leading sign-extension bytes dropped when 
 
 `in(byte[]...)` compares each probe the same way, so on a `DECIMAL` a padded encoding of a probe
 is still a member, and on a `FLOAT16` each probe — exactly two bytes — is compared as the half it
-encodes. `in(double...)` on a `FLOAT16` compares against the decoded half as it does against a
-`FLOAT`'s widened value, so a probe no half represents, such as `0.1`, matches nothing.
+encodes. `in(float...)` on a `FLOAT16` compares each probe against the decoded half.
 
 A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` and an unannotated
 `BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. These are the columns

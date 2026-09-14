@@ -27,10 +27,10 @@ import dev.hardwood.internal.predicate.matcher.doubles.DoubleNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.floats.FloatInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatNotEqBatchMatcher;
-import dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntGtEqBatchMatcher;
@@ -270,6 +270,7 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.LongInPredicate ignored -> true;
             case ResolvedPredicate.UnsignedIntInPredicate ignored -> true;
             case ResolvedPredicate.UnsignedLongInPredicate ignored -> true;
+            case ResolvedPredicate.FloatInPredicate ignored -> true;
             case ResolvedPredicate.DoubleInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
@@ -349,9 +350,8 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
             case ResolvedPredicate.UnsignedIntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.UnsignedLongInPredicate p -> new LongInBatchMatcher(p.values());
-            case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
-                    ? new FloatWideningDoubleInBatchMatcher(p.values())
-                    : new DoubleInBatchMatcher(p.values());
+            case ResolvedPredicate.FloatInPredicate p -> new FloatInBatchMatcher(p.values());
+            case ResolvedPredicate.DoubleInPredicate p -> new DoubleInBatchMatcher(p.values());
             case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher();
             case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher();
             case ResolvedPredicate.EveryNonNullRowPredicate p -> new IsNotNullBatchMatcher();

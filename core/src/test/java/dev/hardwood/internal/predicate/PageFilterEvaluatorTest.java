@@ -677,33 +677,33 @@ class PageFilterEvaluatorTest {
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
         RowRanges ranges = evaluatePages(doubleIdx, oi, 90,
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, false, false));
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, false));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
     }
 
     @Test
-    void testFloatColumnInPageFilteringWidensBounds() {
-        // FLOAT-column pages decode at float width; probes widen for comparison.
+    void testFloatInPageFiltering() {
+        // FLOAT-column pages decode at float width.
         ColumnIndex floatIdx = floatColumnIndex(new float[]{ 100.0f, 200.0f, 300.0f }, new float[]{ 199.0f, 299.0f, 399.0f });
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
         RowRanges ranges = evaluatePages(floatIdx, oi, 90,
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, true, false));
+                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, 350.0f }, false));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
 
         // NaN probe keeps every page.
         RowRanges nanRanges = evaluatePages(floatIdx, oi, 90,
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, Double.NaN }, true, false));
+                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, Float.NaN }, false));
         assertTrue(nanRanges.overlapsPage(0, 90));
     }
 
     @Test
-    void testDoubleInPageDispatchFiltersThroughResolvedLeaf() throws IOException {
-        // End-to-end page dispatch: a resolved DoubleInPredicate against a page index read from
+    void testFloatInPageDispatchFiltersThroughResolvedLeaf() throws IOException {
+        // End-to-end page dispatch: a resolved FloatInPredicate against a page index read from
         // its wire bytes. Three FLOAT-column pages [100,199], [200,299], [300,399]; probes
         // 150/350 keep pages 0 and 2 only.
         byte[] columnIndex = new ThriftStructBuilder()
@@ -724,8 +724,8 @@ class PageFilterEvaluatorTest {
 
         try (InputFile inputFile = InputFile.of(file)) {
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(
-                    0, new double[]{ 150.0, 350.0 }, true, false);
+            ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(
+                    0, new float[]{ 150.0f, 350.0f }, false);
             RowRanges ranges = PageFilterEvaluator.computeMatchingRows(in, rowGroup, buffers,
                     new LogContext("float-in.parquet", 0), BoundsReadability.ALL);
             assertTrue(ranges.overlapsPage(0, 30));

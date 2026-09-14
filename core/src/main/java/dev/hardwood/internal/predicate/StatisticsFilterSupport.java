@@ -201,6 +201,26 @@ final class StatisticsFilterSupport {
     /// A `NaN` probe stops the list from pruning at all. Stored `NaN` values sit outside the
     /// min/max ordering, so no interval can prove one absent — where an unusable *bound* is
     /// caught when the unit is sourced, this is a property of the probe.
+    static boolean canDropFloatIn(float[] values, float min, float max, boolean ieee754TotalOrder) {
+        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
+        // the unambiguous IEEE 754 total order.
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0f) ? -0.0f : min;
+            max = (max == 0.0f) ? 0.0f : max;
+        }
+        for (float value : values) {
+            if (Float.isNaN(value)) {
+                return false;
+            }
+        }
+        for (float value : values) {
+            if (Float.compare(value, min) >= 0 && Float.compare(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static boolean canDropDoubleIn(double[] values, double min, double max, boolean ieee754TotalOrder) {
         // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
         // the unambiguous IEEE 754 total order.

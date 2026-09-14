@@ -227,8 +227,9 @@ type. A typed literal is converted at resolution: `LocalDate` to epoch days, `In
 Where the conversion is not exact, it rounds as "Literals the column cannot hold" describes. A
 literal past the column's range resolves to the "no row" constant on the side whose bound is
 missing, and to a comparison against the carrier's extreme on the other. `ResolvedPredicate.negate`
-maps that constant to "every non-null row", which a membership test also negates to when no probe
-is a value the column holds. A `BOOLEAN` column holds two values and nothing between them, so each
+maps that constant to "every non-null row". A set form resolves probe by probe as the equality
+literal of the same type does, into the membership test of the column's physical type, and its
+negation is the conjunction of `notEq` over the probes. A `BOOLEAN` column holds two values and nothing between them, so each
 ordered operator on one resolves the same way: to an equality against `false` or `true`, or to a
 constant. Every evaluator therefore answers a boolean column through one comparison.
 
@@ -282,7 +283,7 @@ express get the same answer; the differences are listed below.
 | `INT96` literals | [#1192](https://github.com/hardwood-hq/hardwood/issues/1192) (done) |
 | Literals the column cannot hold; the constant predicates | [#1193](https://github.com/hardwood-hq/hardwood/issues/1193) (done) |
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) (done) |
-| Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) |
+| Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) (done) |
 | `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) (done) |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | [#921](https://github.com/hardwood-hq/hardwood/issues/921) |
 

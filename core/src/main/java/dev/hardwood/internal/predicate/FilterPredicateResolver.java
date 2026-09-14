@@ -14,10 +14,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.UUID;
+import java.util.function.Function;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
@@ -93,6 +97,9 @@ public class FilterPredicateResolver {
 
     private static final HexFormat HEX = HexFormat.of();
 
+    private static final String EPOCH_DAY_HOLDS = "an epoch day within the INT32 range";
+    private static final String INT96_HOLDS = "an instant within the range an INT96 encodes";
+
     /// The leaf a measured literal resolves into, given an operator and a value the column holds.
     @FunctionalInterface
     private interface CarriedLeaf {
@@ -121,72 +128,93 @@ public class FilterPredicateResolver {
             List<ColumnOrder> columnOrders) {
         return switch (predicate) {
             case DateColumnPredicate p -> {
-                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.INT32, cs);
-                validateLogicalType(p.column(), LogicalType.DateType.class, cs);
-                BigInteger epochDay = BigInteger.valueOf(p.value().toEpochDay());
-                yield carried(p.column(), cs.columnIndex(), p.op(),
-                        CarriedLiteral.within(epochDay, epochDay, INT32_MIN, INT32_MAX),
-                        "an epoch day within the INT32 range", p.value().toString(),
+                ColumnSchema cs = dateColumn(p.column(), leafColumn(p.column(), schema, p.op()));
+                yield carried(p.column(), cs.columnIndex(), p.op(), epochDay(p.value()), EPOCH_DAY_HOLDS,
+                        p.value().toString(),
                         (op, day) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op, day.intValueExact()));
+            }
+            case FilterPredicate.DateInPredicate p -> {
+                ColumnSchema cs = dateColumn(p.column(), leafColumn(p.column(), schema));
+                yield new ResolvedPredicate.IntInPredicate(cs.columnIndex(), intsOf(
+                        held(p.column(), p.values(), FilterPredicateResolver::epochDay, EPOCH_DAY_HOLDS,
+                                LocalDate::toString)));
             }
             case InstantColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 if (isLegacyInt96(cs)) {
                     yield int96Instant(p.column(), cs, p.op(), p.value());
                 }
-                LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, true);
-                validateType(p.column(), PhysicalType.INT64, cs);
+                LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, true);
                 yield timestamp(p.column(), cs, p.op(), unit, nanosSinceEpoch(p.value()), p.value().toString());
+            }
+            case FilterPredicate.InstantInPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema);
+                if (isLegacyInt96(cs)) {
+                    yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), bytesOf(
+                            held(p.column(), p.values(), FilterPredicateResolver::int96Instant, INT96_HOLDS,
+                                    Instant::toString),
+                            FilterPredicateResolver::int96Bytes), Comparison.INT96_INSTANT);
+                }
+                LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, true);
+                yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(
+                        held(p.column(), p.values(), value -> inUnit(nanosSinceEpoch(value), unit),
+                                timestampHolds(unit), Instant::toString)));
             }
             case LocalDateTimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                if (isLegacyInt96(cs)) {
-                    throw new IllegalArgumentException("Column '" + p.column() + "' is "
-                            + TimestampAccessorKind.describeLegacyInt96()
-                            + ", which takes Instant and byte[] literals, not a LocalDateTime");
-                }
-                LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs, false);
-                validateType(p.column(), PhysicalType.INT64, cs);
-                // A local timestamp stores its wall clock as though it were a UTC instant.
-                yield timestamp(p.column(), cs, p.op(), unit,
-                        nanosSinceEpoch(p.value().toInstant(ZoneOffset.UTC)), p.value().toString());
+                LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, false);
+                yield timestamp(p.column(), cs, p.op(), unit, wallClockNanos(p.value()), p.value().toString());
+            }
+            case FilterPredicate.LocalDateTimeInPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema);
+                LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, false);
+                yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(
+                        held(p.column(), p.values(), value -> inUnit(wallClockNanos(value), unit),
+                                timestampHolds(unit), LocalDateTime::toString)));
             }
             case TimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                LogicalType.TimeUnit unit = getTimeUnit(p.column(), cs);
-                BigInteger nanoOfDay = BigInteger.valueOf(p.value().toNanoOfDay());
-                String holds = "a whole number of " + unitName(unit);
+                LogicalType.TimeUnit unit = timeUnit(p.column(), cs);
+                CarriedLiteral literal = timeOfDay(p.value(), unit);
                 if (unit == LogicalType.TimeUnit.MILLIS) {
-                    validateType(p.column(), PhysicalType.INT32, cs);
-                    yield carried(p.column(), cs.columnIndex(), p.op(),
-                            inUnit(nanoOfDay, unit, INT32_MIN, INT32_MAX), holds, p.value().toString(),
+                    yield carried(p.column(), cs.columnIndex(), p.op(), literal, timeHolds(unit), p.value().toString(),
                             (op, value) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op,
                                     value.intValueExact()));
                 }
-                validateType(p.column(), PhysicalType.INT64, cs);
-                yield carried(p.column(), cs.columnIndex(), p.op(),
-                        inUnit(nanoOfDay, unit, INT64_MIN, INT64_MAX), holds, p.value().toString(),
+                yield carried(p.column(), cs.columnIndex(), p.op(), literal, timeHolds(unit), p.value().toString(),
                         (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
                                 value.longValueExact()));
+            }
+            case FilterPredicate.TimeInPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema);
+                LogicalType.TimeUnit unit = timeUnit(p.column(), cs);
+                BigInteger[] probes = held(p.column(), p.values(), value -> timeOfDay(value, unit), timeHolds(unit),
+                        LocalTime::toString);
+                yield unit == LogicalType.TimeUnit.MILLIS
+                        ? new ResolvedPredicate.IntInPredicate(cs.columnIndex(), intsOf(probes))
+                        : new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(probes));
+            }
+            case FilterPredicate.DecimalInPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema);
+                yield decimalIn(p.column(), cs, p.values());
             }
             case DecimalColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 LogicalType.DecimalType dt = getDecimalType(p.column(), cs);
-                BigInteger floor = p.value().setScale(dt.scale(), RoundingMode.FLOOR).unscaledValue();
-                BigInteger ceiling = p.value().setScale(dt.scale(), RoundingMode.CEILING).unscaledValue();
-                String scale = "a DECIMAL of scale " + dt.scale();
+                BigInteger floor = unscaled(p.value(), dt, RoundingMode.FLOOR);
+                BigInteger ceiling = unscaled(p.value(), dt, RoundingMode.CEILING);
+                String scale = scaleHolds(dt);
                 PhysicalType physicalType = cs.type();
                 if (physicalType == PhysicalType.INT32) {
                     yield carried(p.column(), cs.columnIndex(), p.op(),
-                            CarriedLiteral.within(floor, ceiling, INT32_MIN, INT32_MAX),
+                            atScale(p.value(), dt, INT32_MIN, INT32_MAX),
                             scale + " within the INT32 range", p.value().toPlainString(),
                             (op, value) -> new ResolvedPredicate.IntPredicate(cs.columnIndex(), op,
                                     value.intValueExact()));
                 }
                 else if (physicalType == PhysicalType.INT64) {
                     yield carried(p.column(), cs.columnIndex(), p.op(),
-                            CarriedLiteral.within(floor, ceiling, INT64_MIN, INT64_MAX),
+                            atScale(p.value(), dt, INT64_MIN, INT64_MAX),
                             scale + " within the INT64 range", p.value().toPlainString(),
                             (op, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), op,
                                     value.longValueExact()));
@@ -222,6 +250,20 @@ public class FilterPredicateResolver {
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedLongPredicate(cs.columnIndex(), p.op(), p.value())
                         : new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
+            }
+            case FilterPredicate.FloatInPredicate p -> {
+                ColumnSchema cs = leafColumn(p.column(), schema);
+                if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                        && cs.logicalType() instanceof LogicalType.Float16Type) {
+                    for (float value : p.values()) {
+                        rejectUnholdableHalf(p.column(), Operator.EQ, value);
+                    }
+                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                }
+                validateType(p.column(), PhysicalType.FLOAT, cs);
+                yield new ResolvedPredicate.FloatInPredicate(cs.columnIndex(), p.values(),
+                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case FloatColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -287,19 +329,34 @@ public class FilterPredicateResolver {
                         Comparison.BYTE_STRING);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
-                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
-                validateLogicalType(p.column(), LogicalType.UuidType.class, cs);
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class,
+                        leafColumn(p.column(), schema, p.op()));
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
                         Comparison.BYTE_STRING);
             }
+            case FilterPredicate.UUIDInPredicate p -> {
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class,
+                        leafColumn(p.column(), schema));
+                byte[][] probes = new byte[p.values().size()][];
+                for (int i = 0; i < probes.length; i++) {
+                    probes[i] = uuidBytes(p.values().get(i));
+                }
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes, Comparison.BYTE_STRING);
+            }
             case IntervalColumnPredicate p -> {
-                ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
-                validateLogicalType(p.column(), LogicalType.IntervalType.class, cs);
-                byte[] literal = intervalBytes(p.column(), p.value());
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), literal,
-                        Comparison.BYTE_STRING);
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class,
+                        leafColumn(p.column(), schema, p.op()));
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
+                        intervalBytes(p.column(), p.value()), Comparison.BYTE_STRING);
+            }
+            case FilterPredicate.IntervalInPredicate p -> {
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class,
+                        leafColumn(p.column(), schema));
+                byte[][] probes = new byte[p.values().size()][];
+                for (int i = 0; i < probes.length; i++) {
+                    probes[i] = intervalBytes(p.column(), p.values().get(i));
+                }
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes, Comparison.BYTE_STRING);
             }
             case IntInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
@@ -336,22 +393,9 @@ public class FilterPredicateResolver {
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
-                if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
-                        && cs.logicalType() instanceof LogicalType.Float16Type) {
-                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
-                }
-                if (cs.type() == PhysicalType.DOUBLE) {
-                    yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(), false,
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
-                }
-                if (cs.type() == PhysicalType.FLOAT) {
-                    yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(), true,
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
-                }
-                throw new IllegalArgumentException(
-                        "Column '" + p.column() + "' has physical type " + cs.type()
-                                + "; given filter predicate type DOUBLE/FLOAT is incompatible");
+                validateType(p.column(), PhysicalType.DOUBLE, cs);
+                yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(),
+                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case FilterPredicate.IsNullPredicate p -> {
                 NullTarget target = resolveNullTarget(p.column(), schema);
@@ -773,8 +817,8 @@ public class FilterPredicateResolver {
 
     /// The two-byte probes of a `FLOAT16` membership test, as the halves they encode. See
     /// [#float16ToFloat].
-    private static double[] float16Probes(String columnName, byte[][] values) {
-        double[] probes = new double[values.length];
+    private static float[] float16Probes(String columnName, byte[][] values) {
+        float[] probes = new float[values.length];
         for (int i = 0; i < values.length; i++) {
             probes[i] = float16ToFloat(columnName, values[i]);
         }
@@ -800,10 +844,16 @@ public class FilterPredicateResolver {
 
     // ==================== Value conversion helpers ====================
 
-    /// The unit of a `TIMESTAMP` column of the kind the literal denotes: an [Instant] a
-    /// UTC-adjusted one, a [LocalDateTime] a local wall clock.
-    private static LogicalType.TimeUnit getTimestampUnit(String columnName, ColumnSchema columnSchema,
+    /// The unit of an `INT64` `TIMESTAMP` column of the kind the literal denotes: an [Instant] a
+    /// UTC-adjusted one, a [LocalDateTime] a local wall clock. A legacy `INT96` timestamp, which an
+    /// [Instant] reaches before this, takes no [LocalDateTime].
+    private static LogicalType.TimeUnit timestampUnit(String columnName, ColumnSchema columnSchema,
             boolean literalIsInstant) {
+        if (!literalIsInstant && isLegacyInt96(columnSchema)) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is "
+                    + TimestampAccessorKind.describeLegacyInt96()
+                    + ", which takes Instant and byte[] literals, not a LocalDateTime");
+        }
         if (!(columnSchema.logicalType() instanceof LogicalType.TimestampType timestampType)) {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' does not have a TIMESTAMP logical type");
@@ -814,15 +864,45 @@ public class FilterPredicateResolver {
                     + (literalIsInstant ? "LocalDateTime and long literals, not an Instant"
                             : "Instant and long literals, not a LocalDateTime"));
         }
+        validateType(columnName, PhysicalType.INT64, columnSchema);
         return timestampType.unit();
     }
 
-    private static LogicalType.TimeUnit getTimeUnit(String columnName, ColumnSchema columnSchema) {
-        if (columnSchema.logicalType() instanceof LogicalType.TimeType timeType) {
-            return timeType.unit();
+    /// The unit of a `TIME` column, which stores `MILLIS` in an `INT32` and the finer units in an
+    /// `INT64`.
+    private static LogicalType.TimeUnit timeUnit(String columnName, ColumnSchema columnSchema) {
+        if (!(columnSchema.logicalType() instanceof LogicalType.TimeType timeType)) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' does not have a TIME logical type");
         }
-        throw new IllegalArgumentException(
-                "Column '" + columnName + "' does not have a TIME logical type");
+        validateType(columnName,
+                timeType.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64,
+                columnSchema);
+        return timeType.unit();
+    }
+
+    /// A `DATE` column, which stores epoch days in an `INT32`.
+    private static ColumnSchema dateColumn(String columnName, ColumnSchema columnSchema) {
+        validateType(columnName, PhysicalType.INT32, columnSchema);
+        validateLogicalType(columnName, LogicalType.DateType.class, columnSchema);
+        return columnSchema;
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY` column carrying `annotation`, as a `UUID` or `INTERVAL` literal
+    /// requires.
+    private static ColumnSchema annotatedFixedWidth(String columnName, Class<? extends LogicalType> annotation,
+            ColumnSchema columnSchema) {
+        validateType(columnName, PhysicalType.FIXED_LEN_BYTE_ARRAY, columnSchema);
+        validateLogicalType(columnName, annotation, columnSchema);
+        return columnSchema;
+    }
+
+    /// The sixteen big-endian bytes a `UUID` column stores for `value`.
+    private static byte[] uuidBytes(UUID value) {
+        return ByteBuffer.allocate(16)
+                .putLong(value.getMostSignificantBits())
+                .putLong(value.getLeastSignificantBits())
+                .array();
     }
 
     private static LogicalType.DecimalType getDecimalType(String columnName, ColumnSchema columnSchema) {
@@ -960,13 +1040,16 @@ public class FilterPredicateResolver {
     /// from there. That is the range [#carried] measures against, for equality and order alike.
     private static ResolvedPredicate int96Instant(String columnName, ColumnSchema cs, Operator op,
             Instant value) {
-        BigInteger nanos = nanosSinceEpoch(value).add(
-                BigInteger.valueOf(LogicalTypeConverter.JULIAN_EPOCH_OFFSET_DAYS).multiply(NANOS_PER_DAY));
-        return carried(columnName, cs.columnIndex(), op,
-                CarriedLiteral.within(nanos, nanos, INT96_MIN, INT96_MAX),
-                "an instant within the range an INT96 encodes", value.toString(),
+        return carried(columnName, cs.columnIndex(), op, int96Instant(value), INT96_HOLDS, value.toString(),
                 (resolvedOp, instant) -> new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), resolvedOp,
                         int96Bytes(instant), Comparison.INT96_INSTANT));
+    }
+
+    /// `value` in nanoseconds since Julian day 0, measured against [#INT96_MIN] and [#INT96_MAX].
+    private static CarriedLiteral int96Instant(Instant value) {
+        BigInteger nanos = nanosSinceEpoch(value).add(
+                BigInteger.valueOf(LogicalTypeConverter.JULIAN_EPOCH_OFFSET_DAYS).multiply(NANOS_PER_DAY));
+        return CarriedLiteral.within(nanos, nanos, INT96_MIN, INT96_MAX);
     }
 
     /// The twelve bytes of an instant, `nanos` since Julian day 0, within [#INT96_MIN] and
@@ -989,10 +1072,127 @@ public class FilterPredicateResolver {
     /// A timestamp literal, `nanos` since the epoch, on an `INT64` column counting `unit`.
     private static ResolvedPredicate timestamp(String columnName, ColumnSchema cs, Operator op,
             LogicalType.TimeUnit unit, BigInteger nanos, String shown) {
-        return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit, INT64_MIN, INT64_MAX),
-                "a whole number of " + unitName(unit) + " within the INT64 range", shown,
+        return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit), timestampHolds(unit), shown,
                 (resolvedOp, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), resolvedOp,
                         value.longValueExact()));
+    }
+
+    /// `nanos` since the epoch measured in `unit`, narrowed to the `INT64` a timestamp is stored in.
+    private static CarriedLiteral inUnit(BigInteger nanos, LogicalType.TimeUnit unit) {
+        return inUnit(nanos, unit, INT64_MIN, INT64_MAX);
+    }
+
+    private static String timestampHolds(LogicalType.TimeUnit unit) {
+        return timeHolds(unit) + " within the INT64 range";
+    }
+
+    /// A time of day measured in the column's unit, narrowed to the carrier that unit is stored in.
+    private static CarriedLiteral timeOfDay(LocalTime value, LogicalType.TimeUnit unit) {
+        BigInteger nanoOfDay = BigInteger.valueOf(value.toNanoOfDay());
+        return unit == LogicalType.TimeUnit.MILLIS
+                ? inUnit(nanoOfDay, unit, INT32_MIN, INT32_MAX)
+                : inUnit(nanoOfDay, unit, INT64_MIN, INT64_MAX);
+    }
+
+    private static String timeHolds(LogicalType.TimeUnit unit) {
+        return "a whole number of " + unitName(unit);
+    }
+
+    /// The epoch day of a date, narrowed to the `INT32` a `DATE` is stored in.
+    private static CarriedLiteral epochDay(LocalDate value) {
+        BigInteger epochDay = BigInteger.valueOf(value.toEpochDay());
+        return CarriedLiteral.within(epochDay, epochDay, INT32_MIN, INT32_MAX);
+    }
+
+    private static String scaleHolds(LogicalType.DecimalType decimalType) {
+        return "a DECIMAL of scale " + decimalType.scale();
+    }
+
+    /// A `BigDecimal` set on a `DECIMAL` column, each probe measured as a [DecimalColumnPredicate]
+    /// equality literal is.
+    private static ResolvedPredicate decimalIn(String columnName, ColumnSchema cs, List<BigDecimal> values) {
+        LogicalType.DecimalType dt = getDecimalType(columnName, cs);
+        String scale = scaleHolds(dt);
+        return switch (cs.type()) {
+            case INT32 -> new ResolvedPredicate.IntInPredicate(cs.columnIndex(), intsOf(held(columnName, values,
+                    value -> atScale(value, dt, INT32_MIN, INT32_MAX), scale + " within the INT32 range",
+                    BigDecimal::toPlainString)));
+            case INT64 -> new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(held(columnName, values,
+                    value -> atScale(value, dt, INT64_MIN, INT64_MAX), scale + " within the INT64 range",
+                    BigDecimal::toPlainString)));
+            case FIXED_LEN_BYTE_ARRAY -> {
+                int width = FixedWidthValidator.requireWidth(null, cs);
+                CarriedLiteral.Range range = CarriedLiteral.Range.ofBytes(width);
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), bytesOf(held(columnName, values,
+                        value -> atScale(value, dt, range.min(), range.max()), scale + " within " + width + " bytes",
+                        BigDecimal::toPlainString), unscaled -> toFixedLenDecimalBytes(unscaled, width)),
+                        Comparison.FIXED_DECIMAL);
+            }
+            default -> {
+                validateType(columnName, PhysicalType.BYTE_ARRAY, cs);
+                yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), bytesOf(held(columnName, values,
+                        value -> CarriedLiteral.unbounded(unscaled(value, dt, RoundingMode.FLOOR),
+                                unscaled(value, dt, RoundingMode.CEILING)),
+                        scale, BigDecimal::toPlainString), BigInteger::toByteArray), Comparison.VARIABLE_DECIMAL);
+            }
+        };
+    }
+
+    /// `value` at the column's scale, narrowed to `[min, max]`.
+    private static CarriedLiteral atScale(BigDecimal value, LogicalType.DecimalType decimalType,
+            BigInteger min, BigInteger max) {
+        return CarriedLiteral.within(unscaled(value, decimalType, RoundingMode.FLOOR),
+                unscaled(value, decimalType, RoundingMode.CEILING), min, max);
+    }
+
+    private static BigInteger unscaled(BigDecimal value, LogicalType.DecimalType decimalType, RoundingMode rounding) {
+        return value.setScale(decimalType.scale(), rounding).unscaledValue();
+    }
+
+    /// The carrier values the probes of a set form name, each measured by `measure`. Every probe
+    /// is an equality literal, so one the column cannot hold is refused as [#carried] refuses it.
+    private static <T> BigInteger[] held(String columnName, List<T> values, Function<T, CarriedLiteral> measure,
+            String holds, Function<T, String> shown) {
+        BigInteger[] held = new BigInteger[values.size()];
+        for (int i = 0; i < held.length; i++) {
+            T value = values.get(i);
+            CarriedLiteral carried = measure.apply(value);
+            if (!carried.exact()) {
+                throw cannotHold(columnName, holds, shown.apply(value));
+            }
+            held[i] = carried.below();
+        }
+        return held;
+    }
+
+    private static int[] intsOf(BigInteger[] values) {
+        int[] ints = new int[values.length];
+        for (int i = 0; i < ints.length; i++) {
+            ints[i] = values[i].intValueExact();
+        }
+        return ints;
+    }
+
+    private static long[] longsOf(BigInteger[] values) {
+        long[] longs = new long[values.length];
+        for (int i = 0; i < longs.length; i++) {
+            longs[i] = values[i].longValueExact();
+        }
+        return longs;
+    }
+
+    private static byte[][] bytesOf(BigInteger[] values, Function<BigInteger, byte[]> encode) {
+        byte[][] bytes = new byte[values.length][];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = encode.apply(values[i]);
+        }
+        return bytes;
+    }
+
+    /// A wall clock as nanoseconds since the epoch: a local timestamp stores its wall clock as
+    /// though it were a UTC instant.
+    private static BigInteger wallClockNanos(LocalDateTime value) {
+        return nanosSinceEpoch(value.toInstant(ZoneOffset.UTC));
     }
 
     /// `nanos` measured in `unit`, narrowed to `[min, max]`.

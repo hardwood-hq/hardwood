@@ -160,18 +160,16 @@ class ByteStringOrderFilterTest {
                 .containsExactly(half(1.0f), half(1.5f));
     }
 
-    /// `in(double...)` compares against the decoded half as it does against a `FLOAT`'s widened
-    /// value: `0.1` is no half, so it is a member of nothing, and `not(in)` keeps every row.
+    /// `in(float...)` compares against the decoded half, as the byte form does.
     @Test
-    void aFloat16DoubleSetMatchesOnlyExactHalves() throws Exception {
+    void aFloat16FloatSetComparesAgainstTheDecodedHalf() throws Exception {
         byte[] oneAndABit = { 0x01, 0x3C };
         byte[] file = writeFloat16(new byte[][] { half(1.0f), oneAndABit, half(1.5f) });
 
-        assertThat(filteredFloat16(file, FilterPredicate.in("h", 1.0009765625, 0.1)))
+        assertThat(filteredFloat16(file, FilterPredicate.in("h", 1.0009765625f, 2.0f)))
                 .containsExactly(oneAndABit);
-        assertThat(filteredFloat16(file, FilterPredicate.in("h", 0.1))).isEmpty();
-        assertThat(filteredFloat16(file, FilterPredicate.not(FilterPredicate.in("h", 0.1))))
-                .containsExactly(half(1.0f), oneAndABit, half(1.5f));
+        assertThat(filteredFloat16(file, FilterPredicate.not(FilterPredicate.in("h", 1.0009765625f))))
+                .containsExactly(half(1.0f), half(1.5f));
     }
 
     @Test

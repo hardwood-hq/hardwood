@@ -98,7 +98,7 @@ class FilterDecisionTest {
 
     @Test
     void doubleInDecisions() {
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, false, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, false);
         assertThat(doubleStats(42.0, 43.0, 0L).decideLeaf(in))
                 .isEqualTo(MIGHT_MATCH);
         assertThat(doubleStats(6.0, 41.0, 0L).decideLeaf(in))
@@ -106,7 +106,7 @@ class FilterDecisionTest {
 
         // A stored NaN sits outside the bounds' ordering, so one NaN probe stops the whole list
         // from pruning: [10.0, 20.0] holds neither 5.0 nor NaN, and the unit is still kept.
-        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN }, false, false);
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN }, false);
         assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(inWithNaN))
                 .isEqualTo(MIGHT_MATCH);
     }
@@ -166,12 +166,23 @@ class FilterDecisionTest {
     }
 
     @Test
-    void doubleInOnFloatColumnDecisions() {
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, true, false);
+    void floatInDecisions() {
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, 42.0f, 99.0f }, false);
         assertThat(floatStats(42.0f, 43.0f, 0L).decideLeaf(in))
                 .isEqualTo(MIGHT_MATCH);
         assertThat(floatStats(6.0f, 41.0f, 0L).decideLeaf(in))
                 .isEqualTo(CANNOT_MATCH);
+
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, Float.NaN }, false);
+        assertThat(floatStats(10.0f, 20.0f, 0L).decideLeaf(inWithNaN))
+                .isEqualTo(MIGHT_MATCH);
+    }
+
+    @Test
+    void floatInSignedZeroDispatch() {
+        // The same widening of zero bounds as the DOUBLE list, at float width.
+        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ -0.0f }, +0.0f, +0.0f, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ -0.0f }, +0.0f, +0.0f, true)).isTrue();
     }
 
     // ==================== Null-count gating ====================
@@ -213,7 +224,7 @@ class FilterDecisionTest {
                 .isEqualTo(MIGHT_MATCH);
 
         ResolvedPredicate inDouble =
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 }, false, false);
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 }, false);
         assertThat(doubleStats(15.0, 15.0, 0L).decideLeaf(inDouble))
                 .isEqualTo(MIGHT_MATCH);
 

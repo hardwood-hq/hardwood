@@ -108,6 +108,7 @@ sealed interface UnitStats {
             case ResolvedPredicate.UnsignedIntInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedLongInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.BinaryInPredicate ignored -> decideValue(leaf, logContext);
+            case ResolvedPredicate.FloatInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.DoubleInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.Float16InPredicate ignored -> decideValue(leaf, logContext);
             // Geospatial statistics sit on the column chunk's metadata alone, outside any unit.

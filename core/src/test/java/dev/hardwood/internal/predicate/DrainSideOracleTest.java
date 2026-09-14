@@ -134,25 +134,30 @@ class DrainSideOracleTest {
     }
 
     @Test
-    void doubleIn_bothWidths_bothWaysAgree() {
+    void floatingPointIn_bothWidths_bothWaysAgree() {
         Workload w = workload(0xD0AB1E);
         double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
         double[] values = new double[]{0.0, -0.0, Double.NaN, customNan, 0.5, 0.1, 250.0, Float.NaN,
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
-        ResolvedPredicate pDouble = new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false, false);
+        ResolvedPredicate pDouble = new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false);
         assertSurvivorsAgree(pDouble, w);
-        ResolvedPredicate pFloat = new ResolvedPredicate.DoubleInPredicate(COL_SCORE, values, true, false);
+        float customFloatNan = Float.intBitsToFloat(0x7fc00001);
+        float[] floatValues = new float[]{0.0f, -0.0f, Float.NaN, customFloatNan, 0.5f, 0.1f, 250.0f,
+                Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY};
+        ResolvedPredicate pFloat = new ResolvedPredicate.FloatInPredicate(COL_SCORE, floatValues, false);
         assertSurvivorsAgree(pFloat, w);
     }
 
     @Test
-    void doubleInNegation_bothWidths_bothWaysAgree() {
+    void floatingPointInNegation_bothWidths_bothWaysAgree() {
         Workload w = workload(0xD0ABA11);
         double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
         double[] values = new double[]{0.5, Double.NaN, customNan, 0.1, Double.POSITIVE_INFINITY};
-        ResolvedPredicate pDouble = ResolvedPredicate.negate(new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false, false));
+        ResolvedPredicate pDouble = ResolvedPredicate.negate(new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false));
         assertSurvivorsAgree(pDouble, w);
-        ResolvedPredicate pFloat = ResolvedPredicate.negate(new ResolvedPredicate.DoubleInPredicate(COL_SCORE, values, true, false));
+        float[] floatValues = new float[]{0.5f, Float.NaN, Float.intBitsToFloat(0x7fc00001), 0.1f,
+                Float.POSITIVE_INFINITY};
+        ResolvedPredicate pFloat = ResolvedPredicate.negate(new ResolvedPredicate.FloatInPredicate(COL_SCORE, floatValues, false));
         assertSurvivorsAgree(pFloat, w);
     }
 

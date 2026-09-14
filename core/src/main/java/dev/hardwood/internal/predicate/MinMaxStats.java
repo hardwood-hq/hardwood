@@ -203,11 +203,12 @@ sealed interface MinMaxStats {
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
                     p.ieee754TotalOrder(), nanFree, nullCount);
-            case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
-                    ? FloatStats.of(StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                            p.ieee754TotalOrder(), nanFree, nullCount)
-                    : DoubleStats.of(StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                            p.ieee754TotalOrder(), nanFree, nullCount);
+            case ResolvedPredicate.FloatInPredicate p -> FloatStats.of(
+                    StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
+                    p.ieee754TotalOrder(), nanFree, nullCount);
+            case ResolvedPredicate.DoubleInPredicate p -> DoubleStats.of(
+                    StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
+                    p.ieee754TotalOrder(), nanFree, nullCount);
             // These leaves read no bounds, so there is nothing to decode and nothing to
             // validate. What the file wrote is not discarded; it is simply not their business.
             case ResolvedPredicate.IsNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
@@ -465,9 +466,9 @@ sealed interface MinMaxStats {
                         p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
                 case ResolvedPredicate.Float16Predicate p -> StatisticsFilterSupport.canDropFloat(
                         p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
-                case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
+                case ResolvedPredicate.FloatInPredicate p -> StatisticsFilterSupport.canDropFloatIn(
                         p.values(), min, max, ieee754TotalOrder);
-                case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
+                case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.canDropFloatIn(
                         p.values(), min, max, ieee754TotalOrder);
                 default -> throw wrongWidth("FLOAT", leaf);
             };

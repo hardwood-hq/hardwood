@@ -76,19 +76,19 @@ class DictionarySignedZeroTest {
     void signedZeroInAnInListIsDecidedAtEachZeroSeparately() throws IOException {
         // The list path indexes its probes and searches them per entry, where the single-value
         // path scans; both orders separate the zeroes, so a +0.0 list is proven absent too.
-        assertThat(absentAll(FLOAT_COLUMN, true, 0.0)).isTrue();
-        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0)).isTrue();
+        assertThat(absentAll(FLOAT_COLUMN, 0.0f)).isTrue();
+        assertThat(absentAll(DOUBLE_COLUMN, 0.0)).isTrue();
 
         // -0.0 is stored, so a list holding it is kept — including one holding both zeroes,
         // which the probe order keeps distinct rather than collapsing onto one value.
-        assertThat(absentAll(FLOAT_COLUMN, true, -0.0)).isFalse();
-        assertThat(absentAll(DOUBLE_COLUMN, false, -0.0)).isFalse();
-        assertThat(absentAll(FLOAT_COLUMN, true, 0.0, -0.0)).isFalse();
-        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0, -0.0)).isFalse();
+        assertThat(absentAll(FLOAT_COLUMN, -0.0f)).isFalse();
+        assertThat(absentAll(DOUBLE_COLUMN, -0.0)).isFalse();
+        assertThat(absentAll(FLOAT_COLUMN, 0.0f, -0.0f)).isFalse();
+        assertThat(absentAll(DOUBLE_COLUMN, 0.0, -0.0)).isFalse();
 
         // A list of values the dictionary does not hold, a zero among them, still drops.
-        assertThat(absentAll(FLOAT_COLUMN, true, 0.0, 4.5)).isTrue();
-        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0, 4.5)).isTrue();
+        assertThat(absentAll(FLOAT_COLUMN, 0.0f, 4.5f)).isTrue();
+        assertThat(absentAll(DOUBLE_COLUMN, 0.0, 4.5)).isTrue();
     }
 
     @Test
@@ -99,8 +99,11 @@ class DictionarySignedZeroTest {
         assertThat(DictionaryFilterSupport.valueAbsent(dictionaries.forColumn(DOUBLE_COLUMN), 4.5)).isTrue();
     }
 
-    private static boolean absentAll(int columnIndex, boolean floatColumn, double... probes)
-            throws IOException {
-        return DictionaryFilterSupport.absentAll(dictionaries.forColumn(columnIndex), probes, floatColumn);
+    private static boolean absentAll(int columnIndex, float... probes) throws IOException {
+        return DictionaryFilterSupport.absentAll(dictionaries.forColumn(columnIndex), probes);
+    }
+
+    private static boolean absentAll(int columnIndex, double... probes) throws IOException {
+        return DictionaryFilterSupport.absentAll(dictionaries.forColumn(columnIndex), probes);
     }
 }

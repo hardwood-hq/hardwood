@@ -463,8 +463,8 @@ class ColumnReaderExactFilterTest {
                 Arguments.of(FilterPredicate.ltEq("half", 0.0f), List.of(1, 3)),
                 Arguments.of(FilterPredicate.gt("half", 1.0f), List.of(4, 5, 6)),
                 Arguments.of(FilterPredicate.gtEq("half", 65504.0f), List.of(4, 5, 6)),
-                Arguments.of(FilterPredicate.in("half", 1.0, -1.5), List.of(2, 3)),
-                Arguments.of(FilterPredicate.not(FilterPredicate.in("half", 1.0, -1.5)), List.of(1, 4, 5, 6)));
+                Arguments.of(FilterPredicate.in("half", 1.0f, -1.5f), List.of(2, 3)),
+                Arguments.of(FilterPredicate.not(FilterPredicate.in("half", 1.0f, -1.5f)), List.of(1, 4, 5, 6)));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -478,7 +478,7 @@ class ColumnReaderExactFilterTest {
         // `half` cycles 1.0, 2.0, 4.0, 8.0 over 4096 rows, so each value is 1024 rows.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(DICT_FLOAT16_FILE));
              ColumnReader half = reader.buildColumnReader("half")
-                     .filter(FilterPredicate.in("half", 2.0, 8.0)).build()) {
+                     .filter(FilterPredicate.in("half", 2.0f, 8.0f)).build()) {
             int count = 0;
             while (half.nextBatch()) {
                 count += half.getRecordCount();

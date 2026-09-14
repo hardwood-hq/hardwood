@@ -78,9 +78,9 @@ class BloomFilterSignedZeroPushDownTest {
 
     @Test
     void floatSignedZeroInListUsesBloomFilter() throws IOException {
-        assertThat(statisticsDrop(FilterPredicate.in("float_value", 0.0d))).isFalse();
-        assertThat(bloomDrop(FilterPredicate.in("float_value", 0.0d))).isTrue();
-        assertThat(bloomDrop(FilterPredicate.in("float_value", -0.0d))).isFalse();
+        assertThat(statisticsDrop(FilterPredicate.in("float_value", 0.0f))).isFalse();
+        assertThat(bloomDrop(FilterPredicate.in("float_value", 0.0f))).isTrue();
+        assertThat(bloomDrop(FilterPredicate.in("float_value", -0.0f))).isFalse();
     }
 
     @Test
@@ -93,16 +93,17 @@ class BloomFilterSignedZeroPushDownTest {
     @Test
     void nanProbeInListDisablesBloomDrop() throws IOException {
         double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
-        assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0d, Double.NaN))).isFalse();
+        float customFloatNan = Float.intBitsToFloat(0x7fc00001);
+        assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0f, Float.NaN))).isFalse();
         assertThat(bloomDrop(FilterPredicate.in("double_value", 5.0d, Double.NaN))).isFalse();
-        assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0d, customNan))).isFalse();
+        assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0f, customFloatNan))).isFalse();
         assertThat(bloomDrop(FilterPredicate.in("double_value", 5.0d, customNan))).isFalse();
     }
 
     @Test
     void infinityInListUsesBloomFilter() throws IOException {
         // Fixture stores -0.0; +Inf and -Inf are absent, so bloom filter drops them.
-        assertThat(bloomDrop(FilterPredicate.in("float_value", Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY))).isTrue();
+        assertThat(bloomDrop(FilterPredicate.in("float_value", Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY))).isTrue();
         assertThat(bloomDrop(FilterPredicate.in("double_value", Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY))).isTrue();
     }
 

@@ -214,13 +214,18 @@ public sealed interface ResolvedPredicate {
             return comparison.byteExact();
         }
     }
-    record DoubleInPredicate(int columnIndex, double[] values, boolean floatColumn,
-            boolean ieee754TotalOrder) implements ResolvedPredicate {}
+    /// Membership against a `FLOAT` column, each probe compared by [Float#compare].
+    /// `ieee754TotalOrder` is as on [FloatPredicate].
+    record FloatInPredicate(int columnIndex, float[] values, boolean ieee754TotalOrder)
+            implements ResolvedPredicate {}
 
-    /// Membership against a `FLOAT16` column, each probe compared with the decoded half the way
-    /// [DoubleInPredicate] compares a `FLOAT` column's widened values, so a probe no half can
-    /// represent matches nothing. `ieee754TotalOrder` is as on [Float16Predicate].
-    record Float16InPredicate(int columnIndex, double[] values, boolean ieee754TotalOrder)
+    /// Membership against a `DOUBLE` column, each probe compared by [Double#compare].
+    record DoubleInPredicate(int columnIndex, double[] values, boolean ieee754TotalOrder)
+            implements ResolvedPredicate {}
+
+    /// Membership against a `FLOAT16` column, each probe a half compared with the decoded stored
+    /// half by [Float#compare]. `ieee754TotalOrder` is as on [Float16Predicate].
+    record Float16InPredicate(int columnIndex, float[] values, boolean ieee754TotalOrder)
             implements ResolvedPredicate {}
 
     /// Every non-null row of the leaf, and no null one: the answer to an ordered predicate whose
@@ -363,6 +368,7 @@ public sealed interface ResolvedPredicate {
             case UnsignedIntInPredicate p -> p.columnIndex();
             case UnsignedLongInPredicate p -> p.columnIndex();
             case BinaryInPredicate p -> p.columnIndex();
+            case FloatInPredicate p -> p.columnIndex();
             case DoubleInPredicate p -> p.columnIndex();
             case Float16InPredicate p -> p.columnIndex();
             case IsNullPredicate p -> p.columnIndex();
@@ -425,8 +431,10 @@ public sealed interface ResolvedPredicate {
                     p.values());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.comparison());
+            case FloatInPredicate p -> new FloatInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.ieee754TotalOrder());
             case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
-                    p.floatColumn(), p.ieee754TotalOrder());
+                    p.ieee754TotalOrder());
             case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.ieee754TotalOrder());
             case IsNullPredicate p -> new IsNullPredicate(
@@ -528,38 +536,27 @@ public sealed interface ResolvedPredicate {
                 }
                 yield new And(notEqs);
             }
-            case Float16InPredicate p -> {
-                // A probe no half can represent is never equal to a stored value, so it drops out of
-                // the conjunction rather than narrowing onto a half `in` would not have matched; with
-                // none left, every non-null row is outside the set.
+            case FloatInPredicate p -> {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
-                for (double v : p.values()) {
-                    if (Double.isNaN(v) || isFloat16(v)) {
-                        notEqs.add(new Float16Predicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ,
-                                (float) v, p.ieee754TotalOrder()));
-                    }
+                for (float value : p.values()) {
+                    notEqs.add(new FloatPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
+                            p.ieee754TotalOrder()));
                 }
-                if (notEqs.isEmpty()) {
-                    yield new EveryNonNullRowPredicate(p.columnIndex());
+                yield new And(notEqs);
+            }
+            case Float16InPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (float value : p.values()) {
+                    notEqs.add(new Float16Predicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
+                            p.ieee754TotalOrder()));
                 }
                 yield new And(notEqs);
             }
             case DoubleInPredicate p -> {
-                if (p.floatColumn()) {
-                    List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
-                    for (double v : p.values()) {
-                        if (Double.isNaN(v) || (double) (float) v == v) {
-                            notEqs.add(new FloatPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, (float) v));
-                        }
-                    }
-                    if (notEqs.isEmpty()) {
-                        yield new EveryNonNullRowPredicate(p.columnIndex());
-                    }
-                    yield new And(notEqs);
-                }
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (double value : p.values()) {
-                    notEqs.add(new DoublePredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
+                    notEqs.add(new DoublePredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
+                            p.ieee754TotalOrder()));
                 }
                 yield new And(notEqs);
             }
@@ -567,12 +564,5 @@ public sealed interface ResolvedPredicate {
                     "A spatial intersects predicate on column " + p.columnIndex() + " reached"
                             + " negation; the resolver refuses one below not");
         };
-    }
-
-    /// Whether `value` is exactly a `FLOAT16`: representable as a `float`, and that `float` as a
-    /// half.
-    private static boolean isFloat16(double value) {
-        float asFloat = (float) value;
-        return asFloat == value && Float.float16ToFloat(Float.floatToFloat16(asFloat)) == asFloat;
     }
 }

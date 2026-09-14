@@ -115,9 +115,8 @@ public final class DictionaryFilterSupport {
     }
 
     /// Whether every probe of a `FLOAT16` membership test is provably absent, each compared with
-    /// the halves the dictionary holds — the list form of [#valueAbsentFloat16]. A probe no half
-    /// can represent matches no entry, as it matches no stored value.
-    public static boolean absentAllFloat16(Dictionary dictionary, double[] values) {
+    /// the halves the dictionary holds — the list form of [#valueAbsentFloat16].
+    public static boolean absentAllFloat16(Dictionary dictionary, float[] values) {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
@@ -125,9 +124,9 @@ public final class DictionaryFilterSupport {
             if (entry.length != FLOAT16_BYTES) {
                 continue;
             }
-            double stored = StatisticsDecoder.decodeFloat16(entry);
-            for (double value : values) {
-                if (Double.compare(stored, value) == 0) {
+            float stored = StatisticsDecoder.decodeFloat16(entry);
+            for (float value : values) {
+                if (Float.compare(stored, value) == 0) {
                     return false;
                 }
             }
@@ -194,32 +193,29 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
-    /// `IN`-list dictionary check for `double` values across DOUBLE and FLOAT columns.
+    /// `IN`-list dictionary check for `FLOAT` values.
     ///
-    /// [Arrays#sort(double[])] and [Arrays#binarySearch(double[], double)] impose the total order
-    /// [Double#compare] does — every `NaN` equal to every other, `-0.0` below `+0.0` — so indexing
+    /// [Arrays#sort(float[])] and [Arrays#binarySearch(float[], float)] impose the total order
+    /// [Float#compare] does — every `NaN` equal to every other, `-0.0` below `+0.0` — so indexing
     /// the probes agrees with the equality the single-value check applies.
-    ///
-    /// For FLOAT columns the entries are widened to `double` rather than the probes narrowed to
-    /// `float`, for the reason [#valueAbsentFloat16] gives: narrowing is lossy, and a probe no
-    /// `float` can represent would round to a neighbour and prove the wrong value absent. Widening
-    /// leaves such a probe matching no entry, which is what a full scan finds too.
-    public static boolean absentAll(Dictionary dictionary, double[] values, boolean floatColumn) {
-        if (floatColumn) {
-            if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
+    public static boolean absentAll(Dictionary dictionary, float[] values) {
+        if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
+            return false;
+        }
+        // Sorted copy, not the predicate's own array: the resolved predicate is shared across
+        // every row group and file of the read.
+        float[] probes = values.clone();
+        Arrays.sort(probes);
+        for (float entry : dict.values()) {
+            if (Arrays.binarySearch(probes, entry) >= 0) {
                 return false;
             }
-            // Sorted copy, not the predicate's own array: the resolved predicate is shared across
-            // every row group and file of the read.
-            double[] probes = values.clone();
-            Arrays.sort(probes);
-            for (float entry : dict.values()) {
-                if (Arrays.binarySearch(probes, entry) >= 0) {
-                    return false;
-                }
-            }
-            return true;
         }
+        return true;
+    }
+
+    /// `IN`-list dictionary check for `DOUBLE` values. See the `float[]` overload.
+    public static boolean absentAll(Dictionary dictionary, double[] values) {
         if (!(dictionary instanceof Dictionary.DoubleDictionary dict)) {
             return false;
         }

@@ -10,14 +10,13 @@ package dev.hardwood.internal.predicate.matcher.floats;
 import dev.hardwood.internal.predicate.FloatBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 
-/// IN-list matcher for `float` columns against double probe values. Reads `float[]`
-/// storage, widens each element to `double`, and compares with [Double#compare] to implement
-/// the total order, equating all NaNs and distinguishing `-0.0` from `+0.0`.
-public final class FloatWideningDoubleInBatchMatcher implements FloatBatchMatcher {
+/// IN-list matcher for `float` columns. Compares with [Float#compare] to implement the total
+/// order, equating all NaNs and distinguishing `-0.0` from `+0.0`.
+public final class FloatInBatchMatcher implements FloatBatchMatcher {
 
-    private final double[] values;
+    private final float[] values;
 
-    public FloatWideningDoubleInBatchMatcher(double[] values) {
+    public FloatInBatchMatcher(float[] values) {
         this.values = values;
     }
 
@@ -38,10 +37,10 @@ public final class FloatWideningDoubleInBatchMatcher implements FloatBatchMatche
             int base = w << 6;
             long word = 0L;
             for (int b = 0; b < 64; b++) {
-                double v = vals[base + b];
+                float v = vals[base + b];
                 long hit = 0L;
-                for (double member : values) {
-                    if (Double.compare(v, member) == 0) {
+                for (float member : values) {
+                    if (Float.compare(v, member) == 0) {
                         hit = 1L;
                         break;
                     }
@@ -54,10 +53,10 @@ public final class FloatWideningDoubleInBatchMatcher implements FloatBatchMatche
             int base = fullWords << 6;
             long word = 0L;
             for (int b = 0; b < tail; b++) {
-                double v = vals[base + b];
+                float v = vals[base + b];
                 long hit = 0L;
-                for (double member : values) {
-                    if (Double.compare(v, member) == 0) {
+                for (float member : values) {
+                    if (Float.compare(v, member) == 0) {
                         hit = 1L;
                         break;
                     }

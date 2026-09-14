@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- `FilterPredicate.in` takes every literal type that `eq` takes except `boolean`, adding `float`, `LocalDate`, `Instant`, `LocalDateTime`, `LocalTime`, `BigDecimal`, `UUID` and `PqInterval` sets ([#1195](https://github.com/hardwood-hq/hardwood/issues/1195)).
+
 - `FilterPredicate.inStrings` is deprecated in favour of `in(String, String...)`, which builds the same predicate ([#1178](https://github.com/hardwood-hq/hardwood/issues/1178)).
 
 - `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in` ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
@@ -61,7 +63,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — testing whether the group itself is present rather than one of its fields ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
 
-- `FilterPredicate.in(String, double...)` filters `FLOAT` and `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).
+- `FilterPredicate.in(String, double...)` filters `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).
 
 - Row-group and page statistics pruning no longer drops `NaN` rows that a floating-point predicate matches ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016)).
 
@@ -80,7 +82,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `LocalDate` predicate requires the column to carry the `DATE` annotation, as its JavaDoc has always said ([#1141](https://github.com/hardwood-hq/hardwood/issues/1141)). The annotation went unchecked before, so a `LocalDate` against a plain `INT32` column compared epoch days against unrelated integers and returned rows answering a different question, with nothing raised. **What changes for you:** such a call now throws `IllegalArgumentException` at reader creation. A plain `INT32` column that does hold epoch days is filtered by the day itself — `gt("d", (int) date.toEpochDay())`.
 
-- A `String` predicate on a `DECIMAL` or `FLOAT16` column compares as the column does — a `DECIMAL` by its unscaled value, a `FLOAT16` by the number its two bytes encode — rather than as a byte string ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)). Both order by the value their bytes stand for and record their statistics that way, so comparing byte-wise pruned row groups against bounds written in a different order and silently dropped matching rows. This is the comparison parquet-java applies, so a filter carried over through the compatibility shim answers the same. `inStrings` compares its probes the same way — which is also how parquet-java evaluates `In` — so a padded encoding of a `DECIMAL` probe is found; on a `FLOAT16` column each probe is compared as the half it encodes, and `in(double...)` accepts a `FLOAT16` column too.
+- A `String` predicate on a `DECIMAL` or `FLOAT16` column compares as the column does — a `DECIMAL` by its unscaled value, a `FLOAT16` by the number its two bytes encode — rather than as a byte string ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)). Both order by the value their bytes stand for and record their statistics that way, so comparing byte-wise pruned row groups against bounds written in a different order and silently dropped matching rows. This is the comparison parquet-java applies, so a filter carried over through the compatibility shim answers the same. `inStrings` compares its probes the same way — which is also how parquet-java evaluates `In` — so a padded encoding of a `DECIMAL` probe is found; on a `FLOAT16` column each probe is compared as the half it encodes.
 
 - An ordered predicate on an `INT(bitWidth, isSigned = false)` column compares by unsigned magnitude, the order the column is written in ([#1144](https://github.com/hardwood-hq/hardwood/issues/1144)). The comparison was signed before, so `lt`, `gt` and their siblings returned wrong rows on a column holding values above 2^31, and bounds straddling that point read as inverted and were discarded — costing those columns row-group and page skipping as well.
 

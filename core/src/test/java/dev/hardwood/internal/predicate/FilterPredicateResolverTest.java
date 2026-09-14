@@ -1383,7 +1383,7 @@ class FilterPredicateResolverTest {
         assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isTrue();
     }
 
-    // ==================== Double IN (#868) ====================
+    // ==================== Set forms ====================
 
     @Test
     void resolveDoubleInOnDoubleColumn() {
@@ -1394,7 +1394,6 @@ class FilterPredicateResolverTest {
         ResolvedPredicate.DoubleInPredicate dp = (ResolvedPredicate.DoubleInPredicate) resolved;
         assertThat(dp.columnIndex()).isEqualTo(0);
         assertThat(dp.values()).containsExactly(1.5, 2.5);
-        assertThat(dp.floatColumn()).isFalse();
         assertThat(dp.ieee754TotalOrder()).isTrue();
 
         ResolvedPredicate defaultOrder = FilterPredicateResolver.resolve(
@@ -1403,67 +1402,262 @@ class FilterPredicateResolverTest {
     }
 
     @Test
-    void resolveDoubleInOnFloatColumn() {
+    void resolveFloatInOnFloatColumn() {
         FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.in("f", 1.5, 2.5), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.DoubleInPredicate.class);
-        ResolvedPredicate.DoubleInPredicate dp = (ResolvedPredicate.DoubleInPredicate) resolved;
-        assertThat(dp.columnIndex()).isEqualTo(0);
-        assertThat(dp.values()).containsExactly(1.5, 2.5);
-        assertThat(dp.floatColumn()).isTrue();
-        assertThat(dp.ieee754TotalOrder()).isTrue();
-
-        ResolvedPredicate defaultOrder = FilterPredicateResolver.resolve(
-                FilterPredicate.in("f", 1.5, 2.5), schema, List.of());
-        assertThat(((ResolvedPredicate.DoubleInPredicate) defaultOrder).ieee754TotalOrder()).isFalse();
+                FilterPredicate.in("f", 0.1f, Float.NaN), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.FloatInPredicate.class, p -> {
+            assertThat(p.values()).containsExactly(0.1f, Float.NaN);
+            assertThat(p.ieee754TotalOrder()).isTrue();
+        });
     }
 
     @Test
-    void resolveDoubleInOnFloat16() {
+    void resolveFloatInOnFloat16() {
         FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
                 new LogicalType.Float16Type());
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("h", 1.5, 2.5), schema))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("h", 1.5f, Float.NaN), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.Float16InPredicate.class,
-                        p -> assertThat(p.values()).containsExactly(1.5, 2.5));
+                        p -> assertThat(p.values()).containsExactly(1.5f, Float.NaN));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("h", 1.5f, 0.1f), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'h' holds a value an IEEE half represents; "
+                        + "the equality literal 0.1 is not a value it can hold");
     }
 
     @Test
-    void resolveDoubleInOnIncompatibleColumnThrows() {
-        FileSchema intSchema = schemaWithLogicalType("i", PhysicalType.INT32, null);
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("i", 1.5, 2.5), intSchema))
+    void floatAndDoubleSetsTakeTheirOwnWidthOnly() {
+        FileSchema floatSchema = schemaWithLogicalType("c", PhysicalType.FLOAT, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5, 2.5), floatSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'i' has physical type INT32; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible");
+                .hasMessage(incompatible("FLOAT", "DOUBLE"));
 
-        FileSchema stringSchema = schemaWithLogicalType("s", PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("s", 1.5, 2.5), stringSchema))
+        FileSchema doubleSchema = schemaWithLogicalType("c", PhysicalType.DOUBLE, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5f), doubleSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 's' has physical type BYTE_ARRAY; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible");
+                .hasMessage(incompatible("DOUBLE", "FLOAT"));
 
-        FileSchema int64Schema = schemaWithLogicalType("l", PhysicalType.INT64, null);
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("l", 1.5, 2.5), int64Schema))
+        FileSchema float16Schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                new LogicalType.Float16Type());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5), float16Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'l' has physical type INT64; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible");
+                .hasMessage(incompatible("FIXED_LEN_BYTE_ARRAY", "DOUBLE"));
 
-        FileSchema boolSchema = schemaWithLogicalType("b", PhysicalType.BOOLEAN, null);
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("b", 1.5, 2.5), boolSchema))
+        FileSchema intSchema = schemaWithLogicalType("c", PhysicalType.INT32, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5), intSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'b' has physical type BOOLEAN; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible");
+                .hasMessage(incompatible("INT32", "DOUBLE"));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5f), intSchema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(incompatible("INT32", "FLOAT"));
+    }
 
-        FileSchema flbaSchema = schemaWithLogicalType("flba", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.in("flba", 1.5, 2.5), flbaSchema))
+    @Test
+    void resolveDateIn() {
+        FileSchema schema = schemaWithLogicalType("d", PhysicalType.INT32, new LogicalType.DateType());
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.in("d", LocalDate.ofEpochDay(19000), LocalDate.ofEpochDay(-3)), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.IntInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(19000, -3));
+
+        FileSchema plain = schemaWithLogicalType("d", PhysicalType.INT32, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("d", LocalDate.EPOCH), plain))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'flba' has physical type FIXED_LEN_BYTE_ARRAY; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible");
+                .hasMessage("Column 'd' is not a DateType column (logical type: null)");
+    }
+
+    @Test
+    void resolveInstantIn() {
+        FileSchema micros = schemaWithLogicalType("ts", PhysicalType.INT64,
+                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS));
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", Instant.ofEpochSecond(1, 2_000), Instant.ofEpochSecond(-1)), micros))
+                .isInstanceOfSatisfying(ResolvedPredicate.LongInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(1_000_002L, -1_000_000L));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", Instant.EPOCH, Instant.ofEpochSecond(0, 1)), micros))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' holds a whole number of microseconds within the INT64 range; "
+                        + "the equality literal 1970-01-01T00:00:00.000000001Z is not a value it can hold");
+
+        FileSchema local = schemaWithLogicalType("ts", PhysicalType.INT64,
+                new LogicalType.TimestampType(false, LogicalType.TimeUnit.MICROS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("ts", Instant.EPOCH), local))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false),"
+                        + " which takes LocalDateTime and long literals, not an Instant");
+    }
+
+    @Test
+    void resolveInstantInOnInt96() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        Instant instant = Instant.ofEpochSecond(1_700_000_000L, 5);
+        ResolvedPredicate eq = FilterPredicateResolver.resolve(FilterPredicate.eq("ts", instant), schema);
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("ts", instant), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] { ((ResolvedPredicate.BinaryPredicate) eq).value() });
+                    assertThat(p.comparison()).isEqualTo(Comparison.INT96_INSTANT);
+                });
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("ts", Instant.MAX), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' holds an instant within the range an INT96 encodes; "
+                        + "the equality literal +1000000000-12-31T23:59:59.999999999Z is not a value it can hold");
+    }
+
+    @Test
+    void resolveLocalDateTimeIn() {
+        FileSchema millis = schemaWithLogicalType("ts", PhysicalType.INT64,
+                new LogicalType.TimestampType(false, LogicalType.TimeUnit.MILLIS));
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", LocalDateTime.ofEpochSecond(2, 3_000_000, ZoneOffset.UTC)), millis))
+                .isInstanceOfSatisfying(ResolvedPredicate.LongInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(2_003L));
+
+        FileSchema utc = schemaWithLogicalType("ts", PhysicalType.INT64,
+                new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", LocalDateTime.of(2026, 1, 1, 0, 0)), utc))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
+                        + " which takes Instant and long literals, not a LocalDateTime");
+
+        FileSchema int96 = schemaWithLogicalType("ts", PhysicalType.INT96, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", LocalDateTime.of(2026, 1, 1, 0, 0)), int96))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field),"
+                        + " which takes Instant and byte[] literals, not a LocalDateTime");
+    }
+
+    @Test
+    void resolveTimeIn() {
+        FileSchema millis = schemaWithLogicalType("t", PhysicalType.INT32,
+                new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("t", LocalTime.of(0, 0, 1)), millis))
+                .isInstanceOfSatisfying(ResolvedPredicate.IntInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(1_000));
+
+        FileSchema nanos = schemaWithLogicalType("t", PhysicalType.INT64,
+                new LogicalType.TimeType(false, LogicalType.TimeUnit.NANOS));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("t", LocalTime.ofNanoOfDay(7)), nanos))
+                .isInstanceOfSatisfying(ResolvedPredicate.LongInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(7L));
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("t", LocalTime.ofNanoOfDay(1)), millis))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 't' holds a whole number of milliseconds; "
+                        + "the equality literal 00:00:00.000000001 is not a value it can hold");
+    }
+
+    @Test
+    void resolveDecimalInOnEveryCarrier() {
+        LogicalType.DecimalType decimal = new LogicalType.DecimalType(9, 2);
+        BigDecimal[] probes = { new BigDecimal("1.25"), new BigDecimal("-3") };
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", probes),
+                schemaWithLogicalType("c", PhysicalType.INT32, decimal)))
+                .isInstanceOfSatisfying(ResolvedPredicate.IntInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(125, -300));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", probes),
+                schemaWithLogicalType("c", PhysicalType.INT64, decimal)))
+                .isInstanceOfSatisfying(ResolvedPredicate.LongInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(125L, -300L));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", probes),
+                schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, decimal)))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] { { 0, 0, 0, 125 },
+                            { (byte) 0xFF, (byte) 0xFF, (byte) 0xFE, (byte) 0xD4 } });
+                    assertThat(p.comparison()).isEqualTo(Comparison.FIXED_DECIMAL);
+                });
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", probes),
+                schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, decimal)))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] { { 125 }, { (byte) 0xFE, (byte) 0xD4 } });
+                    assertThat(p.comparison()).isEqualTo(Comparison.VARIABLE_DECIMAL);
+                });
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", new BigDecimal("1.255")),
+                schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, decimal)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' holds a DECIMAL of scale 2; "
+                        + "the equality literal 1.255 is not a value it can hold");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", new BigDecimal("1E+10")),
+                schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, decimal)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' holds a DECIMAL of scale 2 within 4 bytes; "
+                        + "the equality literal 10000000000 is not a value it can hold");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", BigDecimal.ONE),
+                schemaWithLogicalType("c", PhysicalType.INT32, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'c' does not have a DECIMAL logical type");
+    }
+
+    @Test
+    void resolveUuidIn() {
+        FileSchema schema = schemaWithLogicalType("u", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, new LogicalType.UuidType());
+        UUID uuid = new UUID(0x0102030405060708L, 0x090A0B0C0D0E0F10L);
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("u", uuid), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] {
+                            { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 } });
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                });
+
+        FileSchema plain = schemaWithLogicalType("u", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("u", uuid), plain))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'u' is not a UuidType column (logical type: null)");
+    }
+
+    @Test
+    void resolveIntervalIn() {
+        FileSchema schema = schemaWithLogicalType("iv", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                new LogicalType.IntervalType());
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("iv", new PqInterval(1, 2, 3)), schema))
+                .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
+                    assertThat(p.values()).isDeepEqualTo(new byte[][] { { 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0 } });
+                    assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
+                });
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("iv", new PqInterval(1, 2, 3), new PqInterval(0, 0, 4294967296L)), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'iv' holds an interval whose months, days and milliseconds are each within "
+                        + "[0, 4294967295]; the equality literal PqInterval[months=0, days=0, milliseconds=4294967296]"
+                        + " is not a value it can hold");
+    }
+
+    @Test
+    void negatedSetFormsBecomeConjunctionsOfNotEq() {
+        FileSchema floatSchema = schemaWithLogicalType("c", PhysicalType.FLOAT, null);
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f, Float.NaN)),
+                floatSchema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER)))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, true),
+                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, Float.NaN, true))));
+
+        FileSchema doubleSchema = schemaWithLogicalType("c", PhysicalType.DOUBLE, null);
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5, Double.NaN)),
+                doubleSchema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER)))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5, true),
+                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, Double.NaN, true))));
+
+        FileSchema float16Schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                new LogicalType.Float16Type());
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f)), float16Schema))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.Float16Predicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, false))));
+
+        FileSchema dateSchema = schemaWithLogicalType("c", PhysicalType.INT32, new LogicalType.DateType());
+        assertThat(FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("c", LocalDate.ofEpochDay(4))), dateSchema))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.NOT_EQ, 4))));
     }
 
     @Test
@@ -1483,8 +1677,16 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("rep", UUID.randomUUID()),
                 FilterPredicate.in("rep", 1, 2),
                 FilterPredicate.in("rep", 1L, 2L),
+                FilterPredicate.in("rep", 1.0f, 2.0f),
                 FilterPredicate.in("rep", 1.0, 2.0),
                 FilterPredicate.in("rep", "a", "b"),
+                FilterPredicate.in("rep", LocalDate.of(2026, 1, 1)),
+                FilterPredicate.in("rep", Instant.EPOCH),
+                FilterPredicate.in("rep", LocalDateTime.of(2026, 1, 1, 0, 0)),
+                FilterPredicate.in("rep", LocalTime.NOON),
+                FilterPredicate.in("rep", BigDecimal.ONE),
+                FilterPredicate.in("rep", UUID.randomUUID()),
+                FilterPredicate.in("rep", new PqInterval(0, 0, 0)),
                 FilterPredicate.isNull("rep"),
                 FilterPredicate.isNotNull("rep")
         );

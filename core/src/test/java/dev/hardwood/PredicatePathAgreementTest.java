@@ -199,8 +199,7 @@ class PredicatePathAgreementTest {
     /// same change that makes the case pass, so the list cannot outlive the defect it records.
     /// A [Rejected] case disagrees by being answered rather than refused, which is how a
     /// predicate the rule does not admit but a factory still builds is recorded.
-    private static final Map<String, String> EXCLUDED = Map.of(
-            "f16: in(0.1), a double on a FLOAT16 column", "#1195");
+    private static final Map<String, String> EXCLUDED = Map.of();
 
     // ==================== Cases ====================
 
@@ -269,6 +268,12 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.LT, LocalDate.ofEpochDay(19000)))));
         cases.add(new Case("date", "eq(epoch day 19000 as int)", FilterPredicate.eq("date", 19000),
                 matching(eqPhysical(19000))));
+        cases.add(new Case("date", "in(row 200, row 202)",
+                FilterPredicate.in("date", LocalDate.ofEpochDay(19000), LocalDate.ofEpochDay(19002)),
+                matching(oneOf(LocalDate.ofEpochDay(19000), LocalDate.ofEpochDay(19002)))));
+        cases.add(new Case("date", "not(in(row 200))",
+                FilterPredicate.not(FilterPredicate.in("date", LocalDate.ofEpochDay(19000))),
+                matching(noneOf(LocalDate.ofEpochDay(19000)))));
 
         timeCases(cases, "time_ms", LocalTime.ofNanoOfDay(3_600_000_000_000L + 200 * 60_000_000_000L));
         timeCases(cases, "time_us", LocalTime.ofNanoOfDay(200 * 60_000_000_000L + 200_000L));
@@ -317,6 +322,10 @@ class PredicatePathAgreementTest {
         cases.add(new Case("uuid", "eq(row 200)", FilterPredicate.eq("uuid", uuidAt200), matching(eq(uuidAt200))));
         cases.add(new Case("uuid", "gt(row 200)", FilterPredicate.gt("uuid", uuidAt200),
                 matching(cmp(Operator.GT, uuidAt200))));
+        cases.add(new Case("uuid", "in(row 200, row 201)", FilterPredicate.in("uuid", uuidAt200, uuidOfRow(201)),
+                matching(oneOf(uuidAt200, uuidOfRow(201)))));
+        cases.add(new Case("uuid", "not(in(row 200))", FilterPredicate.not(FilterPredicate.in("uuid", uuidAt200)),
+                matching(noneOf(uuidAt200))));
 
         // --- Null tests, and a group that is absent on some rows ---
         cases.add(new Case("str", "isNull", FilterPredicate.isNull("str"), new MatchingNulls()));
@@ -336,15 +345,16 @@ class PredicatePathAgreementTest {
         cases.add(new Case("i32", "eq(0L), a long on an INT32 column", FilterPredicate.eq("i32", 0L),
                 new Rejected("Column 'i32' has physical type INT32; "
                         + "given filter predicate type INT64 is incompatible")));
-        // A FLOAT16 column's literals are a `float` and two bytes, so `in(double...)` does not
-        // take it. The factory still builds one, and the reader answers it, which the exclusion
-        // records; `in(float...)`, which the rule does give a FLOAT16 column, does not exist yet.
-        // The `not(not(in(0.1)))` cases below go through the same shape and stay as they are:
-        // they prove the nulls a negated constant used to return, which is what #1193 fixed.
+        // A membership literal is the column's literal type, so a `double` set takes a DOUBLE
+        // column only, as `eq(double)` does.
         cases.add(new Case("f16", "in(0.1), a double on a FLOAT16 column",
                 FilterPredicate.in("f16", 0.1),
                 new Rejected("Column 'f16' has physical type FIXED_LEN_BYTE_ARRAY; "
-                        + "given filter predicate type DOUBLE/FLOAT is incompatible")));
+                        + "given filter predicate type DOUBLE is incompatible")));
+        cases.add(new Case("f32", "in(12.5), a double on a FLOAT column",
+                FilterPredicate.in("f32", 12.5),
+                new Rejected("Column 'f32' has physical type FLOAT; "
+                        + "given filter predicate type DOUBLE is incompatible")));
 
         stringLiteralsOnlyWhereGetStringReads(cases);
         literalsTheColumnCannotHold(cases);
@@ -491,12 +501,46 @@ class PredicatePathAgreementTest {
         cases.add(new Case("ts_us_utc", "not(not(lt(Instant.MIN)))",
                 FilterPredicate.not(FilterPredicate.not(FilterPredicate.lt("ts_us_utc", Instant.MIN))),
                 matching(never())));
-        cases.add(new Case("f32", "not(in(0.1)), no float is 0.1",
-                FilterPredicate.not(FilterPredicate.in("f32", 0.1)), matching(everyNonNullRow())));
-        cases.add(new Case("f32", "not(not(in(0.1)))",
-                FilterPredicate.not(FilterPredicate.not(FilterPredicate.in("f32", 0.1))), matching(never())));
-        cases.add(new Case("f16", "not(not(in(0.1)))",
-                FilterPredicate.not(FilterPredicate.not(FilterPredicate.in("f16", 0.1))), matching(never())));
+
+        // Every probe of a set form is an equality literal, so one the column cannot hold refuses
+        // the set, whatever the others are.
+        cases.add(new Case("ts_us_utc", "in(row 200, a sub-microsecond instant)",
+                FilterPredicate.in("ts_us_utc", Instant.ofEpochSecond(1_700_000_000L, 200_000L), subMicrosecond),
+                new Rejected("Column 'ts_us_utc' holds a whole number of microseconds within the INT64 range; "
+                        + "the equality literal 2023-11-14T22:13:20.000200500Z is not a value it can hold")));
+        cases.add(new Case("ts_us_local", "in(a sub-microsecond wall clock)",
+                FilterPredicate.in("ts_us_local", subMicrosecondWallClock),
+                new Rejected("Column 'ts_us_local' holds a whole number of microseconds within the INT64 range; "
+                        + "the equality literal " + subMicrosecondWallClock + " is not a value it can hold")));
+        cases.add(new Case("time_ms", "in(a sub-millisecond time)",
+                FilterPredicate.in("time_ms", subMillisecond),
+                new Rejected("Column 'time_ms' holds a whole number of milliseconds; "
+                        + "the equality literal 04:20:00.000000001 is not a value it can hold")));
+        cases.add(new Case("dec_i64", "in(0.00, 1.255), past the scale",
+                FilterPredicate.in("dec_i64", new BigDecimal("0.00"), pastTheScale),
+                new Rejected("Column 'dec_i64' holds a DECIMAL of scale 2 within the INT64 range; "
+                        + "the equality literal 1.255 is not a value it can hold")));
+        cases.add(new Case("dec_i32", "in(99999999999.00), past the INT32 range",
+                FilterPredicate.in("dec_i32", pastTheCarrier),
+                new Rejected("Column 'dec_i32' holds a DECIMAL of scale 2 within the INT32 range; "
+                        + "the equality literal 99999999999.00 is not a value it can hold")));
+        cases.add(new Case("dec_flba", "in(a DECIMAL wider than the column)",
+                FilterPredicate.in("dec_flba", new BigDecimal("1E+30")),
+                new Rejected("Column 'dec_flba' holds a DECIMAL of scale 2 within 9 bytes; "
+                        + "the equality literal 1000000000000000000000000000000 is not a value it can hold")));
+        cases.add(new Case("f16", "in(6.25, 0.1), no half is 0.1",
+                FilterPredicate.in("f16", 6.25f, 0.1f),
+                new Rejected("Column 'f16' holds a value an IEEE half represents; "
+                        + "the equality literal 0.1 is not a value it can hold")));
+        cases.add(new Case("date", "in(LocalDate.MAX), past the INT32 range",
+                FilterPredicate.in("date", LocalDate.MAX),
+                new Rejected("Column 'date' holds an epoch day within the INT32 range; "
+                        + "the equality literal +999999999-12-31 is not a value it can hold")));
+        cases.add(new Case("iv", "in(an interval with a negative component)",
+                FilterPredicate.in("iv", new PqInterval(-1, 0, 0)),
+                new Rejected("Column 'iv' holds an interval whose months, days and milliseconds are each "
+                        + "within [0, 4294967295]; the equality literal PqInterval[months=-1, days=0, milliseconds=0]"
+                        + " is not a value it can hold")));
     }
 
     /// The comparison cases every column takes: each operator once, membership and its negation,
@@ -548,6 +592,11 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+        float other = literal + 2;
+        cases.add(new Case(column, "in(" + literal + ", " + other + ", NaN)",
+                FilterPredicate.in(column, literal, other, Float.NaN), matching(oneOf(literal, other, Float.NaN))));
+        cases.add(new Case(column, "not(in(" + literal + ", " + other + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal, other)), matching(noneOf(literal, other))));
     }
 
     private static void doubleCases(List<Case> cases, String column, double literal) {
@@ -570,6 +619,10 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
+                matching(oneOf(literal))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)), matching(noneOf(literal))));
     }
 
     private static void instantCases(List<Case> cases, String column, Instant literal) {
@@ -580,6 +633,10 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
+                matching(oneOf(literal))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)), matching(noneOf(literal))));
     }
 
     private static void localDateTimeCases(List<Case> cases, String column, LocalDateTime literal) {
@@ -596,6 +653,10 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
+                matching(oneOf(literal))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)), matching(noneOf(literal))));
     }
 
     private static void decimalCases(List<Case> cases, String column, BigDecimal literal) {
@@ -606,6 +667,10 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
+                matching(oneOf(literal))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)), matching(noneOf(literal))));
     }
 
     private static void stringCases(List<Case> cases, String column, String literal) {
@@ -661,6 +726,11 @@ class PredicatePathAgreementTest {
                 matching(notEqPhysical(bytes))));
         cases.add(new Case(column, "not(eq(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.eq(column, literal)),
+                matching(notEqPhysical(bytes))));
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
+                matching(eqPhysical(bytes))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)),
                 matching(notEqPhysical(bytes))));
 
         String noOrder = "Column '" + column + "' is annotated INTERVAL, whose values"
@@ -777,15 +847,15 @@ class PredicatePathAgreementTest {
         }
     }
 
-    /// A constant predicate inside a conjunction, negated. `not(in("f32", 0.1))` matches every
-    /// non-null `f32` row, since no `float` is `0.1`; negating the conjunction pushes its
-    /// negation down to the leaves, and the branch that comes back must match no row rather than
-    /// the rows `f32` is null on.
+    /// A constant predicate inside a conjunction, negated. `gtEq("ts_us_utc", Instant.MIN)` matches
+    /// every non-null row, since the column holds nothing earlier; negating the conjunction pushes
+    /// its negation down to the leaves, and the branch that comes back must match no row rather
+    /// than the rows `ts_us_utc` is null on.
     @ParameterizedTest(name = "{0} / {1}")
     @MethodSource("flatLayoutsAndPaths")
     void negatingAConstantInsideAConjunctionKeepsNullsOut(Layout layout, ReadPath path) throws Exception {
         FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
-                FilterPredicate.not(FilterPredicate.in("f32", 0.1)),
+                FilterPredicate.gtEq("ts_us_utc", Instant.MIN),
                 FilterPredicate.gt("i32", 0)));
 
         List<Object[]> values = values(layout, "i32");

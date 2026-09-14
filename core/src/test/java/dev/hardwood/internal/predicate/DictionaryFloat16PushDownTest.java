@@ -87,13 +87,9 @@ class DictionaryFloat16PushDownTest {
     }
 
     @Test
-    void aProbeBinary16CannotRepresentMatchesNothing() throws IOException {
-        // 2.0005 is not a binary16 value. Narrowing the probe would round it to a neighbouring
-        // half — 2.0 among them — and wrongly report it present; widening the entries instead
-        // compares it against the stored values exactly, and none of them equal it. A membership
-        // test is where such a probe reaches the dictionary: a scalar equality literal no half
-        // represents is refused when the reader is built.
-        assertThat(dictionaryDrop(FilterPredicate.in("half", 2.0005))).isTrue();
+    void aSetIsDroppedOnlyWhenEveryProbeIsAbsent() throws IOException {
+        assertThat(dictionaryDrop(FilterPredicate.in("half", 6.0f, 3.0f))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("half", 6.0f, 4.0f))).isFalse();
     }
 
     @Test

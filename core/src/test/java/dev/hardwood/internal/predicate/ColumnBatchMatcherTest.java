@@ -18,7 +18,7 @@ import dev.hardwood.internal.predicate.matcher.doubles.DoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleNotEqBatchMatcher;
-import dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.floats.FloatInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
@@ -236,21 +236,21 @@ class ColumnBatchMatcherTest {
     }
 
     @Test
-    void floatWideningDoubleIn_matchesOnlyExactValuesAndExcludesNulls() {
+    void floatIn_matchesOnlyExactValuesAndExcludesNulls() {
         float[] vals = {0.5f, 1.5f, -0.0f, +0.0f, Float.NaN, 0.1f};
         BatchExchange.Batch batch = floatBatch(vals, nullsAt(1));
-        double[] inValues = {1.5, -0.0, Double.NaN, 0.1};
-        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new FloatWideningDoubleInBatchMatcher(inValues), batch));
+        float[] inValues = {1.5f, -0.0f, Float.NaN, 0.1f};
+        assertArrayEquals(new long[]{bits(2, 4, 5)}, runMatcher(new FloatInBatchMatcher(inValues), batch));
     }
 
     @Test
-    void floatWideningDoubleIn_acrossWordBoundary_setsBitsInBothWords() {
+    void floatIn_acrossWordBoundary_setsBitsInBothWords() {
         float[] vals = new float[70];
         for (int i = 0; i < vals.length; i++) {
             vals[i] = (float) i;
         }
         BatchExchange.Batch batch = floatBatch(vals, null);
-        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
+        long[] out = runMatcher(new FloatInBatchMatcher(new float[]{5.0f, 65.0f}), batch);
         assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
     }
 
@@ -305,48 +305,42 @@ class ColumnBatchMatcherTest {
     }
 
     @Test
-    void floatWideningDoubleIn_signedZeroAndExactWideningPrecision() {
-        float[] vals = {+0.0f, -0.0f, Float.NaN, 0.1f};
+    void floatIn_signedZeroAndNaNPrecision() {
+        float[] vals = {+0.0f, -0.0f, Float.NaN};
         assertArrayEquals(new long[]{bits(0)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{+0.0}), floatBatch(vals, null)));
+                runMatcher(new FloatInBatchMatcher(new float[]{+0.0f}), floatBatch(vals, null)));
         assertArrayEquals(new long[]{bits(1)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{-0.0}), floatBatch(vals, null)));
+                runMatcher(new FloatInBatchMatcher(new float[]{-0.0f}), floatBatch(vals, null)));
         assertArrayEquals(new long[]{bits(2)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), floatBatch(vals, null)));
-        // 0.1d does not equal (double) 0.1f -> 0L
-        assertArrayEquals(new long[]{0L},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{0.1}), floatBatch(vals, null)));
-        // Widened probe (double) 0.1f DOES match
-        assertArrayEquals(new long[]{bits(3)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{(double) 0.1f}), floatBatch(vals, null)));
+                runMatcher(new FloatInBatchMatcher(new float[]{Float.NaN}), floatBatch(vals, null)));
     }
 
     @Test
-    void floatWideningDoubleIn_nanPayloadsAndInfinities() {
+    void floatIn_nanPayloadsAndInfinities() {
         float customFloatNan1 = Float.intBitsToFloat(0x7fc00001);
-        double customDoubleNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        float customFloatNan2 = Float.intBitsToFloat(0x7fc00042);
         float[] vals = {customFloatNan1, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 1.0f};
         BatchExchange.Batch batch = floatBatch(vals, null);
 
-        // Probe with canonical Double.NaN matches customFloatNan1 (widened)
+        // Probe with canonical NaN matches customFloatNan1
         assertArrayEquals(new long[]{bits(0)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), batch));
+                runMatcher(new FloatInBatchMatcher(new float[]{Float.NaN}), batch));
 
-        // Probe with customDoubleNan2 matches customFloatNan1 (widened)
+        // Probe with customFloatNan2 matches customFloatNan1
         assertArrayEquals(new long[]{bits(0)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{customDoubleNan2}), batch));
+                runMatcher(new FloatInBatchMatcher(new float[]{customFloatNan2}), batch));
 
-        // Probe with Double.+Inf matches Float.+Inf (widened)
+        // Probe with +Inf matches +Inf
         assertArrayEquals(new long[]{bits(1)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY}), batch));
+                runMatcher(new FloatInBatchMatcher(new float[]{Float.POSITIVE_INFINITY}), batch));
 
-        // Probe with Double.-Inf matches Float.-Inf (widened)
+        // Probe with -Inf matches -Inf
         assertArrayEquals(new long[]{bits(2)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NEGATIVE_INFINITY}), batch));
+                runMatcher(new FloatInBatchMatcher(new float[]{Float.NEGATIVE_INFINITY}), batch));
 
         // Both infinities in probe list
         assertArrayEquals(new long[]{bits(1, 2)},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}), batch));
+                runMatcher(new FloatInBatchMatcher(new float[]{Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}), batch));
     }
 
     @Test
@@ -363,15 +357,15 @@ class ColumnBatchMatcherTest {
     }
 
     @Test
-    void floatWideningDoubleIn_matchesAtTheLastBitOfAWordAndInTheMiddleWord() {
+    void floatIn_matchesAtTheLastBitOfAWordAndInTheMiddleWord() {
         float[] vals64 = new float[64];
         vals64[63] = 42.0f;
         assertArrayEquals(new long[]{1L << 63},
-                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{42.0}), floatBatch(vals64, null)));
+                runMatcher(new FloatInBatchMatcher(new float[]{42.0f}), floatBatch(vals64, null)));
 
         float[] vals130 = new float[130];
         vals130[65] = 99.0f;
-        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{99.0}), floatBatch(vals130, null));
+        long[] out = runMatcher(new FloatInBatchMatcher(new float[]{99.0f}), floatBatch(vals130, null));
         assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
     }
 }

@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -441,6 +442,46 @@ class FilterPredicateTest {
     }
 
     @Test
+    void typedSetFormsHoldTheirProbesInOrder() {
+        UUID uuid = new UUID(1L, 2L);
+        assertThat(FilterPredicate.in("c", 1.5f, Float.NaN))
+                .isInstanceOfSatisfying(FilterPredicate.FloatInPredicate.class,
+                        p -> assertThat(p.values()).containsExactly(1.5f, Float.NaN));
+        assertThat(FilterPredicate.in("c", LocalDate.EPOCH, LocalDate.MAX))
+                .isEqualTo(new FilterPredicate.DateInPredicate("c", List.of(LocalDate.EPOCH, LocalDate.MAX)));
+        assertThat(FilterPredicate.in("c", Instant.EPOCH))
+                .isEqualTo(new FilterPredicate.InstantInPredicate("c", List.of(Instant.EPOCH)));
+        assertThat(FilterPredicate.in("c", LocalDateTime.MIN))
+                .isEqualTo(new FilterPredicate.LocalDateTimeInPredicate("c", List.of(LocalDateTime.MIN)));
+        assertThat(FilterPredicate.in("c", LocalTime.NOON))
+                .isEqualTo(new FilterPredicate.TimeInPredicate("c", List.of(LocalTime.NOON)));
+        assertThat(FilterPredicate.in("c", BigDecimal.ONE, BigDecimal.TEN))
+                .isEqualTo(new FilterPredicate.DecimalInPredicate("c", List.of(BigDecimal.ONE, BigDecimal.TEN)));
+        assertThat(FilterPredicate.in("c", uuid))
+                .isEqualTo(new FilterPredicate.UUIDInPredicate("c", List.of(uuid)));
+        assertThat(FilterPredicate.in("c", new PqInterval(1, 2, 3)))
+                .isEqualTo(new FilterPredicate.IntervalInPredicate("c", List.of(new PqInterval(1, 2, 3))));
+    }
+
+    /// A caller reusing its array to build a second predicate must not change the first.
+    @Test
+    void setProbesAreCopiedWhenThePredicateIsBuilt() {
+        float[] floats = { 1.5f, 2.5f };
+        LocalDate[] dates = { LocalDate.EPOCH };
+        FilterPredicate.FloatInPredicate floatSet = (FilterPredicate.FloatInPredicate) FilterPredicate.in("c", floats);
+        FilterPredicate dateSet = FilterPredicate.in("c", dates);
+
+        floats[0] = 9.0f;
+        dates[0] = LocalDate.MAX;
+
+        assertThat(floatSet.values()).containsExactly(1.5f, 2.5f);
+        assertThat(dateSet).isEqualTo(FilterPredicate.in("c", LocalDate.EPOCH));
+        assertThat(FilterPredicate.in("c", 1.5f, 2.5f)).isEqualTo(FilterPredicate.in("c", 1.5f, 2.5f))
+                .hasSameHashCodeAs(FilterPredicate.in("c", 1.5f, 2.5f))
+                .isNotEqualTo(FilterPredicate.in("c", 1.5f));
+    }
+
+    @Test
     void testBinaryInPredicateCreation() {
         FilterPredicate p = FilterPredicate.in("code", new byte[] { 0x01 }, new byte[] { 0x02 });
         assertThat(p).isInstanceOfSatisfying(FilterPredicate.BinaryInPredicate.class, in -> {
@@ -520,15 +561,23 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicate.in("c", new long[0]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("IN predicate requires at least one value");
-        assertThatThrownBy(() -> FilterPredicate.in("c", new double[0]))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("IN predicate requires at least one value");
-        assertThatThrownBy(() -> FilterPredicate.in("c", new byte[0][]))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("IN predicate requires at least one value");
-        assertThatThrownBy(() -> FilterPredicate.in("c", new String[0]))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("IN predicate requires at least one value");
+        List<ThrowingCallable> emptySets = List.of(
+                () -> FilterPredicate.in("c", new float[0]),
+                () -> FilterPredicate.in("c", new double[0]),
+                () -> FilterPredicate.in("c", new byte[0][]),
+                () -> FilterPredicate.in("c", new String[0]),
+                () -> FilterPredicate.in("c", new LocalDate[0]),
+                () -> FilterPredicate.in("c", new Instant[0]),
+                () -> FilterPredicate.in("c", new LocalDateTime[0]),
+                () -> FilterPredicate.in("c", new LocalTime[0]),
+                () -> FilterPredicate.in("c", new BigDecimal[0]),
+                () -> FilterPredicate.in("c", new UUID[0]),
+                () -> FilterPredicate.in("c", new PqInterval[0]));
+        for (ThrowingCallable emptySet : emptySets) {
+            assertThatThrownBy(emptySet)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("IN predicate requires at least one value");
+        }
     }
 
     /// A null literal is a mistake at the call site, and it is caught there rather than at
@@ -558,6 +607,22 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicate.in("c", new byte[] { 0x01 }, null))
                 .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
         assertThatThrownBy(() -> FilterPredicate.in("c", "a", null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", (LocalDate[]) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values");
+        assertThatThrownBy(() -> FilterPredicate.in("c", LocalDate.EPOCH, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", Instant.EPOCH, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", LocalDateTime.MIN, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", LocalTime.NOON, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", BigDecimal.ONE, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new UUID(0, 0), null))
+                .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
+        assertThatThrownBy(() -> FilterPredicate.in("c", new PqInterval(0, 0, 0), null))
                 .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
     }
 
@@ -590,13 +655,16 @@ class FilterPredicateTest {
         assertThat(FilterPredicate.in("c", 1)).isInstanceOf(FilterPredicate.IntInPredicate.class);
         assertThat(FilterPredicate.in("c", 1L)).isInstanceOf(FilterPredicate.LongInPredicate.class);
         assertThat(FilterPredicate.in("c", 1.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
-        assertThat(FilterPredicate.in("c", 1.5f)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5f)).isInstanceOf(FilterPredicate.FloatInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5f, 2.5f)).isInstanceOf(FilterPredicate.FloatInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1, 2.5f)).isInstanceOf(FilterPredicate.FloatInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5f, 2.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        assertThat(FilterPredicate.in("c", "a", "b")).isInstanceOf(FilterPredicate.StringInPredicate.class);
         assertThat(FilterPredicate.in("c", 1, 2)).isInstanceOf(FilterPredicate.IntInPredicate.class);
         assertThat(FilterPredicate.in("c", 1L, 2L)).isInstanceOf(FilterPredicate.LongInPredicate.class);
         assertThat(FilterPredicate.in("c", 1.5, 2.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
-        assertThat(FilterPredicate.in("c", "a", "b")).isInstanceOf(FilterPredicate.StringInPredicate.class);
-        // Note: FilterPredicate.in("c") is ambiguous between int..., long..., and double... varargs,
-        // which was already the case between int... and long...
+        // Note: FilterPredicate.in("c") is ambiguous between the primitive and the reference varargs
+        // forms
     }
 
     @Test
@@ -665,9 +733,11 @@ class FilterPredicateTest {
         FileSchema schema = createFloatSchema();
 
         assertThat(canDropRowGroup(
-                FilterPredicate.in("col", 1.0, 5.0, 8.0), rg, schema)).isTrue();
+                FilterPredicate.in("col", 1.0f, 5.0f, 8.0f), rg, schema)).isTrue();
         assertThat(canDropRowGroup(
-                FilterPredicate.in("col", 5.0, 15.0, 25.0), rg, schema)).isFalse();
+                FilterPredicate.in("col", 5.0f, 15.0f, 25.0f), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0f, Float.NaN), rg, schema)).isFalse();
     }
 
     @Test
@@ -1297,48 +1367,14 @@ class FilterPredicateTest {
     }
 
     @Test
-    void testNotOnDoubleInExpandsToAndNotEqOnFloatColumn() {
+    void testNotOnFloatInExpandsToAndNotEqOnFloatColumn() {
         FileSchema schema = createFloatSchema();
-        // Finite representable probes narrow losslessly to FloatPredicate NOT_EQ
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", 0.5, 1.5)), schema);
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.And.class);
-        ResolvedPredicate.And and = (ResolvedPredicate.And) resolved;
-        assertThat(and.children()).hasSize(2);
-        assertThat(and.children().get(0)).isEqualTo(new ResolvedPredicate.FloatPredicate(
-                0, FilterPredicate.Operator.NOT_EQ, 0.5f, false));
-        assertThat(and.children().get(1)).isEqualTo(new ResolvedPredicate.FloatPredicate(
-                0, FilterPredicate.Operator.NOT_EQ, 1.5f, false));
-
-        // Mixed: 0.1 is not float-representable, so only 0.5 survives as a conjunct
-        ResolvedPredicate mixed = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", 0.1, 0.5)), schema);
-        assertThat(mixed).isInstanceOf(ResolvedPredicate.And.class);
-        ResolvedPredicate.And mixedAnd = (ResolvedPredicate.And) mixed;
-        assertThat(mixedAnd.children()).containsExactly(new ResolvedPredicate.FloatPredicate(
-                0, FilterPredicate.Operator.NOT_EQ, 0.5f, false));
-
-        // Zero surviving probes: not(in("col", 0.1)) matches every non-null row, and negating it
-        // again matches none rather than returning the rows it left out for being null.
-        ResolvedPredicate allNonRep = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", 0.1)), schema);
-        assertThat(allNonRep).isEqualTo(new ResolvedPredicate.EveryNonNullRowPredicate(0));
-        assertThat(ResolvedPredicate.negate(allNonRep)).isEqualTo(new ResolvedPredicate.NoRowPredicate(0));
-
-        // NaN probe: NaN is float-representable; Double.isNaN(v) keeps it
-        // and resolves to an And containing FloatPredicate NOT_EQ Float.NaN (never a constant)
-        ResolvedPredicate nanResolved = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", Double.NaN)), schema);
-        assertThat(nanResolved).isInstanceOf(ResolvedPredicate.And.class);
-        ResolvedPredicate.And nanAnd = (ResolvedPredicate.And) nanResolved;
-        assertThat(nanAnd.children()).hasSize(1);
-        assertThat(nanAnd.children().get(0)).isInstanceOf(ResolvedPredicate.FloatPredicate.class);
-        ResolvedPredicate.FloatPredicate fp = (ResolvedPredicate.FloatPredicate) nanAnd.children().get(0);
-        assertThat(fp.columnIndex()).isEqualTo(0);
-        assertThat(fp.op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
-        assertThat(Float.isNaN(fp.value())).isTrue();
+                FilterPredicate.not(FilterPredicate.in("col", 0.1f, Float.NaN)), schema);
+        assertThat(resolved).isEqualTo(new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.1f, false),
+                new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, Float.NaN, false))));
     }
-
 
     @Test
     void testNotOnIsNullInvertsToIsNotNull() throws IOException {
