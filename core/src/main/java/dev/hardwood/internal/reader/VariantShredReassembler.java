@@ -170,7 +170,9 @@ public final class VariantShredReassembler {
             return;
         }
         if (logical instanceof LogicalType.DecimalType d) {
-            pos = VariantValueEncoder.writeDecimal16(scratch, pos, new BigInteger(raw), d.scale());
+            // A payload of no bytes is zero, as the column's accessors read it.
+            BigInteger unscaled = raw.length == 0 ? BigInteger.ZERO : new BigInteger(raw);
+            pos = VariantValueEncoder.writeDecimal16(scratch, pos, unscaled, d.scale());
             return;
         }
         pos = VariantValueEncoder.writeBinary(scratch, pos, raw);

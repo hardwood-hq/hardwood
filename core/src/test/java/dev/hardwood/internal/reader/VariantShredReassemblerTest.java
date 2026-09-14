@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.math.BigInteger;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
@@ -15,12 +16,15 @@ import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.internal.variant.ShredLevel.Typed;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.internal.variant.VariantValueEncoder;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// White-box tests for [VariantShredReassembler]'s handling of malformed
-/// shredded input that violates the per-level shredding invariants.
+/// shredded input that violates the per-level shredding invariants, and of
+/// typed_value payloads a writer may encode in more than one way.
 class VariantShredReassemblerTest {
 
     /// Variant metadata dictionary holding a single field `dup` (header 0x01,
@@ -57,6 +61,28 @@ class VariantShredReassemblerTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Malformed shredded Variant: field 'dup' appears in both the shredded "
                          + "typed_value and the unshredded value object");
+    }
+
+    /// A `BYTE_ARRAY` `DECIMAL` typed_value stored as no bytes is zero, as the column's
+    /// accessors read it.
+    @Test
+    void anEmptyByteArrayDecimalTypedValueIsZero() {
+        ShredLevel root = new ShredLevel(-1, 0,
+                new Typed.Primitive(0, 1, PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2)));
+
+        NestedBatch typedCol = new NestedBatch();
+        typedCol.values = new BinaryBatchValues(new byte[0], new int[] { 0, 0 });
+        typedCol.valueCount = 1;
+        typedCol.recordCount = 1;
+        typedCol.definitionLevels = new int[] { 1 };
+        NestedBatchIndex batch = NestedBatchIndex.buildFromBatches(
+                new NestedBatch[] { typedCol }, null, null, null, null);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThat(reassembler.reassemble(root, batch, 0))
+                .isEqualTo(encode(buf -> VariantValueEncoder.writeDecimal16(buf, 0, BigInteger.ZERO, 2)));
     }
 
     // ==================== Helpers ====================

@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.conversion;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -54,6 +55,21 @@ class LogicalTypeConverterTest {
     @MethodSource("int96Cases")
     void int96ToInstantDecodesKnownValues(String name, byte[] bytes, Instant expected) {
         assertThat(LogicalTypeConverter.int96ToInstant(bytes)).isEqualTo(expected);
+    }
+
+    /// A `BYTE_ARRAY` `DECIMAL` value stored as no bytes is zero, as a filter predicate on the
+    /// column compares it.
+    @Test
+    void anEmptyDecimalPayloadIsZero() {
+        assertThat(LogicalTypeConverter.bytesToDecimal(new byte[0], 3)).isEqualTo(new BigDecimal("0.000"));
+        assertThat(LogicalTypeConverter.bytesToDecimal(new byte[] { 0x7F, 0x01 }, 1, 0, 2))
+                .isEqualTo(new BigDecimal("0.00"));
+    }
+
+    @Test
+    void aDecimalPayloadInsideABufferIsReadAtItsOffset() {
+        assertThat(LogicalTypeConverter.bytesToDecimal(new byte[] { 0x7F, (byte) 0xFF, 0x06 }, 1, 2, 1))
+                .isEqualTo(new BigDecimal("-25.0"));
     }
 
     @Test

@@ -286,16 +286,18 @@ public final class LogicalTypeConverter {
     }
 
     /// The decimal a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column's payload
-    /// stands for. Parquet stores it big-endian two's complement.
+    /// stands for. Parquet stores it big-endian two's complement; a payload of no bytes is zero.
     public static BigDecimal bytesToDecimal(byte[] bytes, int scale) {
-        return new BigDecimal(new BigInteger(bytes), scale);
+        return bytesToDecimal(bytes, 0, bytes.length, scale);
     }
 
     /// The decimal the `DECIMAL` payload at `offset` stands for, for a caller holding
     /// the payload inside a larger buffer. Parquet stores it big-endian two's
-    /// complement, which is the layout [BigInteger] reads.
+    /// complement, which is the layout [BigInteger] reads, and a payload of no bytes is zero, as
+    /// a filter predicate on the column compares it.
     public static BigDecimal bytesToDecimal(byte[] bytes, int offset, int length, int scale) {
-        return new BigDecimal(new BigInteger(bytes, offset, length), scale);
+        BigInteger unscaled = length == 0 ? BigInteger.ZERO : new BigInteger(bytes, offset, length);
+        return new BigDecimal(unscaled, scale);
     }
 
     /// The UTF-8 text of a `STRING`, `ENUM` or `JSON` payload.
