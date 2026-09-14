@@ -78,6 +78,10 @@ Every column also takes `isNull` / `isNotNull`.
 | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; `intersects(xmin, ymin, xmax, ymax)` | equality and set form; `intersects` | the WKB bytes; `intersects` by bounding box |
 | `NULL` | the physical type's literal | equality and set form | the stored value, which a conforming file never has |
 
+The `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` rows follow the carrier parquet-format defines after
+its 2.14.0 release ([apache/parquet-format#601](https://github.com/apache/parquet-format/pull/601)):
+a signed 96-bit little-endian count of the column's unit, ordered by that count.
+
 `FLOAT`, `DOUBLE` and `FLOAT16` values compare by `Float.compare` / `Double.compare`: every `NaN`
 equals every other `NaN` and sorts above `+Inf`, and `-0.0` sorts below `+0.0`. This holds
 whatever `ColumnOrder` the file declares for the column; the column order says only how the
