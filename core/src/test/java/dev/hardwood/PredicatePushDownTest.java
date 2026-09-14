@@ -1198,8 +1198,8 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             assertThatThrownBy(() -> reader.buildRowReader().filter(FilterPredicate.eq("name", 42)).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Column 'name' has physical type BYTE_ARRAY"
-                            + "; given filter predicate type INT32 is incompatible");
+                    .hasMessage("Column 'name' is annotated STRING"
+                            + ", which takes String and byte[] literals, not an int");
         }
     }
 
@@ -1209,8 +1209,8 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             assertThatThrownBy(() -> reader.buildRowReader().filter(FilterPredicate.eq("id", "hello")).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Column 'id' has physical type INT32"
-                            + "; given filter predicate type BYTE_ARRAY is incompatible");
+                    .hasMessage("Column 'id' is an unannotated INT32"
+                            + ", which takes int literals, not a String");
         }
     }
 
@@ -1220,8 +1220,8 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             assertThatThrownBy(() -> reader.buildColumnReader("price").filter(FilterPredicate.gt("price", 100L)).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Column 'price' has physical type DOUBLE"
-                            + "; given filter predicate type INT64 is incompatible");
+                    .hasMessage("Column 'price' is an unannotated DOUBLE"
+                            + ", which takes double literals, not a long");
         }
     }
 

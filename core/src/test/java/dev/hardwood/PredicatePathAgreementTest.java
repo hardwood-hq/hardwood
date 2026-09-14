@@ -352,18 +352,18 @@ class PredicatePathAgreementTest {
         cases.add(new Case("s", "eq(1) on a group", FilterPredicate.eq("s", 1),
                 new Rejected("Filter predicates require a leaf column. Column 's' is a group.")));
         cases.add(new Case("i32", "eq(0L), a long on an INT32 column", FilterPredicate.eq("i32", 0L),
-                new Rejected("Column 'i32' has physical type INT32; "
-                        + "given filter predicate type INT64 is incompatible")));
+                new Rejected("Column 'i32' is an unannotated INT32"
+                        + ", which takes int literals, not a long")));
         // A membership literal is the column's literal type, so a `double` set takes a DOUBLE
         // column only, as `eq(double)` does.
         cases.add(new Case("f16", "in(0.1), a double on a FLOAT16 column",
                 FilterPredicate.in("f16", 0.1),
-                new Rejected("Column 'f16' has physical type FIXED_LEN_BYTE_ARRAY; "
-                        + "given filter predicate type DOUBLE is incompatible")));
+                new Rejected("Column 'f16' is annotated FLOAT16"
+                        + ", which takes float and byte[] literals, not a double")));
         cases.add(new Case("f32", "in(12.5), a double on a FLOAT column",
                 FilterPredicate.in("f32", 12.5),
-                new Rejected("Column 'f32' has physical type FLOAT; "
-                        + "given filter predicate type DOUBLE is incompatible")));
+                new Rejected("Column 'f32' is an unannotated FLOAT"
+                        + ", which takes float literals, not a double")));
 
         stringLiteralsOnlyWhereGetStringReads(cases);
         literalsTheColumnCannotHold(cases);
@@ -404,8 +404,8 @@ class PredicatePathAgreementTest {
                         + "which takes byte[] literals, not a String")));
         cases.add(new Case("iv", "eq(a String on an INTERVAL column)",
                 FilterPredicate.eq("iv", "months days ms"),
-                new Rejected("Column 'iv' is annotated INTERVAL, "
-                        + "which takes byte[] literals, not a String")));
+                new Rejected("Column 'iv' is annotated INTERVAL"
+                        + ", which takes PqInterval and byte[] literals, not a String")));
     }
 
     /// A literal of the column's literal type that the column cannot hold: finer than its time
@@ -810,8 +810,8 @@ class PredicatePathAgreementTest {
                 new Rejected("Column '" + column + "' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field),"
                         + " which takes Instant and byte[] literals, not a LocalDateTime")));
         cases.add(new Case(column, "eq(a long), an INT96 column", FilterPredicate.eq(column, 0L),
-                new Rejected("Column '" + column + "' has physical type INT96; "
-                        + "given filter predicate type INT64 is incompatible")));
+                new Rejected("Column '" + column + "' is a legacy INT96 TIMESTAMP (no isAdjustedToUTC field),"
+                        + " which takes Instant and byte[] literals, not a long")));
 
         // Instant.MAX lies millions of years past the latest instant an INT96 encodes.
         cases.add(new Case(column, "eq(Instant.MAX), past every instant an INT96 encodes",

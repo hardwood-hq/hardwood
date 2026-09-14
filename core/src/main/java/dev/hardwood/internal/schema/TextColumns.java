@@ -18,7 +18,7 @@ import dev.hardwood.metadata.PhysicalType;
 /// columns: a literal is a value the column's accessors return, so a column a `String`
 /// cannot be read out of is a column a `String` cannot filter either.
 ///
-/// The switch in [#nonTextLiterals] is exhaustive rather than a list of exceptions, so an
+/// The switch in [#isText] is exhaustive rather than a list of exceptions, so an
 /// annotation added later has to state whether a `String` reads it.
 public final class TextColumns {
 
@@ -31,36 +31,30 @@ public final class TextColumns {
     /// drops `STRING`, `ENUM` and `JSON` off anything but a `BYTE_ARRAY` when the footer is
     /// read, leaving the column unannotated.
     public static boolean holdsText(PhysicalType type, LogicalType logicalType) {
-        return type == PhysicalType.BYTE_ARRAY
-                && (logicalType == null || nonTextLiterals(logicalType) == null);
+        return type == PhysicalType.BYTE_ARRAY && (logicalType == null || isText(logicalType));
     }
 
-    /// The literals a binary column takes in place of a `String`, or `null` where a `String`
-    /// reads the column.
-    ///
-    /// The annotations that reach an arm returning `byte[]` alone read the stored bytes as an
-    /// opaque payload, or annotate a physical type no binary column has —
-    /// [dev.hardwood.schema.FileSchema] drops the latter when the footer is read.
-    public static String nonTextLiterals(LogicalType logicalType) {
+    /// Whether the annotation says the stored bytes are the UTF-8 encoding of a string.
+    private static boolean isText(LogicalType logicalType) {
         return switch (logicalType) {
-            case LogicalType.StringType ignored -> null;
-            case LogicalType.EnumType ignored -> null;
-            case LogicalType.JsonType ignored -> null;
-            case LogicalType.DecimalType ignored -> "BigDecimal and byte[]";
-            case LogicalType.Float16Type ignored -> "float and byte[]";
-            case LogicalType.UuidType ignored -> "UUID and byte[]";
-            case LogicalType.BsonType ignored -> "byte[]";
-            case LogicalType.IntervalType ignored -> "byte[]";
-            case LogicalType.GeometryType ignored -> "byte[]";
-            case LogicalType.GeographyType ignored -> "byte[]";
-            case LogicalType.NullType ignored -> "byte[]";
-            case LogicalType.VariantType ignored -> "byte[]";
-            case LogicalType.ListType ignored -> "byte[]";
-            case LogicalType.MapType ignored -> "byte[]";
-            case LogicalType.IntType ignored -> "byte[]";
-            case LogicalType.DateType ignored -> "byte[]";
-            case LogicalType.TimeType ignored -> "byte[]";
-            case LogicalType.TimestampType ignored -> "byte[]";
+            case LogicalType.StringType ignored -> true;
+            case LogicalType.EnumType ignored -> true;
+            case LogicalType.JsonType ignored -> true;
+            case LogicalType.DecimalType ignored -> false;
+            case LogicalType.Float16Type ignored -> false;
+            case LogicalType.UuidType ignored -> false;
+            case LogicalType.BsonType ignored -> false;
+            case LogicalType.IntervalType ignored -> false;
+            case LogicalType.GeometryType ignored -> false;
+            case LogicalType.GeographyType ignored -> false;
+            case LogicalType.NullType ignored -> false;
+            case LogicalType.VariantType ignored -> false;
+            case LogicalType.ListType ignored -> false;
+            case LogicalType.MapType ignored -> false;
+            case LogicalType.IntType ignored -> false;
+            case LogicalType.DateType ignored -> false;
+            case LogicalType.TimeType ignored -> false;
+            case LogicalType.TimestampType ignored -> false;
         };
     }
 }

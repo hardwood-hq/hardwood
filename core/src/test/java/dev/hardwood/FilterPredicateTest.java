@@ -1063,7 +1063,7 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", UUID.randomUUID()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is not a UuidType column (logical type: null)");
+                .hasMessage("Column 'col' is an unannotated FIXED_LEN_BYTE_ARRAY, which takes byte[] literals, not a UUID");
     }
 
     @Test
@@ -1226,8 +1226,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", 42), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
-                        + "; given filter predicate type INT32 is incompatible");
+                .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
+                        + ", which takes String and byte[] literals, not an int");
     }
 
     @Test
@@ -1237,8 +1237,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.gt("col", 50L), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type INT32"
-                        + "; given filter predicate type INT64 is incompatible");
+                .hasMessage("Column 'col' is an unannotated INT32"
+                        + ", which takes int literals, not a long");
     }
 
     @Test
@@ -1248,8 +1248,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.gt("col", 50.0f), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type DOUBLE"
-                        + "; given filter predicate type FLOAT is incompatible");
+                .hasMessage("Column 'col' is an unannotated DOUBLE"
+                        + ", which takes double literals, not a float");
     }
 
     @Test
@@ -1259,8 +1259,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", "hello"), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type INT32"
-                        + "; given filter predicate type BYTE_ARRAY is incompatible");
+                .hasMessage("Column 'col' is an unannotated INT32"
+                        + ", which takes int literals, not a String");
     }
 
     @Test
@@ -1270,8 +1270,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", true), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type INT64"
-                        + "; given filter predicate type BOOLEAN is incompatible");
+                .hasMessage("Column 'col' is an unannotated INT64"
+                        + ", which takes long literals, not a boolean");
     }
 
     @Test
@@ -1281,8 +1281,8 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.in("col", 1, 2, 3), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
-                        + "; given filter predicate type INT32 is incompatible");
+                .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
+                        + ", which takes String and byte[] literals, not an int");
     }
 
     @Test
@@ -1295,8 +1295,8 @@ class FilterPredicateTest {
                 FilterPredicate.eq("col", 42));
         assertThatThrownBy(() -> canDropRowGroup(filter, rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
-                        + "; given filter predicate type INT32 is incompatible");
+                .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
+                        + ", which takes String and byte[] literals, not an int");
     }
 
     @Test

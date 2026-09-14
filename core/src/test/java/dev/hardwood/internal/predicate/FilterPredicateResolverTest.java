@@ -73,7 +73,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalDate.of(2024, 6, 15)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is not a DateType column (logical type: null)");
+                .hasMessage("Column 'col' is an unannotated INT32, which takes int literals, not a LocalDate");
     }
 
     @Test
@@ -83,7 +83,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.gt("col", LocalDate.of(2024, 6, 15)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is not a DateType column (logical type: INT_32)");
+                .hasMessage("Column 'col' is annotated INT_32, which takes int literals, not a LocalDate");
     }
 
     // ==================== Instant ====================
@@ -134,7 +134,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", Instant.now()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' does not have a TIMESTAMP logical type");
+                .hasMessage("Column 'col' is an unannotated INT64, which takes long literals, not an Instant");
     }
 
     @Test
@@ -382,7 +382,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalDateTime.of(2024, 6, 15, 12, 30)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' does not have a TIMESTAMP logical type");
+                .hasMessage("Column 'col' is an unannotated INT64, which takes long literals, not a LocalDateTime");
     }
 
     @Test
@@ -431,7 +431,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", LocalTime.NOON), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' does not have a TIME logical type");
+                .hasMessage("Column 'col' is annotated DATE, which takes LocalDate and int literals, not a LocalTime");
     }
 
     /// `TIME(MILLIS)` is stored in an `INT32`, so on an `INT64` column the annotation is
@@ -443,7 +443,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("t", LocalTime.NOON), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 't' does not have a TIME logical type");
+                .hasMessage("Column 't' is an unannotated INT64, which takes long literals, not a LocalTime");
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("t", 7L), schema))
                 .isInstanceOf(ResolvedPredicate.LongPredicate.class);
     }
@@ -457,7 +457,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("1.50")), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'amount' does not have a DECIMAL logical type");
+                .hasMessage("Column 'amount' is an unannotated INT32, which takes int literals, not a BigDecimal");
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("amount", 150), schema))
                 .isInstanceOf(ResolvedPredicate.IntPredicate.class);
     }
@@ -583,7 +583,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", new BigDecimal("1.0")), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' does not have a DECIMAL logical type");
+                .hasMessage("Column 'col' is annotated DATE, which takes LocalDate and int literals, not a BigDecimal");
     }
 
     @Test
@@ -807,7 +807,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("id", UUID.randomUUID()), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'id' is not a UuidType column (logical type: null)");
+                .hasMessage("Column 'id' is an unannotated FIXED_LEN_BYTE_ARRAY, which takes byte[] literals, not a UUID");
     }
 
     // ==================== Combinators ====================
@@ -1035,8 +1035,8 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("col", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' has physical type BYTE_ARRAY; given filter predicate type INT32 "
-                         + "is incompatible");
+                .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
+                         + ", which takes String and byte[] literals, not an int");
     }
 
     // ==================== IS NULL / IS NOT NULL ====================
@@ -1121,7 +1121,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.intersects("col", 0.0, 0.0, 1.0, 1.0), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is not a GEOMETRY or GEOGRAPHY column")
+                .hasMessage("Column 'col' is annotated STRING; intersects takes a GEOMETRY or GEOGRAPHY column")
                 ;
     }
 
@@ -1310,7 +1310,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("c", new PqInterval(1, 0, 0)), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' is not a IntervalType column (logical type: null)");
+                .hasMessage("Column 'c' is an unannotated FIXED_LEN_BYTE_ARRAY, which takes byte[] literals, not a PqInterval");
     }
 
     // ==================== VARIANT ====================
@@ -1480,26 +1480,26 @@ class FilterPredicateResolverTest {
         FileSchema floatSchema = schemaWithLogicalType("c", PhysicalType.FLOAT, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5, 2.5), floatSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("FLOAT", "DOUBLE"));
+                .hasMessage(notTaken("an unannotated FLOAT", "float", "a double"));
 
         FileSchema doubleSchema = schemaWithLogicalType("c", PhysicalType.DOUBLE, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5f), doubleSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("DOUBLE", "FLOAT"));
+                .hasMessage(notTaken("an unannotated DOUBLE", "double", "a float"));
 
         FileSchema float16Schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
                 new LogicalType.Float16Type());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5), float16Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("FIXED_LEN_BYTE_ARRAY", "DOUBLE"));
+                .hasMessage(notTaken("annotated FLOAT16", "float and byte[]", "a double"));
 
         FileSchema intSchema = schemaWithLogicalType("c", PhysicalType.INT32, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5), intSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "DOUBLE"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a double"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1.5f), intSchema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "FLOAT"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a float"));
     }
 
     @Test
@@ -1513,7 +1513,7 @@ class FilterPredicateResolverTest {
         FileSchema plain = schemaWithLogicalType("d", PhysicalType.INT32, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("d", LocalDate.EPOCH), plain))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'd' is not a DateType column (logical type: null)");
+                .hasMessage("Column 'd' is an unannotated INT32, which takes int literals, not a LocalDate");
     }
 
     @Test
@@ -1642,7 +1642,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", BigDecimal.ONE),
                 schemaWithLogicalType("c", PhysicalType.INT32, null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' does not have a DECIMAL logical type");
+                .hasMessage("Column 'c' is an unannotated INT32, which takes int literals, not a BigDecimal");
     }
 
     @Test
@@ -1659,7 +1659,7 @@ class FilterPredicateResolverTest {
         FileSchema plain = schemaWithLogicalType("u", PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("u", uuid), plain))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'u' is not a UuidType column (logical type: null)");
+                .hasMessage("Column 'u' is an unannotated FIXED_LEN_BYTE_ARRAY, which takes byte[] literals, not a UUID");
     }
 
     @Test
@@ -1755,30 +1755,30 @@ class FilterPredicateResolverTest {
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", 1L), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "INT64"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a long"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", 1.0), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "DOUBLE"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a double"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", true), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "BOOLEAN"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a boolean"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", "str"), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "BYTE_ARRAY"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a String"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1, 2), int64Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT64", "INT32"));
+                .hasMessage(notTaken("an unannotated INT64", "long", "an int"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1L, 2L), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "INT64"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a long"));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", "a"), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "BYTE_ARRAY"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a String"));
 
         FileSchema dateSchemaWrong = schemaWithLogicalType("c", PhysicalType.INT64, new LogicalType.DateType());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalDate.of(2026, 1, 1)), dateSchemaWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT64", "INT32"));
+                .hasMessage(notTaken("an unannotated INT64", "long", "a LocalDate"));
 
         // A TIMESTAMP annotation on an INT32 column, and a TIME annotation on the width its unit
         // is not stored in, are dropped from the schema, so the column arrives with no logical
@@ -1787,26 +1787,26 @@ class FilterPredicateResolverTest {
                 new LogicalType.TimestampType(false, LogicalType.TimeUnit.MILLIS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", Instant.EPOCH), tsSchemaWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' does not have a TIMESTAMP logical type");
+                .hasMessage(notTaken("an unannotated INT32", "int", "an Instant"));
 
         FileSchema timeMillisWrong = schemaWithLogicalType("c", PhysicalType.INT64,
                 new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMillisWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' does not have a TIME logical type");
+                .hasMessage(notTaken("an unannotated INT64", "long", "a LocalTime"));
 
         FileSchema timeMicrosWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMicrosWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' does not have a TIME logical type");
+                .hasMessage(notTaken("an unannotated INT32", "int", "a LocalTime"));
 
         FileSchema uuidWrong = schemaWithLogicalType("c", PhysicalType.INT32,
                 new LogicalType.UuidType());
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
                 FilterPredicate.eq("c", UUID.randomUUID()), uuidWrong))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage(incompatible("INT32", "FIXED_LEN_BYTE_ARRAY"));
+                .hasMessage(notTaken("an unannotated INT32", "int", "a UUID"));
     }
 
     @Test
@@ -1882,7 +1882,7 @@ class FilterPredicateResolverTest {
                 Arguments.of("INTERVAL",
                         schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
                                 new LogicalType.IntervalType()),
-                        notText("annotated INTERVAL", "byte[]")),
+                        notText("annotated INTERVAL", "PqInterval and byte[]")),
                 Arguments.of("BSON",
                         schemaWithLogicalType("c", PhysicalType.BYTE_ARRAY, LogicalType.bson()),
                         notText("annotated BSON", "byte[]")),
@@ -1917,15 +1917,13 @@ class FilterPredicateResolverTest {
 
     /// The message a `String` literal raises on a column that does not hold text.
     private static String notText(String description, String literals) {
-        return "Column 'c' is " + description + ", which takes " + literals
-                + " literals, not a String";
+        return notTaken(description, literals, "a String");
     }
 
-    /// The message `validateType` raises when a column's physical type does not admit the
-    /// predicate's value type.
-    private static String incompatible(String actualType, String expectedType) {
-        return "Column 'c' has physical type " + actualType
-                + "; given filter predicate type " + expectedType + " is incompatible";
+    /// The message a literal of a type column `c` does not take raises, naming what the column
+    /// is, the literals it takes and the literal given.
+    private static String notTaken(String description, String literals, String literal) {
+        return "Column 'c' is " + description + ", which takes " + literals + " literals, not " + literal;
     }
 
     private static FileSchema schemaWithLogicalType(String columnName, PhysicalType type,

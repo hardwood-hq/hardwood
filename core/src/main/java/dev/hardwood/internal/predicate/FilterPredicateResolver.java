@@ -224,7 +224,7 @@ public class FilterPredicateResolver {
                             p.value().toPlainString());
                 }
                 else {
-                    validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                    validateType(p.column(), PhysicalType.BYTE_ARRAY, cs, "a BigDecimal");
                     // A BYTE_ARRAY decimal should store each value in the fewest bytes that hold
                     // it — `should`, not `must`, so a writer may pad and two byte strings of
                     // different lengths may be the same number. The literal takes the minimal
@@ -239,14 +239,14 @@ public class FilterPredicateResolver {
             }
             case IntColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.INT32, cs);
+                validateType(p.column(), PhysicalType.INT32, cs, "an int");
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedIntPredicate(cs.columnIndex(), p.op(), p.value())
                         : new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case LongColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.INT64, cs);
+                validateType(p.column(), PhysicalType.INT64, cs, "a long");
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedLongPredicate(cs.columnIndex(), p.op(), p.value())
                         : new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
@@ -261,7 +261,7 @@ public class FilterPredicateResolver {
                     yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
-                validateType(p.column(), PhysicalType.FLOAT, cs);
+                validateType(p.column(), PhysicalType.FLOAT, cs, "a float");
                 yield new ResolvedPredicate.FloatInPredicate(cs.columnIndex(), p.values(),
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
@@ -273,19 +273,19 @@ public class FilterPredicateResolver {
                     yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value(),
                             isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
-                validateType(p.column(), PhysicalType.FLOAT, cs);
+                validateType(p.column(), PhysicalType.FLOAT, cs, "a float");
                 yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value(),
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case DoubleColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.DOUBLE, cs);
+                validateType(p.column(), PhysicalType.DOUBLE, cs, "a double");
                 yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value(),
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case BooleanColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.BOOLEAN, cs);
+                validateType(p.column(), PhysicalType.BOOLEAN, cs, "a boolean");
                 yield booleanLeaf(cs.columnIndex(), p.op(), p.value());
             }
             case BinaryColumnPredicate p -> {
@@ -304,14 +304,14 @@ public class FilterPredicateResolver {
             }
             case FilterPredicate.StringColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
-                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs, "a String");
                 requireTextColumn(p.column(), cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
                         p.value().getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
             }
             case FilterPredicate.StringInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
-                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs, "a String");
                 requireTextColumn(p.column(), cs);
                 byte[][] probes = new byte[p.values().length][];
                 for (int i = 0; i < probes.length; i++) {
@@ -321,13 +321,13 @@ public class FilterPredicateResolver {
                         Comparison.BYTE_STRING);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
-                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class,
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class, "a UUID",
                         leafColumn(p.column(), schema, p.op()));
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
                         Comparison.BYTE_STRING);
             }
             case FilterPredicate.UUIDInPredicate p -> {
-                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class,
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.UuidType.class, "a UUID",
                         leafColumn(p.column(), schema));
                 byte[][] probes = new byte[p.values().size()][];
                 for (int i = 0; i < probes.length; i++) {
@@ -336,13 +336,13 @@ public class FilterPredicateResolver {
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes, Comparison.BYTE_STRING);
             }
             case IntervalColumnPredicate p -> {
-                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class,
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class, "a PqInterval",
                         leafColumn(p.column(), schema, p.op()));
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
                         intervalBytes(p.column(), p.value()), Comparison.BYTE_STRING);
             }
             case FilterPredicate.IntervalInPredicate p -> {
-                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class,
+                ColumnSchema cs = annotatedFixedWidth(p.column(), LogicalType.IntervalType.class, "a PqInterval",
                         leafColumn(p.column(), schema));
                 byte[][] probes = new byte[p.values().size()][];
                 for (int i = 0; i < probes.length; i++) {
@@ -352,14 +352,14 @@ public class FilterPredicateResolver {
             }
             case IntInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
-                validateType(p.column(), PhysicalType.INT32, cs);
+                validateType(p.column(), PhysicalType.INT32, cs, "an int");
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedIntInPredicate(cs.columnIndex(), p.values())
                         : new ResolvedPredicate.IntInPredicate(cs.columnIndex(), p.values());
             }
             case LongInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
-                validateType(p.column(), PhysicalType.INT64, cs);
+                validateType(p.column(), PhysicalType.INT64, cs, "a long");
                 yield ordersUnsigned(cs)
                         ? new ResolvedPredicate.UnsignedLongInPredicate(cs.columnIndex(), p.values())
                         : new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
@@ -377,7 +377,7 @@ public class FilterPredicateResolver {
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
-                validateType(p.column(), PhysicalType.DOUBLE, cs);
+                validateType(p.column(), PhysicalType.DOUBLE, cs, "a double");
                 yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(),
                         isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
@@ -406,8 +406,8 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = leafColumn(p.column(), schema);
                 if (!(cs.logicalType() instanceof LogicalType.GeometryType) &&
                         !(cs.logicalType() instanceof LogicalType.GeographyType)) {
-                    throw new IllegalArgumentException(
-                            "Column '" + p.column() + "' is not a GEOMETRY or GEOGRAPHY column");
+                    throw new IllegalArgumentException("Column '" + p.column() + "' is "
+                            + ColumnLiterals.describe(cs) + "; intersects takes a GEOMETRY or GEOGRAPHY column");
                 }
                 yield new ResolvedPredicate.GeospatialPredicate(cs.columnIndex(),
                         p.xmin(), p.ymin(), p.xmax(), p.ymax());
@@ -606,13 +606,12 @@ public class FilterPredicateResolver {
                         + "Column '" + columnName + "' is repeated.");
     }
 
+    /// Refuses `literal`, such as `an int`, on a column whose physical type does not store it.
     private static void validateType(String columnName, PhysicalType expectedType,
-            ColumnSchema columnSchema) {
+            ColumnSchema columnSchema, String literal) {
         PhysicalType actualType = columnSchema.type();
         if (actualType != expectedType && !isBinaryCompatible(actualType, expectedType)) {
-            throw new IllegalArgumentException(
-                    "Column '" + columnName + "' has physical type " + actualType
-                            + "; given filter predicate type " + expectedType + " is incompatible");
+            throw ColumnLiterals.notTaken(columnName, columnSchema, literal);
         }
     }
 
@@ -632,7 +631,7 @@ public class FilterPredicateResolver {
     /// whatever it is annotated.
     private static ColumnSchema byteColumn(String columnName, ColumnSchema columnSchema) {
         if (columnSchema.type() != PhysicalType.INT96) {
-            validateType(columnName, PhysicalType.BYTE_ARRAY, columnSchema);
+            validateType(columnName, PhysicalType.BYTE_ARRAY, columnSchema, "a byte[]");
         }
         return columnSchema;
     }
@@ -750,23 +749,9 @@ public class FilterPredicateResolver {
     /// column stores bytes its annotation reads as something else, which a caller writes as a
     /// `byte[]` or as the annotation's own literal type.
     private static void requireTextColumn(String columnName, ColumnSchema columnSchema) {
-        LogicalType logicalType = columnSchema.logicalType();
-        if (logicalType == null) {
-            if (columnSchema.type() == PhysicalType.BYTE_ARRAY) {
-                return;
-            }
-            throw notTextColumn(columnName, "an unannotated " + columnSchema.type(), "byte[]");
+        if (!TextColumns.holdsText(columnSchema.type(), columnSchema.logicalType())) {
+            throw ColumnLiterals.notTaken(columnName, columnSchema, "a String");
         }
-        String literals = TextColumns.nonTextLiterals(logicalType);
-        if (literals != null) {
-            throw notTextColumn(columnName, "annotated " + logicalType, literals);
-        }
-    }
-
-    private static IllegalArgumentException notTextColumn(String columnName, String description,
-            String literals) {
-        return new IllegalArgumentException("Column '" + columnName + "' is " + description
-                + ", which takes " + literals + " literals, not a String");
     }
 
     /// A `BOOLEAN` predicate, as one of the four answers a two-valued column has.
@@ -849,15 +834,12 @@ public class FilterPredicateResolver {
         return probes;
     }
 
+    /// Refuses `literal` on a column not carrying the annotation that literal is the value of.
     private static void validateLogicalType(String columnName,
             Class<? extends LogicalType> expectedLogicalType,
-            ColumnSchema columnSchema) {
-        LogicalType logicalType = columnSchema.logicalType();
-
-        if (!expectedLogicalType.isInstance(logicalType)) {
-            throw new IllegalArgumentException(
-                    "Column '" + columnName + "' is not a " + expectedLogicalType.getSimpleName()
-                            + " column (logical type: " + logicalType + ")");
+            ColumnSchema columnSchema, String literal) {
+        if (!expectedLogicalType.isInstance(columnSchema.logicalType())) {
+            throw ColumnLiterals.notTaken(columnName, columnSchema, literal);
         }
     }
 
@@ -878,9 +860,9 @@ public class FilterPredicateResolver {
                     + TimestampAccessorKind.describeLegacyInt96()
                     + ", which takes Instant and byte[] literals, not a LocalDateTime");
         }
+        String literal = literalIsInstant ? "an Instant" : "a LocalDateTime";
         if (!(columnSchema.logicalType() instanceof LogicalType.TimestampType timestampType)) {
-            throw new IllegalArgumentException(
-                    "Column '" + columnName + "' does not have a TIMESTAMP logical type");
+            throw ColumnLiterals.notTaken(columnName, columnSchema, literal);
         }
         if (timestampType.isAdjustedToUTC() != literalIsInstant) {
             throw new IllegalArgumentException("Column '" + columnName + "' is "
@@ -888,7 +870,7 @@ public class FilterPredicateResolver {
                     + (literalIsInstant ? "LocalDateTime and long literals, not an Instant"
                             : "Instant and long literals, not a LocalDateTime"));
         }
-        validateType(columnName, PhysicalType.INT64, columnSchema);
+        validateType(columnName, PhysicalType.INT64, columnSchema, literal);
         return timestampType.unit();
     }
 
@@ -896,28 +878,27 @@ public class FilterPredicateResolver {
     /// `INT64`.
     private static LogicalType.TimeUnit timeUnit(String columnName, ColumnSchema columnSchema) {
         if (!(columnSchema.logicalType() instanceof LogicalType.TimeType timeType)) {
-            throw new IllegalArgumentException(
-                    "Column '" + columnName + "' does not have a TIME logical type");
+            throw ColumnLiterals.notTaken(columnName, columnSchema, "a LocalTime");
         }
         validateType(columnName,
                 timeType.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64,
-                columnSchema);
+                columnSchema, "a LocalTime");
         return timeType.unit();
     }
 
     /// A `DATE` column, which stores epoch days in an `INT32`.
     private static ColumnSchema dateColumn(String columnName, ColumnSchema columnSchema) {
-        validateType(columnName, PhysicalType.INT32, columnSchema);
-        validateLogicalType(columnName, LogicalType.DateType.class, columnSchema);
+        validateType(columnName, PhysicalType.INT32, columnSchema, "a LocalDate");
+        validateLogicalType(columnName, LogicalType.DateType.class, columnSchema, "a LocalDate");
         return columnSchema;
     }
 
     /// A `FIXED_LEN_BYTE_ARRAY` column carrying `annotation`, as a `UUID` or `INTERVAL` literal
     /// requires.
     private static ColumnSchema annotatedFixedWidth(String columnName, Class<? extends LogicalType> annotation,
-            ColumnSchema columnSchema) {
-        validateType(columnName, PhysicalType.FIXED_LEN_BYTE_ARRAY, columnSchema);
-        validateLogicalType(columnName, annotation, columnSchema);
+            String literal, ColumnSchema columnSchema) {
+        validateType(columnName, PhysicalType.FIXED_LEN_BYTE_ARRAY, columnSchema, literal);
+        validateLogicalType(columnName, annotation, columnSchema, literal);
         return columnSchema;
     }
 
@@ -933,8 +914,7 @@ public class FilterPredicateResolver {
         if (columnSchema.logicalType() instanceof LogicalType.DecimalType decimalType) {
             return decimalType;
         }
-        throw new IllegalArgumentException(
-                "Column '" + columnName + "' does not have a DECIMAL logical type");
+        throw ColumnLiterals.notTaken(columnName, columnSchema, "a BigDecimal");
     }
 
     /// Converts an unscaled [BigInteger] to a fixed-length big-endian two's complement byte array,
@@ -1142,7 +1122,7 @@ public class FilterPredicateResolver {
                         Comparison.FIXED_DECIMAL);
             }
             default -> {
-                validateType(columnName, PhysicalType.BYTE_ARRAY, cs);
+                validateType(columnName, PhysicalType.BYTE_ARRAY, cs, "a BigDecimal");
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), bytesOf(held(columnName, values,
                         value -> CarriedLiteral.unbounded(unscaled(value, dt, RoundingMode.FLOOR),
                                 unscaled(value, dt, RoundingMode.CEILING)),

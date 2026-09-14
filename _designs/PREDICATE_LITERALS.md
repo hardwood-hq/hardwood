@@ -241,7 +241,9 @@ by inverting each operator. `intersects` is the one leaf without an inverse.
 ## Errors
 
 A predicate the rule does not admit throws `IllegalArgumentException` at reader creation, naming
-the column and what it takes. That covers:
+the column and what it takes. A literal type the column does not take is refused as `Column 'c' is
+annotated DATE, which takes LocalDate and int literals, not a BigDecimal`: `ColumnLiterals` names
+the literals of every column, through an exhaustive `switch` over `LogicalType`. That covers:
 
 - a literal type the column does not take
 - an equality literal it cannot hold
@@ -274,10 +276,10 @@ comparison.
 
 A `StringColumnPredicate` / `StringInPredicate` resolves in two steps. First, `requireTextColumn`
 decides whether the column takes a `String`, through `TextColumns`, which `getString` asks as well.
-Its `nonTextLiterals` is an exhaustive `switch` over `LogicalType`, the shape `orderingLiteral` has,
-so an annotation added later has to state whether it takes one; an unannotated column takes one
-only as a `BYTE_ARRAY`. Second, the value is encoded as UTF-8 and
-resolved as the equivalent `byte[]` literal. Every column that passes the first step compares as
+Its `isText` is an exhaustive `switch` over `LogicalType`, the shape `orderingLiteral` has, so an
+annotation added later has to state whether it takes one; an unannotated column takes one only as
+a `BYTE_ARRAY`. Second, the value is encoded as UTF-8 and resolved as the equivalent `byte[]`
+literal. Every column that passes the first step compares as
 `BYTE_STRING`.
 
 A `BinaryColumnPredicate` / `BinaryInPredicate` resolves through `orderingLiteral`, an exhaustive
