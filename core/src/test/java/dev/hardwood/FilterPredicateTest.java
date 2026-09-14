@@ -626,6 +626,87 @@ class FilterPredicateTest {
                 .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
     }
 
+    /// A null column name, like a null literal, is caught where the predicate is built rather than
+    /// in the schema lookup at reader creation.
+    @Test
+    void everyFactoryRejectsANullColumn() {
+        assertThatThrownBy(() -> FilterPredicate.eq(null, 1))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.lt(null, 1L))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.gt(null, 1.0f))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.gtEq(null, 1.0))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.ltEq(null, true))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, new byte[] { 0x01 }))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, "a"))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, LocalDate.EPOCH))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, Instant.EPOCH))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, LocalDateTime.MIN))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, LocalTime.NOON))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, BigDecimal.ONE))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, new UUID(0, 0)))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.eq(null, new PqInterval(0, 0, 0)))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, 1, 2))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, 1L))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, 1.0f))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, 1.0))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, new byte[] { 0x01 }))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, "a"))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, LocalDate.EPOCH))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, Instant.EPOCH))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, LocalDateTime.MIN))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, LocalTime.NOON))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, BigDecimal.ONE))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, new UUID(0, 0)))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.in(null, new PqInterval(0, 0, 0)))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.isNull(null))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.isNotNull(null))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+        assertThatThrownBy(() -> FilterPredicate.intersects(null, 0, 0, 1, 1))
+                .isInstanceOf(NullPointerException.class).hasMessage("column");
+    }
+
+    @Test
+    void everyCombinatorRejectsANullChild() {
+        FilterPredicate leaf = FilterPredicate.eq("c", 1);
+        assertThatThrownBy(() -> FilterPredicate.not(null))
+                .isInstanceOf(NullPointerException.class).hasMessage("filter");
+        assertThatThrownBy(() -> FilterPredicate.and(leaf, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("filters[1]");
+        assertThatThrownBy(() -> FilterPredicate.or(null, leaf))
+                .isInstanceOf(NullPointerException.class).hasMessage("filters[0]");
+        assertThatThrownBy(() -> FilterPredicate.and(leaf, leaf, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("filters[2]");
+        assertThatThrownBy(() -> FilterPredicate.or((FilterPredicate[]) null))
+                .isInstanceOf(NullPointerException.class).hasMessage("filters");
+    }
+
     @Test
     void testDoubleInPredicateCreation() {
         FilterPredicate p = FilterPredicate.in("rate", 1.5, 2.5);

@@ -164,7 +164,8 @@ returns. Each of its three components is stored as an unsigned 32-bit value.
 FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600_000));
 ```
 
-Every factory rejects a null literal with a `NullPointerException` naming the argument.
+Every factory rejects a null column name or literal, and `and`, `or` and `not` a null child, with a
+`NullPointerException` naming the argument.
 
 ## Literals the column cannot hold
 

@@ -682,6 +682,19 @@ public sealed interface FilterPredicate
 
     // ==================== Conversion Helpers ====================
 
+    /// Rejects a null column name, naming the argument as a null literal is named.
+    private static String requireColumn(String column) {
+        return Objects.requireNonNull(column, "column");
+    }
+
+    /// Rejects a null child of `and` / `or`, naming it by its position.
+    private static List<FilterPredicate> requireFilters(List<FilterPredicate> filters) {
+        for (int i = 0; i < filters.size(); i++) {
+            Objects.requireNonNull(filters.get(i), "filters[" + i + "]");
+        }
+        return List.copyOf(filters);
+    }
+
     /// Rejects a set form with no probe to test against.
     private static void requireValues(int count) {
         if (count == 0) {
@@ -748,40 +761,60 @@ public sealed interface FilterPredicate
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
-        return new And(List.of(left, right));
+        return new And(Arrays.asList(left, right));
     }
 
     static FilterPredicate and(FilterPredicate... filters) {
-        return new And(List.of(filters));
+        return new And(Arrays.asList(Objects.requireNonNull(filters, "filters")));
     }
 
     static FilterPredicate or(FilterPredicate left, FilterPredicate right) {
-        return new Or(List.of(left, right));
+        return new Or(Arrays.asList(left, right));
     }
 
     static FilterPredicate or(FilterPredicate... filters) {
-        return new Or(List.of(filters));
+        return new Or(Arrays.asList(Objects.requireNonNull(filters, "filters")));
     }
 
     static FilterPredicate not(FilterPredicate filter) {
-        return new Not(filter);
+        return new Not(Objects.requireNonNull(filter, "filter"));
     }
 
     // ==================== Leaf Predicate Records ====================
 
     record IntColumnPredicate(String column, Operator op, int value) implements FilterPredicate {
+
+        public IntColumnPredicate {
+            requireColumn(column);
+        }
     }
 
     record LongColumnPredicate(String column, Operator op, long value) implements FilterPredicate {
+
+        public LongColumnPredicate {
+            requireColumn(column);
+        }
     }
 
     record FloatColumnPredicate(String column, Operator op, float value) implements FilterPredicate {
+
+        public FloatColumnPredicate {
+            requireColumn(column);
+        }
     }
 
     record DoubleColumnPredicate(String column, Operator op, double value) implements FilterPredicate {
+
+        public DoubleColumnPredicate {
+            requireColumn(column);
+        }
     }
 
     record BooleanColumnPredicate(String column, Operator op, boolean value) implements FilterPredicate {
+
+        public BooleanColumnPredicate {
+            requireColumn(column);
+        }
     }
 
     /// Predicate for a binary column over its stored bytes. Built by the `byte[]` factories and by
@@ -789,7 +822,7 @@ public sealed interface FilterPredicate
     record BinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
 
         public BinaryColumnPredicate(String column, Operator op, byte[] value) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.op = op;
             this.value = Objects.requireNonNull(value, "value").clone();
         }
@@ -816,11 +849,17 @@ public sealed interface FilterPredicate
     record StringColumnPredicate(String column, Operator op, String value) implements FilterPredicate {
 
         public StringColumnPredicate {
+            requireColumn(column);
             requireWellFormed(column, Objects.requireNonNull(value, "value"), "the literal");
         }
     }
 
     record UUIDColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
+
+        public UUIDColumnPredicate {
+            requireColumn(column);
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -840,7 +879,7 @@ public sealed interface FilterPredicate
     record IntInPredicate(String column, int[] values) implements FilterPredicate {
 
         public IntInPredicate(String column, int[] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
@@ -860,7 +899,7 @@ public sealed interface FilterPredicate
     record LongInPredicate(String column, long[] values) implements FilterPredicate {
 
         public LongInPredicate(String column, long[] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
@@ -880,7 +919,7 @@ public sealed interface FilterPredicate
     record FloatInPredicate(String column, float[] values) implements FilterPredicate {
 
         public FloatInPredicate(String column, float[] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
@@ -900,7 +939,7 @@ public sealed interface FilterPredicate
     record DoubleInPredicate(String column, double[] values) implements FilterPredicate {
 
         public DoubleInPredicate(String column, double[] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
@@ -922,7 +961,7 @@ public sealed interface FilterPredicate
     record BinaryInPredicate(String column, byte[][] values) implements FilterPredicate {
 
         public BinaryInPredicate(String column, byte[][] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = new byte[Objects.requireNonNull(values, "values").length][];
             for (int i = 0; i < values.length; i++) {
                 this.values[i] = Objects.requireNonNull(values[i], "values[" + i + "]").clone();
@@ -947,7 +986,7 @@ public sealed interface FilterPredicate
     record StringInPredicate(String column, String[] values) implements FilterPredicate {
 
         public StringInPredicate(String column, String[] values) {
-            this.column = column;
+            this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
             for (int i = 0; i < this.values.length; i++) {
                 String argument = "values[" + i + "]";
@@ -974,6 +1013,7 @@ public sealed interface FilterPredicate
     record DateColumnPredicate(String column, Operator op, LocalDate value) implements FilterPredicate {
 
         public DateColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -985,6 +1025,7 @@ public sealed interface FilterPredicate
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
 
         public InstantColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -995,6 +1036,7 @@ public sealed interface FilterPredicate
             implements FilterPredicate {
 
         public LocalDateTimeColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -1004,6 +1046,7 @@ public sealed interface FilterPredicate
     record TimeColumnPredicate(String column, Operator op, LocalTime value) implements FilterPredicate {
 
         public TimeColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -1014,6 +1057,7 @@ public sealed interface FilterPredicate
             implements FilterPredicate {
 
         public IntervalColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -1023,6 +1067,7 @@ public sealed interface FilterPredicate
     record DecimalColumnPredicate(String column, Operator op, BigDecimal value) implements FilterPredicate {
 
         public DecimalColumnPredicate {
+            requireColumn(column);
             Objects.requireNonNull(value, "value");
         }
     }
@@ -1034,6 +1079,7 @@ public sealed interface FilterPredicate
     record DateInPredicate(String column, List<LocalDate> values) implements FilterPredicate {
 
         public DateInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1043,6 +1089,7 @@ public sealed interface FilterPredicate
     record InstantInPredicate(String column, List<Instant> values) implements FilterPredicate {
 
         public InstantInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1052,6 +1099,7 @@ public sealed interface FilterPredicate
     record LocalDateTimeInPredicate(String column, List<LocalDateTime> values) implements FilterPredicate {
 
         public LocalDateTimeInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1061,6 +1109,7 @@ public sealed interface FilterPredicate
     record TimeInPredicate(String column, List<LocalTime> values) implements FilterPredicate {
 
         public TimeInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1070,6 +1119,7 @@ public sealed interface FilterPredicate
     record DecimalInPredicate(String column, List<BigDecimal> values) implements FilterPredicate {
 
         public DecimalInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1078,6 +1128,7 @@ public sealed interface FilterPredicate
     record UUIDInPredicate(String column, List<UUID> values) implements FilterPredicate {
 
         public UUIDInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1087,6 +1138,7 @@ public sealed interface FilterPredicate
     record IntervalInPredicate(String column, List<PqInterval> values) implements FilterPredicate {
 
         public IntervalInPredicate {
+            requireColumn(column);
             values = List.copyOf(requireProbes(values));
         }
     }
@@ -1095,21 +1147,41 @@ public sealed interface FilterPredicate
 
     /// Predicate that matches rows where the column value is null.
     record IsNullPredicate(String column) implements FilterPredicate {
+
+        public IsNullPredicate {
+            requireColumn(column);
+        }
     }
 
     /// Predicate that matches rows where the column value is not null.
     record IsNotNullPredicate(String column) implements FilterPredicate {
+
+        public IsNotNullPredicate {
+            requireColumn(column);
+        }
     }
 
     // ==================== Logical Combinator Records ====================
 
     record And(List<FilterPredicate> filters) implements FilterPredicate {
+
+        public And {
+            filters = requireFilters(filters);
+        }
     }
 
     record Or(List<FilterPredicate> filters) implements FilterPredicate {
+
+        public Or {
+            filters = requireFilters(filters);
+        }
     }
 
     record Not(FilterPredicate delegate) implements FilterPredicate {
+
+        public Not {
+            Objects.requireNonNull(delegate, "filter");
+        }
     }
 
     // ==================== Geospatial Predicate Records ====================
@@ -1117,5 +1189,9 @@ public sealed interface FilterPredicate
     ///  Predicate for spatial bounding box.
     record IntersectsPredicate(String column, double xmin, double ymin,
                                double xmax, double ymax) implements FilterPredicate {
+
+        public IntersectsPredicate {
+            requireColumn(column);
+        }
     }
 }

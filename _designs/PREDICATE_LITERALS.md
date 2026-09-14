@@ -252,10 +252,10 @@ the column and what it takes. That covers:
 - a column below a repeated path, or a comparison on a leaf below a `VARIANT` group
 - `not` over `intersects`
 
-Three errors are raised when the predicate is built. Every factory rejects a null literal with a
-`NullPointerException` naming the argument, every set form rejects an empty list with an
-`IllegalArgumentException`, and a `String` that is not well-formed UTF-16 throws
-`IllegalArgumentException`.
+Three errors are raised when the predicate is built. Every factory rejects a null column name,
+a null literal and a null child of `and`, `or` or `not` with a `NullPointerException` naming the
+argument, every set form rejects an empty list with an `IllegalArgumentException`, and a `String`
+that is not well-formed UTF-16 throws `IllegalArgumentException`.
 
 ## Resolution
 
