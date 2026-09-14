@@ -15,78 +15,20 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
-- `FilterPredicate.in` takes every literal type that `eq` takes except `boolean`, adding `float`, `LocalDate`, `Instant`, `LocalDateTime`, `LocalTime`, `BigDecimal`, `UUID` and `PqInterval` sets ([#1195](https://github.com/hardwood-hq/hardwood/issues/1195)).
+- Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
-- `FilterPredicate.inStrings` is deprecated in favour of `in(String, String...)`, which builds the same predicate ([#1178](https://github.com/hardwood-hq/hardwood/issues/1178)).
+- `isNull` and `isNotNull` test whether a struct, `LIST` or `MAP` group is present ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
 
-- `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq` and `in`, and through `lt`, `ltEq`, `gt` and `gtEq` where the column's values order as their bytes ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
+- Filters, including parquet-java filters through the compatibility layer, no longer return wrong rows for `NaN` values, unsigned integers, statistics in an unknown sort order and several other edge cases ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016), [#1142](https://github.com/hardwood-hq/hardwood/issues/1142), [#1144](https://github.com/hardwood-hq/hardwood/issues/1144), [#1179](https://github.com/hardwood-hq/hardwood/issues/1179), [#1193](https://github.com/hardwood-hq/hardwood/issues/1193), [#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
 
-- A `String` literal filters a column that holds text — a `STRING`, an `ENUM`, a `JSON` or an unannotated `BYTE_ARRAY` — and throws `IllegalArgumentException` on every other binary column, where a `byte[]` or the annotation's own literal type filters instead ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
-
-- A `String` literal that is not well-formed UTF-16 throws `IllegalArgumentException` when the predicate is built ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
-
-- Every `FilterPredicate` factory rejects a null literal with a `NullPointerException` naming the argument ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
-
-- `lt`, `ltEq`, `gt` and `gtEq` throw `IllegalArgumentException` on an `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` or `NULL` column, whose values parquet-format puts in no order ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
-
-- A comparison or set predicate on a leaf below a `VARIANT` group throws `IllegalArgumentException`; those leaves hold the encoded variant and take `isNull` and `isNotNull` only ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
-
-- `not` over a predicate holding an `intersects` throws `IllegalArgumentException` at reader creation, where it used to throw `UnsupportedOperationException` ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
-
-- A `BOOLEAN` column takes `lt`, `ltEq`, `gt` and `gtEq`, ordering `false` before `true`; they used to be answerable only through the record constructor and returned every non-null row ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
-
-- `FilterPredicate.eq` and `notEq` take a `PqInterval` literal on an `INTERVAL` column ([#1183](https://github.com/hardwood-hq/hardwood/issues/1183)).
-
-- `FilterPredicate` takes a `LocalDateTime` literal on a `TIMESTAMP` column with `isAdjustedToUTC = false`, through `eq`, `notEq`, `lt`, `ltEq`, `gt` and `gtEq` ([#1194](https://github.com/hardwood-hq/hardwood/issues/1194)).
-
-- An `Instant` literal on a `TIMESTAMP` column with `isAdjustedToUTC = false` throws `IllegalArgumentException`, where it used to compare the instant against the stored wall clock as though that were UTC ([#1194](https://github.com/hardwood-hq/hardwood/issues/1194)).
-
-- `FilterPredicate` filters a legacy `INT96` timestamp column with an `Instant` literal through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in`, compared as the instant the value encodes, and with its 12 stored bytes through `eq`, `notEq` and `in` ([#1192](https://github.com/hardwood-hq/hardwood/issues/1192)).
-
-- `getString` and `ColumnReader.getStrings` throw `IllegalArgumentException` on a column that does not hold text, where they used to decode its stored bytes as characters ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
-
-- An equality literal a column cannot hold throws `IllegalArgumentException`: an `Instant` or `LocalTime` finer than the column's time unit, a `BigDecimal` past its scale, a byte literal of a width a fixed-width column does not have, a `float` no IEEE half represents, and any literal outside the range of the `INT32` or `INT64` behind the column ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
-
-- An ordered predicate whose literal the column cannot hold is answered exactly, where several such literals used to throw `ArithmeticException` ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
-
-- `not` over a predicate that matches every non-null row, or over one that matches none, no longer returns the rows the comparison leaves out for being null ([#1193](https://github.com/hardwood-hq/hardwood/issues/1193)).
-
-- A `TIME`, `INT` or `DECIMAL` annotation stored in a physical type that cannot hold it is dropped, and the column is read as its physical type: `TIME(MILLIS)` on `INT64`, `TIME(MICROS)` or `TIME(NANOS)` on `INT32`, `INT(8)`, `INT(16)` or `INT(32)` on `INT64`, `INT(64)` on `INT32`, and a `DECIMAL` with more digits than its `INT32`, `INT64` or `FIXED_LEN_BYTE_ARRAY` holds ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
-
-- An `INT` annotation whose footer names a bit width other than 8, 16, 32 or 64, or names none at all, raises `ParquetReadException` instead of `IllegalArgumentException` ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
-
-- A `ColumnReader` filter on a `FLOAT16` column no longer throws `ClassCastException`, and one on a struct leaf no longer reads a leaf that is null under a present struct as a value ([#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
-
-- A parquet-java `binaryColumn` literal on a `FIXED_LEN_BYTE_ARRAY` `DECIMAL` column that is narrower or wider than the column no longer drops row groups holding matching rows ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
-
-- Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
-
-- Row groups and pages are no longer pruned against the `min` / `max` of a column whose annotation is dropped, either because its physical type cannot carry it or because this release does not recognize it ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
-
-- `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — testing whether the group itself is present rather than one of its fields ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
-
-- `FilterPredicate.in(String, double...)` filters `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).
-
-- Row-group and page statistics pruning no longer drops `NaN` rows that a floating-point predicate matches ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016)).
-
-- Statistics whose `min` sorts above its `max` no longer prune ([#1172](https://github.com/hardwood-hq/hardwood/issues/1172)).
-
-- Statistics carrying a null count and no bounds are no longer reported as carrying deprecated `min` / `max` bounds ([#1172](https://github.com/hardwood-hq/hardwood/issues/1172)).
+- A logical type annotation a column's physical type cannot carry, or one this release does not recognize, is ignored, and the column is read as its physical type ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
 - A `ParquetFileReader` no longer retains a read's `RowGroupIterator` after the reader consuming it is closed ([#1170](https://github.com/hardwood-hq/hardwood/issues/1170)).
-
-- A logical type annotation that a column's physical type cannot carry is now dropped, and the column is read as its physical type. Previously it surfaced as an `IllegalArgumentException` from whichever accessor first reached the column ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)). `FLOAT16` is defined as a two-byte payload, so a column annotated `FLOAT16` that declares three bytes is invalid; [parquet-format PR 606](https://github.com/apache/parquet-format/pull/606) specifies that readers ignore the annotation and use only the physical type. An annotation this version does not recognize is dropped the same way, so a file written against a newer format version can still be read. Both cases log a warning, naming the column and the reason, or the union field that was not recognized. **What changes for you:** `getFileSchema()` reports no logical type for such a column, `getValue` returns its physical value where it used to throw, and a logical accessor on it fails as it does on any unannotated column.
 
 - A multi-file read opens each file as it reaches it, rather than opening every file when the reader is built, so the time to the first row no longer grows with the number of files ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).
     - A later file's I/O errors, and any `SchemaIncompatibleException` its schema raises, now surface from the reading loop rather than from `ParquetFileReader.openAll(...)` or `build()` — always before any row of that file is returned. Code that catches those around reader construction alone should catch them around iteration too.
 
 - Every `LogicalType` member has a static factory, and those are the documented way to construct one — `LogicalType.string()`, `LogicalType.decimal(18, 2)`, `LogicalType.timestamp(true, TimeUnit.MICROS)` ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). The parameterless ones return a shared instance, which the reader now hands back instead of allocating a record per column while it decodes a footer. The record constructors still work.
-
-- A `LocalDate` predicate requires the column to carry the `DATE` annotation, as its JavaDoc has always said ([#1141](https://github.com/hardwood-hq/hardwood/issues/1141)). The annotation went unchecked before, so a `LocalDate` against a plain `INT32` column compared epoch days against unrelated integers and returned rows answering a different question, with nothing raised. **What changes for you:** such a call now throws `IllegalArgumentException` at reader creation. A plain `INT32` column that does hold epoch days is filtered by the day itself — `gt("d", (int) date.toEpochDay())`.
-
-- A parquet-java `binaryColumn` filter on a `DECIMAL` or `FLOAT16` column, through the compatibility shim, compares as the column does — by the number or the half its bytes encode — and no longer drops row groups holding matching rows ([#1142](https://github.com/hardwood-hq/hardwood/issues/1142)).
-
-- An ordered predicate on an `INT(bitWidth, isSigned = false)` column compares by unsigned magnitude, the order the column is written in ([#1144](https://github.com/hardwood-hq/hardwood/issues/1144)). The comparison was signed before, so `lt`, `gt` and their siblings returned wrong rows on a column holding values above 2^31, and bounds straddling that point read as inverted and were discarded — costing those columns row-group and page skipping as well.
 
 - `print`, `convert`, `inspect` and `dive` spell a value of a given logical type the same way: decimals as plain strings (`0.0000001`, never `1E-7`), `INTERVAL` as `1mo 15d 3600000ms`, and `INT96` values and statistics as timestamps ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
 
@@ -102,7 +44,11 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 **Breaking Changes:**
 
-- `FilterPredicate.SignedBinaryColumnPredicate` is removed; a `DECIMAL` column is filtered with the `BigDecimal` factories ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
+- A filter predicate's literal must be a value the column's accessors return: a `String` filters only text columns, an `Instant` only UTC timestamps and a `LocalDate` only `DATE` columns. Other literals, ordered operators on types without an order, and equality literals the column cannot hold throw `IllegalArgumentException` ([#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
+
+- `getString` throws `IllegalArgumentException` on a column that does not hold text ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
+
+- `FilterPredicate.SignedBinaryColumnPredicate` is removed ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
 
 - The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).
     - `IOException` now means the transport — a read that failed, a connection reset — and is declared where the reader reaches the file: `RowReader.hasNext`/`next`/`close` and `ColumnReader.nextBatch`/`close`, as `ParquetFileWriter` has always declared it. **The canonical idiom is unaffected**, because `ParquetFileReader.open(...)` already declared `IOException` and so the enclosing method already handles it:
