@@ -116,9 +116,16 @@ can hold is set by its physical carrier:
 | `PqInterval` | `INTERVAL` | each component within `[0, 2^32 − 1]` |
 
 An annotation's value range does not bound a literal. That covers the bit width of an `INT(8)`,
-the precision of a `DECIMAL` and the single day of a `TIME`. The accessors return what a file
-stores, and a file may exceed its annotation. A literal outside that range is compared as given
-and matches no row of a file that keeps to its annotation.
+the precision of a `DECIMAL` and the single day of a `TIME`. The physical accessors (`getInt`,
+`getLong`) return what a file stores, and a file may exceed its annotation. A literal outside that
+range is compared as given and matches no row of a file that keeps to its annotation.
+
+For an annotated integer the rule follows the physical accessor. `getInt` returns a value stored
+past an `INT(8)` or `INT(16)` annotation as stored, and a predicate compares that value. On a
+signed `INT(8)` or `INT(16)` the generic `getValue` returns the annotation's `Byte` or `Short`,
+keeping the low 8 or 16 bits of such a value (a stored `1000` reads as `-24`), so a row of a file
+that exceeds its annotation reads differently through the two. On an unsigned one `getValue`
+returns the stored `Integer`.
 
 - An equality literal (`eq`, `notEq`, a set form, its negation) the column cannot hold throws
   `IllegalArgumentException`.
@@ -285,6 +292,7 @@ express get the same answer; the differences are listed below.
 | `LocalDateTime` literal; `Instant` on UTC timestamps only | [#1194](https://github.com/hardwood-hq/hardwood/issues/1194) (done) |
 | Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) (done) |
 | `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) (done) |
+| `getValue` narrows a stored signed `INT(8)` / `INT(16)` value past the annotation; the rule follows `getInt` | [#1203](https://github.com/hardwood-hq/hardwood/issues/1203) (done) |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | [#921](https://github.com/hardwood-hq/hardwood/issues/921) |
 
 The floating-point rows depend on NaN-aware pruning

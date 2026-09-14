@@ -604,6 +604,15 @@ def annotate_element_at_path_as_float16(path: str, name_path) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def annotate_element_at_path_as_int(path: str, name_path, *, bit_width: int, is_signed: bool) -> None:
+    """Annotate the SchemaElement at `name_path` as INT(bit_width, is_signed), without checking
+    that the values the column stores fit the annotation."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(INTEGER=_parquet.IntType(bitWidth=bit_width, isSigned=is_signed))
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def annotate_element_at_path_as_uuid(path: str, name_path) -> None:
     """Annotate the SchemaElement at `name_path` as UUID (FLBA(16) payload).
 

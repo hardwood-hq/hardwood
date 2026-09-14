@@ -24,6 +24,7 @@ from parquet_annotators import (
     annotate_group_at_path_as_variant,
     annotate_column_as_interval,
     annotate_element_at_path_as_float16,
+    annotate_element_at_path_as_int,
     annotate_element_at_path_as_interval,
     annotate_element_at_path_as_json,
     annotate_element_at_path_as_time,
@@ -6187,6 +6188,24 @@ for pred_name, pred_rg_size, pred_dictionary in [
                       if not _pred_null(r)]
             by_bytes = sorted(stored, key=lambda b: int.from_bytes(b, 'big', signed=True))
             set_row_group_min_max(pred_path, 'ts96', rg, by_bytes[0], by_bytes[-1])
+
+# INT(8) and INT(16) columns storing values outside the range their annotation states, which the
+# format does not forbid: getValue narrows the signed ones to Byte / Short and passes the unsigned
+# one through as Integer; getInt and predicates see them as stored.
+int_past_path = 'core/src/test/resources/int_past_annotation.parquet'
+pq.write_table(
+    pa.table({
+        'i8': pa.array([-1000, -129, -128, 127, 128, 200, 1000, 100000], type=pa.int32()),
+        'i16': pa.array([-40000, -32769, -32768, 32767, 32768, 40000, 70000, 100000], type=pa.int32()),
+        'u8': pa.array([-1000, -1, 0, 127, 128, 255, 1000, 100000], type=pa.int32()),
+    }),
+    int_past_path,
+    compression=None,
+)
+annotate_element_at_path_as_int(int_past_path, ['i8'], bit_width=8, is_signed=True)
+annotate_element_at_path_as_int(int_past_path, ['i16'], bit_width=16, is_signed=True)
+annotate_element_at_path_as_int(int_past_path, ['u8'], bit_width=8, is_signed=False)
+print(f"\nGenerated {int_past_path}: INT(8) / INT(16) columns storing values past their annotation")
 
 print("\nGenerated predicate/*.parquet:")
 print(f"  - predicate_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")

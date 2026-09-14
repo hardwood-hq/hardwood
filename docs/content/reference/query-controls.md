@@ -195,9 +195,10 @@ against a number past the column's width compares against the largest or smalles
 holds — so `lt` on a literal wider than the column returns every non-null row.
 
 An annotation's value range does not bound a literal. That covers the bit width of an `INT(8)`,
-the precision of a `DECIMAL` and the single day of a `TIME`: [the accessors](accessors.md) return
-what a file stores, so `eq("i8", 1000)` on an `INT(8)` column is compared as given and matches no
-row of a file that keeps to its annotation.
+the precision of a `DECIMAL` and the single day of a `TIME`: [the physical
+accessors](accessors.md#physical-accessors) `getInt` and `getLong` return what a file stores, so
+`eq("i8", 1000)` on an `INT(8)` column is compared as given and matches no row of a file that keeps
+to its annotation.
 
 ## When statistics are ignored
 
