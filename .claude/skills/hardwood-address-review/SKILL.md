@@ -114,7 +114,7 @@ git commit -m "#<issue> Addressing findings from code review"
 
 `<issue>` is the number extracted in step 2 (typically the issue the PR closes, not the PR number itself).
 
-Body: optional. If multiple distinct findings were addressed, a short paragraph in the body listing the *whys* (not the whats) is helpful. Don't restate the diff. No `Co-Authored-By: Claude …` trailer — CLAUDE.md forbids that; human co-authors are fine.
+Body: optional. If multiple distinct findings were addressed, a short paragraph in the body listing the *whys* (not the whats) is helpful. Don't restate the diff.
 
 **Do not push.** The user reviews the commit locally and pushes themselves.
 

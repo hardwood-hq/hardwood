@@ -10,6 +10,11 @@
   "enabledPlugins": {
     "hardwood@hardwood-skills": true
   },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "permissions": {
     "allow": [
       "Bash(./mvnw:*)",

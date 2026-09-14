@@ -241,7 +241,6 @@ gh pr view <N> --json headRepositoryOwner,headRepository,headRefName,isCrossRepo
 - First line begins with the issue key: `#853 Separate the S3 network fetcher from range-cache dispatch`.
 - Body explains **why**, not what. A short paragraph, not a bullet list. Drop ephemeral detail —
   slips fixed within the branch, interim states, how the change was developed.
-- **Never** add Claude or any Anthropic identity as `Co-Authored-By`. Human co-authors are fine.
 - Always pass multi-paragraph messages via `-F -` and a heredoc. `-m` mangles blank lines:
   ```bash
   git commit -q --amend -F - <<'MSG'
