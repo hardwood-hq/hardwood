@@ -293,6 +293,7 @@ express get the same answer; the differences are listed below.
 | Set forms for every literal type; `in(double...)` on `DOUBLE` only; `in(String, String...)` | [#1195](https://github.com/hardwood-hq/hardwood/issues/1195), [#1178](https://github.com/hardwood-hq/hardwood/issues/1178) (done) |
 | `getString` reads text columns only | [#1196](https://github.com/hardwood-hq/hardwood/issues/1196) (done) |
 | `getValue` narrows a stored signed `INT(8)` / `INT(16)` value past the annotation; the rule follows `getInt` | [#1203](https://github.com/hardwood-hq/hardwood/issues/1203) (done) |
+| A column whose annotation is dropped has no readable bounds | [#1139](https://github.com/hardwood-hq/hardwood/issues/1139) (done) |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | [#921](https://github.com/hardwood-hq/hardwood/issues/921) |
 
 The floating-point rows depend on NaN-aware pruning

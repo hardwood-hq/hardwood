@@ -18,6 +18,7 @@ import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
+import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetReadException;
@@ -51,6 +52,16 @@ public final class ParquetMetadataReader {
     /// @throws IOException if the file cannot be read
     /// @throws ParquetReadException if what it holds is not a Parquet file
     public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
+        return readFooter(inputFile).metaData();
+    }
+
+    /// Reads the footer of an [InputFile].
+    ///
+    /// @param inputFile the input file to read the footer from
+    /// @return the parsed footer
+    /// @throws IOException if the file cannot be read
+    /// @throws ParquetReadException if what it holds is not a Parquet file
+    public static ReadFooter readFooter(InputFile inputFile) throws IOException {
         long fileSize = inputFile.length();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
             throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
@@ -104,7 +115,7 @@ public final class ParquetMetadataReader {
         }
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         try {
-            return FileMetaDataReader.read(reader);
+            return FileMetaDataReader.readFooter(reader);
         }
         catch (EncryptedFileException e) {
             // Plaintext-footer encryption: the footer parsed, but the data is

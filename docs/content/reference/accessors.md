@@ -113,8 +113,9 @@ case. The column is then reported and read as its physical type.
 
 `getFileSchema()` reports no logical type for it, `getValue` returns the physical value, and the
 physical accessors work. A logical accessor fails as it would on any unannotated column of that
-type. Statistics are compared under the physical type's ordering, and a logical-type predicate on
-the column is rejected at reader creation.
+type. Its `min` / `max` statistics prune nothing (see
+[When statistics are ignored](query-controls.md#when-statistics-are-ignored)), and a logical-type
+predicate on the column is rejected at reader creation.
 
 The `getTimestamp` / `getLocalTimestamp` pair is split along the column's `isAdjustedToUTC` flag:
 `getTimestamp` requires `isAdjustedToUTC = true` and returns `Instant`; `getLocalTimestamp`

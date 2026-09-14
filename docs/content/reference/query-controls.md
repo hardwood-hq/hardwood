@@ -205,7 +205,7 @@ to its annotation.
 Pruning compares a unit's `min` / `max` bounds. A pair a reader cannot compare against is
 ignored rather than trusted, so the row group or page is kept and its rows are read and filtered
 one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored for
-one of six reasons:
+one of seven reasons:
 
 | Reason | Bounds |
 |---|---|
@@ -214,6 +214,7 @@ one of six reasons:
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
 | The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
 | The column is `INT96` | The Parquet spec defines no sort order for `INT96`, and a recorded order does not follow the instants on every value |
+| The column's annotation is dropped | An annotation the column's physical type cannot carry, or one this release does not recognize, so the column is read as its physical type while its bounds were recorded in the annotation's order |
 | The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |
 
 The bounds themselves are still reported as the file carries them, by `Statistics` on the metadata

@@ -15,14 +15,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.function.UnaryOperator;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.thrift.FileMetaDataReader;
+import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.FooterRewriter;
+import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.thrift.ThriftStructBuilder;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
@@ -35,6 +42,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.metadata.Statistics;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -45,8 +53,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Pruning compares a literal against recorded bounds, which answers only in the order those
-/// bounds were written in. Two shapes arrive where that order is not knowable, neither of them
-/// produced by this writer, so both reach the reader only on a file written elsewhere. An `INT96`
+/// bounds were written in. Three shapes arrive where that order is not knowable, none of them
+/// produced by this writer, so each reaches the reader only on a file written elsewhere. An `INT96`
 /// is the one type whose bounds are never read at all, which is not reported as a discard.
 class UnreadableSortOrderTest {
 
@@ -120,7 +128,7 @@ class UnreadableSortOrderTest {
                 0L, null, false);
 
         MinMaxStats stats = MinMaxStats.of(beforeTheLiteral, leaf,
-                BoundsReadability.of(int96, List.of(ColumnOrder.TYPE_DEFINED_ORDER)));
+                readability(int96, List.of(ColumnOrder.TYPE_DEFINED_ORDER)));
 
         assertThat(stats.canDrop(leaf)).isFalse();
         assertThat(stats.discardReason()).isNull();
@@ -138,7 +146,7 @@ class UnreadableSortOrderTest {
         Statistics foreign = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
 
         assertThat(MinMaxStats.of(foreign, leaf,
-                BoundsReadability.of(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
+                readability(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
     }
 
     @Test
@@ -149,7 +157,7 @@ class UnreadableSortOrderTest {
         Statistics stats = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
 
         assertThat(MinMaxStats.of(stats, leaf,
-                BoundsReadability.of(ints, List.of(ColumnOrder.TYPE_DEFINED_ORDER))).canDrop(leaf))
+                readability(ints, List.of(ColumnOrder.TYPE_DEFINED_ORDER))).canDrop(leaf))
                 .isTrue();
     }
 
@@ -161,7 +169,7 @@ class UnreadableSortOrderTest {
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(FilterPredicate.gt("v", 100), ints);
         Statistics stats = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
 
-        assertThat(MinMaxStats.of(stats, leaf, BoundsReadability.of(ints, List.of()))
+        assertThat(MinMaxStats.of(stats, leaf, readability(ints, List.of()))
                 .canDrop(leaf)).isTrue();
     }
 
@@ -176,7 +184,7 @@ class UnreadableSortOrderTest {
                 ColumnIndex.BoundaryOrder.UNORDERED, new long[] { 0L }, null, null, null);
 
         assertThat(MinMaxStats.ofPage(columnIndex, 0, leaf,
-                BoundsReadability.of(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
+                readability(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
     }
 
     /// The null count needs no ordering, so it survives where the bounds do not.
@@ -188,14 +196,14 @@ class UnreadableSortOrderTest {
         Statistics foreign = new Statistics(intBytes(0), intBytes(50), 7L, null, false);
 
         assertThat(MinMaxStats.of(foreign, leaf,
-                BoundsReadability.of(ints, List.of(ColumnOrder.UNKNOWN))).nullCount()).isEqualTo(7L);
+                readability(ints, List.of(ColumnOrder.UNKNOWN))).nullCount()).isEqualTo(7L);
     }
 
     /// Readability is asked in one file's ordinals; an ordinal outside that file is a wiring
     /// error, not a column without bounds.
     @Test
     void anOrdinalOutsideTheFileIsRefused() {
-        BoundsReadability readability = BoundsReadability.of(intSchema(), List.of());
+        BoundsReadability readability = readability(intSchema());
 
         assertThatThrownBy(() -> readability.readable(1))
                 .isInstanceOf(IllegalStateException.class)
@@ -229,7 +237,222 @@ class UnreadableSortOrderTest {
         assertThat(warnings.messages()).isEmpty();
     }
 
+    /// A `TIMESTAMP` held in sixteen bytes is no carrier the format defines, so the reader drops
+    /// the annotation and reads the column as plain bytes. The writer recorded the bounds in the
+    /// order of the annotation, as little-endian counts: `[256, 513]`, stored `00 01 …` and
+    /// `01 02 …`. Read byte-wise those bounds hold together, yet the stored `300`, `2C 01 …`,
+    /// sorts above the maximum, so pruning on them would drop the row that matches.
+    @Test
+    void boundsUnderADroppedAnnotationDoNotPrune() throws Exception {
+        Path file = droppedTimestampWithValueOrderBounds();
+        FilterPredicate aboveTwo = FilterPredicate.gt("ts", littleEndian(2));
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rows = reader.buildRowReader().filter(aboveTwo).build()) {
+            assertThat(reader.getFileSchema().getColumn("ts").logicalType()).isNull();
+            List<byte[]> values = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                values.add(rows.getBinary("ts"));
+            }
+            assertThat(values).containsExactly(littleEndian(300));
+        }
+        assertThat(warnings.messages()).containsExactly(
+                "Ignoring 1 logical type annotation(s) the column's physical type cannot carry; those "
+                        + "columns are read as their physical type: ts (TIMESTAMP is read from INT64, "
+                        + "but the column is FIXED_LEN_BYTE_ARRAY)",
+                "[dropped-timestamp.parquet: row group 0, column 'ts'] Ignoring the min/max statistics "
+                        + "for pruning: the order they were written in is one this reader cannot read. "
+                        + "Rows they could have skipped are read and filtered instead.");
+    }
+
+    /// The column reader plans its row groups through the same bounds.
+    @Test
+    void boundsUnderADroppedAnnotationDoNotPruneTheColumnReader() throws Exception {
+        Path file = droppedTimestampWithValueOrderBounds();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader column = reader.buildColumnReader("ts")
+                        .filter(FilterPredicate.gt("ts", littleEndian(2))).build()) {
+            List<byte[]> values = new ArrayList<>();
+            while (column.nextBatch()) {
+                values.addAll(List.of(column.getBinaries()));
+            }
+            assertThat(values).containsExactly(littleEndian(300));
+        }
+    }
+
+    /// A logical type this build does not recognize is dropped where the footer is parsed, so the
+    /// column reads as unannotated. Its bounds are in the unknown type's order, which the reader
+    /// cannot name either. The file's reader reaches the same bounds through its own footer read.
+    @Test
+    void boundsUnderAnUnrecognizedLogicalTypeDoNotPrune() throws Exception {
+        Path file = sixteenByteColumnWithValueOrderBounds(LogicalType.uuid(), "unrecognized-type.parquet",
+                UnreadableSortOrderTest::withUnrecognizedLogicalType);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rows = reader.buildRowReader()
+                        .filter(FilterPredicate.gt("ts", littleEndian(2))).build()) {
+            assertThat(reader.getFileSchema().getColumn("ts").logicalType()).isNull();
+            List<byte[]> values = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                values.add(rows.getBinary("ts"));
+            }
+            assertThat(values).containsExactly(littleEndian(300));
+        }
+        assertThat(warnings.messages()).containsExactly(
+                "Ignoring unrecognized LogicalType union field 20; the column will be read as its "
+                        + "physical type. The file may have been written against a newer version of the "
+                        + "format.",
+                "[unrecognized-type.parquet: row group 0, column 'ts'] Ignoring the min/max statistics "
+                        + "for pruning: the order they were written in is one this reader cannot read. "
+                        + "Rows they could have skipped are read and filtered instead.");
+    }
+
+    /// The unannotated column beside a leaf of unrecognized logical type keeps its bounds.
+    @Test
+    void boundsUnderAnUnrecognizedLogicalTypeAreNotRead() {
+        byte[] unknownMember = new ThriftStructBuilder()
+                .field(20, FieldType.STRUCT).nested(new ThriftStructBuilder().stop().build())
+                .stop().build();
+        byte[] unknown = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(7) // FIXED_LEN_BYTE_ARRAY
+                .field(2, FieldType.I32).i32(16)
+                .field(3, FieldType.I32).i32(0) // REQUIRED
+                .field(4, FieldType.BINARY).binary(bytes("ts"))
+                .field(10, FieldType.STRUCT).nested(unknownMember) // logicalType
+                .stop().build();
+        byte[] plain = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(1) // INT32
+                .field(3, FieldType.I32).i32(0) // REQUIRED
+                .field(4, FieldType.BINARY).binary(bytes("v"))
+                .stop().build();
+
+        ReadFooter footer = readFooter(unknown, plain);
+        FileSchema schema = FileSchema.fromSchemaElements(footer.metaData().schema());
+        BoundsReadability readability = BoundsReadability.of(schema, footer);
+
+        assertThat(schema.getColumn("ts").logicalType()).isNull();
+        assertThat(readability.readable(0)).isFalse();
+        assertThat(readability.readable(1)).isTrue();
+    }
+
+    /// A legacy `converted_type` the physical type cannot carry is dropped as a `LogicalType` is,
+    /// and so are its bounds. `MAP_KEY_VALUE` annotates a group, so on a leaf it stands for no
+    /// annotation at all: nothing is dropped and the leaf keeps its bounds.
+    @Test
+    void boundsUnderADroppedConvertedTypeAreNotRead() {
+        byte[] timestamp = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(7) // FIXED_LEN_BYTE_ARRAY
+                .field(2, FieldType.I32).i32(16)
+                .field(3, FieldType.I32).i32(0) // REQUIRED
+                .field(4, FieldType.BINARY).binary(bytes("ts"))
+                .field(6, FieldType.I32).i32(10) // converted_type TIMESTAMP_MICROS
+                .stop().build();
+        byte[] mapKeyValue = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(1) // INT32
+                .field(3, FieldType.I32).i32(0) // REQUIRED
+                .field(4, FieldType.BINARY).binary(bytes("v"))
+                .field(6, FieldType.I32).i32(2) // converted_type MAP_KEY_VALUE
+                .stop().build();
+
+        ReadFooter footer = readFooter(timestamp, mapKeyValue);
+        FileSchema schema = FileSchema.fromSchemaElements(footer.metaData().schema());
+        BoundsReadability readability = BoundsReadability.of(schema, footer);
+
+        assertThat(schema.getColumn("ts").logicalType()).isNull();
+        assertThat(schema.getColumn("v").logicalType()).isNull();
+        assertThat(readability.readable(0)).isFalse();
+        assertThat(readability.readable(1)).isTrue();
+    }
+
     // ==================== Fixtures ====================
+
+    /// A sixteen-byte column holding the little-endian counts `256`, `300` and `513`, annotated
+    /// `TIMESTAMP(MICROS)` with row-group bounds `[256, 513]`.
+    private Path droppedTimestampWithValueOrderBounds() throws IOException {
+        return sixteenByteColumnWithValueOrderBounds(LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS),
+                "dropped-timestamp.parquet", UnaryOperator.identity());
+    }
+
+    /// A sixteen-byte column `ts` holding the little-endian counts `256`, `300` and `513`,
+    /// annotated `annotation` with row-group bounds `[256, 513]`, its bytes then passed through
+    /// `patch`.
+    private Path sixteenByteColumnWithValueOrderBounds(LogicalType annotation, String fileName,
+            UnaryOperator<byte[]> patch) throws IOException {
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, FileSchema.builder("s")
+                .addColumn("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .build())) {
+            writer.columnWriter().writeBatch(batch -> batch.fixed(0, new byte[][] {
+                    littleEndian(256), littleEndian(300), littleEndian(513) }));
+        }
+        byte[] rewritten = FooterRewriter.rewrite(out.toByteArray(), metaData -> new FileMetaData(
+                metaData.version(),
+                metaData.schema().stream().map(element -> annotated(element, annotation)).toList(),
+                metaData.numRows(),
+                metaData.rowGroups().stream()
+                        .map(rowGroup -> withBounds(rowGroup, littleEndian(256), littleEndian(513)))
+                        .toList(),
+                metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders()));
+        Path path = tempDir.resolve(fileName);
+        Files.write(path, patch.apply(rewritten));
+        return path;
+    }
+
+    private static SchemaElement annotated(SchemaElement element, LogicalType annotation) {
+        return element.name().equals("ts")
+                ? new SchemaElement(element.name(), element.type(), element.typeLength(),
+                        element.repetitionType(), element.numChildren(), null, element.scale(),
+                        element.precision(), element.fieldId(), annotation)
+                : element;
+    }
+
+    /// Renumbers the footer's one `UUID` union member, field 14, to field 20, which no version
+    /// of parquet-format defines. Its compact header grows from the short form `EC` to the long
+    /// form `0C 28`, so the footer length is rewritten with it.
+    private static byte[] withUnrecognizedLogicalType(byte[] file) {
+        byte[] uuidMember = { (byte) 0xEC, 0x00, 0x00 };
+        byte[] unknownMember = { 0x0C, 0x28, 0x00, 0x00 };
+        int footerLength = ByteBuffer.wrap(file, file.length - 8, Integer.BYTES)
+                .order(ByteOrder.LITTLE_ENDIAN).getInt();
+        int footerStart = file.length - 8 - footerLength;
+        int at = -1;
+        for (int i = footerStart; i <= file.length - 8 - uuidMember.length; i++) {
+            if (Arrays.equals(file, i, i + uuidMember.length, uuidMember, 0, uuidMember.length)) {
+                assertThat(at).as("a single UUID member in the footer").isEqualTo(-1);
+                at = i;
+            }
+        }
+        assertThat(at).as("a UUID member in the footer").isNotEqualTo(-1);
+        ByteBuffer patched = ByteBuffer.allocate(file.length + unknownMember.length - uuidMember.length)
+                .order(ByteOrder.LITTLE_ENDIAN);
+        patched.put(file, 0, at);
+        patched.put(unknownMember);
+        patched.put(file, at + uuidMember.length, file.length - 8 - at - uuidMember.length);
+        patched.putInt(footerLength + unknownMember.length - uuidMember.length);
+        patched.put(file, file.length - 4, 4);
+        return patched.array();
+    }
+
+    /// Reads a footer whose root group holds `leaves`, each an encoded `SchemaElement`.
+    private static ReadFooter readFooter(byte[]... leaves) {
+        byte[] root = new ThriftStructBuilder()
+                .field(4, FieldType.BINARY).binary(bytes("s"))
+                .field(5, FieldType.I32).i32(leaves.length)
+                .stop().build();
+        byte[][] elements = new byte[leaves.length + 1][];
+        elements[0] = root;
+        System.arraycopy(leaves, 0, elements, 1, leaves.length);
+        byte[] footerBytes = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(2)
+                .field(2, FieldType.LIST).structList(elements)
+                .field(3, FieldType.I64).i64(0)
+                .field(4, FieldType.LIST).structList()
+                .stop().build();
+        return FileMetaDataReader.readFooter(new ThriftCompactReader(ByteBuffer.wrap(footerBytes)));
+    }
 
     private static FileSchema geometrySchema() {
         return FileSchema.builder("s")
@@ -245,7 +468,12 @@ class UnreadableSortOrderTest {
     }
 
     private static BoundsReadability readability(FileSchema schema) {
-        return BoundsReadability.of(schema, List.of());
+        return readability(schema, List.of());
+    }
+
+    /// A schema declared here drops no annotation.
+    private static BoundsReadability readability(FileSchema schema, List<ColumnOrder> columnOrders) {
+        return BoundsReadability.of(schema, columnOrders, ordinal -> false);
     }
 
     /// Leaves `g`, `v`, holding the single row `g = M, v = 1`.
@@ -301,14 +529,19 @@ class UnreadableSortOrderTest {
 
     /// `g` is the only `BYTE_ARRAY` chunk in either fixture.
     private static RowGroup withForeignBounds(RowGroup rowGroup) {
+        return withBounds(rowGroup, bytes("N"), bytes("Z"));
+    }
+
+    /// Replaces the bounds of the fixture's one binary chunk.
+    private static RowGroup withBounds(RowGroup rowGroup, byte[] min, byte[] max) {
         List<ColumnChunk> columns = new ArrayList<>(rowGroup.columns().size());
         for (ColumnChunk chunk : rowGroup.columns()) {
             ColumnMetaData m = chunk.metaData();
-            if (m.type() != PhysicalType.BYTE_ARRAY) {
+            if (m.type() != PhysicalType.BYTE_ARRAY && m.type() != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
                 columns.add(chunk);
                 continue;
             }
-            Statistics foreign = new Statistics(bytes("N"), bytes("Z"), m.statistics().nullCount(),
+            Statistics foreign = new Statistics(min, max, m.statistics().nullCount(),
                     null, false);
             columns.add(new ColumnChunk(new ColumnMetaData(m.type(), m.encodings(), m.pathInSchema(),
                     m.codec(), m.numValues(), m.totalUncompressedSize(), m.totalCompressedSize(),
@@ -336,6 +569,10 @@ class UnreadableSortOrderTest {
 
     private static byte[] int96Bytes(long nanosOfDay, int julianDay) {
         return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putLong(nanosOfDay).putInt(julianDay).array();
+    }
+
+    private static byte[] littleEndian(int value) {
+        return ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
     }
 
     private static byte[] intBytes(int value) {

@@ -18,6 +18,8 @@ import java.util.concurrent.CompletionException;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.BoundsReadability;
+import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -43,12 +45,11 @@ public final class FileMetadataCache {
     /// Seeds the first file's footer, already read by the owning
     /// [dev.hardwood.reader.ParquetFileReader], so that opening the reader and
     /// inspecting index `0` never read it twice.
-    public FileMetadataCache(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
+    public FileMetadataCache(List<InputFile> inputFiles, ReadFooter firstFileFooter,
                              FileSchema firstFileSchema) {
         this(inputFiles);
-        PreparedFile prepared = new PreparedFile(this.inputFiles.getFirst(), firstFileMetaData,
-                firstFileSchema, firstFileMetaData.rowGroups());
-        fileFutures.put(0, CompletableFuture.completedFuture(prepared));
+        fileFutures.put(0, CompletableFuture.completedFuture(
+                PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter, firstFileSchema)));
     }
 
     List<InputFile> inputFiles() {
@@ -162,7 +163,8 @@ public final class FileMetadataCache {
         event.begin();
 
         try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            ReadFooter footer = ParquetMetadataReader.readFooter(inputFile);
+            FileMetaData metaData = footer.metaData();
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
 
             event.file = inputFile.name();
@@ -171,7 +173,7 @@ public final class FileMetadataCache {
             event.columnCount = schema.getColumnCount();
             event.commit();
 
-            return new PreparedFile(inputFile, metaData, schema, metaData.rowGroups());
+            return PreparedFile.of(inputFile, footer, schema);
         }
         catch (IOException e) {
             throw new UncheckedIOException(
@@ -184,17 +186,28 @@ public final class FileMetadataCache {
 
     /// One file's reusable, projection-independent state. Every component is
     /// parsed from that file's own footer, so none of them is ever absent.
+    ///
+    /// @param boundsReadability which of the file's columns have `min` / `max` bounds
+    ///        in an order this reader can read
     record PreparedFile(
             InputFile inputFile,
             FileMetaData metaData,
             FileSchema schema,
-            List<RowGroup> rowGroups
+            List<RowGroup> rowGroups,
+            BoundsReadability boundsReadability
     ) {
         PreparedFile {
             Objects.requireNonNull(inputFile, "inputFile");
             Objects.requireNonNull(metaData, "metaData");
             Objects.requireNonNull(schema, "schema");
             Objects.requireNonNull(rowGroups, "rowGroups");
+            Objects.requireNonNull(boundsReadability, "boundsReadability");
+        }
+
+        static PreparedFile of(InputFile inputFile, ReadFooter footer, FileSchema schema) {
+            FileMetaData metaData = footer.metaData();
+            return new PreparedFile(inputFile, metaData, schema, metaData.rowGroups(),
+                    BoundsReadability.of(schema, footer));
         }
     }
 }

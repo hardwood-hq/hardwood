@@ -8,23 +8,32 @@
 package dev.hardwood.internal.predicate;
 
 import java.util.List;
+import java.util.function.IntPredicate;
 
+import dev.hardwood.internal.schema.LeafAnnotation;
+import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// Whether a column's recorded `min` / `max` are in an order this reader can read.
 ///
 /// Pruning compares a literal against those bounds, which is sound only in the order they were
-/// written in. Two shapes arrive where that order is not knowable, neither of them produced by
+/// written in. Three shapes arrive where that order is not knowable, none of them produced by
 /// this writer:
 ///
 /// - the annotation names no order — parquet-format defines none for `INTERVAL`, `GEOMETRY`,
 ///   `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` and `MAP`, and asks that `INTERVAL` record no
 ///   bounds at all;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
-///   as a column whose `min` / `max` are to be ignored.
+///   as a column whose `min` / `max` are to be ignored;
+/// - the reader dropped the column's annotation, either because this build does not recognize
+///   it or because the column's physical type cannot carry it. The column reads as its physical
+///   type, but its writer recorded the bounds in the order of the annotation, which the
+///   physical type's order need not agree with. The "Unsupported Logical Types" section of
+///   `LogicalTypes.md` has readers ignore the column order of such a column.
 ///
 /// Bloom filters and dictionaries are unaffected: both test exact stored values, which does not
 /// depend on how those values order.
@@ -43,19 +52,42 @@ public interface BoundsReadability {
     /// Readability is a property of the file that wrote the bounds, so each file of a
     /// multi-file read has its own.
     ///
+    /// @param schema the schema built from `footer`
+    /// @param footer the file's footer, whose schema elements still carry every annotation
+    ///        `schema` dropped
+    static BoundsReadability of(FileSchema schema, ReadFooter footer) {
+        boolean[] dropped = new boolean[schema.getColumnCount()];
+        int leafOrdinal = 0;
+        for (SchemaElement element : footer.metaData().schema()) {
+            if (!element.isPrimitive()) {
+                continue;
+            }
+            dropped[leafOrdinal] = footer.logicalTypeUnread(leafOrdinal)
+                    || LeafAnnotation.dropFault(element) != null;
+            leafOrdinal++;
+        }
+        return of(schema, footer.metaData().columnOrders(), ordinal -> dropped[ordinal]);
+    }
+
+    /// The readability of every leaf of one file, indexed by that file's own leaf ordinals.
+    ///
     /// Asking about an ordinal outside `schema` is a wiring error, and throws
     /// [IllegalStateException] rather than answering either way.
     ///
     /// @param schema the file's schema
     /// @param columnOrders the file's decoded `column_orders`, empty where the file omitted them,
     ///        which means the type-defined order throughout
-    static BoundsReadability of(FileSchema schema, List<ColumnOrder> columnOrders) {
+    /// @param annotationDropped whether the reader dropped the annotation the footer gave the
+    ///        leaf at an ordinal
+    static BoundsReadability of(FileSchema schema, List<ColumnOrder> columnOrders,
+            IntPredicate annotationDropped) {
         boolean[] readable = new boolean[schema.getColumnCount()];
         for (int i = 0; i < readable.length; i++) {
             ColumnSchema column = schema.getColumn(i);
             boolean orderRecognized = columnOrders.size() <= i
                     || columnOrders.get(i) != ColumnOrder.UNKNOWN;
-            readable[i] = orderRecognized && namesAnOrder(column.logicalType());
+            readable[i] = orderRecognized && !annotationDropped.test(i)
+                    && namesAnOrder(column.logicalType());
         }
         return columnIndex -> {
             if (columnIndex < 0 || columnIndex >= readable.length) {

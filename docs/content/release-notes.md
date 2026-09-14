@@ -61,6 +61,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Row groups and pages are no longer pruned against `min` / `max` in a sort order the reader cannot read — a column annotated `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP`, or one whose file declares an unrecognized `ColumnOrder` ([#1179](https://github.com/hardwood-hq/hardwood/issues/1179)).
 
+- Row groups and pages are no longer pruned against the `min` / `max` of a column whose annotation is dropped, either because its physical type cannot carry it or because this release does not recognize it ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
+
 - `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — testing whether the group itself is present rather than one of its fields ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
 
 - `FilterPredicate.in(String, double...)` filters `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).

@@ -17,7 +17,22 @@ import dev.hardwood.metadata.SchemaElement;
 /// Reader for SchemaElement from Thrift Compact Protocol.
 public class SchemaElementReader {
 
+    /// A schema element together with whether its `logicalType` field was present but decoded to
+    /// no annotation: a union member added to the format after this version, or a union with no
+    /// member set. [SchemaElement] cannot record that, since the element reads as unannotated
+    /// either way.
+    ///
+    /// @param element the element as read
+    /// @param logicalTypeUnread whether the footer annotated the element with a logical type this
+    ///        reader does not decode
+    public record ReadElement(SchemaElement element, boolean logicalTypeUnread) {
+    }
+
     public static SchemaElement read(ThriftCompactReader reader) {
+        return readElement(reader).element();
+    }
+
+    public static ReadElement readElement(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.SCHEMA_ELEMENT);
         try {
             return readInternal(reader);
@@ -27,7 +42,7 @@ public class SchemaElementReader {
         }
     }
 
-    private static SchemaElement readInternal(ThriftCompactReader reader) {
+    private static ReadElement readInternal(ThriftCompactReader reader) {
         String name = null;
         PhysicalType type = null;
         Integer typeLength = null;
@@ -38,6 +53,7 @@ public class SchemaElementReader {
         Integer precision = null;
         Integer fieldId = null;
         LogicalType logicalType = null;
+        boolean logicalTypePresent = false;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -94,6 +110,7 @@ public class SchemaElementReader {
                 case 10: // logicalType (optional)
                     if (reader.acceptField(header, Codes.STRUCT)) {
                         logicalType = LogicalTypeReader.read(reader);
+                        logicalTypePresent = true;
                     }
                     break;
                 default:
@@ -102,6 +119,8 @@ public class SchemaElementReader {
             }
         }
 
-        return new SchemaElement(name, type, typeLength, repetitionType, numChildren, convertedType, scale, precision, fieldId, logicalType);
+        return new ReadElement(
+                new SchemaElement(name, type, typeLength, repetitionType, numChildren, convertedType, scale, precision, fieldId, logicalType),
+                logicalTypePresent && logicalType == null);
     }
 }

@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Characterizes [FileSchema]'s funneling of legacy `converted_type` annotations
-/// through `effectiveLogicalType`. Files written by older parquet-mr / Hive /
+/// through `LeafAnnotation.effective`. Files written by older parquet-mr / Hive /
 /// Impala / Spark set only `converted_type` (no modern `LogicalType`); the schema
 /// builder must promote each primitive annotation to its `LogicalType` so the read
 /// path — which keys exclusively off `logicalType()` — decodes the column correctly.

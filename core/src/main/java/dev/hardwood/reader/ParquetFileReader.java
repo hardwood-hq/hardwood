@@ -28,6 +28,7 @@ import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -95,12 +96,12 @@ public class ParquetFileReader implements Closeable {
     private final List<RowGroupIterator> rowGroupIterators = new CopyOnWriteArrayList<>();
     private boolean closed;
 
-    private ParquetFileReader(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
+    private ParquetFileReader(List<InputFile> inputFiles, ReadFooter firstFileFooter,
                               FileSchema schema, HardwoodContextImpl context, boolean fixedListFastPathEnabled,
                               boolean metadataFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
-        this.firstFileMetaData = firstFileMetaData;
-        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileMetaData, schema);
+        this.firstFileMetaData = firstFileFooter.metaData();
+        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, schema);
         this.schema = schema;
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -227,16 +228,17 @@ public class ParquetFileReader implements Closeable {
         InputFile first = files.get(0);
         first.open();
         try {
-            FileMetaData firstFileMetaData;
+            ReadFooter firstFileFooter;
             try {
-                firstFileMetaData = ParquetMetadataReader.readMetadata(first);
+                firstFileFooter = ParquetMetadataReader.readFooter(first);
             }
             catch (RuntimeException e) {
                 // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
                 // corrupt enum values) that escape the IOException-only contract of
-                // readMetadata — enrich them with file context so they're attributable.
+                // readFooter — enrich them with file context so they're attributable.
                 throw ExceptionContext.addFileContext(first.name(), e);
             }
+            FileMetaData firstFileMetaData = firstFileFooter.metaData();
             FileSchema schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
 
             FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
@@ -247,7 +249,7 @@ public class ParquetFileReader implements Closeable {
             fileOpenedEvent.columnCount = schema.getColumnCount();
             fileOpenedEvent.commit();
 
-            return new ParquetFileReader(files, firstFileMetaData, schema, context, fixedListFastPathEnabled,
+            return new ParquetFileReader(files, firstFileFooter, schema, context, fixedListFastPathEnabled,
                     metadataFilteringEnabled, ownsContext, true);
         }
         catch (Exception e) {

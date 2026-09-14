@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.util.StringToIntMap;
@@ -311,31 +311,26 @@ public class FileSchema {
     /// column order for that column. Only the physical type information should be used to
     /// process the column's data."
     ///
-    /// So the column is reported and read as though the footer had not annotated it. Every
-    /// consequence follows from the annotation's absence rather than from a check: the
-    /// physical accessors work, `getValue` yields the physical value, a logical accessor
-    /// fails exactly as it would on any unannotated column of that type, and the column's
-    /// statistics are compared under its physical type's ordering.
+    /// So the column is reported and read as though the footer had not annotated it. The
+    /// physical accessors work, `getValue` yields the physical value, and a logical accessor
+    /// fails exactly as it would on any unannotated column of that type.
+    ///
+    /// The column's statistics are the one consequence that does not follow from the
+    /// annotation's absence. The writer recorded them in the order of the annotation, which
+    /// the physical type's order need not agree with, so `BoundsReadability` reads no bounds
+    /// for such a column. It asks [LeafAnnotation#dropFault] of the footer's schema element,
+    /// as this method does.
     ///
     /// The sibling case — an annotation this version does not recognize at all — is dropped
-    /// where it is parsed, in `LogicalTypeReader`. Both end here as an unannotated column;
-    /// they differ only in what the warning can tell the reader, because one is a file from
-    /// a newer writer and the other is a file from a broken one.
-    ///
-    /// Column order needs no separate handling: the only thing it decides is whether a float
-    /// predicate compares under IEEE 754 total order, and a column that has lost its
-    /// `FLOAT16` annotation is rejected by `FilterPredicateResolver` before that flag is
-    /// consulted.
+    /// where it is parsed, in `LogicalTypeReader`, and `FileMetaDataReader.ReadFooter` records
+    /// the column for `BoundsReadability`. The two differ only in what the warning can tell
+    /// the reader, because one is a file from a newer writer and the other is a file from a
+    /// broken one.
     private static LogicalType readableLogicalType(SchemaElement element, List<String> path,
                                                    List<String> dropped) {
-        LogicalType annotation = effectiveLogicalType(element);
-        if (annotation == null) {
-            return null;
-        }
-        String fault = LogicalTypeConverter.conversionFault(
-                element.type(), element.typeLength(), annotation);
+        String fault = LeafAnnotation.dropFault(element);
         if (fault == null) {
-            return annotation;
+            return LeafAnnotation.effective(element);
         }
         dropped.add(String.join(".", path) + " (" + fault + ")");
         return null;
@@ -354,63 +349,12 @@ public class FileSchema {
             if (!element.isPrimitive()) {
                 continue;
             }
-            LogicalType annotation = effectiveLogicalType(element);
-            if (annotation == null) {
-                continue;
-            }
-            String fault = LogicalTypeConverter.conversionFault(
-                    element.type(), element.typeLength(), annotation);
+            String fault = LeafAnnotation.dropFault(element);
             if (fault != null) {
                 throw new IllegalStateException("Column '" + element.name() + "': " + fault
                         + ". A declared schema must not carry an annotation the reader drops.");
             }
         }
-    }
-
-    /// Resolve the effective logical type of a primitive element, falling back
-    /// to the legacy `converted_type` annotation when the modern logical-type
-    /// union is absent. Older writers (parquet-mr, Spark, Hive) only set
-    /// `converted_type`, which would otherwise leave the column read as a bare
-    /// physical column and decoded wrong or not at all (e.g. a `DECIMAL` read as
-    /// an unscaled integer, a `DATE` as a raw `INT32`).
-    ///
-    /// When both annotations are present the modern `logicalType()` wins. Only
-    /// primitive-level annotations are mapped here; the group-level `LIST`, `MAP`,
-    /// and `MAP_KEY_VALUE` are consulted directly on [SchemaNode.GroupNode].
-    private static LogicalType effectiveLogicalType(SchemaElement element) {
-        if (element.logicalType() != null) {
-            return element.logicalType();
-        }
-        ConvertedType converted = element.convertedType();
-        if (converted == null) {
-            return null;
-        }
-        return switch (converted) {
-            case UTF8 -> LogicalType.string();
-            case ENUM -> LogicalType.enumType();
-            case JSON -> LogicalType.json();
-            case BSON -> LogicalType.bson();
-            case INTERVAL -> LogicalType.interval();
-            case DATE -> LogicalType.date();
-            case DECIMAL -> decimalFromElement(element);
-            // The parquet-format backward-compatibility rule maps the legacy
-            // TIME_*/TIMESTAMP_* converted types to isAdjustedToUTC=true; these
-            // annotations always denoted UTC-normalized values.
-            case TIME_MILLIS -> LogicalType.time(true, LogicalType.TimeUnit.MILLIS);
-            case TIME_MICROS -> LogicalType.time(true, LogicalType.TimeUnit.MICROS);
-            case TIMESTAMP_MILLIS -> LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS);
-            case TIMESTAMP_MICROS -> LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
-            case INT_8 -> LogicalType.intType(8, true);
-            case INT_16 -> LogicalType.intType(16, true);
-            case INT_32 -> LogicalType.intType(32, true);
-            case INT_64 -> LogicalType.intType(64, true);
-            case UINT_8 -> LogicalType.intType(8, false);
-            case UINT_16 -> LogicalType.intType(16, false);
-            case UINT_32 -> LogicalType.intType(32, false);
-            case UINT_64 -> LogicalType.intType(64, false);
-            // Group-level annotations are handled on GroupNode, not here.
-            case LIST, MAP, MAP_KEY_VALUE -> null;
-        };
     }
 
     /// Resolve the effective logical type of a group element. The modern
@@ -440,18 +384,6 @@ public class FileSchema {
                 && children.get(0) instanceof SchemaNode.GroupNode child
                 && child.repetitionType() == RepetitionType.REPEATED
                 && child.convertedType() == ConvertedType.MAP_KEY_VALUE;
-    }
-
-    /// Build a [LogicalType.DecimalType] from a legacy `DECIMAL` converted-type
-    /// element, reading `scale`/`precision` off the schema element. A missing
-    /// scale defaults to `0`; a missing precision is a malformed schema.
-    private static LogicalType.DecimalType decimalFromElement(SchemaElement element) {
-        if (element.precision() == null) {
-            throw new IllegalArgumentException(
-                    "DECIMAL converted type requires a precision: " + element.name());
-        }
-        int scale = element.scale() != null ? element.scale() : 0;
-        return LogicalType.decimal(element.precision(), scale);
     }
 
     /// Validate a Variant-annotated group's shape: required `metadata` binary

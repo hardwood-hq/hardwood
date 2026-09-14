@@ -8,6 +8,7 @@
 package dev.hardwood.internal.thrift;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -22,7 +23,34 @@ import dev.hardwood.metadata.SchemaElement;
 /// Reader for FileMetaData from Thrift Compact Protocol.
 public class FileMetaDataReader {
 
+    /// A footer as read, together with what [FileMetaData] cannot record: which leaf columns the
+    /// footer annotated with a logical type this reader does not decode.
+    public static final class ReadFooter {
+
+        private final FileMetaData metaData;
+        private final BitSet logicalTypeUnread;
+
+        ReadFooter(FileMetaData metaData, BitSet logicalTypeUnread) {
+            this.metaData = metaData;
+            this.logicalTypeUnread = (BitSet) logicalTypeUnread.clone();
+        }
+
+        public FileMetaData metaData() {
+            return metaData;
+        }
+
+        /// Whether the footer annotated the leaf column at `leafOrdinal` with a logical type this
+        /// reader does not decode, which leaves the column read as its physical type.
+        public boolean logicalTypeUnread(int leafOrdinal) {
+            return logicalTypeUnread.get(leafOrdinal);
+        }
+    }
+
     public static FileMetaData read(ThriftCompactReader reader) {
+        return readFooter(reader).metaData();
+    }
+
+    public static ReadFooter readFooter(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.FILE_META_DATA);
         try {
             return readInternal(reader);
@@ -32,9 +60,10 @@ public class FileMetaDataReader {
         }
     }
 
-    private static FileMetaData readInternal(ThriftCompactReader reader) {
+    private static ReadFooter readInternal(ThriftCompactReader reader) {
         int version = 0;
         List<SchemaElement> schema = Collections.emptyList();
+        BitSet logicalTypeUnread = new BitSet();
         long numRows = 0;
         List<RowGroup> rowGroups = Collections.emptyList();
         Map<String, String> keyValueMetadata = Collections.emptyMap();
@@ -55,7 +84,10 @@ public class FileMetaDataReader {
                     break;
                 case 2: // schema (required list<SchemaElement>)
                     if (reader.acceptField(header, Codes.LIST)) {
-                        schema = reader.readStructList(SchemaElementReader::read);
+                        List<SchemaElementReader.ReadElement> elements =
+                                reader.readStructList(SchemaElementReader::readElement);
+                        schema = elements(elements);
+                        logicalTypeUnread = logicalTypeUnread(elements);
                     }
                     break;
                 case 3: // num_rows
@@ -94,8 +126,33 @@ public class FileMetaDataReader {
             }
         }
 
-        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy,
-                columnOrders);
+        return new ReadFooter(new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata,
+                createdBy, columnOrders), logicalTypeUnread);
+    }
+
+    private static List<SchemaElement> elements(List<SchemaElementReader.ReadElement> elements) {
+        List<SchemaElement> schema = new ArrayList<>(elements.size());
+        for (SchemaElementReader.ReadElement element : elements) {
+            schema.add(element.element());
+        }
+        return Collections.unmodifiableList(schema);
+    }
+
+    /// The leaf ordinals of the elements whose logical type went unread, counting primitive
+    /// elements in schema order as `FileSchema` numbers its columns.
+    private static BitSet logicalTypeUnread(List<SchemaElementReader.ReadElement> elements) {
+        BitSet unread = new BitSet();
+        int leafOrdinal = 0;
+        for (SchemaElementReader.ReadElement element : elements) {
+            if (!element.element().isPrimitive()) {
+                continue;
+            }
+            if (element.logicalTypeUnread()) {
+                unread.set(leafOrdinal);
+            }
+            leafOrdinal++;
+        }
+        return unread;
     }
 
     /// The column orders are optional and only refine how statistics are compared, so a list

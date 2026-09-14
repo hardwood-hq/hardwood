@@ -1176,8 +1176,7 @@ public class RowGroupIterator implements Closeable {
         PreparedFile prepared = getPreparedFile(fileIndex);
         // Decided per file and in the file's own ordinals: the order its bounds were written in
         // is this file's to declare, not the reference file's (#1179).
-        BoundsReadability boundsReadability = BoundsReadability.of(
-                prepared.schema(), prepared.metaData().columnOrders());
+        BoundsReadability boundsReadability = prepared.boundsReadability();
         FileColumnOrdinals columnOrdinals = fileIndex == 0
                 ? FileColumnOrdinals.identity(referenceSchema.getColumnCount(), filterPredicate,
                         boundsReadability)

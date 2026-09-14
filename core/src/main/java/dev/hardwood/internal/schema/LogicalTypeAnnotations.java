@@ -18,7 +18,7 @@ import dev.hardwood.metadata.SchemaElement;
 /// parquet-format requires both: a writer must always write the union where applicable, and
 /// must also write the corresponding `converted_type` so pre-union readers still see the
 /// annotation. Deriving one from the other here is what makes that a single declaration for the
-/// caller. This is the inverse of `FileSchema.effectiveLogicalType`, which collapses a legacy
+/// caller. This is the inverse of [LeafAnnotation#effective], which collapses a legacy
 /// annotation into a `LogicalType` when a file is read.
 ///
 /// @param union the `LogicalType` union member to write, or `null` if the annotation has none

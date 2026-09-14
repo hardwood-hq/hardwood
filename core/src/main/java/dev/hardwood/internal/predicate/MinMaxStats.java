@@ -48,8 +48,9 @@ sealed interface MinMaxStats {
     /// pruning directions at once (#1172).
     String INVERTED = "the minimum sorts above the maximum";
 
-    /// The column's annotation names no ordering, or the file names one this build does not
-    /// recognize, so there is no reading of the pair that the file vouches for (#1179).
+    /// The column's annotation names no ordering, the file names one this build does not
+    /// recognize, or the reader dropped the annotation the bounds were ordered by, so there is
+    /// no reading of the pair that the file vouches for (#1179, #1139).
     String UNKNOWN_SORT_ORDER =
             "the order they were written in is one this reader cannot read";
 
