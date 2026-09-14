@@ -1,6 +1,7 @@
 # Predicate literals
 
-**Status: Proposed** — scope by issue below.
+**Status: Implemented**, except the `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` rows, which come with
+[#921](https://github.com/hardwood-hq/hardwood/issues/921). Scope by issue below.
 
 Which predicates a column takes, with which literals, and what they mean.
 
@@ -15,9 +16,9 @@ Which predicates a column takes, with which literals, and what they mean.
    - physical: `boolean`, `int`, `long`, `float`, `double`, or `byte[]` through `getBinary`
 
    Literal types do not widen into each other: an `int` is not a literal for an `INT64` column,
-   nor a `double` for a `FLOAT` column. Every column takes both literals for equality and the set
-   form. An ordered operator takes the physical literal only where the physical order is the
-   column's order.
+   nor a `double` for a `FLOAT` column. Every column takes each of its literals for equality and,
+   `BOOLEAN` excepted, the set form. An ordered operator takes the physical literal only where the
+   physical order is the column's order.
 2. **A literal matches a row when it denotes the value the row holds, and an ordered predicate
    compares in the order the column's type defines.** A typed literal denotes a value of the
    column's type. A `byte[]` literal denotes the stored bytes: it matches a row storing exactly
@@ -110,7 +111,7 @@ can hold is set by its physical carrier:
 |---|---|---|
 | `Instant`, `LocalDateTime` | `TIMESTAMP` over `INT64` | a whole number of the column's unit within the `INT64` range |
 | `Instant`, `LocalDateTime` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | a whole number of the column's unit |
-| `Instant` | `INT96` | an instant whose Julian day fits a signed 32-bit integer |
+| `Instant` | `INT96` | an instant within its extreme Julian days plus what an `INT64` of nanoseconds reaches |
 | `LocalTime` | `TIME` | a whole number of the column's unit |
 | `LocalDate` | `DATE` | an epoch day within the `INT32` range |
 | `BigDecimal` | `DECIMAL` | no more fractional digits than the scale, and an unscaled value within the `INT32` / `INT64` range, or within the width of a `FIXED_LEN_BYTE_ARRAY` after sign extension; a `BYTE_ARRAY` holds any unscaled value |
@@ -237,8 +238,9 @@ the column and what it takes. That covers:
 - a column below a repeated path, or a comparison on a leaf below a `VARIANT` group
 - `not` over `intersects`
 
-Two errors are raised when the predicate is built. Every factory rejects a null literal with a
-`NullPointerException` naming the argument, and a `String` that is not well-formed UTF-16 throws
+Three errors are raised when the predicate is built. Every factory rejects a null literal with a
+`NullPointerException` naming the argument, every set form rejects an empty list with an
+`IllegalArgumentException`, and a `String` that is not well-formed UTF-16 throws
 `IllegalArgumentException`.
 
 ## Resolution
@@ -251,14 +253,16 @@ literal past the column's range resolves to the "no row" constant on the side wh
 missing, and to a comparison against the carrier's extreme on the other. `ResolvedPredicate.negate`
 maps that constant to "every non-null row". A set form resolves probe by probe as the equality
 literal of the same type does, into the membership test of the column's physical type, and its
-negation is the conjunction of `notEq` over the probes. A `BOOLEAN` column holds two values and nothing between them, so each
-ordered operator on one resolves the same way: to an equality against `false` or `true`, or to a
-constant. Every evaluator therefore answers a boolean column through one comparison.
+negation is the conjunction of `notEq` over the probes. A `BOOLEAN` column holds two values and
+nothing between them, so each ordered operator on one resolves the same way: to an equality against
+`false` or `true`, or to a constant. Every evaluator therefore answers a boolean column through one
+comparison.
 
 A `StringColumnPredicate` / `StringInPredicate` resolves in two steps. First, `requireTextColumn`
-decides whether the column takes a `String`. It is an exhaustive `switch` over `LogicalType`, the
-shape `orderingLiteral` has, so an annotation added later has to state whether it takes one; an
-unannotated column takes one only as a `BYTE_ARRAY`. Second, the value is encoded as UTF-8 and
+decides whether the column takes a `String`, through `TextColumns`, which `getString` asks as well.
+Its `nonTextLiterals` is an exhaustive `switch` over `LogicalType`, the shape `orderingLiteral` has,
+so an annotation added later has to state whether it takes one; an unannotated column takes one
+only as a `BYTE_ARRAY`. Second, the value is encoded as UTF-8 and
 resolved as the equivalent `byte[]` literal. Every column that passes the first step compares as
 `BYTE_STRING`.
 
@@ -347,9 +351,9 @@ the column-reader record view handling `FLOAT16` and struct leaves
     `BSON` column; and `INT96` columns in the three flat layouts, one value stored under a
     non-canonical encoding and bounds recorded in the byte order of a big-endian integer, so that
     both the exact-byte shortcuts and pruning would drop a row that matches.
-- `FilterPredicateResolverTest` covers every row of the per-column table for every literal kind and
-  operator: accepted with the expected resolved predicate, or rejected with the full message. For
-  every resolved leaf form, `not(not(p))` resolves to a predicate equivalent to `p`.
+- `FilterPredicateResolverTest` covers the literal kinds of the per-column table: accepted with the
+  expected resolved predicate, or rejected with the full message. A negated set form resolves to the
+  conjunction of `notEq` over its probes.
 - `FilterPredicateTest`: the `byte[]` factories copy their literal and compare by content, every
   set form rejects an empty list, and every factory rejects a null literal.
 - `DifferentialColumnOrderTest`: byte equality and membership go through the `byte[]` factories.

@@ -356,8 +356,9 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `FilterPredicate` hierarchy (sealed interface)
   - [x] Eq, NotEq
   - [x] Lt, LtEq, Gt, GtEq
-  - [x] In (int, long, double, String)
+  - [x] In, over every literal type but `boolean`
   - [x] And, Or, Not
+- [x] One literal rule for every predicate: a column takes the values its accessors return, an equality literal the column cannot hold is rejected, and ordered operators exist on ordered types only (see `_designs/PREDICATE_LITERALS.md`)
 - [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)

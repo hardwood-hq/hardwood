@@ -38,7 +38,8 @@ not compose this way: it filters a `STRING`, an `ENUM`, a `JSON` and an unannota
 and no other binary column. Where both rows apply, the annotation names the order: a `UINT_32`
 column matches the `INT32` row and the `INT(32, isSigned = false)` row, and compares by unsigned
 magnitude. Set membership follows the same mapping: `in` takes each literal type below but
-`boolean`, and each of its values is an equality literal. A literal a column does not take throws
+`boolean`, and each of its values is an equality literal. An empty set throws
+`IllegalArgumentException` when the predicate is built. A literal a column does not take throws
 `IllegalArgumentException` at reader creation.
 
 ```java
