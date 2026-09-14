@@ -198,9 +198,10 @@ never matches a null row, and `not` over one of these does not either.
 
 On a fixed-width column whose bytes compare as a byte string, a byte literal of another width
 compares as given for an ordered predicate, since the comparison is exact on it either way. On a
-fixed-width `DECIMAL`, an ordered predicate against a `BigDecimal` past the column's width compares
-against the largest or smallest number the width holds — so `lt` on such a literal returns every
-non-null row.
+fixed-width `DECIMAL`, an ordered predicate against a `BigDecimal` past the column's width matches
+every non-null row or none: against a literal above the largest number the width holds, `lt` and
+`ltEq` return every non-null row and `gt` and `gtEq` none, and against one below the smallest, the
+other way round.
 
 An annotation's value range does not bound a literal. That covers the bit width of an `INT(8)`,
 the precision of a `DECIMAL` and the single day of a `TIME`: [the physical

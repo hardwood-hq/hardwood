@@ -16,21 +16,22 @@ Which predicates a column takes, with which literals, and what they mean.
    - physical: `boolean`, `int`, `long`, `float`, `double`, or `byte[]` through `getBinary`
 
    Literal types do not widen into each other: an `int` is not a literal for an `INT64` column,
-   nor a `double` for a `FLOAT` column. Every column takes each of its literals for equality and,
-   `BOOLEAN` excepted, the set form. An ordered operator takes the physical literal only where the
-   physical order is the column's order.
-2. **A literal matches a row when it denotes the value the row holds, and an ordered predicate
-   compares in the order the column's type defines.** A typed literal denotes a value of the
-   column's type. A `byte[]` literal denotes the stored bytes: it matches a row storing exactly
-   those bytes, whatever the column's annotation reads them as. Where the type orders as its
-   bytes, unsigned, a `byte[]` takes every operator. A `DECIMAL`, a `FLOAT16`, an `INT96` and a
-   `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` order by the value their bytes encode, and take a
-   `byte[]` for equality and the set form only.
-3. **Ordered operators exist exactly on types that define an order.**
-4. **Every literal type with `eq` has a set form**, `BOOLEAN` excepted.
-5. **An equality literal is a value the column can hold; an order literal is any value of the
+   nor a `double` for a `FLOAT` column. `String` is the literal where `getString` reads the
+   column. Every column takes each of its literals for equality and, `BOOLEAN` excepted, the set
+   form.
+2. **A literal matches a row when it denotes the value the row holds.** A typed literal denotes a
+   value of the column's type. An `int` or `long` denotes the stored integer, which on an
+   unsigned `INT` column is the bit pattern. A `byte[]` literal denotes the stored bytes: it
+   matches a row storing exactly those bytes, whatever the column's annotation reads them as.
+3. **A literal takes the ordered operators where it compares in the order the column's type
+   defines.** A typed literal compares by the value it denotes. An `int` or `long` compares signed,
+   and unsigned on an unsigned `INT` column. A `byte[]` compares its bytes unsigned
+   lexicographically, which is the order of every binary type but a `DECIMAL`, a `FLOAT16`, an
+   `INT96` and a `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`; those order by the value their bytes
+   encode and take a `byte[]` for equality and the set form only. A type that defines no order
+   takes no ordered operator.
+4. **An equality literal is a value the column can hold; an order literal is any value of the
    literal type.**
-6. **`String` is the literal where `getString` reads the column.**
 
 ## What can be filtered
 
@@ -170,7 +171,7 @@ deprecated spelling of `in(String, String...)`.
 
 For `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` the physical literal is `byte[]`: the stored
 bytes. Equality and the set form match the rows storing exactly those bytes. The ordered operators
-compare them unsigned, on the types whose order that is, and reject them on the others (rule 2),
+compare them unsigned, on the types whose order that is, and reject them on the others (rule 3),
 naming the typed literal that orders the column.
 
 The bytes and the value part where a type admits more than one encoding of a value: a
@@ -297,19 +298,36 @@ express get the same answer; the differences are listed below.
   `BINARY_AS_SIGNED_INTEGER_COMPARATOR` for `DECIMAL`, `BINARY_AS_FLOAT16_COMPARATOR` for
   `FLOAT16`. A `Binary` there therefore compares as the value on a `DECIMAL` and a `FLOAT16`, which
   here is the typed literal's meaning, and the compatibility shim converts it accordingly. Its
-  floating-point comparators order as `Float.compare`, as here. It also accepts ordered predicates
-  on types without an order, offers equality and membership only on `BOOLEAN`, and orders `INT96`
-  by its bytes as a signed big-endian integer rather than as the instant it holds. The shim passes
-  a `Binary` on an `INT96` through as a `byte[]`, so an ordered one throws.
+  floating-point comparators order as `Float.compare`, as here. The differences:
+  - `notEq` and `notIn` match null rows; here a comparison never does. In 1.17.1 a `notIn` of
+    more than one value matches every row, its members included.
+  - It accepts ordered predicates on types without an order, and offers equality and membership
+    only on `BOOLEAN`.
+  - It orders `INT96` by its bytes as a signed big-endian integer rather than as the instant it
+    holds. The shim passes a `Binary` on an `INT96` through as a `byte[]`, so an ordered one throws.
+  - Its dictionary and Bloom filter checks compare a `Binary` by its bytes while its record-level
+    comparison is by value, so on a `DECIMAL` a `Binary` of another encoding than the stored one
+    matches in some layouts and not in others. Here a `byte[]` is the stored bytes on every path.
+  - Its statistics pruning (1.17.1) drops `NaN` rows from a row group whose bounds exclude `NaN`.
 - **DuckDB.** It takes the literal of the column's SQL type only, which the annotation determines.
   An integer against a `DATE` and a `BLOB` against a `DECIMAL` are conversion errors, and a string
   is parsed as text of the column's type (`dec = '1.25'`). The typed literals here give the same
-  answers, with three differences:
+  answers, with these differences:
   - DuckDB treats `-0.0` and `+0.0` as equal.
   - An integer against a `DECIMAL` is the number there, where an `int` literal here is the
     unscaled value.
   - An unsigned column's literal is the unsigned value there and the stored bit pattern here, as
     in parquet-java.
+  - An `INT(8)` or `INT(16)` value stored past its annotation is narrowed there, as `getValue`
+    narrows it; here a predicate compares the value `getInt` returns.
+  - An `INTERVAL` compares normalised there, so 9,300 days equals 310 months; here equality is
+    the 12 stored bytes.
+  - An equality literal the column cannot hold, such as a `DECIMAL` literal past the scale,
+    matches no row there and throws here.
+  - A `TIMESTAMP(NANOS)` or `TIME(NANOS)` column is read at microsecond precision there, so
+    literals a nanosecond apart compare equal.
+  - Its statistics pruning drops `NaN` rows from a row group whose bounds exclude `NaN`, as
+    parquet-java's does.
 - **Strings.** On a text column or an unannotated `BYTE_ARRAY`, a `String` is its UTF-8 bytes in
   all three. On a typed binary column DuckDB parses it as text and parquet-java has no such
   literal; here it is rejected, as on an unannotated `FIXED_LEN_BYTE_ARRAY`, which no accessor
