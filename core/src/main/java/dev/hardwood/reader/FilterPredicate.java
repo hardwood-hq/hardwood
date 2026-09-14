@@ -573,8 +573,10 @@ public sealed interface FilterPredicate
 
     /// Creates an equals predicate for a [BigDecimal] column (Parquet DECIMAL logical type).
     /// The column's scale and physical type are read from the schema at reader creation, and the
-    /// value is rescaled to the column's scale — padded where the column holds more, and rejected
-    /// with `ArithmeticException` where it carries a digit the column's scale cannot hold.
+    /// value is rescaled to the column's scale, padded where the column holds more. An equality
+    /// literal carrying a digit the column's scale cannot hold, or a value past the range of the
+    /// column's physical type, throws `IllegalArgumentException` at reader creation; an ordered
+    /// predicate on such a literal is answered exactly.
     static FilterPredicate eq(String column, BigDecimal value) {
         return new DecimalColumnPredicate(column, Operator.EQ, value);
     }

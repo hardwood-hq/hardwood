@@ -76,7 +76,7 @@ Every column also takes `isNull` / `isNotNull`.
 | `UUID` | `UUID`, `byte[]` | all | unsigned lexicographic over the 16 bytes |
 | `INTERVAL` | `PqInterval`, `byte[]` | equality and set form | the 12 bytes |
 | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; `intersects(xmin, ymin, xmax, ymax)` | equality and set form; `intersects` | the WKB bytes; `intersects` by bounding box |
-| `NULL` | the physical type's literal | equality and set form | no value matches |
+| `NULL` | the physical type's literal | equality and set form | the stored value, which a conforming file never has |
 
 `FLOAT`, `DOUBLE` and `FLOAT16` values compare by `Float.compare` / `Double.compare`: every `NaN`
 equals every other `NaN` and sorts above `+Inf`, and `-0.0` sorts below `+0.0`. This holds
@@ -102,6 +102,15 @@ the extreme day keeps that day and carries the remaining days in its nanoseconds
 as the same instant.
 
 `intersects` has no inverse: `not` over a predicate containing `intersects` is rejected.
+
+`intersects` decides row groups, not rows. It drops a row group whose bounding box does not overlap
+the query box and returns every row of the others, nulls included, so its answer depends on the
+bounding boxes the file records and on whether metadata filtering is on. It is the one leaf whose
+answer differs between the read paths.
+
+A `NULL` column stores only nulls in a conforming file, so no comparison matches a row of one. A
+file that stores values in such a column anyway is compared by the value it stores, as a column
+storing values past an `INT(8)` annotation is.
 
 ## Literals the column cannot hold
 
