@@ -1484,7 +1484,7 @@ class FilterPredicateResolverTest {
                 FilterPredicate.in("rep", 1, 2),
                 FilterPredicate.in("rep", 1L, 2L),
                 FilterPredicate.in("rep", 1.0, 2.0),
-                FilterPredicate.inStrings("rep", "a", "b"),
+                FilterPredicate.in("rep", "a", "b"),
                 FilterPredicate.isNull("rep"),
                 FilterPredicate.isNotNull("rep")
         );
@@ -1520,7 +1520,7 @@ class FilterPredicateResolverTest {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1L, 2L), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(incompatible("INT32", "INT64"));
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", "a"), int32Schema))
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", "a"), int32Schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(incompatible("INT32", "BYTE_ARRAY"));
 
@@ -1576,7 +1576,7 @@ class FilterPredicateResolverTest {
                     assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
                     assertThat(p.value()).containsExactly(0x68, 0xC3, 0xA9);
                 });
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", "hé"), schema))
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("c", "hé"), schema))
                 .isInstanceOfSatisfying(ResolvedPredicate.BinaryInPredicate.class, p -> {
                     assertThat(p.comparison()).isEqualTo(Comparison.BYTE_STRING);
                     assertThat(p.values()[0]).containsExactly(0x68, 0xC3, 0xA9);
@@ -1606,7 +1606,7 @@ class FilterPredicateResolverTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.inStrings("c", "a"), schema))
+                FilterPredicate.in("c", "a"), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
     }

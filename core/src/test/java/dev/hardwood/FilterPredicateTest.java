@@ -429,8 +429,15 @@ class FilterPredicateTest {
 
     @Test
     void testStringInPredicateCreation() {
-        FilterPredicate p = FilterPredicate.inStrings("city", "NYC", "LA");
+        FilterPredicate p = FilterPredicate.in("city", "NYC", "LA");
         assertThat(p).isInstanceOf(FilterPredicate.StringInPredicate.class);
+    }
+
+    @SuppressWarnings("deprecation")
+    @Test
+    void inStringsBuildsTheSamePredicateAsIn() {
+        assertThat(FilterPredicate.inStrings("city", "NYC", "LA"))
+                .isEqualTo(FilterPredicate.in("city", "NYC", "LA"));
     }
 
     @Test
@@ -481,7 +488,7 @@ class FilterPredicateTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'name' compares a String literal as its UTF-8 bytes;"
                         + " the literal is not well-formed UTF-16 and has no UTF-8 encoding");
-        assertThatThrownBy(() -> FilterPredicate.inStrings("name", "ok", "\uDC00"))
+        assertThatThrownBy(() -> FilterPredicate.in("name", "ok", "\uDC00"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'name' compares a String literal as its UTF-8 bytes;"
                         + " values[1] is not well-formed UTF-16 and has no UTF-8 encoding");
@@ -496,11 +503,11 @@ class FilterPredicateTest {
                 .hasSameHashCodeAs(FilterPredicate.eq("city", "NYC"))
                 .isNotEqualTo(FilterPredicate.eq("city", "LA"))
                 .isNotEqualTo(FilterPredicate.notEq("city", "NYC"));
-        assertThat(FilterPredicate.inStrings("city", "NYC", "LA"))
-                .isEqualTo(FilterPredicate.inStrings("city", "NYC", "LA"))
-                .hasSameHashCodeAs(FilterPredicate.inStrings("city", "NYC", "LA"))
-                .isNotEqualTo(FilterPredicate.inStrings("city", "NYC"))
-                .isNotEqualTo(FilterPredicate.inStrings("town", "NYC", "LA"));
+        assertThat(FilterPredicate.in("city", "NYC", "LA"))
+                .isEqualTo(FilterPredicate.in("city", "NYC", "LA"))
+                .hasSameHashCodeAs(FilterPredicate.in("city", "NYC", "LA"))
+                .isNotEqualTo(FilterPredicate.in("city", "NYC"))
+                .isNotEqualTo(FilterPredicate.in("town", "NYC", "LA"));
     }
 
     /// Every set form needs a value to test against: an empty one would be a predicate matching
@@ -519,7 +526,7 @@ class FilterPredicateTest {
         assertThatThrownBy(() -> FilterPredicate.in("c", new byte[0][]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("IN predicate requires at least one value");
-        assertThatThrownBy(() -> FilterPredicate.inStrings("c"))
+        assertThatThrownBy(() -> FilterPredicate.in("c", new String[0]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("IN predicate requires at least one value");
     }
@@ -550,7 +557,7 @@ class FilterPredicateTest {
                 .isInstanceOf(NullPointerException.class).hasMessage("values");
         assertThatThrownBy(() -> FilterPredicate.in("c", new byte[] { 0x01 }, null))
                 .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
-        assertThatThrownBy(() -> FilterPredicate.inStrings("c", "a", null))
+        assertThatThrownBy(() -> FilterPredicate.in("c", "a", null))
                 .isInstanceOf(NullPointerException.class).hasMessage("values[1]");
     }
 
@@ -587,6 +594,7 @@ class FilterPredicateTest {
         assertThat(FilterPredicate.in("c", 1, 2)).isInstanceOf(FilterPredicate.IntInPredicate.class);
         assertThat(FilterPredicate.in("c", 1L, 2L)).isInstanceOf(FilterPredicate.LongInPredicate.class);
         assertThat(FilterPredicate.in("c", 1.5, 2.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        assertThat(FilterPredicate.in("c", "a", "b")).isInstanceOf(FilterPredicate.StringInPredicate.class);
         // Note: FilterPredicate.in("c") is ambiguous between int..., long..., and double... varargs,
         // which was already the case between int... and long...
     }
@@ -626,10 +634,10 @@ class FilterPredicateTest {
         FileSchema schema = createBinarySchema();
 
         assertThat(canDropRowGroup(
-                FilterPredicate.inStrings("col", "apple", "elderberry"), rg, schema)).isTrue();
+                FilterPredicate.in("col", "apple", "elderberry"), rg, schema)).isTrue();
 
         assertThat(canDropRowGroup(
-                FilterPredicate.inStrings("col", "apple", "cherry"), rg, schema)).isFalse();
+                FilterPredicate.in("col", "apple", "cherry"), rg, schema)).isFalse();
     }
 
     @Test

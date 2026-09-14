@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- `FilterPredicate.inStrings` is deprecated in favour of `in(String, String...)`, which builds the same predicate ([#1178](https://github.com/hardwood-hq/hardwood/issues/1178)).
+
 - `FilterPredicate` takes a `byte[]` literal on any binary column, through `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` and `in` ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).
 
 - A `String` literal filters a column that holds text — a `STRING`, an `ENUM`, a `JSON` or an unannotated `BYTE_ARRAY` — and throws `IllegalArgumentException` on every other binary column, where a `byte[]` or the annotation's own literal type filters instead ([#1181](https://github.com/hardwood-hq/hardwood/issues/1181)).

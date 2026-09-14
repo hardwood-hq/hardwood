@@ -46,8 +46,8 @@ import dev.hardwood.row.PqInterval;
 ///
 /// ## Null handling
 ///
-/// All comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`,
-/// `inStrings`) follow SQL three-valued logic: comparing a null column value
+/// All comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`)
+/// follow SQL three-valued logic: comparing a null column value
 /// against any operand yields UNKNOWN, and rows whose predicate is UNKNOWN are
 /// not returned. In practice this means **rows with a null in the tested column
 /// are never returned by a comparison predicate**. Use `isNull` / `isNotNull`
@@ -376,7 +376,16 @@ public sealed interface FilterPredicate
 
     /// Creates a set-membership predicate for a text column, matching a row whose value is any of
     /// `values`. Each probe compares as [#eq(String,String)] describes.
+    ///
+    /// @deprecated use [#in(String,String...)], which builds the same predicate
+    @Deprecated(since = "1.1.0")
     static FilterPredicate inStrings(String column, String... values) {
+        return in(column, values);
+    }
+
+    /// Creates a set-membership predicate for a text column, matching a row whose value is any of
+    /// `values`. Each probe compares as [#eq(String,String)] describes.
+    static FilterPredicate in(String column, String... values) {
         requireValues(Objects.requireNonNull(values, "values").length);
         return new StringInPredicate(column, values);
     }

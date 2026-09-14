@@ -94,9 +94,9 @@ class DictionaryPushDownTest {
 
     @Test
     void inListDropsOnlyWhenAllValuesAreAbsent() throws IOException {
-        assertThat(dictionaryDrop(FilterPredicate.inStrings("category", "nope_a", "nope_b"))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("category", "nope_a", "nope_b"))).isTrue();
         // One present value is enough to keep it.
-        assertThat(dictionaryDrop(FilterPredicate.inStrings("category", "nope_a", "cat_3"))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.in("category", "nope_a", "cat_3"))).isFalse();
     }
 
     @Test

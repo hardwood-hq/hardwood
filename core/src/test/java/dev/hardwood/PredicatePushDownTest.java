@@ -966,7 +966,7 @@ class PredicatePushDownTest {
     void testStringInPredicateEndToEnd() throws Exception {
         // INT_FILE: RG0 labels rg1_*, RG1 labels rg2_*, RG2 labels rg3_*
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
-            FilterPredicate filter = FilterPredicate.inStrings("label", "rg1_1", "rg3_300");
+            FilterPredicate filter = FilterPredicate.in("label", "rg1_1", "rg3_300");
 
             List<String> labels = new ArrayList<>();
             try (RowReader rows = reader.buildRowReader().filter(filter).build()) {

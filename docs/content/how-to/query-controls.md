@@ -39,7 +39,7 @@ FilterPredicate filter = FilterPredicate.and(
 // IN filter
 FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
 FilterPredicate filter = FilterPredicate.in("temperature", 20.5, 21.0, 22.5);
-FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
+FilterPredicate filter = FilterPredicate.in("city", "NYC", "LA", "Chicago");
 
 // Binary filter, on the bytes the column stores
 FilterPredicate filter = FilterPredicate.eq("checksum", new byte[] { 0x00, (byte) 0xC8 });
@@ -73,7 +73,7 @@ For the full matrix of supported operators, comparable physical and logical type
 
 ### Null Handling
 
-Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
+Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
 
 `not(p)` preserves this behavior: rows where `p` is UNKNOWN stay UNKNOWN under negation and are dropped. The SQL identity `not(gt(x, v)) ≡ ltEq(x, v)` holds on all rows, including null ones.
 

@@ -213,8 +213,8 @@ class BloomFilterPushDownTest {
     void binaryInListIsDroppedOnlyWhenEveryValueIsAbsent() throws IOException {
         // `name` holds only runs of 'x' ("" … "x"*63). "w"/"v" are not stored, yet sort inside the
         // min/max range ["", "x"*63] ('v','w' < 'x'), so statistics keep but the bloom filter drops.
-        assertThat(bloomDrop(FilterPredicate.inStrings("name", "w", "v"))).isTrue();
-        assertThat(bloomDrop(FilterPredicate.inStrings("name", "w", "xx"))).isFalse();
+        assertThat(bloomDrop(FilterPredicate.in("name", "w", "v"))).isTrue();
+        assertThat(bloomDrop(FilterPredicate.in("name", "w", "xx"))).isFalse();
     }
 
     @Test

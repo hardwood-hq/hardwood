@@ -20,7 +20,7 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Category | Supported |
 |---|---|
 | Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
-| Set operators | `in` (int, long, double, `byte[]`), `inStrings` |
+| Set operators | `in` (int, long, double, `String`, `byte[]`) |
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
@@ -38,8 +38,8 @@ not compose this way: it filters a `STRING`, an `ENUM`, a `JSON` and an unannota
 and no other binary column. Where both rows apply, the annotation names the order: a `UINT_32`
 column matches the `INT32` row and the `INT(32, isSigned = false)` row, and compares by unsigned
 magnitude. Set membership follows the same mapping: `in` on the
-`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, on every binary column and on `INT96`, `inStrings`
-on those taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
+`INT32`, `INT64`, `FLOAT`, `DOUBLE` and `FLOAT16` columns, on every binary column, on `INT96`, and
+on the columns taking a `String`. A literal a column does not take throws `IllegalArgumentException` at
 reader creation.
 
 `eq`, `notEq` and the set form are available on every column below. The ordered operators `lt`,

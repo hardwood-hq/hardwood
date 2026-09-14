@@ -105,12 +105,12 @@ class DictionaryEndToEndTest {
     @Test
     void rowReaderPrunesRowGroupOnlyWhenEveryInListValueIsAbsent() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
-            FilterPredicate allAbsent = FilterPredicate.inStrings("category", "cat_5x", "cat_7x");
+            FilterPredicate allAbsent = FilterPredicate.in("category", "cat_5x", "cat_7x");
             try (RowReader rows = reader.buildRowReader().filter(allAbsent).build()) {
                 assertThat(countRows(rows)).isZero();
             }
             // One stored value keeps the row group; only its rows survive record-level filtering.
-            FilterPredicate onePresent = FilterPredicate.inStrings("category", "cat_5x", "cat_3");
+            FilterPredicate onePresent = FilterPredicate.in("category", "cat_5x", "cat_3");
             try (RowReader rows = reader.buildRowReader().filter(onePresent).build()) {
                 assertThat(countRows(rows)).isEqualTo(PRESENT_ROWS);
             }

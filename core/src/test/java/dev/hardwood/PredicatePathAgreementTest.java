@@ -379,8 +379,8 @@ class PredicatePathAgreementTest {
                 FilterPredicate.eq("flba5", "abcde"),
                 new Rejected("Column 'flba5' is an unannotated FIXED_LEN_BYTE_ARRAY, "
                         + "which takes byte[] literals, not a String")));
-        cases.add(new Case("bson", "inStrings(a String on a BSON column)",
-                FilterPredicate.inStrings("bson", "abc"),
+        cases.add(new Case("bson", "in(a String on a BSON column)",
+                FilterPredicate.in("bson", "abc"),
                 new Rejected("Column 'bson' is annotated BSON, "
                         + "which takes byte[] literals, not a String")));
         cases.add(new Case("iv", "eq(a String on an INTERVAL column)",
@@ -618,10 +618,10 @@ class PredicatePathAgreementTest {
                 matching(cmp(Operator.GT_EQ, literal))));
         cases.add(new Case(column, "not(lt(" + literal + "))",
                 FilterPredicate.not(FilterPredicate.lt(column, literal)), matching(cmp(Operator.GT_EQ, literal))));
-        cases.add(new Case(column, "inStrings(" + literal + ")", FilterPredicate.inStrings(column, literal),
+        cases.add(new Case(column, "in(" + literal + ")", FilterPredicate.in(column, literal),
                 matching(oneOf(literal))));
-        cases.add(new Case(column, "not(inStrings(" + literal + "))",
-                FilterPredicate.not(FilterPredicate.inStrings(column, literal)), matching(noneOf(literal))));
+        cases.add(new Case(column, "not(in(" + literal + "))",
+                FilterPredicate.not(FilterPredicate.in(column, literal)), matching(noneOf(literal))));
     }
 
     private static void binaryCases(List<Case> cases, String column, byte[] literal) {
