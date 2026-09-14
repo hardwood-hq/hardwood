@@ -220,7 +220,7 @@ one of seven reasons:
 |---|---|
 | The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
-| They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair compares unsigned whatever the column's type is, so its order is wrong for every signed one |
+| They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair is ordered by signed comparison whatever the column's type is, so its order is wrong for every unsigned integer and byte string |
 | The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
 | The column is `INT96` | The order the Parquet spec gives `INT96` bounds compares the day before the nanoseconds of the day, which does not follow the instant when the nanoseconds run past one day |
 | The column's annotation is dropped | An annotation the column's physical type cannot carry, or one this release does not recognize, so the column is read as its physical type while its bounds were recorded in the annotation's order |
