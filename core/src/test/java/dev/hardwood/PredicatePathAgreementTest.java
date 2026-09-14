@@ -66,12 +66,15 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 ///   page and answers from values alone
 /// - the `ColumnReader`, with and without metadata filtering
 ///
-/// **Layouts.** `predicate_single`, `predicate_multi` and `predicate_dict` hold the same 400 rows
-/// in one row group, in four, and dictionary-encoded, so the row-group bounds, the page index and
-/// the dictionary each decide a predicate that the record-level comparison decides again.
+/// **Layouts.** `predicate_single`, `predicate_multi`, `predicate_dict` and `predicate_bloom` hold
+/// the same 400 rows in one row group, in four, dictionary-encoded, and in four with a Bloom filter
+/// on every column that takes one, so the row-group bounds, the page index, the dictionary and the
+/// Bloom filter each decide a predicate that the record-level comparison decides again.
 /// `predicate_nested` adds a struct whose leaf is null under a present struct, and a leaf below a
-/// repeated path. `predicate_opaque` carries the `BSON` and `INTERVAL` columns, which DuckDB
-/// cannot open and which therefore stay out of the corpus the differential tests read.
+/// repeated path. `predicate_opaque` carries, in the single, dictionary and Bloom layouts, the
+/// columns that stay out of the corpus the differential tests read: `BSON`, which DuckDB cannot
+/// open, `INTERVAL`, a `DECIMAL` over `BYTE_ARRAY` holding a padded and an empty encoding, a `NULL`
+/// column and `GEOMETRY`.
 /// `predicate_int96` carries `INT96` columns in the same three layouts, one value stored under a
 /// non-canonical encoding, and bounds recorded in byte order rather than in time order.
 class PredicatePathAgreementTest {
@@ -119,12 +122,15 @@ class PredicatePathAgreementTest {
     private static final Layout SINGLE = new Layout("single-rg", RES.resolve("predicate_single.parquet"));
     private static final Layout MULTI = new Layout("multi-rg", RES.resolve("predicate_multi.parquet"));
     private static final Layout DICTIONARY = new Layout("dictionary", RES.resolve("predicate_dict.parquet"));
+    private static final Layout BLOOM = new Layout("bloom", RES.resolve("predicate_bloom.parquet"));
     private static final Layout NESTED = new Layout("nested", RES.resolve("predicate_nested_single.parquet"));
     private static final Layout NESTED_MULTI = new Layout("nested-multi-rg",
             RES.resolve("predicate_nested_multi.parquet"));
     private static final Layout OPAQUE = new Layout("opaque", RES.resolve("predicate_opaque_single.parquet"));
     private static final Layout OPAQUE_DICTIONARY = new Layout("opaque-dictionary",
             RES.resolve("predicate_opaque_dict.parquet"));
+    private static final Layout OPAQUE_BLOOM = new Layout("opaque-bloom",
+            RES.resolve("predicate_opaque_bloom.parquet"));
 
     private static final Layout INT96_SINGLE = new Layout("int96", RES.resolve("predicate_int96_single.parquet"));
     private static final Layout INT96_MULTI = new Layout("int96-multi-rg",
@@ -132,8 +138,8 @@ class PredicatePathAgreementTest {
     private static final Layout INT96_DICTIONARY = new Layout("int96-dictionary",
             RES.resolve("predicate_int96_dict.parquet"));
 
-    private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, NESTED, NESTED_MULTI,
-            OPAQUE, OPAQUE_DICTIONARY, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY);
+    private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, BLOOM, NESTED, NESTED_MULTI,
+            OPAQUE, OPAQUE_DICTIONARY, OPAQUE_BLOOM, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY);
 
     // ==================== Read paths ====================
 
@@ -317,6 +323,38 @@ class PredicatePathAgreementTest {
         binaryCases(cases, "flba5", new byte[] { 100, 0, 0, 0, (byte) 200 });
         binaryCases(cases, "bson", new byte[] { 0, (byte) 200, 0 });
         intervalCases(cases, "iv", new PqInterval(200 % 13, 200 % 29, 200 * 1000));
+
+        // --- DECIMAL over BYTE_ARRAY: row 200 stores zero as no bytes, 202 and 198 a padded encoding ---
+        decimalCases(cases, "dec_ba", new BigDecimal("0.000"));
+        decimalCases(cases, "dec_ba", new BigDecimal("2.5"));
+        decimalCases(cases, "dec_ba", new BigDecimal("-2.500"));
+        storedByteCases(cases, "dec_ba", new byte[0]);
+        storedByteCases(cases, "dec_ba", HEX.parseHex("0009c4"));
+        storedByteCases(cases, "dec_ba", HEX.parseHex("09c4"));
+        storedByteCases(cases, "dec_ba", HEX.parseHex("fff63c"));
+        cases.add(new Case("dec_ba", "gtEq(the stored bytes of 2.500)", binary("dec_ba", Operator.GT_EQ, HEX.parseHex("0009c4")),
+                new Rejected(notByteOrdered("dec_ba", "annotated DECIMAL(30, 3)", "a BigDecimal"))));
+
+        // --- NULL: no row holds a value ---
+        cases.add(new Case("nul", "eq(1)", FilterPredicate.eq("nul", 1), matching(never())));
+        cases.add(new Case("nul", "notEq(1)", FilterPredicate.notEq("nul", 1), matching(never())));
+        cases.add(new Case("nul", "in(1)", FilterPredicate.in("nul", 1), matching(never())));
+        cases.add(new Case("nul", "not(in(1))", FilterPredicate.not(FilterPredicate.in("nul", 1)), matching(never())));
+        cases.add(new Case("nul", "isNull", FilterPredicate.isNull("nul"), new MatchingNulls()));
+        cases.add(new Case("nul", "lt(1), an ordered operator on a NULL column", FilterPredicate.lt("nul", 1),
+                new Rejected("Column 'nul' is annotated NULL, whose values parquet-format puts in no order; "
+                        + "it takes equality and set membership only")));
+
+        // --- GEOMETRY: equality over the WKB bytes ---
+        byte[] pointAt200 = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN)
+                .put((byte) 1).putInt(1).putDouble(0.0).putDouble(100.0).array();
+        storedByteCases(cases, "geom", pointAt200);
+        cases.add(new Case("geom", "lt(the WKB of row 200), an ordered operator on a GEOMETRY column",
+                binary("geom", Operator.LT, pointAt200),
+                new Rejected("Column 'geom' is annotated GEOMETRY(OGC:CRS84), whose values parquet-format puts in no order; "
+                        + "it takes equality and set membership only")));
+        cases.add(new Case("geom", "eq(a String on a GEOMETRY column)", FilterPredicate.eq("geom", "POINT"),
+                new Rejected("Column 'geom' is annotated GEOMETRY(OGC:CRS84), which takes byte[] literals, not a String")));
         cases.add(new Case("str", "eq(emoji at row 399)", FilterPredicate.eq("str", "😀"),
                 matching(eq("😀"))));
         cases.add(new Case("str", "gt(full-width tilde at row 398)", FilterPredicate.gt("str", "～"),
@@ -899,7 +937,7 @@ class PredicatePathAgreementTest {
     }
 
     static Stream<Arguments> flatLayoutsAndPaths() {
-        return Stream.of(SINGLE, MULTI, DICTIONARY)
+        return Stream.of(SINGLE, MULTI, DICTIONARY, BLOOM)
                 .flatMap(layout -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, path)));
     }
 

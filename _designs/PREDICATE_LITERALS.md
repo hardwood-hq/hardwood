@@ -372,18 +372,27 @@ the column-reader record view handling `FLOAT16` and struct leaves
 
 ## Validation
 
-- `PredicatePathAgreementTest` runs every row of the per-column table against a Java oracle of the
-  rule above. It covers every literal kind, operator, `not` form, set form and null test.
+- `PredicatePathAgreementTest` runs the rows of the per-column table against a Java oracle of the
+  rule above, all but `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` and `GEOGRAPHY`, which takes the
+  literals `GEOMETRY` does. It covers every literal kind, operator, `not` form, set form and null
+  test except `intersects`, whose answer depends on the read path. The oracle takes each row's
+  value from the reader's own accessors, so it tests the predicates against the accessors, not the
+  accessors themselves.
   - **Paths:** the `RowReader` by default and forced onto the record-level path, the `RowReader`
     with `hardwood.metadata-filtering=false`, and the `ColumnReader` with and without metadata
     filtering.
-  - **Layouts:** single row group, multiple row groups, and dictionary-encoded, so that the
-    row-group bounds, the page index and the dictionary each decide a predicate the record-level
-    comparison decides again; a struct whose leaf is null under a present struct; and the `BSON`
-    and `INTERVAL` columns, in a corpus of their own because DuckDB cannot open a file holding a
-    `BSON` column; and `INT96` columns in the three flat layouts, one value stored under a
-    non-canonical encoding and bounds recorded in the byte order of a big-endian integer, so that
-    both the exact-byte shortcuts and pruning would drop a row that matches.
+  - **Layouts:**
+    - single row group, multiple row groups, dictionary-encoded, and multiple row groups with a
+      Bloom filter on every column that takes one, so that the row-group bounds, the page index,
+      the dictionary and the Bloom filter each decide a predicate the record-level comparison
+      decides again
+    - a struct whose leaf is null under a present struct
+    - the `BSON`, `INTERVAL`, `NULL` and `GEOMETRY` columns and a `DECIMAL` over `BYTE_ARRAY`
+      holding a padded and an empty encoding, in a corpus of their own because DuckDB cannot open
+      a file holding a `BSON` column, in the single, dictionary and Bloom layouts
+    - `INT96` columns in three flat layouts, one value stored under a non-canonical encoding and
+      bounds recorded in the byte order of a big-endian integer, so that both the exact-byte
+      shortcuts and pruning would drop a row that matches
 - `FilterPredicateResolverTest` covers the literal kinds of the per-column table: accepted with the
   expected resolved predicate, or rejected with the full message. A negated set form resolves to the
   conjunction of `notEq` over its probes.

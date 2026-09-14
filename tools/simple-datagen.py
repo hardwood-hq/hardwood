@@ -24,6 +24,7 @@ from parquet_annotators import (
     annotate_group_at_path_as_variant,
     annotate_column_as_interval,
     annotate_element_at_path_as_float16,
+    annotate_element_at_path_as_geometry,
     annotate_element_at_path_as_int,
     annotate_element_at_path_as_interval,
     annotate_element_at_path_as_json,
@@ -5914,10 +5915,11 @@ print("  - Childless root schema: no columns, no rows")
 # the values whose comparison and whose statistics bounds diverge. `str` ends on a full-width
 # tilde and an emoji, outside the ASCII range where UTF-8 and byte order coincide trivially.
 #
-# Three layouts: one row group, several row groups, and dictionary-encoded. Small pages and a
-# page index bring the row-group bounds, the page index and the dictionary into play, so a
-# literal resolved into the wrong order shows up as a missing or extra row rather than only in a
-# record-level comparison.
+# Four layouts: one row group, several row groups, dictionary-encoded, and several row groups with a
+# Bloom filter on every value column. Small pages and a page index bring the row-group bounds, the
+# page index, the dictionary and the Bloom filter into play, so a literal resolved into the wrong
+# order or the wrong bytes shows up as a missing or extra row rather than only in a record-level
+# comparison.
 PRED_ROWS = 400
 
 
@@ -6010,10 +6012,18 @@ pred_table = pa.table({
     'enum': _pred_opt([f'E{r % 7}'.encode() for r in _pred_range]),
 }, schema=pred_schema)
 
-for pred_name, pred_rg_size, pred_dictionary in [
-        ('predicate_single', PRED_ROWS, False),
-        ('predicate_multi', 100, False),
-        ('predicate_dict', 100, True)]:
+def _pred_bloom(table):
+    """A Bloom filter on every value column of `table` that can carry one, sized for a 100-row row
+    group. Parquet defines none for `BOOLEAN`, and a column of nulls has no value to hash."""
+    return {field.name: {'ndv': 100, 'fpp': 0.01} for field in table.schema
+            if field.name not in ('__row__', 'zz') and field.type not in (pa.bool_(), pa.null())}
+
+
+for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
+        ('predicate_single', PRED_ROWS, False, False),
+        ('predicate_multi', 100, False, False),
+        ('predicate_dict', 100, True, False),
+        ('predicate_bloom', 100, False, True)]:
     pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
     pq.write_table(
         pred_table,
@@ -6027,16 +6037,39 @@ for pred_name, pred_rg_size, pred_dictionary in [
         write_statistics=True,
         write_page_index=True,
         store_decimal_as_integer=True,
+        bloom_filter_options=_pred_bloom(pred_table) if pred_bloom else None,
     )
     annotate_element_at_path_as_enum(pred_path, ['enum'])
 
-# BSON and INTERVAL live in a corpus of their own: DuckDB refuses to open any file holding a BSON
-# column, and the corpus above is what the differential oracle reads.
+# Columns the corpus above cannot carry live in one of their own, which the differential oracle
+# does not read:
+# - `bson` and `iv` (INTERVAL): DuckDB refuses to open any file holding a BSON column.
+# - `dec_ba`, a DECIMAL(30, 3) over BYTE_ARRAY, which PyArrow does not write. Most values take the
+#   fewest bytes, as a conforming writer stores them; row 200 is zero stored as no bytes at all,
+#   row 202 carries a sign-extension byte and row 198 a redundant 0xFF, so an equality shortcut
+#   testing exact bytes and a comparison by value part on those rows. It has no statistics:
+#   PyArrow would record them in the byte order of an unannotated column.
+# - `nul`, which PyArrow annotates UNKNOWN and holds only nulls.
+# - `geom`, WKB points annotated GEOMETRY.
+def _pred_dec_ba(r):
+    unscaled = (r - 200) * 1250
+    if r == 200:
+        return b''
+    if r == 202:
+        return b'\x00' + unscaled.to_bytes((unscaled.bit_length() + 8) // 8, 'big', signed=True)
+    if r == 198:
+        return b'\xff' + unscaled.to_bytes((unscaled.bit_length() + 8) // 8, 'big', signed=True)
+    return unscaled.to_bytes((unscaled.bit_length() + 8) // 8, 'big', signed=True)
+
+
 pred_opaque_schema = pa.schema([
     ('__row__', pa.int64(), False),
     ('zz', pa.binary(), False),
     ('bson', pa.binary()),          # post-annotated as BSON
     ('iv', pa.binary(12)),          # post-annotated as INTERVAL
+    ('dec_ba', pa.binary()),        # post-annotated as DECIMAL(30, 3)
+    ('nul', pa.null()),
+    ('geom', pa.binary()),          # post-annotated as GEOMETRY
 ])
 pred_opaque_table = pa.table({
     '__row__': _pred_range,
@@ -6044,10 +6077,14 @@ pred_opaque_table = pa.table({
     'bson': _pred_opt([bytes([r >> 8, r & 0xFF, 0]) for r in _pred_range]),
     'iv': _pred_opt([(r % 13).to_bytes(4, 'little') + (r % 29).to_bytes(4, 'little')
                      + (r * 1000).to_bytes(4, 'little') for r in _pred_range]),
+    'dec_ba': _pred_opt([_pred_dec_ba(r) for r in _pred_range]),
+    'nul': pa.nulls(PRED_ROWS),
+    'geom': _pred_opt([b'\x01\x01\x00\x00\x00' + struct.pack('<dd', r - 200.0, r * 0.5) for r in _pred_range]),
 }, schema=pred_opaque_schema)
-for pred_name, pred_rg_size, pred_dictionary in [
-        ('predicate_opaque_single', PRED_ROWS, False),
-        ('predicate_opaque_dict', 100, True)]:
+for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
+        ('predicate_opaque_single', PRED_ROWS, False, False),
+        ('predicate_opaque_dict', 100, True, False),
+        ('predicate_opaque_bloom', 100, False, True)]:
     pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
     pq.write_table(
         pred_opaque_table,
@@ -6058,11 +6095,14 @@ for pred_name, pred_rg_size, pred_dictionary in [
         row_group_size=pred_rg_size,
         data_page_size=512,
         write_batch_size=40,
-        write_statistics=True,
+        write_statistics=[name for name in pred_opaque_table.column_names if name != 'dec_ba'],
         write_page_index=True,
+        bloom_filter_options=_pred_bloom(pred_opaque_table) if pred_bloom else None,
     )
     annotate_column_as_bson(pred_path, 'bson')
     annotate_column_as_interval(pred_path, 'iv')
+    annotate_element_at_path_as_decimal(pred_path, ['dec_ba'], precision=30, scale=3)
+    annotate_element_at_path_as_geometry(pred_path, ['geom'])
 
 # A struct whose leaf is null under a present struct, alongside a leaf below a repeated path.
 # The first separates "the group is absent" from "the leaf is null", which the column reader's
@@ -6208,7 +6248,7 @@ annotate_element_at_path_as_int(int_past_path, ['u8'], bit_width=8, is_signed=Fa
 print(f"\nGenerated {int_past_path}: INT(8) / INT(16) columns storing values past their annotation")
 
 print("\nGenerated predicate/*.parquet:")
-print(f"  - predicate_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")
+print(f"  - predicate_{{single,multi,dict,bloom}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")
 print(f"  - predicate_nested_{{single,multi}}.parquet: {PRED_ROWS} rows, struct with a nullable leaf, and a list")
-print(f"  - predicate_opaque_{{single,dict}}.parquet: {PRED_ROWS} rows, the BSON and INTERVAL columns")
+print(f"  - predicate_opaque_{{single,dict,bloom}}.parquet: {PRED_ROWS} rows, BSON, INTERVAL, BYTE_ARRAY DECIMAL, NULL and GEOMETRY")
 print(f"  - predicate_int96_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, INT96 timestamps, one non-canonical")
