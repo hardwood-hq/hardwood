@@ -90,7 +90,7 @@ Support for writing Parquet files is under active development as of Hardwood 1.1
 
 The Hardwood library supports reading arbitrarily large Parquet files, provided individual column chunks are not larger than 2 GB (see [Parquet file layout](concepts/parquet-layout.md)).
 The interactive `dive` TUI currently caps S3 files at 2 GB.
-Writing targets local files through `OutputFile.of(Path)`; output to object storage is coming soon.
+Writing targets local files through `OutputFile.of(Path)` and the heap through `OutputFile.inMemory()`; output to object storage is coming soon.
 
 ## Roadmap
 
