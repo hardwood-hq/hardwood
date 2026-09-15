@@ -52,8 +52,29 @@ The TIME logical type carries the same `isAdjustedToUTC` flag, but the situation
 `LocalTime` has no zone of its own, so there is no second Java type to split toward. `getTime`
 returns `LocalTime` either way and the flag is purely informational.
 
+## Two physical carriers
+
+The TIMESTAMP annotation is stored in two physical types, and the choice between them is about
+range, not precision. Both count the same three units, milliseconds, microseconds and nanoseconds,
+since the epoch. An `INT64` spans about 292 million years either side of 1970 in milliseconds and
+292,000 years in microseconds, but only about 585 years in nanoseconds, from 1677 to 2262. A
+`FIXED_LEN_BYTE_ARRAY(12)` holds the count in 96 bits, which spans every `Instant` in any unit.
+
+So the 12-byte carrier matters for a column that needs nanosecond precision beyond 1677 to 2262,
+such as a SQL `TIMESTAMP(9)` covering the years 0001 to 9999. A millisecond or microsecond column
+reaches those years on an `INT64` already.
+
+The annotation means the same on both, so the accessors, the setters and the filter literals are
+the same too: a column of either carrier is an `Instant` or a `LocalDateTime` according to its
+`isAdjustedToUTC` flag, and an application reads and writes it without knowing which carrier it
+uses unless it reaches for the stored bytes.
+
 ## Legacy INT96
 
 Timestamps written by older Spark and Hive in the deprecated INT96 physical type carry no
 `isAdjustedToUTC` field at all. By the Spark / Hive convention they denote instants, so Hardwood
 reads them as `Instant` through `getTimestamp`.
+
+An INT96 is 12 bytes wide, like the `FIXED_LEN_BYTE_ARRAY(12)` carrier, but packs a Julian day
+beside a count of nanoseconds of the day rather than one count from the epoch, and carries no
+annotation.

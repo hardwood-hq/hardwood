@@ -9,6 +9,7 @@ package dev.hardwood.internal.schema;
 
 import java.math.BigDecimal;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -60,7 +61,7 @@ public class LogicalTypeValidator {
                     integer.bitWidth() == 64 ? PhysicalType.INT64 : PhysicalType.INT32);
             case LogicalType.TimeType time -> require(columnName, logicalType, type,
                     time.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64);
-            case LogicalType.TimestampType ignored -> require(columnName, logicalType, type, PhysicalType.INT64);
+            case LogicalType.TimestampType ignored -> validateTimestamp(columnName, logicalType, type, typeLength);
             case LogicalType.DecimalType decimal -> validateDecimal(columnName, type, typeLength, decimal);
             case LogicalType.NullType ignored -> requireNullable(columnName, repetition);
             case LogicalType.ListType ignored -> throw groupAnnotation(columnName, logicalType);
@@ -78,6 +79,19 @@ public class LogicalTypeValidator {
         if (repetition == RepetitionType.REQUIRED) {
             throw new IllegalArgumentException("UNKNOWN annotates a column holding only nulls, so it cannot be "
                     + "REQUIRED (column " + columnName + ")");
+        }
+    }
+
+    /// A `TIMESTAMP` counts its unit in an `INT64` or in a `FIXED_LEN_BYTE_ARRAY(12)`.
+    private static void validateTimestamp(String columnName, LogicalType logicalType, PhysicalType type,
+                                          Integer typeLength) {
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            requireFixed(columnName, logicalType, type, typeLength, Flba12Timestamps.WIDTH);
+            return;
+        }
+        if (type != PhysicalType.INT64) {
+            throw new IllegalArgumentException(logicalType + " annotates an INT64 or a FIXED_LEN_BYTE_ARRAY(12) "
+                    + "column, not " + type + " (column " + columnName + ")");
         }
     }
 

@@ -83,6 +83,31 @@ public final class PhysicalValueConverter {
         return epochOffset(field, value, value.toEpochSecond(ZoneOffset.UTC), value.getNano(), unit, policy);
     }
 
+    /// The twelve bytes a `FIXED_LEN_BYTE_ARRAY(12)` column stores for a UTC-adjusted `TIMESTAMP`.
+    /// Every [Instant] fits the column, so only a sub-unit fraction can be refused.
+    public static byte[] timestampToFixed12(String field, Instant value, TimeUnit unit, PrecisionLossPolicy policy) {
+        return fixed12Offset(field, value.getEpochSecond(), value.getNano(), unit, policy);
+    }
+
+    /// The twelve bytes a `FIXED_LEN_BYTE_ARRAY(12)` column stores for a local `TIMESTAMP`; see
+    /// [#localTimestampToLong] on the wall clock.
+    public static byte[] localTimestampToFixed12(String field, LocalDateTime value, TimeUnit unit,
+                                                 PrecisionLossPolicy policy) {
+        return fixed12Offset(field, value.toEpochSecond(ZoneOffset.UTC), value.getNano(), unit, policy);
+    }
+
+    /// A whole-second count and a nanosecond-of-second as the 96-bit count of the column's unit.
+    /// The nanosecond part is never negative, so dropping its sub-unit digits floors the value, as
+    /// [#epochOffset] does.
+    private static byte[] fixed12Offset(String field, long epochSecond, int nano, TimeUnit unit,
+                                        PrecisionLossPolicy policy) {
+        long nanosPerUnit = nanosPerUnit(unit);
+        if (nano % nanosPerUnit != 0 && policy == PrecisionLossPolicy.REJECT) {
+            throw finerThanUnit(field, "TIMESTAMP", unit);
+        }
+        return Flba12Timestamps.encode(epochSecond, (int) (nano / nanosPerUnit), unit);
+    }
+
     /// Combines a whole-second count and a nanosecond-of-second into the column's unit. The
     /// nanosecond part is never negative, so dropping its sub-unit digits floors the value —
     /// the same result [Instant#toEpochMilli()] produces, and what every other Parquet writer
@@ -101,7 +126,8 @@ public final class PhysicalValueConverter {
         }
         catch (ArithmeticException e) {
             throw new IllegalArgumentException("Field " + field + ": " + value
-                    + " is outside the range a TIMESTAMP(" + unit + ") column can represent", e);
+                    + " is outside the range an INT64 TIMESTAMP(" + unit + ") column can represent;"
+                    + " a FIXED_LEN_BYTE_ARRAY(12) column holds it", e);
         }
         if (nano % nanosPerUnit != 0 && policy == PrecisionLossPolicy.REJECT) {
             throw finerThanUnit(field, "TIMESTAMP", unit);

@@ -74,7 +74,7 @@ AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
     .build();
 ```
 
-Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`, and ENUM values as `String`. This matches the behavior of parquet-java's `AvroReadSupport`.
+Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`, and ENUM values as `String`. A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` has no Avro counterpart and is a `fixed` of its 12 stored bytes, as an `INT96` is. This matches the behavior of parquet-java's `AvroReadSupport`.
 
 Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type — including an unannotated `BYTE_ARRAY` key, whose bytes are not necessarily text — fails with an error naming the map's path and its key type. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
 

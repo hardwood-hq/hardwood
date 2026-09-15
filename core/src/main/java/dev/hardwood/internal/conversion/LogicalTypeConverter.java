@@ -71,7 +71,7 @@ public final class LogicalTypeConverter {
             case LogicalType.EnumType ignored -> requires(physicalType, "ENUM", PhysicalType.BYTE_ARRAY);
             case LogicalType.BsonType ignored -> requires(physicalType, "BSON", PhysicalType.BYTE_ARRAY);
             case LogicalType.DateType ignored -> requires(physicalType, "DATE", PhysicalType.INT32);
-            case LogicalType.TimestampType ignored -> requires(physicalType, "TIMESTAMP", PhysicalType.INT64);
+            case LogicalType.TimestampType ignored -> timestampFault(physicalType, typeLength);
             case LogicalType.TimeType time -> requires(physicalType, "TIME(" + time.unit() + ")",
                     time.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64);
             case LogicalType.IntType integer -> requires(physicalType, "INT(" + integer.bitWidth() + ")",
@@ -109,6 +109,18 @@ public final class LogicalTypeConverter {
             sb.append(i == 0 ? "" : i == allowed.length - 1 ? " or " : ", ").append(allowed[i]);
         }
         return annotation + " is read from " + sb + ", but the column is " + actual;
+    }
+
+    /// A `TIMESTAMP` is stored in an `INT64` or in a `FIXED_LEN_BYTE_ARRAY(12)`.
+    private static String timestampFault(PhysicalType actual, Integer typeLength) {
+        if (actual == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            // An absent width is FixedWidthValidator's to refuse, as in requiresFixed.
+            return typeLength == null || typeLength == Flba12Timestamps.WIDTH
+                    ? null
+                    : "TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is " + Flba12Timestamps.WIDTH
+                            + " bytes, but the column declares " + typeLength;
+        }
+        return requires(actual, "TIMESTAMP", PhysicalType.INT64, PhysicalType.FIXED_LEN_BYTE_ARRAY);
     }
 
     /// A `DECIMAL` is stored in one of four physical types, and its precision must fit the
@@ -167,9 +179,12 @@ public final class LogicalTypeConverter {
         return switch (logicalType) {
             case LogicalType.StringType t -> bytesToString((byte[]) physicalValue);
             case LogicalType.DateType t -> intToDate((Integer) physicalValue);
-            case LogicalType.TimestampType tt -> longToTemporal((Long) physicalValue, tt);
-            // TIME, DECIMAL and INT are the arms whose unboxing depends on the physical
-            // type, so they keep a helper that takes it; the rest decode from one
+            case LogicalType.TimestampType tt -> physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                    ? Flba12Timestamps.toTemporal((byte[]) physicalValue, 0, ((byte[]) physicalValue).length, tt)
+                    : longToTemporal((Long) physicalValue, tt);
+            // TIMESTAMP, TIME, DECIMAL and INT are the arms whose unboxing depends on the
+            // physical type. TIMESTAMP branches inline between its two carriers, the other
+            // three keep a helper that takes the type; the rest decode from one
             // representation and go straight to the primitive entry point.
             case LogicalType.TimeType tt -> convertToTime(physicalValue, physicalType, tt);
             case LogicalType.DecimalType dt -> convertToDecimal(physicalValue, physicalType, dt);

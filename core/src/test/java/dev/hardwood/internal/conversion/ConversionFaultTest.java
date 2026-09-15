@@ -44,7 +44,7 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.INT32, null, LogicalType.string()))
                 .isEqualTo("STRING is read from BYTE_ARRAY, but the column is INT32");
         assertThat(fault(PhysicalType.INT32, null, timestamp()))
-                .isEqualTo("TIMESTAMP is read from INT64, but the column is INT32");
+                .isEqualTo("TIMESTAMP is read from INT64 or FIXED_LEN_BYTE_ARRAY, but the column is INT32");
     }
 
     @Test
@@ -53,6 +53,8 @@ class ConversionFaultTest {
                 .isEqualTo("FLOAT16 is exactly 2 bytes, but the column declares 3");
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.uuid()))
                 .isEqualTo("UUID is exactly 16 bytes, but the column declares 8");
+        assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, timestamp()))
+                .isEqualTo("TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column declares 16");
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.interval()))
                 .isEqualTo("INTERVAL is exactly 12 bytes, but the column declares 8");
     }

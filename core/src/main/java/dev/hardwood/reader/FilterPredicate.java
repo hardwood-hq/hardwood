@@ -331,11 +331,12 @@ public sealed interface FilterPredicate
     /// the value [RowReader#getBinary] returns for it. A row matches when it stores exactly these
     /// bytes.
     ///
-    /// Ordered predicates compare the bytes unsigned lexicographically. A `DECIMAL`, a `FLOAT16`
-    /// and a legacy `INT96` timestamp column order by the value their bytes encode, and take a
-    /// `byte[]` for `eq`, `notEq` and `in` only; an ordered predicate on one takes a [BigDecimal],
-    /// a `float` or an [Instant]. A fixed-width column takes an equality literal of its own width
-    /// only, a `FLOAT16` two bytes and an `INT96` twelve.
+    /// Ordered predicates compare the bytes unsigned lexicographically. A `DECIMAL`, a `FLOAT16`,
+    /// a legacy `INT96` timestamp and a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` column order by the
+    /// value their bytes encode, and take a `byte[]` for `eq`, `notEq` and `in` only; an ordered
+    /// predicate on one takes a [BigDecimal], a `float`, an [Instant] or a [LocalDateTime]. A
+    /// fixed-width column takes an equality literal of its own width only, a `FLOAT16` two bytes and
+    /// an `INT96` twelve.
     ///
     /// The array is copied, so a caller reusing it does not change the predicate.
     static FilterPredicate eq(String column, byte[] value) {
@@ -1022,8 +1023,8 @@ public sealed interface FilterPredicate
 
     /// Predicate for TIMESTAMP columns with `isAdjustedToUTC = true` and for legacy `INT96`
     /// timestamp columns. The [Instant] value is converted to the column's time unit (MILLIS,
-    /// MICROS, or NANOS) at reader creation using the schema's `TimestampType`, or to the twelve
-    /// bytes of an `INT96`.
+    /// MICROS, or NANOS) at reader creation using the schema's `TimestampType`, stored as the
+    /// column's `INT64` or `FIXED_LEN_BYTE_ARRAY(12)` count, or to the twelve bytes of an `INT96`.
     record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
 
         public InstantColumnPredicate {

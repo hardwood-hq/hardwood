@@ -142,6 +142,23 @@ public sealed interface ResolvedPredicate {
             /// value the column holds.
             VARIABLE_DECIMAL(false),
 
+            /// A `TIMESTAMP` over a `FIXED_LEN_BYTE_ARRAY(12)`: a count of the column's unit since
+            /// the epoch, as a little-endian two's complement 96-bit integer.
+            ///
+            /// `TIMESTAMP(MILLIS)`:
+            ///
+            /// ```text
+            ///  1970-01-01T00:00:00.001Z  ->  01 00 00 00 00 00 00 00  00 00 00 00
+            ///  1970-01-01T00:00:00.256Z  ->  00 01 00 00 00 00 00 00  00 00 00 00
+            ///  1969-12-31T23:59:59.999Z  ->  FF FF FF FF FF FF FF FF  FF FF FF FF
+            /// ```
+            ///
+            /// Byte-wise, `.001` ranks above `.256` and the instant before the epoch above both,
+            /// since the least significant byte leads and the sign sits in the last. The last byte
+            /// compares signed and the rest unsigned, from the last towards the first. The width is
+            /// fixed, so a value has one encoding.
+            FIXED_TIMESTAMP(true),
+
             /// A legacy `INT96` timestamp, compared as the instant it encodes: twelve
             /// little-endian bytes of nanoseconds of the day, then the Julian day.
             ///
@@ -185,6 +202,7 @@ public sealed interface ResolvedPredicate {
                 return switch (this) {
                     case BYTE_STRING, STORED_BYTES -> BinaryComparator.compareUnsigned(left, right);
                     case FIXED_DECIMAL, VARIABLE_DECIMAL -> BinaryComparator.compareSigned(left, right);
+                    case FIXED_TIMESTAMP -> BinaryComparator.compareSignedLittleEndian(left, right);
                     case INT96_INSTANT -> BinaryComparator.compareInt96(left, right);
                 };
             }

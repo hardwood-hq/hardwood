@@ -51,7 +51,31 @@ final class CoverageWaivers {
     private static List<Waiver> all() {
         List<Waiver> waivers = new ArrayList<>();
         brotli(waivers);
+        fixedTimestamps(waivers);
         return waivers;
+    }
+
+    /// A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` reaches no cell of this module. The carrier
+    /// comes from parquet-format after its 2.14.0 release, and no parquet-java release up to 1.18.1
+    /// accepts the pairing: the pinned one refuses it while parsing the footer, so it opens no file
+    /// holding one.
+    ///
+    /// The writer's output is covered by core's `WriterFlba12TimestampTest`, and compared with the
+    /// bytes and bounds a parquet-java development build wrote into `flba12_timestamp.parquet` by
+    /// `Flba12TimestampTest`, whose `parquetJavaRejectsTheAnnotation` pins the reason so that a
+    /// parquet-java that reads the carrier fails there and these waivers come off.
+    private static void fixedTimestamps(List<Waiver> waivers) {
+        for (CoverageDomain.Annotation annotation : CoverageDomain.annotations()) {
+            if (CoverageDomain.readByParquetJava(annotation)) {
+                continue;
+            }
+            for (Coverage.StorageForm form : CoverageDomain.storageForms(annotation)) {
+                waivers.add(new Waiver(Coverage.annotationStorage(annotation.key(), annotation.carrierKey(), form),
+                        "no parquet-java release up to 1.18.1 reads TIMESTAMP on FIXED_LEN_BYTE_ARRAY(12); covered by"
+                                + " WriterFlba12TimestampTest and Flba12TimestampTest, with the reason pinned by"
+                                + " Flba12TimestampTest.parquetJavaRejectsTheAnnotation"));
+            }
+        }
     }
 
     /// `BROTLI` reaches no cell of this module. parquet-java resolves a codec by name through

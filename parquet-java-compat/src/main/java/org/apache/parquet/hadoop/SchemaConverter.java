@@ -16,6 +16,7 @@ import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -47,7 +48,7 @@ class SchemaConverter {
                     repetition,
                     toPrimitiveTypeName(primitive.type()),
                     primitive.name(),
-                    toOriginalType(primitive.logicalType()));
+                    toOriginalType(primitive.type(), primitive.logicalType()));
         }
         else if (node instanceof SchemaNode.GroupNode group) {
             List<Type> children = new ArrayList<>();
@@ -111,6 +112,16 @@ class SchemaConverter {
             case BSON -> OriginalType.BSON;
             case INTERVAL -> OriginalType.INTERVAL;
         };
+    }
+
+    /// The `OriginalType` of a primitive column. `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` annotate
+    /// an `INT64` only, so a `FIXED_LEN_BYTE_ARRAY(12)` timestamp has none and its values are the
+    /// stored `Binary`.
+    private static OriginalType toOriginalType(PhysicalType physicalType, LogicalType logicalType) {
+        if (Flba12Timestamps.isCarriedBy(physicalType, logicalType)) {
+            return null;
+        }
+        return toOriginalType(logicalType);
     }
 
     private static OriginalType toOriginalType(LogicalType logicalType) {

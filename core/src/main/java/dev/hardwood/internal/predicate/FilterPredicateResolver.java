@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
@@ -83,6 +84,9 @@ public class FilterPredicateResolver {
     private static final BigInteger INT32_MAX = BigInteger.valueOf(Integer.MAX_VALUE);
     private static final BigInteger INT64_MIN = BigInteger.valueOf(Long.MIN_VALUE);
     private static final BigInteger INT64_MAX = BigInteger.valueOf(Long.MAX_VALUE);
+
+    /// The counts a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` holds.
+    private static final CarriedLiteral.Range FIXED_TIMESTAMP_RANGE = CarriedLiteral.Range.ofBytes(Flba12Timestamps.WIDTH);
 
     private static final BigInteger NANOS_PER_MILLI = BigInteger.valueOf(1_000_000L);
     private static final BigInteger NANOS_PER_MICRO = BigInteger.valueOf(1_000L);
@@ -156,9 +160,8 @@ public class FilterPredicateResolver {
                             FilterPredicateResolver::int96Bytes), Comparison.INT96_INSTANT);
                 }
                 LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, true);
-                yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(
-                        held(p.column(), p.values(), value -> inUnit(nanosSinceEpoch(value), unit),
-                                timestampHolds(unit), Instant::toString)));
+                yield timestampIn(p.column(), cs, unit, p.values(), FilterPredicateResolver::nanosSinceEpoch,
+                        Instant::toString);
             }
             case LocalDateTimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -168,9 +171,8 @@ public class FilterPredicateResolver {
             case FilterPredicate.LocalDateTimeInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
                 LogicalType.TimeUnit unit = timestampUnit(p.column(), cs, false);
-                yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(
-                        held(p.column(), p.values(), value -> inUnit(wallClockNanos(value), unit),
-                                timestampHolds(unit), LocalDateTime::toString)));
+                yield timestampIn(p.column(), cs, unit, p.values(), FilterPredicateResolver::wallClockNanos,
+                        LocalDateTime::toString);
             }
             case TimeColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -640,7 +642,7 @@ public class FilterPredicateResolver {
     /// a refusal names it, or `null` for a column whose values do.
     ///
     /// A `DECIMAL` orders by the number its bytes encode, a `FLOAT16` by the half, and an `INT96`
-    /// by the instant. On those a `byte[]` literal takes equality and membership only, which the
+    /// and a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` by the instant or wall clock. On those a `byte[]` literal takes equality and membership only, which the
     /// bytes answer whatever annotation the reader recognises; the typed literal carries the
     /// order.
     ///
@@ -674,7 +676,8 @@ public class FilterPredicateResolver {
             case LogicalType.IntType ignored -> null;
             case LogicalType.DateType ignored -> null;
             case LogicalType.TimeType ignored -> null;
-            case LogicalType.TimestampType ignored -> null;
+            // Only a FIXED_LEN_BYTE_ARRAY(12) timestamp reaches here: byteColumn refuses an INT64.
+            case LogicalType.TimestampType timestamp -> timestamp.isAdjustedToUTC() ? "an Instant" : "a LocalDateTime";
         };
     }
 
@@ -692,8 +695,9 @@ public class FilterPredicateResolver {
     ///
     /// Those bytes denote one value of the column, so a row storing them holds that value: the
     /// comparison of the value reads the column's bounds, in the order they are written in, and
-    /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none. A fixed-width
-    /// `DECIMAL` holds each number under one encoding, so there the value alone decides.
+    /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none. A `FIXED_LEN_BYTE_ARRAY(12)`
+    /// `TIMESTAMP` and a fixed-width `DECIMAL` hold each value under one encoding, so there the value
+    /// alone decides.
     private static ResolvedPredicate storedBytesEqual(String columnName, ColumnSchema columnSchema, byte[] value,
             List<ColumnOrder> columnOrders) {
         int columnIndex = columnSchema.columnIndex();
@@ -702,6 +706,10 @@ public class FilterPredicateResolver {
         if (columnSchema.type() == PhysicalType.INT96) {
             requireInt96Width(columnName, value);
             return bytes;
+        }
+        if (columnSchema.logicalType() instanceof LogicalType.TimestampType) {
+            requireFixedTimestampWidth(columnName, value);
+            return new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ, value, Comparison.FIXED_TIMESTAMP);
         }
         if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
             return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16Predicate(columnIndex, Operator.EQ,
@@ -726,6 +734,12 @@ public class FilterPredicateResolver {
                 requireInt96Width(columnName, value);
             }
             return bytes;
+        }
+        if (columnSchema.logicalType() instanceof LogicalType.TimestampType) {
+            for (byte[] value : values) {
+                requireFixedTimestampWidth(columnName, value);
+            }
+            return new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.FIXED_TIMESTAMP);
         }
         if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
             return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16InPredicate(columnIndex,
@@ -818,9 +832,21 @@ public class FilterPredicateResolver {
 
     /// Refuses a byte literal on an `INT96` column that is not the twelve bytes of a value.
     private static void requireInt96Width(String columnName, byte[] value) {
-        if (value.length != LogicalTypeConverter.INT96_BYTES) {
-            throw new IllegalArgumentException("Column '" + columnName + "' is an INT96, whose literal is "
-                    + LogicalTypeConverter.INT96_BYTES + " bytes, not " + value.length);
+        requireLiteralWidth(columnName, "an INT96", LogicalTypeConverter.INT96_BYTES, value);
+    }
+
+    /// Refuses a byte literal on a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` column that is not the
+    /// twelve bytes of a value.
+    private static void requireFixedTimestampWidth(String columnName, byte[] value) {
+        requireLiteralWidth(columnName, "a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP", Flba12Timestamps.WIDTH, value);
+    }
+
+    /// Refuses a byte literal of another width than the `width` bytes that encode a value of the
+    /// column, which `column` names.
+    private static void requireLiteralWidth(String columnName, String column, int width, byte[] value) {
+        if (value.length != width) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is " + column + ", whose literal is "
+                    + width + " bytes, not " + value.length);
         }
     }
 
@@ -850,9 +876,9 @@ public class FilterPredicateResolver {
 
     // ==================== Value conversion helpers ====================
 
-    /// The unit of an `INT64` `TIMESTAMP` column of the kind the literal denotes: an [Instant] a
-    /// UTC-adjusted one, a [LocalDateTime] a local wall clock. A legacy `INT96` timestamp, which an
-    /// [Instant] reaches before this, takes no [LocalDateTime].
+    /// The unit of a `TIMESTAMP` column of the kind the literal denotes: an [Instant] a UTC-adjusted
+    /// one, a [LocalDateTime] a local wall clock. A legacy `INT96` timestamp, which an [Instant]
+    /// reaches before this, takes no [LocalDateTime].
     private static LogicalType.TimeUnit timestampUnit(String columnName, ColumnSchema columnSchema,
             boolean literalIsInstant) {
         if (!literalIsInstant && isLegacyInt96(columnSchema)) {
@@ -867,10 +893,12 @@ public class FilterPredicateResolver {
         if (timestampType.isAdjustedToUTC() != literalIsInstant) {
             throw new IllegalArgumentException("Column '" + columnName + "' is "
                     + TimestampAccessorKind.describe(timestampType.isAdjustedToUTC()) + ", which takes "
-                    + (literalIsInstant ? "LocalDateTime and long literals, not an Instant"
-                            : "Instant and long literals, not a LocalDateTime"));
+                    + ColumnLiterals.taken(columnSchema) + " literals, not " + literal);
         }
-        validateType(columnName, PhysicalType.INT64, columnSchema, literal);
+        // FileSchema keeps a TIMESTAMP on no other carrier.
+        if (columnSchema.type() != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            validateType(columnName, PhysicalType.INT64, columnSchema, literal);
+        }
         return timestampType.unit();
     }
 
@@ -1062,17 +1090,45 @@ public class FilterPredicateResolver {
                 .array();
     }
 
-    /// A timestamp literal, `nanos` since the epoch, on an `INT64` column counting `unit`.
+    /// A timestamp literal, `nanos` since the epoch, on a column counting `unit` in an `INT64` or in
+    /// a `FIXED_LEN_BYTE_ARRAY(12)`.
     private static ResolvedPredicate timestamp(String columnName, ColumnSchema cs, Operator op,
             LogicalType.TimeUnit unit, BigInteger nanos, String shown) {
-        return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit), timestampHolds(unit), shown,
+        if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit, FIXED_TIMESTAMP_RANGE.min(),
+                    FIXED_TIMESTAMP_RANGE.max()), timeHolds(unit), shown,
+                    (resolvedOp, value) -> new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), resolvedOp,
+                            fixedTimestampBytes(value), Comparison.FIXED_TIMESTAMP));
+        }
+        return carried(columnName, cs.columnIndex(), op, inUnit(nanos, unit, INT64_MIN, INT64_MAX),
+                timestampHolds(unit), shown,
                 (resolvedOp, value) -> new ResolvedPredicate.LongPredicate(cs.columnIndex(), resolvedOp,
                         value.longValueExact()));
     }
 
-    /// `nanos` since the epoch measured in `unit`, narrowed to the `INT64` a timestamp is stored in.
-    private static CarriedLiteral inUnit(BigInteger nanos, LogicalType.TimeUnit unit) {
-        return inUnit(nanos, unit, INT64_MIN, INT64_MAX);
+    /// A timestamp set, each probe `nanos` of a value since the epoch, measured as a [#timestamp]
+    /// equality literal is.
+    private static <T> ResolvedPredicate timestampIn(String columnName, ColumnSchema cs, LogicalType.TimeUnit unit,
+            List<T> values, Function<T, BigInteger> nanos, Function<T, String> shown) {
+        if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), bytesOf(held(columnName, values,
+                    value -> inUnit(nanos.apply(value), unit, FIXED_TIMESTAMP_RANGE.min(), FIXED_TIMESTAMP_RANGE.max()),
+                    timeHolds(unit), shown), FilterPredicateResolver::fixedTimestampBytes), Comparison.FIXED_TIMESTAMP);
+        }
+        return new ResolvedPredicate.LongInPredicate(cs.columnIndex(), longsOf(held(columnName, values,
+                value -> inUnit(nanos.apply(value), unit, INT64_MIN, INT64_MAX), timestampHolds(unit), shown)));
+    }
+
+    /// The twelve bytes a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` stores for `count` units: its
+    /// two's complement, least significant byte first. The count has already been measured against
+    /// [#FIXED_TIMESTAMP_RANGE].
+    private static byte[] fixedTimestampBytes(BigInteger count) {
+        byte[] bigEndian = toFixedLenDecimalBytes(count, Flba12Timestamps.WIDTH);
+        byte[] littleEndian = new byte[bigEndian.length];
+        for (int i = 0; i < bigEndian.length; i++) {
+            littleEndian[i] = bigEndian[bigEndian.length - 1 - i];
+        }
+        return littleEndian;
     }
 
     private static String timestampHolds(LogicalType.TimeUnit unit) {

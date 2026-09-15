@@ -16,6 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -337,6 +338,78 @@ class FilterPredicateResolverTest {
     /// Twelve `INT96` bytes: nanoseconds of the day, then the Julian day, both little-endian.
     private static byte[] int96(long nanosOfDay, int julianDay) {
         return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putLong(nanosOfDay).putInt(julianDay).array();
+    }
+
+    // ==================== TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) ====================
+
+    /// An `Instant` resolves to the twelve little-endian bytes of its count of the column's unit,
+    /// compared in the signed order of the value.
+    @ParameterizedTest
+    @EnumSource(FilterPredicate.Operator.class)
+    void resolveInstantOnATwelveByteTimestampToItsCount(FilterPredicate.Operator op) {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS));
+
+        assertThat(FilterPredicateResolver.resolve(instantPredicate("ts", op, Instant.parse("1969-12-31T23:59:59Z")),
+                schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0, op,
+                        HexFormat.of().parseHex("003665c4ffffffffffffffff"), Comparison.FIXED_TIMESTAMP));
+    }
+
+    /// Past the `INT64` nanosecond range, where the count needs the twelfth byte.
+    @Test
+    void resolveLocalDateTimeSetOnATwelveByteTimestampPastTheInt64Range() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                LogicalType.timestamp(false, LogicalType.TimeUnit.NANOS));
+
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.in("ts", LocalDateTime.parse("0001-01-01T00:00")), schema);
+
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryInPredicate.class);
+        ResolvedPredicate.BinaryInPredicate in = (ResolvedPredicate.BinaryInPredicate) resolved;
+        assertThat(in.comparison()).isEqualTo(Comparison.FIXED_TIMESTAMP);
+        assertThat(in.values()).isDeepEqualTo(new byte[][] { HexFormat.of().parseHex("00001a3deb03b2a1fcffffff") });
+    }
+
+    /// An `Instant` between two milliseconds is no value of a `MILLIS` column: equality refuses it
+    /// and an order moves to the whole millisecond on the side it admits.
+    @Test
+    void resolveInstantBetweenTwoUnitsOnATwelveByteTimestamp() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS));
+        Instant between = Instant.parse("1969-12-31T23:59:59.9995Z");
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("ts", between), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' holds a whole number of milliseconds; the equality literal "
+                        + "1969-12-31T23:59:59.999500Z is not a value it can hold");
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.gt("ts", between), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(new ResolvedPredicate.BinaryPredicate(0,
+                        FilterPredicate.Operator.GT_EQ, new byte[12], Comparison.FIXED_TIMESTAMP));
+    }
+
+    /// A `byte[]` is the stored bytes, for equality only, and twelve of them.
+    @Test
+    void resolveBytesOnATwelveByteTimestamp() {
+        FileSchema schema = schemaWithLogicalType("ts", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS));
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.notEq("ts", new byte[12]), schema))
+                .usingRecursiveComparison().withStrictTypeChecking().isEqualTo(ResolvedPredicate.negate(
+                        new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.EQ, new byte[12],
+                                Comparison.FIXED_TIMESTAMP)));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.ltEq("ts", new byte[12]), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is annotated TIMESTAMP(MICROS, UTC), whose values do not order as their "
+                        + "stored bytes; a byte[] literal takes eq, notEq and in there, and an ordered predicate "
+                        + "takes an Instant");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("ts", new byte[8]), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP, whose literal is 12 bytes, not 8");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("ts", 0L), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts' is annotated TIMESTAMP(MICROS, UTC), which takes Instant and byte[] "
+                        + "literals, not a long");
     }
 
     // ==================== LocalDateTime ====================

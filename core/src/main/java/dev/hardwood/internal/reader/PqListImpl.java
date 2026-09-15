@@ -258,17 +258,19 @@ final class PqListImpl implements PqList {
         if (NestedLeafDecoder.isInt96Timestamp(leaf)) {
             return new LeafList<>(pos -> NestedLeafDecoder.int96TimestampAt(batch, projCol, pos));
         }
+        PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
-        return new LeafList<>(pos -> NestedLeafDecoder.timestampAt(batch, projCol, pos, unit));
+        return new LeafList<>(pos -> NestedLeafDecoder.timestampAt(batch, projCol, pos, type, unit));
     }
 
     @Override
     public List<LocalDateTime> localTimestamps() {
         TimestampAccessorKind.require(elementSchema, false);
         int projCol = listDesc.firstLeafProjCol();
-        LogicalType.TimeUnit unit =
-                ((LogicalType.TimestampType) requirePrimitiveElement().logicalType()).unit();
-        return new LeafList<>(pos -> NestedLeafDecoder.localTimestampAt(batch, projCol, pos, unit));
+        SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
+        PhysicalType type = leaf.type();
+        LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
+        return new LeafList<>(pos -> NestedLeafDecoder.localTimestampAt(batch, projCol, pos, type, unit));
     }
 
     @Override

@@ -210,6 +210,10 @@ DATE (6), TIME (7), TIMESTAMP (8), INTERVAL (9, also via `ConvertedType` 21),
 INTEGER (10), UNKNOWN/NULL (11), JSON (12), BSON (13), UUID (14), FLOAT16 (15),
 VARIANT (16), GEOMETRY (17), GEOGRAPHY (18).
 
+`TimestampType` is read and written on both its carriers: `INT64`, and `FIXED_LEN_BYTE_ARRAY(12)`
+holding a signed two's complement little-endian 96-bit count of the unit since the epoch.
+Statistics on the latter compare in that signed order.
+
 Parameterized sub-structs — all fields ✅: `DecimalType` (scale, precision),
 `TimeType` (isAdjustedToUTC, unit), `TimestampType` (isAdjustedToUTC, unit),
 `IntType` (bitWidth, isSigned), `VariantType` (specification_version),

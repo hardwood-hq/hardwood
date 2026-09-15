@@ -259,8 +259,8 @@ class UnreadableSortOrderTest {
         }
         assertThat(warnings.messages()).containsExactly(
                 "Ignoring 1 logical type annotation(s) the column's physical type cannot carry; those "
-                        + "columns are read as their physical type: ts (TIMESTAMP is read from INT64, "
-                        + "but the column is FIXED_LEN_BYTE_ARRAY)",
+                        + "columns are read as their physical type: ts (TIMESTAMP over a FIXED_LEN_BYTE_ARRAY "
+                        + "is 12 bytes, but the column declares 16)",
                 "[dropped-timestamp.parquet: row group 0, column 'ts'] Ignoring the min/max statistics "
                         + "for pruning: the order they were written in is one this reader cannot read. "
                         + "Rows they could have skipped are read and filtered instead.");

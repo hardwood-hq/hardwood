@@ -793,10 +793,12 @@ class AvroRowReaderTest {
 
     @Test
     void fixedBackedColumnsMaterializeAsAvroFixed() throws Exception {
-        // INT96, INTERVAL under either annotation, and FLOAT16 all convert to Avro `fixed`
-        // and read as their on-disk bytes — 12, 12 and 2 wide. They share one plan kind with
-        // FIXED_LEN_BYTE_ARRAY decimals, and nothing pinned them through the reader.
+        // INT96, a TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12), INTERVAL under either annotation, and
+        // FLOAT16 all convert to Avro `fixed` and read as their on-disk bytes — 12, 12, 12 and 2
+        // wide. They share one plan kind with FIXED_LEN_BYTE_ARRAY decimals, and nothing pinned
+        // them through the reader.
         assertFixedColumn("int96_timestamp_test.parquet", "ts", 12);
+        assertFixedColumn("flba12_timestamp_test.parquet", "utc_ns", 12);
         assertFixedColumn("interval_logical_type_test.parquet", "duration", 12);
         assertFixedColumn("interval_legacy_converted_type_test.parquet", "duration", 12);
         assertFixedColumn("float16_logical_type_test.parquet", "half", 2);

@@ -77,7 +77,7 @@ class WriterAnnotationCoverageTest {
     private static final int LONG_BINARY_LENGTH = 100;
 
     static Stream<Annotation> annotations() {
-        return CoverageDomain.annotations().stream();
+        return CoverageDomain.annotations().stream().filter(CoverageDomain::readByParquetJava);
     }
 
     // ==================== Tests ====================

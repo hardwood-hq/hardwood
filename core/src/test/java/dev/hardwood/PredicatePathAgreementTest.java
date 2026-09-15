@@ -9,6 +9,7 @@ package dev.hardwood;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -77,6 +78,10 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /// column and `GEOMETRY`.
 /// `predicate_int96` carries `INT96` columns in the same three layouts, one value stored under a
 /// non-canonical encoding, and bounds recorded in byte order rather than in time order.
+/// `predicate_ts12` carries `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)` of every unit, in the
+/// single, multi, dictionary and Bloom layouts, with values past the `INT64` nanosecond range on both
+/// sides of the epoch and bounds recorded in the order of the values. Its `pages` layout holds one
+/// value per page under a page index, so the page index decides the predicates too.
 class PredicatePathAgreementTest {
 
     private static final Path RES = Paths.get("src/test/resources/predicate");
@@ -138,8 +143,16 @@ class PredicatePathAgreementTest {
     private static final Layout INT96_DICTIONARY = new Layout("int96-dictionary",
             RES.resolve("predicate_int96_dict.parquet"));
 
+    private static final Layout TS12_SINGLE = new Layout("ts12", RES.resolve("predicate_ts12_single.parquet"));
+    private static final Layout TS12_MULTI = new Layout("ts12-multi-rg", RES.resolve("predicate_ts12_multi.parquet"));
+    private static final Layout TS12_DICTIONARY = new Layout("ts12-dictionary",
+            RES.resolve("predicate_ts12_dict.parquet"));
+    private static final Layout TS12_BLOOM = new Layout("ts12-bloom", RES.resolve("predicate_ts12_bloom.parquet"));
+    private static final Layout TS12_PAGES = new Layout("ts12-pages", RES.resolve("predicate_ts12_pages.parquet"));
+
     private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, BLOOM, NESTED, NESTED_MULTI,
-            OPAQUE, OPAQUE_DICTIONARY, OPAQUE_BLOOM, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY);
+            OPAQUE, OPAQUE_DICTIONARY, OPAQUE_BLOOM, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY,
+            TS12_SINGLE, TS12_MULTI, TS12_DICTIONARY, TS12_BLOOM, TS12_PAGES);
 
     // ==================== Read paths ====================
 
@@ -363,6 +376,12 @@ class PredicatePathAgreementTest {
         // --- INT96 ---
         int96Cases(cases, "ts96");
         int96Cases(cases, "s.ts96");
+
+        // --- TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) ---
+        ts12Cases(cases, "ts12_ns", LogicalType.TimeUnit.NANOS);
+        ts12Cases(cases, "s.ts12", LogicalType.TimeUnit.NANOS);
+        ts12Cases(cases, "ts12_ms", LogicalType.TimeUnit.MILLIS);
+        ts12LocalCases(cases, "ts12_us_local");
 
         // --- UUID ---
         UUID uuidAt200 = uuidOfRow(200);
@@ -864,6 +883,88 @@ class PredicatePathAgreementTest {
                 FilterPredicate.not(FilterPredicate.lt(column, Instant.MIN)), matching(everyNonNullRow())));
     }
 
+    /// A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` orders by the instant its count stands for, which
+    /// the stored bytes, little-endian with the sign in the last byte, do not. An [Instant] takes every
+    /// operator; a `byte[]` literal is the twelve stored bytes and takes equality and membership only.
+    private static void ts12Cases(List<Case> cases, String column, LogicalType.TimeUnit unit) {
+        Instant atRow200 = ts12Instant(200, unit);
+        instantCases(cases, column, atRow200);
+        cases.add(new Case(column, "notEq(" + atRow200 + ")", FilterPredicate.notEq(column, atRow200),
+                matching(notEq(atRow200))));
+        cases.add(new Case(column, "ltEq(" + atRow200 + ")", FilterPredicate.ltEq(column, atRow200),
+                matching(cmp(Operator.LT_EQ, atRow200))));
+        cases.add(new Case(column, "gt(" + atRow200 + ")", FilterPredicate.gt(column, atRow200),
+                matching(cmp(Operator.GT, atRow200))));
+        cases.add(new Case(column, "lt(the epoch)", FilterPredicate.lt(column, Instant.EPOCH),
+                matching(cmp(Operator.LT, Instant.EPOCH))));
+        Instant year9999 = ts12Instant(6, unit);
+        cases.add(new Case(column, "gtEq(the end of year 9999)", FilterPredicate.gtEq(column, year9999),
+                matching(cmp(Operator.GT_EQ, year9999))));
+        Instant bcYear = ts12Instant(40, unit);
+        cases.add(new Case(column, "in(row 40, row 200)", FilterPredicate.in(column, bcYear, atRow200),
+                matching(oneOf(bcYear, atRow200))));
+
+        String description = "annotated TIMESTAMP(" + unit + ", UTC)";
+        storedByteCases(cases, column, ts12Bytes(ts12Count(200, unit)));
+        cases.add(new Case(column, "lt(the bytes of row 200)",
+                binary(column, Operator.LT, ts12Bytes(ts12Count(200, unit))),
+                new Rejected(notByteOrdered(column, description, "an Instant"))));
+        String wrongWidth = "Column '" + column + "' is a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP, whose literal is "
+                + "12 bytes, not 11";
+        cases.add(new Case(column, "eq(an eleven-byte literal)", binary(column, Operator.EQ, new byte[11]),
+                new Rejected(wrongWidth)));
+        cases.add(new Case(column, "in(an eleven-byte literal)", FilterPredicate.in(column, new byte[11]),
+                new Rejected(wrongWidth)));
+        cases.add(new Case(column, "gt(an eleven-byte literal)", binary(column, Operator.GT, new byte[11]),
+                new Rejected(notByteOrdered(column, description, "an Instant"))));
+        cases.add(new Case(column, "eq(a long)", FilterPredicate.eq(column, 0L),
+                new Rejected("Column '" + column + "' is " + description
+                        + ", which takes Instant and byte[] literals, not a long")));
+        cases.add(new Case(column, "eq(a LocalDateTime), a UTC timestamp",
+                FilterPredicate.eq(column, LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC)),
+                new Rejected("Column '" + column + "' is a UTC-adjusted TIMESTAMP (isAdjustedToUTC=true),"
+                        + " which takes Instant and byte[] literals, not a LocalDateTime")));
+
+        // Every Instant is a count of nanoseconds the twelve bytes hold.
+        cases.add(new Case(column, "eq(Instant.MAX)", FilterPredicate.eq(column, Instant.MAX),
+                unit == LogicalType.TimeUnit.NANOS
+                        ? matching(never())
+                        : new Rejected("Column '" + column + "' holds a whole number of milliseconds; the equality "
+                                + "literal +1000000000-12-31T23:59:59.999999999Z is not a value it can hold")));
+        cases.add(new Case(column, "lt(Instant.MAX)", FilterPredicate.lt(column, Instant.MAX),
+                matching(everyNonNullRow())));
+        cases.add(new Case(column, "not(gtEq(Instant.MIN))",
+                FilterPredicate.not(FilterPredicate.gtEq(column, Instant.MIN)), matching(never())));
+        if (unit != LogicalType.TimeUnit.NANOS) {
+            // Half a millisecond past row 200: no value the column holds is equal, and the ordered
+            // operators move to the neighbouring whole millisecond.
+            Instant between = atRow200.plusNanos(500_000);
+            cases.add(new Case(column, "eq(between two milliseconds)", FilterPredicate.eq(column, between),
+                    new Rejected("Column '" + column + "' holds a whole number of milliseconds; the equality "
+                            + "literal " + between + " is not a value it can hold")));
+            cases.add(new Case(column, "gt(between two milliseconds)", FilterPredicate.gt(column, between),
+                    matching(cmp(Operator.GT, between))));
+            cases.add(new Case(column, "ltEq(between two milliseconds)", FilterPredicate.ltEq(column, between),
+                    matching(cmp(Operator.LT_EQ, between))));
+        }
+    }
+
+    /// A local `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, whose literal is a [LocalDateTime].
+    private static void ts12LocalCases(List<Case> cases, String column) {
+        Instant atRow200 = ts12Instant(200, LogicalType.TimeUnit.MICROS);
+        localDateTimeCases(cases, column, LocalDateTime.ofInstant(atRow200, ZoneOffset.UTC));
+        LocalDateTime beforeEpoch = LocalDateTime.ofInstant(ts12Instant(3, LogicalType.TimeUnit.MICROS), ZoneOffset.UTC);
+        cases.add(new Case(column, "gtEq(the microsecond before the epoch)", FilterPredicate.gtEq(column, beforeEpoch),
+                matching(cmp(Operator.GT_EQ, beforeEpoch))));
+        storedByteCases(cases, column, ts12Bytes(ts12Count(200, LogicalType.TimeUnit.MICROS)));
+        cases.add(new Case(column, "gtEq(the bytes of row 200)",
+                binary(column, Operator.GT_EQ, ts12Bytes(ts12Count(200, LogicalType.TimeUnit.MICROS))),
+                new Rejected(notByteOrdered(column, "annotated TIMESTAMP(MICROS, local)", "a LocalDateTime"))));
+        cases.add(new Case(column, "eq(an Instant), a local timestamp", FilterPredicate.eq(column, Instant.EPOCH),
+                new Rejected("Column '" + column + "' is a local-wall-clock TIMESTAMP (isAdjustedToUTC=false),"
+                        + " which takes LocalDateTime and byte[] literals, not an Instant")));
+    }
+
     // ==================== The test ====================
 
     static Stream<Arguments> cells() {
@@ -1213,6 +1314,52 @@ class PredicatePathAgreementTest {
                 .putLong(canonical.getLong() + NANOS_PER_DAY)
                 .putInt(canonical.getInt() - 1)
                 .array();
+    }
+
+    /// Fifty years of 365.25 days, in nanoseconds: the step between the rows of `predicate_ts12`.
+    private static final BigInteger TS12_STEP_NANOS = BigInteger.valueOf(50L * 31_557_600L * 1_000_000_000L);
+
+    /// The count `predicate_ts12` stores in `row` of the column counting `unit`, as the fixture writes
+    /// it: the nanosecond count floored to the unit.
+    private static BigInteger ts12Count(int row, LogicalType.TimeUnit unit) {
+        BigInteger nanos = switch (row) {
+            case 3 -> BigInteger.valueOf(-1);
+            case 6 -> BigInteger.valueOf(253_402_300_799L).multiply(BigInteger.TEN.pow(9))
+                    .add(BigInteger.valueOf(999_999_999));
+            default -> BigInteger.valueOf(row - 200).multiply(TS12_STEP_NANOS).add(BigInteger.valueOf(row * 1_000_001L));
+        };
+        BigInteger perUnit = BigInteger.valueOf(switch (unit) {
+            case MILLIS -> 1_000_000L;
+            case MICROS -> 1_000L;
+            case NANOS -> 1L;
+        });
+        BigInteger[] quotientAndRemainder = nanos.divideAndRemainder(perUnit);
+        return quotientAndRemainder[1].signum() < 0
+                ? quotientAndRemainder[0].subtract(BigInteger.ONE)
+                : quotientAndRemainder[0];
+    }
+
+    /// The instant `row` of the column counting `unit` stands for.
+    private static Instant ts12Instant(int row, LogicalType.TimeUnit unit) {
+        BigInteger[] secondsAndNanos = ts12Count(row, unit).multiply(BigInteger.valueOf(switch (unit) {
+            case MILLIS -> 1_000_000L;
+            case MICROS -> 1_000L;
+            case NANOS -> 1L;
+        })).divideAndRemainder(BigInteger.TEN.pow(9));
+        long seconds = secondsAndNanos[0].longValueExact();
+        long nanos = secondsAndNanos[1].longValueExact();
+        return nanos < 0 ? Instant.ofEpochSecond(seconds - 1, nanos + 1_000_000_000L) : Instant.ofEpochSecond(seconds, nanos);
+    }
+
+    /// The twelve bytes of `count`: two's complement, least significant byte first.
+    private static byte[] ts12Bytes(BigInteger count) {
+        byte[] bigEndian = count.toByteArray();
+        byte[] bytes = new byte[12];
+        Arrays.fill(bytes, (byte) (count.signum() < 0 ? 0xFF : 0));
+        for (int i = 0; i < bigEndian.length; i++) {
+            bytes[i] = bigEndian[bigEndian.length - 1 - i];
+        }
+        return bytes;
     }
 
     /// The `uuid` column's value in `row`, as the fixture writes it.

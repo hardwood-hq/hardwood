@@ -200,6 +200,8 @@ final class CoverageDomain {
                         null));
                 annotations.add(new Annotation(LogicalType.timestamp(utc, unit),
                         PhysicalType.INT64, null));
+                annotations.add(new Annotation(LogicalType.timestamp(utc, unit),
+                        PhysicalType.FIXED_LEN_BYTE_ARRAY, 12));
             }
         }
 
@@ -209,6 +211,14 @@ final class CoverageDomain {
         decimals(annotations, PhysicalType.FIXED_LEN_BYTE_ARRAY, 16);
 
         return annotations;
+    }
+
+    /// Whether the pinned parquet-java reads a column carrying `annotation`. It rejects a
+    /// `TIMESTAMP` over a `FIXED_LEN_BYTE_ARRAY(12)` while parsing the footer, so those cells are
+    /// waived in [CoverageWaivers] and no case here reads one back.
+    static boolean readByParquetJava(Annotation annotation) {
+        return !(annotation.logicalType() instanceof LogicalType.TimestampType
+                && annotation.carrier() == PhysicalType.FIXED_LEN_BYTE_ARRAY);
     }
 
     /// The annotations that sit on a group node rather than on a column.

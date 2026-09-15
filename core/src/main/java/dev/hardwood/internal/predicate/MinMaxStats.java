@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.Statistics;
@@ -47,6 +48,10 @@ sealed interface MinMaxStats {
     /// should contain and contains every value it should exclude, so it is wrong in both
     /// pruning directions at once (#1172).
     String INVERTED = "the minimum sorts above the maximum";
+
+    /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` bound of another width is no value the column
+    /// stores, so there is no position in the column's order to read it at.
+    String NOT_THE_COLUMN_WIDTH = "one of them is not the width of the column's values";
 
     /// The column's annotation names no ordering, the file names one this build does not
     /// recognize, or the reader dropped the annotation the bounds were ordered by, so there is
@@ -532,6 +537,10 @@ sealed interface MinMaxStats {
             // reads them instead.
             if (comparison == Comparison.STORED_BYTES) {
                 return new NullCountOnlyStats(nullCount, null);
+            }
+            if (comparison == Comparison.FIXED_TIMESTAMP
+                    && (min.length != Flba12Timestamps.WIDTH || max.length != Flba12Timestamps.WIDTH)) {
+                return new NullCountOnlyStats(nullCount, NOT_THE_COLUMN_WIDTH);
             }
             // -100 sorts below +100 as a two's complement number and above it as a byte
             // string, so only the column's own order tells a decimal's bounds apart from an

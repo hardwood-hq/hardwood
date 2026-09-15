@@ -79,13 +79,13 @@ final class NestedLeafDecoder {
         if (isInt96Timestamp(leaf)) {
             return int96TimestampAt(batch, projCol, idx);
         }
-        return timestampAt(batch, projCol, idx,
+        return timestampAt(batch, projCol, idx, leaf.type(),
                 ((LogicalType.TimestampType) leaf.logicalType()).unit());
     }
 
     static LocalDateTime readLocalTimestamp(
             NestedBatchIndex batch, int projCol, int idx, SchemaNode.PrimitiveNode leaf) {
-        return localTimestampAt(batch, projCol, idx,
+        return localTimestampAt(batch, projCol, idx, leaf.type(),
                 ((LogicalType.TimestampType) leaf.logicalType()).unit());
     }
 
@@ -131,7 +131,13 @@ final class NestedLeafDecoder {
         return LogicalTypeConverter.longToTime(rawValue, unit);
     }
 
-    static Instant timestampAt(NestedBatchIndex batch, int projCol, int idx, LogicalType.TimeUnit unit) {
+    /// The instant a UTC-adjusted `TIMESTAMP` leaf stores, in an `INT64` or in a
+    /// `FIXED_LEN_BYTE_ARRAY(12)` as `type` says.
+    static Instant timestampAt(
+            NestedBatchIndex batch, int projCol, int idx, PhysicalType type, LogicalType.TimeUnit unit) {
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return ((BinaryBatchValues) batch.valueArrays[projCol]).flba12InstantAt(idx, unit);
+        }
         return LogicalTypeConverter.longToTimestamp(((long[]) batch.valueArrays[projCol])[idx], unit);
     }
 
@@ -139,8 +145,12 @@ final class NestedLeafDecoder {
         return LogicalTypeConverter.int96ToInstant(batch.getBinary(projCol, idx));
     }
 
+    /// The wall clock a local `TIMESTAMP` leaf stores; see [#timestampAt].
     static LocalDateTime localTimestampAt(
-            NestedBatchIndex batch, int projCol, int idx, LogicalType.TimeUnit unit) {
+            NestedBatchIndex batch, int projCol, int idx, PhysicalType type, LogicalType.TimeUnit unit) {
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return ((BinaryBatchValues) batch.valueArrays[projCol]).flba12LocalDateTimeAt(idx, unit);
+        }
         return LogicalTypeConverter.longToLocalTimestamp(((long[]) batch.valueArrays[projCol])[idx], unit);
     }
 

@@ -63,7 +63,7 @@ An annotation is built with the `LogicalType` static factory of the same name. T
 | `LogicalType.intType(bitWidth, isSigned)` | `INT_8` … `UINT_64` — `bitWidth` is 8, 16, 32 or 64 |
 | `LogicalType.decimal(precision, scale)` | `DECIMAL(precision, scale)` |
 | `LogicalType.time(isAdjustedToUTC, unit)` | `TIME` — `unit` is `TimeUnit.MILLIS`, `MICROS` or `NANOS` |
-| `LogicalType.timestamp(isAdjustedToUTC, unit)` | `TIMESTAMP` — same units |
+| `LogicalType.timestamp(isAdjustedToUTC, unit)` | `TIMESTAMP` — same units, over an `INT64` or a `FIXED_LEN_BYTE_ARRAY(12)` |
 | `LogicalType.variant(specVersion)` | `VARIANT` — `specVersion` is `1`; the writer rejects a column carrying it |
 | `LogicalType.geometry(crs)` | `GEOMETRY` — `crs` defaults to `OGC:CRS84` when `null` |
 | `LogicalType.geography(crs, edgeInterpolation)` | `GEOGRAPHY` — `edgeInterpolation` is an `EdgeInterpolationAlgorithm` |
@@ -172,8 +172,8 @@ The row-oriented layer takes physical values through the setter named for the ty
 | `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` | `setBinary` | `byte[]` |
 | `INT32` annotated `DATE` | `setDate` | `LocalDate` |
 | `INT32` / `INT64` annotated `TIME` | `setTime` | `LocalTime` |
-| `INT64` annotated `TIMESTAMP(_, UTC)` | `setTimestamp` | `Instant` |
-| `INT64` annotated `TIMESTAMP(_, local)` | `setLocalTimestamp` | `LocalDateTime` |
+| `INT64` or `FIXED_LEN_BYTE_ARRAY(12)` annotated `TIMESTAMP(_, UTC)` | `setTimestamp` | `Instant` |
+| `INT64` or `FIXED_LEN_BYTE_ARRAY(12)` annotated `TIMESTAMP(_, local)` | `setLocalTimestamp` | `LocalDateTime` |
 | `INT32` / `INT64` / `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` annotated `DECIMAL` | `setDecimal` | `BigDecimal` |
 | `FIXED_LEN_BYTE_ARRAY(16)` annotated `UUID` | `setUuid` | `UUID` |
 | `FIXED_LEN_BYTE_ARRAY(12)` annotated `INTERVAL` | `setInterval` | `PqInterval` |
@@ -183,6 +183,16 @@ The row-oriented layer takes physical values through the setter named for the ty
 `ListBuilder` has the same set as `addInt`, `addString`, `addStruct`, `addNull`, … and `MapBuilder` has `addEntry`, whose entry struct declares the two fields `key` and `value`.
 
 Timestamp columns split by `isAdjustedToUTC`, mirroring the reader's split between `getTimestamp` and `getLocalTimestamp`: using the wrong setter throws, so an instant is never silently reinterpreted. Both APIs also accept every setter by field index; see [Addressing fields by index](../how-to/write-row-by-row.md#addressing-fields-by-index).
+
+A timestamp column's physical type sets the range of values it holds; its unit sets the precision on either:
+
+| Unit | `INT64` holds | `FIXED_LEN_BYTE_ARRAY(12)` holds |
+|---|---|---|
+| `MILLIS` | about 292 million years either side of 1970 | every `Instant` and `LocalDateTime` |
+| `MICROS` | about 292,000 years either side of 1970 | every `Instant` and `LocalDateTime` |
+| `NANOS` | 1677-09-21T00:12:43.145224192 to 2262-04-11T23:47:16.854775807 | every `Instant` and `LocalDateTime` |
+
+A value outside the range of an `INT64` column is rejected under either `PrecisionLossPolicy`.
 
 ## Value Ranges
 
@@ -196,7 +206,7 @@ Some annotations narrow what their physical type may hold. Where one does, both 
 | `DECIMAL(p, s)` | an unscaled value of at most `p` digits |
 | `UNKNOWN` | no value at all; every row must be null, so the column is set through a setter taking a null mask |
 
-Every other annotation narrows nothing, and its column is not scanned per value. `DATE` and `TIMESTAMP` are the ones worth naming: every `INT32` is a day offset the reader materializes, and every `INT64` is a timestamp in any of the three units, so there is no value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type — a large unsigned value is spelled as a negative, which is also how the reader returns it.
+Every other annotation narrows nothing, and its column is not scanned per value. `DATE` and `TIMESTAMP` are the ones worth naming: every `INT32` is a day offset the reader materializes, and every `INT64` and every twelve bytes of a `FIXED_LEN_BYTE_ARRAY(12)` is a timestamp in any of the three units, so there is no value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type — a large unsigned value is spelled as a negative, which is also how the reader returns it.
 
 Two checks are not annotations and always apply: a `FIXED_LEN_BYTE_ARRAY` value must be exactly the length the column declares, and a present value of a binary column must not be `null`. The value at a row a `Validity` marks null is never encoded, so it is never checked.
 

@@ -106,9 +106,11 @@ public class Utils {
             "int32_with_uuid_logical_type.parquet", // No parquet-java oracle: invalid annotation
 
             // The fixture annotates a FIXED_LEN_BYTE_ARRAY(12) with TIMESTAMP, a carrier
-            // parquet-format defines after its 2.14.0 release. parquet-java 1.17.1 rejects the
-            // pairing while parsing the footer ("TIMESTAMP(MILLIS,true) can only annotate INT64"),
-            // so it never opens the file and cannot serve as a reference.
+            // parquet-format defines after its 2.14.0 release. No parquet-java release up to 1.18.1
+            // accepts the pairing; the pinned one rejects it while parsing the footer
+            // ("TIMESTAMP(MILLIS,true) can only annotate INT64"), so it never opens the file and
+            // cannot serve as a reference. Flba12TimestampTest
+            // holds Hardwood to the values the fixture documents instead.
             "flba12_timestamp.parquet", // No parquet-java oracle: FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP
 
             // shredded_variant fixtures are skipped outside this list: spec-invalid

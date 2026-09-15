@@ -1,7 +1,6 @@
 # Predicate literals
 
-**Status: Implemented**, except `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, which comes with
-[#921](https://github.com/hardwood-hq/hardwood/issues/921).
+**Status: Implemented**
 
 Which predicates a column takes, with which literals, and which rows they match. The public
 surface is `FilterPredicate`'s factories; `reference/query-controls.md` states the same rule for
@@ -268,8 +267,8 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
 
 ## Validation
 
-- **`PredicatePathAgreementTest`** runs the per-column table, except `TIMESTAMP` over
-  `FIXED_LEN_BYTE_ARRAY(12)` and `GEOGRAPHY` (whose literals are `GEOMETRY`'s), with every literal
+- **`PredicatePathAgreementTest`** runs the per-column table, except `GEOGRAPHY` (whose literals
+  are `GEOMETRY`'s), with every literal
   kind, operator, `not` form, set form and null test except `intersects`. It checks against an
   oracle of this rule that reads each row's value through the reader's accessors.
   - **Paths:** the `RowReader` by default, forced onto its record-level path, and with
@@ -278,8 +277,9 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
     Bloom filters, so that bounds, page index, dictionary and Bloom filter each decide a predicate
     again. Also a struct leaf that is null under a present struct, and a corpus of `BSON`,
     `INTERVAL`, `NULL`, `GEOMETRY` and a padded and empty `BYTE_ARRAY` `DECIMAL`, kept apart because
-    DuckDB cannot open a file holding `BSON`. Finally `INT96` columns with a non-canonical encoding
-    and bounds recorded in byte order.
+    DuckDB cannot open a file holding `BSON`. Then `INT96` columns with a non-canonical encoding
+    and bounds recorded in byte order, and `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)` of
+    every unit, past the `INT64` nanosecond range on both sides of the epoch.
 - **`FilterPredicateResolverTest`**: every literal kind of the table, accepted with the expected
   resolved predicate or rejected with the full message.
 - **`FilterPredicateTest`**: build-time checks, copies and content equality of `byte[]` literals.

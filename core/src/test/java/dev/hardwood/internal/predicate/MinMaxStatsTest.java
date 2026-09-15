@@ -9,10 +9,12 @@ package dev.hardwood.internal.predicate;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate.Operator;
@@ -48,6 +50,27 @@ class MinMaxStatsTest {
                 .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
                 .extracting(MinMaxStats::discardReason)
                 .isEqualTo("they come from the deprecated min/max fields, which compare unsigned");
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` bound of another width is no value of the column, so
+    /// the pair is discarded rather than compared, from the chunk statistics and from the page index
+    /// alike.
+    @Test
+    void aTimestampBoundOfAnotherWidthIsDiscarded() {
+        ResolvedPredicate.BinaryPredicate leaf = new ResolvedPredicate.BinaryPredicate(0, Operator.GT, new byte[12],
+                ResolvedPredicate.BinaryPredicate.Comparison.FIXED_TIMESTAMP);
+        Statistics shortMax = new Statistics(new byte[12], new byte[8], 0L, null, false);
+        ColumnIndex shortMaxPage = new ColumnIndex(new boolean[] { false }, List.of(new byte[12]),
+                List.of(new byte[8]), ColumnIndex.BoundaryOrder.UNORDERED, new long[] { 0 }, null, null, null);
+
+        assertThat(MinMaxStats.of(shortMax, leaf, BoundsReadability.ALL))
+                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is not the width of the column's values");
+        assertThat(MinMaxStats.ofPage(shortMaxPage, 0, leaf, BoundsReadability.ALL))
+                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .extracting(MinMaxStats::discardReason)
+                .isEqualTo("one of them is not the width of the column's values");
     }
 
     @Test

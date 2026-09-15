@@ -10,6 +10,7 @@ package dev.hardwood.internal.schema;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.SchemaElement;
 
 /// The annotation a footer gives a primitive [SchemaElement], and whether the reader drops it.
@@ -76,7 +77,25 @@ public final class LeafAnnotation {
         if (annotation == null) {
             return null;
         }
+        String legacyFault = legacyTimestampFault(element);
+        if (legacyFault != null) {
+            return legacyFault;
+        }
         return LogicalTypeConverter.conversionFault(element.type(), element.typeLength(), annotation);
+    }
+
+    /// The legacy `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` annotate an `INT64` only, while the
+    /// `TIMESTAMP` they map to is also read from a `FIXED_LEN_BYTE_ARRAY(12)`. Standing alone on
+    /// anything but an `INT64`, the legacy annotation is faulted where [#effective] would carry it
+    /// over.
+    private static String legacyTimestampFault(SchemaElement element) {
+        ConvertedType converted = element.convertedType();
+        boolean legacyTimestamp = converted == ConvertedType.TIMESTAMP_MILLIS
+                || converted == ConvertedType.TIMESTAMP_MICROS;
+        if (element.logicalType() != null || !legacyTimestamp || element.type() == PhysicalType.INT64) {
+            return null;
+        }
+        return converted + " is read from INT64, but the column is " + element.type();
     }
 
     /// Build a [LogicalType.DecimalType] from a legacy `DECIMAL` converted-type

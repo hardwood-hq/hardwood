@@ -265,6 +265,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] STRING (BYTE_ARRAY → String with UTF-8 decoding)
   - [x] DATE (INT32 → LocalDate, days since epoch)
   - [x] TIMESTAMP (INT64 → Instant for UTC-adjusted, LocalDateTime for local-wall-clock, MILLIS/MICROS/NANOS units)
+  - [x] TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) (signed little-endian 96-bit count, years 0001–9999 at every unit; read, filtered, written)
   - [x] TIME (INT32/INT64 → LocalTime with MILLIS/MICROS/NANOS units)
   - [x] DECIMAL (FIXED_LEN_BYTE_ARRAY → BigDecimal with scale/precision)
   - [x] INT_8, INT_16 (INT32 → narrowed int with validation)

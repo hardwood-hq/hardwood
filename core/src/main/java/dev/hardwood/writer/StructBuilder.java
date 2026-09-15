@@ -127,10 +127,12 @@ public interface StructBuilder {
     /// @see #setInt(String, int)
     StructBuilder setTime(String name, LocalTime value);
 
-    /// Sets an `INT64` field annotated `TIMESTAMP` with `isAdjustedToUTC = true`, in the unit
-    /// the annotation declares. A value carrying finer precision than the unit can hold is
-    /// rejected, or narrowed, according to the configured [PrecisionLossPolicy]; one outside
-    /// the range that unit spans is rejected under either. A `null` value sets the field null.
+    /// Sets a field annotated `TIMESTAMP` with `isAdjustedToUTC = true`, in the unit the
+    /// annotation declares, over an `INT64` or a `FIXED_LEN_BYTE_ARRAY(12)`. A value carrying finer
+    /// precision than the unit can hold is rejected, or narrowed, according to the configured
+    /// [PrecisionLossPolicy]; one outside the range an `INT64` of that unit spans is rejected under
+    /// either. A `FIXED_LEN_BYTE_ARRAY(12)` holds every [Instant]. A `null` value sets the field
+    /// null.
     ///
     /// A local-wall-clock column — `isAdjustedToUTC = false` — is written through
     /// [#setLocalTimestamp] instead, mirroring the reader's split between `getTimestamp` and
@@ -140,7 +142,8 @@ public interface StructBuilder {
     /// @see #setInt(String, int)
     StructBuilder setTimestamp(String name, Instant value);
 
-    /// Sets an `INT64` field annotated `TIMESTAMP` with `isAdjustedToUTC = false`.
+    /// Sets a field annotated `TIMESTAMP` with `isAdjustedToUTC = false`, over an `INT64` or a
+    /// `FIXED_LEN_BYTE_ARRAY(12)`.
     ///
     /// @see #setTimestamp(String, Instant)
     StructBuilder setLocalTimestamp(String name, LocalDateTime value);

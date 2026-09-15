@@ -8,6 +8,7 @@
 package dev.hardwood.cli.internal;
 
 import java.math.BigDecimal;
+import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.StringJoiner;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.metadata.LogicalType;
@@ -368,7 +370,8 @@ public final class ValueFormatter {
     }
 
     /// Renders a byte-backed leaf. Annotated strings decode as UTF-8; UUID,
-    /// decimal, INTERVAL and INT96 decode through their converters and throw on
+    /// decimal, INTERVAL, a `FIXED_LEN_BYTE_ARRAY(12)` TIMESTAMP and INT96
+    /// decode through their converters and throw on
     /// a payload of the wrong length rather than render a different value;
     /// anything else goes through [BinaryValues].
     private static String formatMaterialisedBytes(byte[] bytes, SchemaNode schema, Style style, int budget) {
@@ -391,6 +394,10 @@ public final class ValueFormatter {
         if (lt instanceof LogicalType.IntervalType) {
             requireLength(pn, "INTERVAL", INTERVAL_LENGTH, bytes);
             return formatIntervalBytes(bytes);
+        }
+        if (lt instanceof LogicalType.TimestampType ts) {
+            requireLength(pn, "TIMESTAMP", Flba12Timestamps.WIDTH, bytes);
+            return Flba12Timestamps.toTemporal(bytes, 0, bytes.length, ts).toString();
         }
         if (pn.type() == PhysicalType.INT96) {
             requireLength(pn, "INT96", INT96_LENGTH, bytes);
@@ -692,10 +699,11 @@ public final class ValueFormatter {
     }
 
     /// `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` entries can carry the byte-backed
-    /// logical types: strings, BSON, UUID, INTERVAL, FLOAT16, DECIMAL, plus
-    /// geometry and geography WKB. A UUID, INTERVAL or FLOAT16 payload of the
-    /// wrong length is not the value its type claims and renders as `0x` hex. See
-    /// [#formatInt] for the `default` arm.
+    /// logical types: strings, BSON, UUID, INTERVAL, FLOAT16, DECIMAL, TIMESTAMP,
+    /// plus geometry and geography WKB. A UUID, INTERVAL, FLOAT16 or TIMESTAMP
+    /// payload of the wrong length is not the value its type claims and renders
+    /// as `0x` hex, as does a TIMESTAMP counting past the range of the Java
+    /// type. See [#formatInt] for the `default` arm.
     private static String formatDictionaryBytes(byte[] raw, LogicalType lt, ColumnSchema col, int budget) {
         return switch (lt) {
             case null -> BinaryValues.render(raw, budget);
@@ -712,10 +720,25 @@ public final class ValueFormatter {
             case LogicalType.Float16Type f when raw.length == FLOAT16_LENGTH ->
                     Float.toString(LogicalTypeConverter.bytesToFloat16(raw));
             case LogicalType.Float16Type f -> BinaryValues.toHex(raw, budget);
+            case LogicalType.TimestampType ts when raw.length == Flba12Timestamps.WIDTH ->
+                    formatFixedTimestamp(raw, ts, budget);
+            case LogicalType.TimestampType ts -> BinaryValues.toHex(raw, budget);
             case LogicalType.GeometryType g -> BinaryValues.render(raw, budget);
             case LogicalType.GeographyType g -> BinaryValues.render(raw, budget);
             default -> throw notBackedBy(col, lt, "BYTE_ARRAY");
         };
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY(12)` TIMESTAMP as its instant or wall clock. A
+    /// count past the range of `Instant` or `LocalDateTime` is no value the
+    /// accessors return, and renders as `0x` hex.
+    private static String formatFixedTimestamp(byte[] raw, LogicalType.TimestampType ts, int budget) {
+        try {
+            return Flba12Timestamps.toTemporal(raw, 0, raw.length, ts).toString();
+        }
+        catch (DateTimeException e) {
+            return BinaryValues.toHex(raw, budget);
+        }
     }
 
     /// INT96 carries no logical annotation: logical mode renders the instant;
@@ -777,7 +800,8 @@ public final class ValueFormatter {
                 default -> LogicalTypeConverter.bytesToDecimal(bytes, dt.scale());
             }).toPlainString();
         }
-        if (lt instanceof LogicalType.TimestampType ts) {
+        // A FIXED_LEN_BYTE_ARRAY(12) timestamp is rendered with the other byte-backed types below.
+        if (lt instanceof LogicalType.TimestampType ts && col.type() == PhysicalType.INT64) {
             return LogicalTypeConverter.longToTemporal(decodeIntegral(bytes, col), ts).toString();
         }
         if (lt instanceof LogicalType.DateType) {

@@ -36,8 +36,8 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getString` | BYTE_ARRAY | STRING, ENUM, JSON, or none | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
-| `getLocalTimestamp` | INT64 | TIMESTAMP (`isAdjustedToUTC = false`) | `LocalDateTime` |
+| `getTimestamp` | INT64, FIXED_LEN_BYTE_ARRAY(12), or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
+| `getLocalTimestamp` | INT64 or FIXED_LEN_BYTE_ARRAY(12) | TIMESTAMP (`isAdjustedToUTC = false`) | `LocalDateTime` |
 | `getDecimal` | INT32, INT64, BYTE_ARRAY, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
@@ -53,10 +53,11 @@ All methods are available as both `method(name)` and `method(index)`.
 
 `getInt`, `getLong` and `getBinary` read the stored value of any column their physical type
 holds, whatever it is annotated with. `getInt` reads a `DATE`, a `TIME(MILLIS)` and an `INT32`
-`DECIMAL` as well as a bare `INT32`; `getLong` reads a `TIMESTAMP`, a `TIME(MICROS)` or
+`DECIMAL` as well as a bare `INT32`; `getLong` reads an `INT64` `TIMESTAMP`, a `TIME(MICROS)` or
 `TIME(NANOS)` and an `INT64` `DECIMAL`; `getBinary` reads every `BYTE_ARRAY`,
 `FIXED_LEN_BYTE_ARRAY` and `INT96` column, including a `DECIMAL`, a `UUID`, an `INTERVAL`, a
-`FLOAT16`, a `BSON` and a `GEOMETRY` or `GEOGRAPHY` payload. Use them to skip the logical-type
+`FLOAT16`, a `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, a `BSON` and a `GEOMETRY` or `GEOGRAPHY`
+payload. Use them to skip the logical-type
 decode — see [Reading the physical value](../how-to/row-reader.md#reading-the-physical-value).
 
 `getValue` on a signed `INT(8)` or `INT(16)` column returns a `Byte` or a `Short`. A file can
@@ -146,6 +147,19 @@ original NaN bit pattern is preserved (the Parquet spec does not canonicalize Na
 the UTF-8 payload to the symbol name, exactly as for a STRING column. The generic `getValue`
 accessor and the `PqList` / `PqStruct` / `PqMap` flyweights return the same `String`, at the top
 level and in every nested position. `getBinary` still yields the undecoded bytes.
+
+## Timestamps over FIXED_LEN_BYTE_ARRAY(12)
+
+A `TIMESTAMP` column is stored in an `INT64` or in a `FIXED_LEN_BYTE_ARRAY(12)`. The 12 bytes hold a
+signed two's complement little-endian 96-bit count of the annotation's time unit since the Unix
+epoch, which spans the years 0001 to 9999 at every unit, nanoseconds included.
+
+`getTimestamp`, `getLocalTimestamp`, `getValue` and the `PqList` / `PqStruct` / `PqMap` flyweights
+read both carriers alike and return the same `Instant` or `LocalDateTime`. `getBinary`,
+`getRawValue` and `ColumnReader` return the 12 stored bytes.
+
+A stored count outside the range of `Instant` or `LocalDateTime`, about a billion years either
+side of the epoch, throws `DateTimeException` naming the stored bytes; `getBinary` reads it.
 
 ## Legacy INT96 timestamps
 

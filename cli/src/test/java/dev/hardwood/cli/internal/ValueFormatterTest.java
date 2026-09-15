@@ -826,6 +826,58 @@ class ValueFormatterTest {
         }
     }
 
+    /// A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` renders as its instant or wall clock wherever
+    /// the value comes from: a row, a dictionary entry, a materialised value and a statistics bound.
+    @Test
+    void flba12TimestampRendersTheSameAcrossEverySource() throws IOException {
+        Path file = Path.of(getClass().getResource("/flba12_timestamp_test.parquet").getPath());
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.rowReader()) {
+            FileSchema schema = fileReader.getFileSchema();
+            rowReader.next();
+            rowReader.next();
+            for (String name : new String[] { "utc_ns", "local_us" }) {
+                SchemaNode field = schema.getField(name);
+                ColumnSchema column = schema.getColumn(name);
+                byte[] raw = (byte[]) rowReader.getRawValue(column.columnIndex());
+                String expected = name.equals("utc_ns") ? "1969-12-31T23:59:59.999999999Z" : "1969-12-31T23:59:59.999999";
+
+                assertThat(ValueFormatter.formatReader(rowReader, column.columnIndex(), field, true,
+                        ValueFormatter.Style.COMPACT, NO_LIMIT)).isEqualTo(expected);
+                assertThat(ValueFormatter.formatDictionary(raw, column, true, NO_LIMIT)).isEqualTo(expected);
+                assertThat(display(raw, field)).isEqualTo(expected);
+                assertThat(ValueFormatter.formatBytes(raw, column, true)).isEqualTo(expected);
+                assertThat(ValueFormatter.formatBytes(raw, column, false)).isEqualTo("0x" + "ff".repeat(12));
+            }
+        }
+    }
+
+    @Test
+    void flba12TimestampOfAnotherWidthRendersAsHexOrFails() {
+        ColumnSchema column = new ColumnSchema(FieldPath.of("ts"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS));
+        assertThat(ValueFormatter.formatDictionary(new byte[8], column, true, NO_LIMIT)).isEqualTo(zeroHex(8));
+        assertThat(ValueFormatter.formatBytes(new byte[8], column, true)).isEqualTo(zeroHex(8));
+        assertThatThrownBy(() -> display(new byte[8], primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field 'f': TIMESTAMP requires exactly 12 bytes, got 8");
+    }
+
+    /// Twelve bytes counting past the range of `Instant` and `LocalDateTime` are no value the
+    /// accessors return, so a dictionary entry or a statistics bound holding them renders as hex.
+    @Test
+    void flba12TimestampPastTheJavaTimeRangeRendersAsHex() {
+        byte[] pastRange = HexFormat.of().parseHex("ffffffffffffffffffffff7f");
+        for (boolean utc : new boolean[] { true, false }) {
+            ColumnSchema column = new ColumnSchema(FieldPath.of("ts"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                    RepetitionType.OPTIONAL, 12, 0, 1, 0, LogicalType.timestamp(utc, LogicalType.TimeUnit.NANOS));
+            assertThat(ValueFormatter.formatDictionary(pastRange, column, true, NO_LIMIT))
+                    .isEqualTo("0xffffffffffffffffffffff7f");
+            assertThat(ValueFormatter.formatBytes(pastRange, column, true)).isEqualTo("0xffffffffffffffffffffff7f");
+        }
+    }
+
     @Test
     void int96DictionaryRendersMalformedWidthsAsHexInBothModes() {
         for (int length : new int[] { 0, 11, 13 }) {

@@ -145,6 +145,11 @@ final class RowLeafNode extends RowNode {
             setNull();
             return;
         }
+        if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            appendBinary(PhysicalValueConverter.timestampToFixed12(path, value, timestampType.unit(),
+                    precisionLossPolicy));
+            return;
+        }
         ((LeafStage.LongStage) stage).append(
                 PhysicalValueConverter.timestampToLong(path, value, timestampType.unit(), precisionLossPolicy));
     }
@@ -153,6 +158,11 @@ final class RowLeafNode extends RowNode {
         LogicalType.TimestampType timestampType = requireTimestamp("setLocalTimestamp", false);
         if (value == null) {
             setNull();
+            return;
+        }
+        if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            appendBinary(PhysicalValueConverter.localTimestampToFixed12(path, value, timestampType.unit(),
+                    precisionLossPolicy));
             return;
         }
         ((LeafStage.LongStage) stage).append(
@@ -294,10 +304,11 @@ final class RowLeafNode extends RowNode {
         }
     }
 
+    /// The annotation of a `TIMESTAMP` column of the kind `setter` writes. `FileSchema` keeps the
+    /// annotation on an `INT64` or a `FIXED_LEN_BYTE_ARRAY(12)` only.
     private LogicalType.TimestampType requireTimestamp(String setter, boolean adjustedToUtc) {
-        require(physicalType == PhysicalType.INT64 && logicalType instanceof LogicalType.TimestampType type
-                        && type.isAdjustedToUTC() == adjustedToUtc,
-                setter, "an INT64 column annotated TIMESTAMP with isAdjustedToUTC=" + adjustedToUtc);
+        require(logicalType instanceof LogicalType.TimestampType type && type.isAdjustedToUTC() == adjustedToUtc,
+                setter, "a column annotated TIMESTAMP with isAdjustedToUTC=" + adjustedToUtc);
         return (LogicalType.TimestampType) logicalType;
     }
 

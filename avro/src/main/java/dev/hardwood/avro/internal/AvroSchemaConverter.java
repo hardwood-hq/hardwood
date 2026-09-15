@@ -305,6 +305,9 @@ public final class AvroSchemaConverter {
             case LogicalType.DateType dt -> AvroPlanNode.leaf(
                     LogicalTypes.date().addToSchema(Schema.create(Schema.Type.INT)), Kind.INT, prim);
             case LogicalType.TimeType t -> convertTimeType(t, prim);
+            // Avro has no timestamp wider than a long, so the 96-bit form keeps its stored bytes.
+            case LogicalType.TimestampType t when physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY ->
+                    convertPhysicalType(physicalType, prim);
             case LogicalType.TimestampType t -> convertTimestampType(t, prim);
             case LogicalType.DecimalType d -> convertDecimalType(physicalType, d, prim);
             case LogicalType.IntType i -> convertIntType(i, prim);

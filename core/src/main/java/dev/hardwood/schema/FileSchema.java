@@ -156,7 +156,7 @@ public class FileSchema {
         for (SchemaNode node : nodes) {
             switch (node) {
                 case SchemaNode.PrimitiveNode leaf -> {
-                    LogicalTypeAnnotations annotations = LogicalTypeAnnotations.of(leaf.logicalType());
+                    LogicalTypeAnnotations annotations = LogicalTypeAnnotations.of(leaf.type(), leaf.logicalType());
                     out.add(new SchemaElement(leaf.name(), leaf.type(),
                             columns.get(leaf.columnIndex()).typeLength(), leaf.repetitionType(), null,
                             annotations.convertedType(), annotations.scale(), annotations.precision(),
@@ -894,7 +894,7 @@ public class FileSchema {
     /// Lowers a primitive leaf to its [SchemaElement], deriving both annotation representations
     /// from the single declared logical type.
     private static SchemaElement leafElement(BuilderLeaf leaf) {
-        LogicalTypeAnnotations annotations = LogicalTypeAnnotations.of(leaf.logicalType());
+        LogicalTypeAnnotations annotations = LogicalTypeAnnotations.of(leaf.type(), leaf.logicalType());
         return new SchemaElement(leaf.name(), leaf.type(), leaf.typeLength(), leaf.repetition(), null,
                 annotations.convertedType(), annotations.scale(), annotations.precision(), null,
                 annotations.union());

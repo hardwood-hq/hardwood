@@ -9,10 +9,14 @@ package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqInterval;
 
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
@@ -100,6 +104,20 @@ public final class BinaryBatchValues {
     public PqInterval intervalAt(int idx) {
         int start = offsets[idx];
         return LogicalTypeConverter.bytesToInterval(bytes, start, offsets[idx + 1] - start);
+    }
+
+    /// Decode value `idx` as the instant its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload stands
+    /// for, reading the bytes where they sit rather than materialising a `byte[]` for them.
+    public Instant flba12InstantAt(int idx, LogicalType.TimeUnit unit) {
+        int start = offsets[idx];
+        return Flba12Timestamps.toInstant(bytes, start, offsets[idx + 1] - start, unit);
+    }
+
+    /// Decode value `idx` as the wall clock its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload
+    /// stands for, reading the bytes where they sit.
+    public LocalDateTime flba12LocalDateTimeAt(int idx, LogicalType.TimeUnit unit) {
+        int start = offsets[idx];
+        return Flba12Timestamps.toLocalDateTime(bytes, start, offsets[idx + 1] - start, unit);
     }
 
     /// Materialise value `idx` as a UTF-8 decoded `String`. A dictionary-encoded

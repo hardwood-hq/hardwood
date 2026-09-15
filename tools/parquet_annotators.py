@@ -19,6 +19,7 @@ Supported annotations:
 - ENUM       — `annotate_element_at_path_as_enum`
 - INTERVAL   — `annotate_column_as_interval`
 - JSON       — `annotate_element_at_path_as_json`
+- TIMESTAMP  — `annotate_element_at_path_as_timestamp` (FIXED_LEN_BYTE_ARRAY(12) carrier)
 - VARIANT    — `annotate_group_as_variant`
 
 Modern-only fixture helpers (strip legacy annotations so only `logicalType` remains):
@@ -549,6 +550,28 @@ def annotate_element_at_path_as_time(path: str, name_path, *,
         el.converted_type = _parquet.ConvertedType.TIME_MILLIS
     elif unit == "MICROS":
         el.converted_type = _parquet.ConvertedType.TIME_MICROS
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_element_at_path_as_timestamp(path: str, name_path, *,
+                                          unit: str = "NANOS", is_adjusted_to_utc: bool = True) -> None:
+    """Annotate the SchemaElement at `name_path` as TIMESTAMP with the given unit.
+
+    For the `FIXED_LEN_BYTE_ARRAY(12)` carrier, which holds a signed two's complement
+    little-endian count of `unit` since the epoch and which PyArrow does not write: the
+    column is written as `pa.binary(12)` and annotated here. No `converted_type` is set,
+    since `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` annotate an INT64 only.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    time_unit = {
+        "MILLIS": _parquet.TimeUnit(MILLIS=_parquet.MilliSeconds()),
+        "MICROS": _parquet.TimeUnit(MICROS=_parquet.MicroSeconds()),
+        "NANOS": _parquet.TimeUnit(NANOS=_parquet.NanoSeconds()),
+    }[unit]
+    el.logicalType = _parquet.LogicalType(
+        TIMESTAMP=_parquet.TimestampType(isAdjustedToUTC=is_adjusted_to_utc, unit=time_unit))
+    el.converted_type = None
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 

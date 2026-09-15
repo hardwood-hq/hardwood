@@ -660,9 +660,11 @@ public final class FlatRowReader implements FileAwareRowReader {
                 return LogicalTypeConverter.int96ToInstant(rawValue);
             }
             TimestampAccessorKind.require(col.name(), col.logicalType(), true);
-            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.longToTimestamp(rawValue,
-                    ((LogicalType.TimestampType) col.logicalType()).unit());
+            LogicalType.TimeUnit unit = ((LogicalType.TimestampType) col.logicalType()).unit();
+            if (col.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+                return ((BinaryBatchValues) flatValueArrays[columnIndex]).flba12InstantAt(rowIndex, unit);
+            }
+            return LogicalTypeConverter.longToTimestamp(((long[]) flatValueArrays[columnIndex])[rowIndex], unit);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -682,9 +684,11 @@ public final class FlatRowReader implements FileAwareRowReader {
         ColumnSchema col = columnSchemas[columnIndex];
         try {
             TimestampAccessorKind.require(col.name(), col.logicalType(), false);
-            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.longToLocalTimestamp(rawValue,
-                    ((LogicalType.TimestampType) col.logicalType()).unit());
+            LogicalType.TimeUnit unit = ((LogicalType.TimestampType) col.logicalType()).unit();
+            if (col.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+                return ((BinaryBatchValues) flatValueArrays[columnIndex]).flba12LocalDateTimeAt(rowIndex, unit);
+            }
+            return LogicalTypeConverter.longToLocalTimestamp(((long[]) flatValueArrays[columnIndex])[rowIndex], unit);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

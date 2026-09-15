@@ -92,6 +92,8 @@ of two values.
 | `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = true)`, and the legacy `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` | `Instant` | the column's time unit |
 | `INT64` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime` | the wall clock, in the column's time unit |
+| `FIXED_LEN_BYTE_ARRAY(12)` | `TIMESTAMP(isAdjustedToUTC = true)` | `Instant`, `byte[]` of 12 bytes | the column's time unit; a `byte[]` as the stored bytes |
+| `FIXED_LEN_BYTE_ARRAY(12)` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime`, `byte[]` of 12 bytes | the wall clock, in the column's time unit; a `byte[]` as the stored bytes |
 | `INT96` | | `Instant`, `byte[]` of 12 bytes | the instant the value encodes; a `byte[]` as the stored bytes |
 | `INT32` up to 9 digits, `INT64` up to 18 | `DECIMAL` | `BigDecimal`; `int` / `long` unscaled | the represented value |
 | `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`; `byte[]`, of `n` bytes on a `FIXED_LEN_BYTE_ARRAY(n)` | the represented value; a `byte[]` as the stored bytes |
@@ -155,10 +157,10 @@ FilterPredicate members = FilterPredicate.in("code",
 
 A `byte[]` literal matches the rows storing exactly its bytes, on every binary column. On most
 columns the values order as their bytes, unsigned, and a `byte[]` takes every operator. A
-`DECIMAL`, a `FLOAT16` and an `INT96` order by the value their bytes encode, and there a `byte[]`
-takes `eq`, `notEq` and `in` only; `lt`, `ltEq`, `gt` and `gtEq` with a `byte[]` throw
-`IllegalArgumentException` at reader creation, naming the `BigDecimal`, `float` or `Instant`
-literal that takes them.
+`DECIMAL`, a `FLOAT16`, an `INT96` and a `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` order by the
+value their bytes encode, and there a `byte[]` takes `eq`, `notEq` and `in` only; `lt`, `ltEq`, `gt`
+and `gtEq` with a `byte[]` throw `IllegalArgumentException` at reader creation, naming the
+`BigDecimal`, `float`, `Instant` or `LocalDateTime` literal that takes them.
 
 | Column | `byte[]` literal | Matches |
 |---|---|---|
@@ -166,6 +168,7 @@ literal that takes them.
 | `DECIMAL` over `FIXED_LEN_BYTE_ARRAY(n)` | `n` bytes | the rows storing these bytes, which is the one encoding of the number |
 | `FLOAT16` | 2 bytes | the rows storing these bytes; each `NaN` encoding is a different literal |
 | `INT96` | 12 bytes | the rows storing these bytes; another encoding of the same instant is a different literal |
+| `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | 12 bytes | the rows storing these bytes, which is the one encoding of the value |
 
 A `byte[]` literal of another length than the table gives throws `IllegalArgumentException` at
 reader creation.

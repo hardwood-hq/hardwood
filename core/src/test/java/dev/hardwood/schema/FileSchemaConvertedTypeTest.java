@@ -11,6 +11,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -48,6 +49,27 @@ class FileSchemaConvertedTypeTest {
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.TIME_MILLIS).logicalType()).isNull();
         assertThat(resolveColumn(PhysicalType.INT64, ConvertedType.INT_8).logicalType()).isNull();
         assertThat(resolveColumn(PhysicalType.INT32, ConvertedType.DECIMAL, 2, 12).logicalType()).isNull();
+    }
+
+    /// `TIMESTAMP` is read from a `FIXED_LEN_BYTE_ARRAY(12)` as well as an `INT64`, but its legacy
+    /// counterparts annotate an `INT64` alone: standing alone on twelve bytes they are dropped,
+    /// while the union member on the same column is kept, and wins over a legacy annotation beside it.
+    @Test
+    void aLegacyTimestampOnTwelveBytesIsDroppedButTheUnionMemberIsKept() {
+        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        LogicalType timestamp = LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
+
+        SchemaElement legacyOnly = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null, null);
+        assertThat(FileSchema.fromSchemaElements(List.of(root, legacyOnly)).getColumn(COLUMN).logicalType())
+                .isNull();
+        assertThat(LeafAnnotation.dropFault(legacyOnly))
+                .isEqualTo("TIMESTAMP_MICROS is read from INT64, but the column is FIXED_LEN_BYTE_ARRAY");
+
+        SchemaElement both = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null, timestamp);
+        assertThat(FileSchema.fromSchemaElements(List.of(root, both)).getColumn(COLUMN).logicalType())
+                .isEqualTo(timestamp);
     }
 
     /// Build a one-column schema whose single leaf carries only the given

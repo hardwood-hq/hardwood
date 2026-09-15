@@ -29,6 +29,7 @@ from parquet_annotators import (
     annotate_element_at_path_as_interval,
     annotate_element_at_path_as_json,
     annotate_element_at_path_as_time,
+    annotate_element_at_path_as_timestamp,
     annotate_element_at_path_as_decimal,
     annotate_element_at_path_as_enum,
     annotate_element_at_path_as_uuid,
@@ -6229,6 +6230,136 @@ for pred_name, pred_rg_size, pred_dictionary in [
             by_bytes = sorted(stored, key=lambda b: int.from_bytes(b, 'big', signed=True))
             set_row_group_min_max(pred_path, 'ts96', rg, by_bytes[0], by_bytes[-1])
 
+# TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) in a corpus of its own: a signed two's complement
+# little-endian count of the unit since the epoch, which PyArrow does not write, so the columns
+# are written as binary(12) and annotated afterwards. `ts12_ns` steps 50 years a row from about
+# 8030 BCE, crossing the epoch and the INT64 nanosecond range in both directions; rows 3 and 6 hold
+# the nanosecond before the epoch and the last one of year 9999. `ts12_us_local` and `ts12_ms` hold
+# the same instants floored to their unit, and `s.ts12` is null under a present struct.
+#
+# PyArrow would record the bounds of a binary(12) column in unsigned byte order, so the columns
+# get none from it, and each row group gets bounds in the order of the values instead. The `pages`
+# layout writes one value per page with a page index: a page's minimum is its maximum, so the
+# column index PyArrow writes holds bounds that are right in any order.
+_PRED_TS12_STEP_NS = 50 * 31_557_600 * 10**9
+
+
+def _pred_ts12_ns(r):
+    if r == 3:
+        return -1                                   # 1969-12-31T23:59:59.999999999Z
+    if r == 6:
+        return 253_402_300_799 * 10**9 + 999_999_999  # 9999-12-31T23:59:59.999999999Z
+    return (r - 200) * _PRED_TS12_STEP_NS + r * 1_000_001
+
+
+def _ts12(count):
+    return count.to_bytes(12, 'little', signed=True)
+
+
+_PRED_TS12_COLUMNS = {'ts12_ns': 1, 'ts12_us_local': 1_000, 'ts12_ms': 1_000_000}
+
+pred_ts12_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('zz', pa.binary(), False),
+    ('ts12_ns', pa.binary(12)),
+    ('ts12_us_local', pa.binary(12)),
+    ('ts12_ms', pa.binary(12)),
+    ('s', pa.struct([('ts12', pa.binary(12))])),
+])
+pred_ts12_table = pa.table({
+    '__row__': _pred_range,
+    'zz': [b'z'] * PRED_ROWS,
+    **{name: _pred_opt([_ts12(_pred_ts12_ns(r) // per) for r in _pred_range])
+       for name, per in _PRED_TS12_COLUMNS.items()},
+    's': pa.array([None if r % 41 == 7 else {'ts12': None if r % 43 == 9 else _ts12(_pred_ts12_ns(r))}
+                   for r in _pred_range],
+                  pa.struct([('ts12', pa.binary(12))])),
+}, schema=pred_ts12_schema)
+for pred_name, pred_rg_size, pred_dictionary, pred_bloom, pred_pages in [
+        ('predicate_ts12_single', PRED_ROWS, False, False, False),
+        ('predicate_ts12_multi', 100, False, False, False),
+        ('predicate_ts12_dict', 100, True, False, False),
+        ('predicate_ts12_bloom', 100, False, True, False),
+        ('predicate_ts12_pages', PRED_ROWS, False, False, True)]:
+    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+    pq.write_table(
+        pred_ts12_table,
+        pred_path,
+        use_dictionary=pred_dictionary,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=pred_rg_size,
+        data_page_size=1 if pred_pages else 512,
+        write_batch_size=1 if pred_pages else 40,
+        write_statistics=['__row__', 'zz', *_PRED_TS12_COLUMNS] if pred_pages else ['__row__', 'zz'],
+        write_page_index=pred_pages,
+        bloom_filter_options=_pred_bloom(pred_ts12_table) if pred_bloom else None,
+    )
+    annotate_element_at_path_as_timestamp(pred_path, ['ts12_ns'], unit='NANOS', is_adjusted_to_utc=True)
+    annotate_element_at_path_as_timestamp(pred_path, ['ts12_us_local'], unit='MICROS', is_adjusted_to_utc=False)
+    annotate_element_at_path_as_timestamp(pred_path, ['ts12_ms'], unit='MILLIS', is_adjusted_to_utc=True)
+    annotate_element_at_path_as_timestamp(pred_path, ['s', 'ts12'], unit='NANOS', is_adjusted_to_utc=True)
+    for rg in range(PRED_ROWS // pred_rg_size):
+        for name, per in _PRED_TS12_COLUMNS.items():
+            held = [_pred_ts12_ns(r) // per for r in range(rg * pred_rg_size, (rg + 1) * pred_rg_size)
+                    if not _pred_null(r)]
+            set_row_group_min_max(pred_path, name, rg, _ts12(min(held)), _ts12(max(held)))
+
+# TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) for the accessors: every unit and both UTC settings, a
+# dictionary-encoded column, and a list. Year 1 and year 9999 lie outside the INT64 nanosecond
+# range; one nanosecond before the epoch floors to the previous second. `int64_ns` holds the same
+# instants where an INT64 of nanoseconds can.
+_TS12_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _ts12_nanos(when):
+    delta = when - _TS12_EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 10**9 + delta.microseconds * 1_000
+
+
+_ts12_ns = [
+    _ts12_nanos(datetime(1, 1, 1, tzinfo=timezone.utc)),
+    -1,
+    0,
+    _ts12_nanos(datetime(2026, 8, 13, 12, 34, 56, 123456, tzinfo=timezone.utc)) + 789,
+    _ts12_nanos(datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc)) + 999,
+    None,
+]
+
+
+def _ts12_floored(per):
+    return [None if v is None else _ts12(v // per) for v in _ts12_ns]
+
+
+ts12_path = 'core/src/test/resources/flba12_timestamp_test.parquet'
+pq.write_table(
+    pa.table({
+        'id': pa.array(range(1, 7), type=pa.int32()),
+        'utc_ns': pa.array(_ts12_floored(1), type=pa.binary(12)),
+        'local_us': pa.array(_ts12_floored(1_000), type=pa.binary(12)),
+        'utc_ms': pa.array(_ts12_floored(1_000_000), type=pa.binary(12)),
+        'dict_us': pa.array([_ts12(0), _ts12(-1), _ts12(0), _ts12(-1), _ts12(0), None], type=pa.binary(12)),
+        'list_ns': pa.array([_ts12_floored(1)[:3], [], None, _ts12_floored(1)[3:], [_ts12(-1)], [_ts12(0)]],
+                            type=pa.list_(pa.binary(12))),
+        'int64_ns': pa.array([None, -1, 0, _ts12_ns[3], None, None], type=pa.int64()),
+    }),
+    ts12_path,
+    use_dictionary=['dict_us'],
+    compression=None,
+    write_statistics=['id', 'int64_ns'],
+)
+annotate_element_at_path_as_timestamp(ts12_path, ['utc_ns'], unit='NANOS', is_adjusted_to_utc=True)
+annotate_element_at_path_as_timestamp(ts12_path, ['local_us'], unit='MICROS', is_adjusted_to_utc=False)
+annotate_element_at_path_as_timestamp(ts12_path, ['utc_ms'], unit='MILLIS', is_adjusted_to_utc=True)
+annotate_element_at_path_as_timestamp(ts12_path, ['dict_us'], unit='MICROS', is_adjusted_to_utc=True)
+annotate_element_at_path_as_timestamp(ts12_path, ['list_ns', 'list', 'element'], unit='NANOS',
+                                      is_adjusted_to_utc=True)
+annotate_element_at_path_as_timestamp(ts12_path, ['int64_ns'], unit='NANOS', is_adjusted_to_utc=True)
+for name, per in (('utc_ns', 1), ('local_us', 1_000), ('utc_ms', 1_000_000)):
+    held = [v // per for v in _ts12_ns if v is not None]
+    set_row_group_min_max(ts12_path, name, 0, _ts12(min(held)), _ts12(max(held)))
+print(f"\nGenerated {ts12_path}: FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP columns of every unit, a dictionary and a list")
+
 # INT(8) and INT(16) columns storing values outside the range their annotation states, which the
 # format does not forbid: getValue narrows the signed ones to Byte / Short and passes the unsigned
 # one through as Integer; getInt and predicates see them as stored.
@@ -6252,3 +6383,4 @@ print(f"  - predicate_{{single,multi,dict,bloom}}.parquet: {PRED_ROWS} rows, one
 print(f"  - predicate_nested_{{single,multi}}.parquet: {PRED_ROWS} rows, struct with a nullable leaf, and a list")
 print(f"  - predicate_opaque_{{single,dict,bloom}}.parquet: {PRED_ROWS} rows, BSON, INTERVAL, BYTE_ARRAY DECIMAL, NULL and GEOMETRY")
 print(f"  - predicate_int96_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, INT96 timestamps, one non-canonical")
+print(f"  - predicate_ts12_{{single,multi,dict,bloom,pages}}.parquet: {PRED_ROWS} rows, FIXED_LEN_BYTE_ARRAY(12) timestamps")

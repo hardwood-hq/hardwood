@@ -17,6 +17,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
+- `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)`, which span the years 0001 to 9999 at nanosecond precision, are read, filtered and written ([#921](https://github.com/hardwood-hq/hardwood/issues/921)).
+
 - `isNull` and `isNotNull` test whether a struct, `LIST` or `MAP` group is present ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
 
 - Filters, including parquet-java filters through the compatibility layer, no longer return wrong rows for `NaN` values, unsigned integers, statistics in an unknown sort order and several other edge cases ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016), [#1142](https://github.com/hardwood-hq/hardwood/issues/1142), [#1144](https://github.com/hardwood-hq/hardwood/issues/1144), [#1179](https://github.com/hardwood-hq/hardwood/issues/1179), [#1193](https://github.com/hardwood-hq/hardwood/issues/1193), [#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).

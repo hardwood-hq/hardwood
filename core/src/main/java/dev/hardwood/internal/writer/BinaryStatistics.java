@@ -15,8 +15,8 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// The bytes of a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column carry no single ordering: the
 /// same physical type is compared unsigned byte-wise when it holds a string, as a signed
-/// big-endian integer when it holds a decimal, and as a represented floating-point value when
-/// it holds a half-precision float. The logical type picks the accumulator, so the ordering is
+/// big-endian integer when it holds a decimal, as a signed little-endian integer when it holds a
+/// timestamp, and as a represented floating-point value when it holds a half-precision float. The logical type picks the accumulator, so the ordering is
 /// decided once per chunk rather than tested per value.
 interface BinaryStatistics {
 
@@ -40,6 +40,12 @@ interface BinaryStatistics {
             // A decimal's bounds compare as signed big-endian integers, under which a prefix is
             // not a lower bound, so they are never truncated.
             return new BinaryStatisticsCollector(BinaryStatisticsCollector.Order.SIGNED_BIG_ENDIAN,
+                    Integer.MAX_VALUE);
+        }
+        if (logicalType instanceof LogicalType.TimestampType) {
+            // Only a FIXED_LEN_BYTE_ARRAY(12) timestamp reaches a binary accumulator, and it is
+            // already at its bound length.
+            return new BinaryStatisticsCollector(BinaryStatisticsCollector.Order.SIGNED_LITTLE_ENDIAN,
                     Integer.MAX_VALUE);
         }
         // A FIXED_LEN_BYTE_ARRAY is already at its bound length, so only a BYTE_ARRAY truncates.

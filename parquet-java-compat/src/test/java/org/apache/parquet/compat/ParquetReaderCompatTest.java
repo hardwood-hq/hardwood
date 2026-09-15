@@ -94,6 +94,26 @@ class ParquetReaderCompatTest {
         }
     }
 
+    /// A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` has no `OriginalType`, whose timestamp members
+    /// annotate an `INT64` only, and reads as its twelve stored bytes.
+    @Test
+    void testFixedTwelveByteTimestampReadsAsItsBytes() throws Exception {
+        Path path = new Path("../core/src/test/resources/flba12_timestamp_test.parquet");
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build()) {
+            reader.read();
+            Group record = reader.read();
+
+            Type utcNs = record.getType().getType("utc_ns");
+            assertThat(utcNs.asPrimitiveType().getPrimitiveTypeName())
+                    .isEqualTo(PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
+            assertThat(utcNs.asPrimitiveType().getOriginalType()).isNull();
+            byte[] minusOne = new byte[12];
+            Arrays.fill(minusOne, (byte) 0xFF);
+            assertThat(record.getBinary("utc_ns", 0).getBytes()).isEqualTo(minusOne);
+        }
+    }
+
     @Test
     void testNestedStruct() throws Exception {
         Path path = new Path("../core/src/test/resources/nested_struct_test.parquet");
@@ -373,6 +393,29 @@ class ParquetReaderCompatTest {
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'f16' is a FLOAT16, whose literal is 2 bytes, not 3");
+    }
+
+    /// A `binaryColumn` literal on a `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` reaches the reader
+    /// as the stored bytes: equality finds the row storing them, and an ordered filter is refused,
+    /// since the values do not order as their bytes.
+    @Test
+    void testFilterPushdownBinaryLiteralOnFixedTwelveByteTimestampColumn() throws Exception {
+        // Row 3 of ts12_ns holds the nanosecond before the epoch, a count of -1.
+        Path path = new Path("../core/src/test/resources/predicate/predicate_ts12_single.parquet");
+        byte[] minusOne = new byte[12];
+        Arrays.fill(minusOne, (byte) 0xFF);
+        Binary beforeEpoch = Binary.fromConstantByteArray(minusOne);
+
+        assertThat(rows(path, eq(binaryColumn("ts12_ns"), beforeEpoch), "__row__")).containsExactly(3L);
+
+        FilterPredicate ordered = lt(binaryColumn("ts12_ns"), beforeEpoch);
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(ordered))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'ts12_ns' is annotated TIMESTAMP(NANOS, UTC), whose values do not order as "
+                        + "their stored bytes; a byte[] literal takes eq, notEq and in there, and an ordered "
+                        + "predicate takes an Instant");
     }
 
     @Test

@@ -12,11 +12,12 @@ import java.util.Arrays;
 import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.metadata.Statistics;
 
-/// Accumulates a binary column chunk's `min` / `max` / `null_count` in one of the two orders a
+/// Accumulates a binary column chunk's `min` / `max` / `null_count` in one of the three orders a
 /// byte string is compared in: unsigned lexicographic — the type-defined order for an
-/// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations — or
-/// signed big-endian two's complement, the order of a `DECIMAL`'s represented value. Both are
-/// the orders `BinaryComparator` compares in, which the signed arm calls directly.
+/// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations —,
+/// signed big-endian two's complement, the order of a `DECIMAL`'s represented value, or signed
+/// little-endian two's complement, the order of a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`. All are
+/// the orders `BinaryComparator` compares in, which the signed arms call directly.
 ///
 /// Bounds are **truncated** to at most `truncationLength` bytes so a chunk of long values does
 /// not bloat the footer. A truncated `min` keeps the value's first *N* bytes — a prefix is `<=`
@@ -34,7 +35,9 @@ final class BinaryStatisticsCollector implements BinaryStatistics {
         /// Unsigned byte-wise comparison.
         LEXICOGRAPHIC,
         /// Signed big-endian two's complement comparison of the represented value.
-        SIGNED_BIG_ENDIAN
+        SIGNED_BIG_ENDIAN,
+        /// Signed little-endian two's complement comparison of the represented value.
+        SIGNED_LITTLE_ENDIAN
     }
 
     private final Order order;
@@ -66,9 +69,11 @@ final class BinaryStatisticsCollector implements BinaryStatistics {
     }
 
     private int compare(byte[] left, byte[] right) {
-        return order == Order.LEXICOGRAPHIC
-                ? Arrays.compareUnsigned(left, right)
-                : BinaryComparator.compareSigned(left, right);
+        return switch (order) {
+            case LEXICOGRAPHIC -> Arrays.compareUnsigned(left, right);
+            case SIGNED_BIG_ENDIAN -> BinaryComparator.compareSigned(left, right);
+            case SIGNED_LITTLE_ENDIAN -> BinaryComparator.compareSignedLittleEndian(left, right);
+        };
     }
 
     @Override

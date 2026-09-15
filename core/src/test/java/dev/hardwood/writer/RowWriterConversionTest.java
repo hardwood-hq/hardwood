@@ -74,11 +74,11 @@ class RowWriterConversionTest {
         assertThatThrownBy(() -> write(utc, row -> row.setLocalTimestamp("v", LocalDateTime.of(2026, 1, 1, 0, 0))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Field v is INT64 annotated TIMESTAMP(MILLIS, UTC); setLocalTimestamp requires "
-                         + "an INT64 column annotated TIMESTAMP with isAdjustedToUTC=false");
+                         + "a column annotated TIMESTAMP with isAdjustedToUTC=false");
         assertThatThrownBy(() -> write(local, row -> row.setTimestamp("v", Instant.EPOCH)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Field v is INT64 annotated TIMESTAMP(MILLIS, local); setTimestamp requires an "
-                         + "INT64 column annotated TIMESTAMP with isAdjustedToUTC=true");
+                .hasMessage("Field v is INT64 annotated TIMESTAMP(MILLIS, local); setTimestamp requires a "
+                         + "column annotated TIMESTAMP with isAdjustedToUTC=true");
     }
 
     @Test
@@ -225,22 +225,22 @@ class RowWriterConversionTest {
         for (WriterConfig config : List.of(WriterConfig.defaults(), truncating())) {
             assertThatThrownBy(() -> write(nanos, config, row -> row.setTimestamp("v", beyondNanos)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field v: 2263-01-01T00:00:00Z is outside the range a TIMESTAMP(NANOS) "
-                             + "column can represent")
+                    .hasMessage("Field v: 2263-01-01T00:00:00Z is outside the range an INT64 TIMESTAMP(NANOS) "
+                             + "column can represent; a FIXED_LEN_BYTE_ARRAY(12) column holds it")
                     ;
             assertThatThrownBy(() -> write(localNanos, config,
                     row -> row.setLocalTimestamp("v", LocalDateTime.of(2263, 1, 1, 0, 0))))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field v: 2263-01-01T00:00 is outside the range a TIMESTAMP(NANOS) column "
-                             + "can represent");
+                    .hasMessage("Field v: 2263-01-01T00:00 is outside the range an INT64 TIMESTAMP(NANOS) column "
+                             + "can represent; a FIXED_LEN_BYTE_ARRAY(12) column holds it");
             // Instant.MAX carries sub-millisecond digits too; the magnitude is reported first,
             // so the same value fails the same way whatever the policy says about precision.
             assertThatThrownBy(() -> write(single(PhysicalType.INT64,
                     LogicalType.timestamp(true, TimeUnit.MILLIS)), config,
                     row -> row.setTimestamp("v", Instant.MAX)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field v: +1000000000-12-31T23:59:59.999999999Z is outside the range a "
-                             + "TIMESTAMP(MILLIS) column can represent");
+                    .hasMessage("Field v: +1000000000-12-31T23:59:59.999999999Z is outside the range an "
+                             + "INT64 TIMESTAMP(MILLIS) column can represent; a FIXED_LEN_BYTE_ARRAY(12) column holds it");
         }
     }
 

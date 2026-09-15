@@ -15,7 +15,8 @@ import java.util.Arrays;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 
 /// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
-/// BYTE_ARRAY), signed two's complement (for DECIMAL columns of either byte-array type), and the
+/// BYTE_ARRAY), big-endian signed two's complement (for DECIMAL columns of either byte-array type),
+/// little-endian signed two's complement (for a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`), and the
 /// instant a legacy `INT96` timestamp encodes.
 ///
 /// Both the reader's predicate evaluation and the writer's statistics collection compare through
@@ -76,6 +77,35 @@ public final class BinaryComparator {
             int bByte = i < bOffset ? bPad : b[i - bOffset] & 0xFF;
             if (aByte != bByte) {
                 return aByte - bByte;
+            }
+        }
+        return 0;
+    }
+
+    /// Compare two little-endian two's complement values of equal width, the order a
+    /// `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` sorts in.
+    ///
+    /// The last byte is the most significant and carries the sign, so it compares signed; the
+    /// remaining bytes compare unsigned, from the last towards the first.
+    ///
+    /// @return negative if a < b, zero if equal, positive if a > b
+    /// @throws IllegalArgumentException if the two differ in width, which no column of the type
+    ///         stores
+    public static int compareSignedLittleEndian(byte[] a, byte[] b) {
+        if (a.length != b.length) {
+            throw new IllegalArgumentException("A little-endian signed comparison takes values of one width, not "
+                    + a.length + " and " + b.length + " bytes");
+        }
+        int last = a.length - 1;
+        if (last < 0) {
+            return 0;
+        }
+        if (a[last] != b[last]) {
+            return Byte.compare(a[last], b[last]);
+        }
+        for (int i = last - 1; i >= 0; i--) {
+            if (a[i] != b[i]) {
+                return Integer.compare(a[i] & 0xFF, b[i] & 0xFF);
             }
         }
         return 0;

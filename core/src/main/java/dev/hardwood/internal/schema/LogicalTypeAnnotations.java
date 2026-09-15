@@ -7,8 +7,10 @@
  */
 package dev.hardwood.internal.schema;
 
+import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.SchemaElement;
 
 /// The annotation fields a schema node writes to its [SchemaElement]: the modern `LogicalType`
@@ -31,7 +33,18 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
     /// An unannotated node.
     public static final LogicalTypeAnnotations NONE = new LogicalTypeAnnotations(null, null, null, null);
 
-    /// The annotations written for a primitive column's logical type.
+    /// The annotations written for a primitive column of `physicalType` carrying `logicalType`.
+    ///
+    /// The physical type decides one case: a `TIMESTAMP` over a `FIXED_LEN_BYTE_ARRAY(12)` is
+    /// union-only, since its legacy annotations annotate an `INT64` alone. Every other annotation is
+    /// written as it is for any physical type.
+    public static LogicalTypeAnnotations of(PhysicalType physicalType, LogicalType logicalType) {
+        return Flba12Timestamps.isCarriedBy(physicalType, logicalType)
+                ? unionOnly(logicalType)
+                : of(logicalType);
+    }
+
+    /// The annotations written for a logical type, whatever physical type carries it.
     ///
     /// Two members are asymmetric. `INTERVAL` writes only the legacy annotation, because
     /// parquet.thrift reserves union field 9 for it without ever defining the member struct.
@@ -40,7 +53,7 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
     /// parquet-format requires writers to annotate local times with them too, for forward
     /// compatibility with the libraries that did so before the union existed. Nanosecond units
     /// have no legacy counterpart and are union-only.
-    public static LogicalTypeAnnotations of(LogicalType logicalType) {
+    private static LogicalTypeAnnotations of(LogicalType logicalType) {
         if (logicalType == null) {
             return NONE;
         }
