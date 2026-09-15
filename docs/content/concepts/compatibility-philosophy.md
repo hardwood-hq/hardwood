@@ -66,18 +66,11 @@ Written this way, the null-inclusion is explicit, and the code shows which rows 
 
 ### Schema validation across multiple files
 
-When a data reader spans multiple files, the first file's schema is the reference, and each
-subsequent file reached by the data-reader plan is validated against it: every column the read
-touches — the projected ones plus any a filter tests — must exist with a matching physical type,
-logical type, repetition type, fixed byte length, and enclosing groups of the same nullability and
-repeatedness, or a `SchemaIncompatibleException` is thrown rather than the mismatch surfacing as
-garbage values.
-
-Which columns a read touches is known only once a reader is planned, so that is when the check
-runs. A file is planned as the read arrives at it, so a mismatch in a later file is raised while
-iterating rather than when the reader is built — but always before any row of that file is
-returned, which is what keeps a mismatch from being read as data. Inspecting a file's metadata
-reports the footer as it is on disk and does not run the check.
+When a data reader spans multiple files, the first file's schema is the reference. Every column a
+read touches in a later file must match it, or a `SchemaIncompatibleException` is thrown instead of
+the mismatch surfacing as garbage values. The check runs when the read reaches the file, before
+any of its rows is returned. [Reading Multiple Files](../how-to/multi-file.md) lists what must
+match and when a mismatch surfaces.
 
 The match is by field path, never by position. A Parquet footer lists column chunks in the order
 of the schema's flattened leaves, so a column's ordinal belongs to the file that was written, not

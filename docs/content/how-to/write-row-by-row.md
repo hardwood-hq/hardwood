@@ -208,7 +208,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
 }
 ```
 
-Key-value metadata is application-defined and opaque to Parquet: it is where `ARROW:schema`, the pandas descriptor and the table-format stamps live. Passing the map `FileMetaData.keyValueMetadata()` returns reproduces another file's entries exactly. See [File Metadata](../reference/writer.md#file-metadata).
+Passing the map `FileMetaData.keyValueMetadata()` returns reproduces another file's entries exactly. See [File Metadata](../reference/writer.md#file-metadata) for what the entries hold and how they are written.
 
 ## One API per File
 
