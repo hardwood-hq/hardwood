@@ -19,7 +19,7 @@ import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.example.GroupReadSupport;
 
-/// Reads the `__row__` values a parquet-java 1.17.1 filter returns, with its row-group, page-index,
+/// Reads the `__row__` values a parquet-java 1.18.1 filter returns, with its row-group, page-index,
 /// dictionary and Bloom filter pushdown at their defaults.
 final class ParquetJavaReader {
 

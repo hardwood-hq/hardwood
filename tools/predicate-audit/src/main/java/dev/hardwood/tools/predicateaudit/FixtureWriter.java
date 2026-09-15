@@ -33,7 +33,7 @@ import org.apache.parquet.schema.Types;
 
 import dev.hardwood.tools.predicateaudit.Columns.Col;
 
-/// Writes the audit fixtures with parquet-java 1.17.1, a writer independent of Hardwood, which
+/// Writes the audit fixtures with parquet-java 1.18.1, a writer independent of Hardwood, which
 /// records statistics, the page index, dictionaries and Bloom filters in each column's own order.
 final class FixtureWriter {
 
