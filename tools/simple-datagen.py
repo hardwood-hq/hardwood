@@ -7,6 +7,7 @@
 #
 
 import base64
+import gzip
 import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -6069,6 +6070,132 @@ def _pred_bloom(table):
             if field.name not in ('__row__', 'zz') and field.type not in (pa.bool_(), pa.null())}
 
 
+# Every corpus below gets a `<corpus>.values.tsv.gz` beside its files: for each row and column, the
+# value its logical accessor and its physical accessor return in a reader that decodes correctly,
+# taken from what this script wrote rather than from reading the files back.
+# `PredicatePathAgreementTest` holds the reader to it, so its oracle, which reads values through the
+# reader, cannot share a decoding defect with the predicate it checks.
+#
+# Each value is tagged with the Java type the accessor returns, in a form the test renders without
+# decoding anything: integers in decimal, floating point as raw bits, bytes and strings as hex (a
+# string as its UTF-8), a date as its epoch day, a time as its nanosecond of the day, an instant or a
+# local date-time as its epoch second and nanosecond, a decimal as its unscaled value and scale, and
+# an interval as its three components. A null leaf is `null` for both.
+def _pv_signed(value, bits):
+    return value - (1 << bits) if value >= 1 << (bits - 1) else value
+
+
+def _pv_hex(data):
+    return data.hex()
+
+
+def _pv_instant(tag, nanos):
+    return f'{tag}:{nanos // 10**9}:{nanos % 10**9}'
+
+
+def _pv_decimal_width(precision):
+    width = 1
+    while 2 ** (8 * width - 1) <= 10 ** precision - 1:
+        width += 1
+    return width
+
+
+def _pv_write(corpus, columns):
+    """Writes `corpus`'s sidecar, gzipped with a zero timestamp so the bytes do not change between
+    runs. `columns` maps a column path to a function from a row to `None` for a null leaf, or to
+    its logical and physical value."""
+    lines = ['# Written by tools/simple-datagen.py: row, column, logical value, physical value.\n']
+    for r in range(PRED_ROWS):
+        for name, value in columns.items():
+            pair = value(r)
+            logical, physical = ('null', 'null') if pair is None else pair
+            lines.append(f'{r}\t{name}\t{logical}\t{physical}\n')
+    path = f'core/src/test/resources/predicate/{corpus}.values.tsv.gz'
+    with open(path, 'wb') as raw, gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as out:
+        out.write(''.join(lines).encode('utf-8'))
+
+
+def _pv_leaves(array):
+    """The Python values of an Arrow column, or of a struct's leaves with the struct's nulls applied,
+    by leaf path."""
+    array = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+    if pa.types.is_struct(array.type):
+        return {f'{array.type.field(i).name}': leaf for i, leaf in enumerate(array.flatten())}
+    return {'': array}
+
+
+def _pv_floats(array, dtype):
+    raw = numpy.frombuffer(array.buffers()[1], dtype=dtype, count=len(array) + array.offset)[array.offset:]
+    return [None if not valid else raw[i] for i, valid in enumerate(array.is_valid().to_pylist())]
+
+
+def _pv_column(array, logical_kind, **options):
+    """A sidecar column for an Arrow leaf whose logical accessor returns `logical_kind`."""
+    if isinstance(array, pa.ExtensionArray):
+        array = array.storage
+    arrow_type = array.type
+    if pa.types.is_float32(arrow_type) or pa.types.is_float64(arrow_type) or pa.types.is_float16(arrow_type):
+        raw = _pv_floats(array, {4: '<f4', 8: '<f8', 2: '<f2'}[arrow_type.bit_width // 8])
+    elif pa.types.is_date32(arrow_type) or pa.types.is_time32(arrow_type):
+        raw = array.cast(pa.int32()).to_pylist()
+    elif pa.types.is_time64(arrow_type) or pa.types.is_timestamp(arrow_type):
+        raw = array.cast(pa.int64()).to_pylist()
+    else:
+        raw = array.to_pylist()
+
+    def render(r):
+        v = raw[r]
+        if v is None:
+            return None
+        if pa.types.is_boolean(arrow_type):
+            return f'boolean:{str(v).lower()}', f'boolean:{str(v).lower()}'
+        if pa.types.is_float32(arrow_type):
+            bits = f'float:{v.view("<u4"):08x}'
+            return bits, bits
+        if pa.types.is_float64(arrow_type):
+            bits = f'double:{v.view("<u8"):016x}'
+            return bits, bits
+        if pa.types.is_float16(arrow_type):
+            return f'float:{v.astype("<f4").view("<u4"):08x}', f'bytes:{_pv_hex(v.tobytes())}'
+        if pa.types.is_integer(arrow_type):
+            if arrow_type.bit_width == 64:
+                stored = f'long:{_pv_signed(v, 64)}'
+                return stored, stored
+            stored = _pv_signed(v, 32) if arrow_type.bit_width == 32 else v
+            return f'{logical_kind}:{stored}', f'int:{stored}'
+        if pa.types.is_date32(arrow_type):
+            return f'date:{v}', f'int:{v}'
+        if pa.types.is_time(arrow_type) or pa.types.is_timestamp(arrow_type):
+            per = {'s': 10**9, 'ms': 10**6, 'us': 10**3, 'ns': 1}[arrow_type.unit]
+            physical = f'int:{v}' if pa.types.is_time32(arrow_type) else f'long:{v}'
+            if pa.types.is_time(arrow_type):
+                return f'time:{v * per}', physical
+            return _pv_instant('instant' if arrow_type.tz else 'datetime', v * per), physical
+        if pa.types.is_decimal(arrow_type):
+            unscaled = int(v.scaleb(arrow_type.scale))
+            logical = f'decimal:{unscaled}:{arrow_type.scale}'
+            if arrow_type.precision <= 9:
+                return logical, f'int:{unscaled}'
+            if arrow_type.precision <= 18:
+                return logical, f'long:{unscaled}'
+            width = _pv_decimal_width(arrow_type.precision)
+            return logical, f'bytes:{_pv_hex(unscaled.to_bytes(width, "big", signed=True))}'
+        data = v.encode('utf-8') if isinstance(v, str) else v
+        physical = f'bytes:{_pv_hex(data)}'
+        if logical_kind == 'string':
+            return f'string:{_pv_hex(data)}', physical
+        if logical_kind == 'uuid':
+            return f'uuid:{uuid.UUID(bytes=data)}', physical
+        if logical_kind == 'interval':
+            months, days, millis = (int.from_bytes(data[i:i + 4], 'little') for i in (0, 4, 8))
+            return f'interval:{months}:{days}:{millis}', physical
+        if logical_kind == 'decimal':
+            return f'decimal:{int.from_bytes(data, "big", signed=True)}:{options["scale"]}', physical
+        return physical, physical
+
+    return render
+
+
 for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
         ('predicate_single', PRED_ROWS, False, False),
         ('predicate_multi', 100, False, False),
@@ -6090,6 +6217,18 @@ for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
         bloom_filter_options=_pred_bloom(pred_table) if pred_bloom else None,
     )
     annotate_element_at_path_as_enum(pred_path, ['enum'])
+
+
+_pv_write('predicate', {
+    name: _pv_column(pred_table.column(name).combine_chunks(), kind)
+    for name, kind in [('bool', 'boolean'), ('i32', 'int'), ('i64', 'long'), ('i8', 'byte'), ('u8', 'int'),
+                       ('u32', 'int'), ('u64', 'long'), ('f32', 'float'), ('f64', 'double'), ('f16', 'float'),
+                       ('date', 'date'), ('time_ms', 'time'), ('time_us', 'time'), ('time_ns', 'time'),
+                       ('ts_ms_utc', 'instant'), ('ts_us_utc', 'instant'), ('ts_ns_utc', 'instant'),
+                       ('ts_us_local', 'datetime'), ('dec_i32', 'decimal'), ('dec_i64', 'decimal'),
+                       ('dec_flba', 'decimal'), ('str', 'string'), ('json', 'string'), ('ba', 'bytes'),
+                       ('flba5', 'bytes'), ('uuid', 'uuid'), ('enum', 'string')]
+})
 
 # Columns the corpus above cannot carry live in one of their own, which the differential oracle
 # does not read:
@@ -6154,6 +6293,15 @@ for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
     annotate_element_at_path_as_decimal(pred_path, ['dec_ba'], precision=30, scale=3)
     annotate_element_at_path_as_geometry(pred_path, ['geom'])
 
+
+_pv_write('predicate_opaque', {
+    'bson': _pv_column(pred_opaque_table.column('bson').combine_chunks(), 'bytes'),
+    'iv': _pv_column(pred_opaque_table.column('iv').combine_chunks(), 'interval'),
+    'dec_ba': _pv_column(pred_opaque_table.column('dec_ba').combine_chunks(), 'decimal', scale=3),
+    'nul': lambda r: None,
+    'geom': _pv_column(pred_opaque_table.column('geom').combine_chunks(), 'bytes'),
+})
+
 # A struct whose leaf is null under a present struct, alongside a leaf below a repeated path.
 # The first separates "the group is absent" from "the leaf is null", which the column reader's
 # row view has to derive from definition levels; the second is the shape a predicate is rejected
@@ -6187,6 +6335,14 @@ for pred_name, pred_rg_size in [('predicate_nested_single', PRED_ROWS), ('predic
         write_page_index=True,
         store_decimal_as_integer=True,
     )
+
+
+_pv_nested = _pv_leaves(pred_nested_table.column('s'))
+_pv_write('predicate_nested', {
+    's.x': _pv_column(_pv_nested['x'], 'int'),
+    's.name': _pv_column(_pv_nested['name'], 'string'),
+    's.dec': _pv_column(_pv_nested['dec'], 'decimal'),
+})
 
 # INT96 in a corpus of its own, since PyArrow writes every timestamp of a file as INT96 once asked
 # to. `ts96` crosses day boundaries and the epoch; `s.ts96` is null under a present struct.
@@ -6279,6 +6435,21 @@ for pred_name, pred_rg_size, pred_dictionary in [
             by_bytes = sorted(stored, key=lambda b: int.from_bytes(b, 'big', signed=True))
             set_row_group_min_max(pred_path, 'ts96', rg, by_bytes[0], by_bytes[-1])
 
+
+
+def _pv_int96(present):
+    def render(r):
+        if not present(r):
+            return None
+        return _pv_instant('instant', _pred_ts96_ns(r)), f'bytes:{_pv_hex(_pred_int96_stored(r))}'
+    return render
+
+
+_pv_write('predicate_int96', {
+    'ts96': _pv_int96(lambda r: not _pred_null(r)),
+    's.ts96': _pv_int96(lambda r: r % 41 != 7 and r % 43 != 9),
+})
+
 # TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) in a corpus of its own: a signed two's complement
 # little-endian count of the unit since the epoch, which PyArrow does not write, so the columns
 # are written as binary(12) and annotated afterwards. `ts12_ns` steps 50 years a row from about
@@ -6353,6 +6524,24 @@ for pred_name, pred_rg_size, pred_dictionary, pred_bloom, pred_pages in [
             held = [_pred_ts12_ns(r) // per for r in range(rg * pred_rg_size, (rg + 1) * pred_rg_size)
                     if not _pred_null(r)]
             set_row_group_min_max(pred_path, name, rg, _ts12(min(held)), _ts12(max(held)))
+
+
+
+def _pv_ts12(per, tag, present):
+    def render(r):
+        if not present(r):
+            return None
+        count = _pred_ts12_ns(r) // per
+        return _pv_instant(tag, count * per), f'bytes:{_pv_hex(_ts12(count))}'
+    return render
+
+
+_pv_write('predicate_ts12', {
+    'ts12_ns': _pv_ts12(1, 'instant', lambda r: not _pred_null(r)),
+    'ts12_us_local': _pv_ts12(1_000, 'datetime', lambda r: not _pred_null(r)),
+    'ts12_ms': _pv_ts12(1_000_000, 'instant', lambda r: not _pred_null(r)),
+    's.ts12': _pv_ts12(1, 'instant', lambda r: r % 41 != 7 and r % 43 != 9),
+})
 
 # TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) for the accessors: every unit and both UTC settings, a
 # dictionary-encoded column, and a list. Year 1 and year 9999 lie outside the INT64 nanosecond

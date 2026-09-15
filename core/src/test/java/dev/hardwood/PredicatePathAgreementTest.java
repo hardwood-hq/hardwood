@@ -7,12 +7,15 @@
  */
 package dev.hardwood;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -24,10 +27,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
+import java.util.zip.GZIPInputStream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -57,6 +62,11 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /// predicate matches the rows whose value it denotes, in the order the column's type defines, and
 /// never a null row. Disagreement is therefore always the reader's, and it shows up as the row
 /// numbers that differ rather than as a count.
+///
+/// **Values.** The oracle is only as right as the values it reads, so [#readsTheValuesTheFixtureHolds]
+/// first holds those values to what `tools/simple-datagen.py` wrote: each corpus has a
+/// `<corpus>.values.tsv.gz` beside its files, with every row's logical and physical value. A decoding
+/// defect fails there, once, rather than passing on both sides of every predicate.
 ///
 /// **Read paths.** A predicate takes a different route through the reader depending on how it is
 /// built and configured, and a literal resolved wrongly can show on one route only:
@@ -100,6 +110,9 @@ class PredicatePathAgreementTest {
     /// and the physical one, indexed by row.
     private static final Map<String, List<Object[]>> VALUES = new HashMap<>();
 
+    /// The values `tools/simple-datagen.py` wrote to each corpus, read once.
+    private static final Map<String, Map<String, List<String[]>>> WRITTEN = new HashMap<>();
+
     /// The schema of each layout, read once: every case of every path asks it for the column it
     /// filters.
     private static final Map<String, FileSchema> SCHEMAS = new HashMap<>();
@@ -113,6 +126,7 @@ class PredicatePathAgreementTest {
     static void closeContext() {
         context.close();
         VALUES.clear();
+        WRITTEN.clear();
         SCHEMAS.clear();
     }
 
@@ -1042,6 +1056,98 @@ class PredicatePathAgreementTest {
                 .flatMap(layout -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, path)));
     }
 
+    /// Every value the oracle reads is the value the fixture generator wrote, through the logical
+    /// and the physical accessor alike.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("layouts")
+    void readsTheValuesTheFixtureHolds(Layout layout) {
+        Map<String, List<String[]>> written = writtenValues(layout);
+        List<String> differences = new ArrayList<>();
+        for (Map.Entry<String, List<String[]>> column : written.entrySet()) {
+            List<Object[]> read = values(layout, column.getKey());
+            assertThat(read).as("%s: rows of '%s'", layout, column.getKey()).hasSameSizeAs(column.getValue());
+            for (int row = 0; row < read.size(); row++) {
+                String[] expected = column.getValue().get(row);
+                String logical = rendered(read.get(row)[0]);
+                String physical = rendered(read.get(row)[1]);
+                if (!logical.equals(expected[0]) || !physical.equals(expected[1])) {
+                    differences.add("row " + row + ", " + column.getKey() + ": read " + logical + " / " + physical
+                            + ", written " + expected[0] + " / " + expected[1]);
+                }
+            }
+        }
+        assertThat(differences).as("%s", layout).isEmpty();
+    }
+
+    static Stream<Layout> layouts() {
+        return LAYOUTS.stream();
+    }
+
+    /// The values `tools/simple-datagen.py` wrote to the layout's corpus, by column, each as its
+    /// logical and physical rendering, indexed by row.
+    private static Map<String, List<String[]>> writtenValues(Layout layout) {
+        return WRITTEN.computeIfAbsent(corpus(layout), corpus -> {
+            try {
+                return writtenValues(corpus);
+            }
+            catch (IOException e) {
+                throw new IllegalStateException("Cannot read " + corpus + ".values.tsv.gz", e);
+            }
+        });
+    }
+
+    private static Map<String, List<String[]>> writtenValues(String corpus) throws IOException {
+        Map<String, List<String[]>> columns = new LinkedHashMap<>();
+        for (String line : writtenLines(RES.resolve(corpus + ".values.tsv.gz"))) {
+            if (line.startsWith("#")) {
+                continue;
+            }
+            String[] fields = line.split("\t", -1);
+            List<String[]> rows = columns.computeIfAbsent(fields[1], key -> new ArrayList<>());
+            if (Integer.parseInt(fields[0]) != rows.size()) {
+                throw new IllegalStateException(corpus + ".values.tsv.gz: row " + fields[0] + " of '" + fields[1]
+                        + "' out of order");
+            }
+            rows.add(new String[] { fields[2], fields[3] });
+        }
+        return columns;
+    }
+
+    private static String corpus(Layout layout) {
+        return layout.path().getFileName().toString().replaceFirst("_(single|multi|dict|bloom|pages)\\.parquet$", "");
+    }
+
+    private static List<String> writtenLines(Path sidecar) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new GZIPInputStream(Files.newInputStream(sidecar)), StandardCharsets.UTF_8))) {
+            return reader.lines().toList();
+        }
+    }
+
+    /// A value in the form `tools/simple-datagen.py` writes it: tagged with its type, and reduced to
+    /// integers, raw bits or hex without decoding anything.
+    private static String rendered(Object value) {
+        return switch (value) {
+            case null -> "null";
+            case Boolean v -> "boolean:" + v;
+            case Byte v -> "byte:" + v;
+            case Integer v -> "int:" + v;
+            case Long v -> "long:" + v;
+            case Float v -> "float:" + HexFormat.of().toHexDigits(Float.floatToRawIntBits(v));
+            case Double v -> "double:" + HexFormat.of().toHexDigits(Double.doubleToRawLongBits(v));
+            case byte[] v -> "bytes:" + HexFormat.of().formatHex(v);
+            case String v -> "string:" + HexFormat.of().formatHex(v.getBytes(StandardCharsets.UTF_8));
+            case LocalDate v -> "date:" + v.toEpochDay();
+            case LocalTime v -> "time:" + v.toNanoOfDay();
+            case Instant v -> "instant:" + v.getEpochSecond() + ":" + v.getNano();
+            case LocalDateTime v -> "datetime:" + v.toEpochSecond(ZoneOffset.UTC) + ":" + v.getNano();
+            case BigDecimal v -> "decimal:" + v.unscaledValue() + ":" + v.scale();
+            case UUID v -> "uuid:" + v;
+            case PqInterval v -> "interval:" + v.months() + ":" + v.days() + ":" + v.milliseconds();
+            default -> throw new IllegalArgumentException("No rendering for a " + value.getClass().getName());
+        };
+    }
+
     // ==================== Reading ====================
 
     private static List<Long> read(Layout layout, FilterPredicate predicate, ReadPath path) throws IOException {
@@ -1093,7 +1199,12 @@ class PredicatePathAgreementTest {
         return rows;
     }
 
+    /// The values of `column`, which must be among those [#readsTheValuesTheFixtureHolds] checks.
     private static List<Object[]> values(Layout layout, String column) {
+        if (!writtenValues(layout).containsKey(column)) {
+            throw new IllegalStateException(corpus(layout) + ".values.tsv.gz holds no values of '" + column
+                    + "'; add the column to the corpus's _pv_write call in tools/simple-datagen.py");
+        }
         return VALUES.computeIfAbsent(layout.name() + "#" + column, key -> {
             List<Object[]> values = new ArrayList<>();
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(layout.path()), context,

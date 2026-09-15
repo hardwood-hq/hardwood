@@ -284,7 +284,9 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
 - **`PredicatePathAgreementTest`** runs the per-column table, except `GEOGRAPHY` (whose literals
   are `GEOMETRY`'s), with every literal
   kind, operator, `not` form, set form and null test except `intersects`. It checks against an
-  oracle of this rule that reads each row's value through the reader's accessors.
+  oracle of this rule that reads each row's value through the reader's accessors, and first holds
+  those values to the ones `tools/simple-datagen.py` wrote, recorded beside each corpus as
+  `<corpus>.values.tsv.gz`.
   - **Paths:** the `RowReader` by default, forced onto its record-level path, and with
     `hardwood.metadata-filtering=false`; the `ColumnReader` with and without metadata filtering.
   - **Layouts:** one row group, several row groups, dictionary-encoded, and several row groups with
