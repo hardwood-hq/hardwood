@@ -18,9 +18,9 @@
 
 Filter predicates apply at three levels, in this order:
 
-1. **Row group** — entire row groups whose statistics prove no rows can match are skipped. For `eq` and `in` predicates, two further sources skip a row group whose value range covers the target but which never actually stored it — the case min/max statistics cannot catch. A column's [Bloom filter](https://parquet.apache.org/docs/file-format/bloomfilter/) does so when present. So does the column chunk's dictionary page, when the chunk's `encoding_stats` show every data page is dictionary-encoded: the dictionary then lists every value the chunk holds, so a target missing from it cannot occur in any row. Both apply automatically; dictionary pages are read only for a row group that statistics and the Bloom filter did not already drop.
+1. **Row group** — entire row groups whose statistics prove no rows can match are skipped. For `eq` and `in` predicates, two further sources skip a row group whose value range covers the target but which never stored it — the case min/max statistics cannot catch. A column's [Bloom filter](https://parquet.apache.org/docs/file-format/bloomfilter/) does so when present. So does the column chunk's dictionary page, when the chunk's `encoding_stats` show every data page is dictionary-encoded: the dictionary then lists every value the chunk holds, so a target missing from it cannot occur in any row. Both apply automatically; dictionary pages are read only for a row group that statistics and the Bloom filter did not already drop.
 2. **Page** — within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, so the same skip also reduces network I/O.
-3. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that actually match.
+3. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that match.
 
 For spatial filtering on GEOMETRY / GEOGRAPHY columns, see [Geospatial Support](geospatial.md).
 

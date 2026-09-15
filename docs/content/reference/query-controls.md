@@ -11,9 +11,8 @@
 -->
 # Query Controls
 
-Look-it-up reference for the predicate and projection controls. For worked examples and the I/O
-behavior of each control — predicate pushdown, projection, row limits, splits, and skip — see
-[Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-controls.md).
+The predicate and projection controls. For worked examples and the I/O behavior of each control,
+see [Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-controls.md).
 
 ## Supported filter predicates
 

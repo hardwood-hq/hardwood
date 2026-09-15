@@ -12,9 +12,8 @@
 # Typed Accessors
 
 `RowReader` — and the nested `PqStruct` / `PqList` / `PqMap` flyweights — decode each column to its
-logical-type Java representation through typed accessor methods. This page is the full
-correspondence between accessor, Parquet type, and Java type, together with the null- and
-type-mismatch contracts every accessor obeys. For the task-oriented walkthrough, see
+logical-type Java representation through typed accessor methods, listed below with the
+Parquet and Java type of each and the null- and type-mismatch contracts every accessor obeys. For the task-oriented walkthrough, see
 [Read Row by Row](../how-to/row-reader.md).
 
 !!! example "Try it yourself"

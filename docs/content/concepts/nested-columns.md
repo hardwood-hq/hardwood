@@ -14,9 +14,8 @@
 `ColumnReader` hands you a column as flat, typed primitive arrays. For a nested column — a struct
 field, a list, a map, or any combination — those flat arrays need extra structure to say which
 leaf values belong to which record, and where the nulls and empty containers sit. The **layer
-model** is how `ColumnReader` expresses that structure without boxing or per-row objects. This page
-explains the model; for worked code against it, see
-[Column-Oriented Reading](../how-to/column-reader.md).
+model** is how `ColumnReader` expresses that structure without boxing or per-row objects. For
+worked code against it, see [Column-Oriented Reading](../how-to/column-reader.md).
 
 !!! example "Try it yourself"
     Want to run it or explore the capabilities yourself?
@@ -36,7 +35,7 @@ explains the model; for worked code against it, see
 `ColumnReader` exposes a column's schema chain as a sequence of **layers**. Each non-leaf node
 along the chain contributes zero or one layer:
 
-| Schema node | Contributes layer? | Layer kind |
+| Schema node | Adds a layer | Layer kind |
 |---|---|---|
 | `REQUIRED` group | no | — |
 | `OPTIONAL` group (struct) | yes | `STRUCT` |

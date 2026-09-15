@@ -11,9 +11,8 @@
 -->
 # RowReader vs. ColumnReader
 
-Hardwood offers two reader APIs over the same files: `RowReader` and `ColumnReader`. They exist
-for genuinely different reasons, and the trade-off between them is real. For a quick decision
-table on which to pick, see the [How-to overview](../how-to/index.md#choosing-a-reader).
+Hardwood offers two reader APIs over the same files: `RowReader` and `ColumnReader`. For a
+decision table on which to pick, see the [How-to overview](../how-to/index.md#choosing-a-reader).
 
 ## One file, two shapes of access
 
@@ -28,8 +27,7 @@ fits depends on whether your code thinks in *records* or in *columns*.
   (`double[]`, `int[]`, …) plus a [`Validity`](/api/latest/dev/hardwood/Validity.html)
   bitmap for nulls. You loop over the array directly.
 
-Both read the same bytes through the same pipeline. The difference is entirely in what they hand
-to your loop.
+Both read the same bytes through the same pipeline and differ in what they hand to your loop.
 
 ## The trade-off: ergonomics vs. throughput
 
@@ -73,8 +71,7 @@ The leaf values arrive as one flat primitive array holding real values only — 
 null or empty parents are excluded. You walk the offsets and check the bitmaps to reconstruct
 whatever structure you need, with zero allocation in the hot loop.
 
-This is more work to consume than a `PqList`, which is exactly the trade-off restated: the layer
-model is the price `ColumnReader` pays for not allocating, and the reason it wins on analytical
+This is more work to consume than a `PqList`. The layer model is the price `ColumnReader` pays for not allocating, and the reason it wins on analytical
 scans. The full mechanics — layer counts per schema shape, the empty-vs-null distinction, the
 hot-loop null-check shapes — are documented in
 [Read Column by Column](../how-to/column-reader.md).

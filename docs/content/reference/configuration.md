@@ -74,7 +74,7 @@ SIMD support: enabled (256-bit vectors)
 
 The vector width depends on your CPU (128-bit for SSE/NEON, 256-bit for AVX2, 512-bit for AVX-512).
 
-SIMD engages only when the incubator module is added, so to run scalar operations (for debugging or comparison) simply omit the `--add-modules jdk.incubator.vector` argument.
+SIMD engages only when the incubator module is added, so to run scalar operations (for debugging or comparison) omit the `--add-modules jdk.incubator.vector` argument.
 
 ## JFR (Java Flight Recorder) Events
 

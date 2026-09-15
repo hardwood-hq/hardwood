@@ -11,7 +11,7 @@
 -->
 # Writer Reference
 
-Facts about the write path: how a schema is declared, the configuration options, the encodings and codecs the writer produces, the setters each column type accepts, and what it rejects. For task-oriented instructions see [Write Row by Row](../how-to/write-row-by-row.md) and [Write Column by Column](../how-to/write-column-by-column.md).
+How a schema is declared, the configuration options, the encodings and codecs the writer produces, the setters each column type accepts, and what the writer rejects. For task-oriented instructions see [Write Row by Row](../how-to/write-row-by-row.md) and [Write Column by Column](../how-to/write-column-by-column.md).
 
 ## Schema
 
@@ -206,7 +206,7 @@ Some annotations narrow what their physical type may hold. Where one does, both 
 | `DECIMAL(p, s)` | an unscaled value of at most `p` digits |
 | `UNKNOWN` | no value at all; every row must be null, so the column is set through a setter taking a null mask |
 
-Every other annotation narrows nothing, and its column is not scanned per value. `DATE` and `TIMESTAMP` are the ones worth naming: every `INT32` is a day offset the reader materializes, and every `INT64` and every twelve bytes of a `FIXED_LEN_BYTE_ARRAY(12)` is a timestamp in any of the three units, so there is no value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type — a large unsigned value is spelled as a negative, which is also how the reader returns it.
+Every other annotation narrows nothing, and its column is not scanned per value. On a `DATE` column, every `INT32` is a day offset the reader materializes. On a `TIMESTAMP` column, every `INT64` and every twelve bytes of a `FIXED_LEN_BYTE_ARRAY(12)` is a timestamp in any of the three units. Neither leaves a value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type — a large unsigned value is spelled as a negative, which is also how the reader returns it.
 
 Two checks are not annotations and always apply: a `FIXED_LEN_BYTE_ARRAY` value must be exactly the length the column declares, and a present value of a binary column must not be `null`. The value at a row a `Validity` marks null is never encoded, so it is never checked.
 

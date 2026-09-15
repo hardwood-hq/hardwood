@@ -29,7 +29,7 @@ Read and write Parquet files with Hardwood — pick the guide that matches what 
 !!! example "Runnable examples"
     Each guide below links to a matching standalone example in the
     [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository — every example is a
-    complete project you can clone and run with a single command. New to Hardwood? Start with
+    complete project you can clone and run with a single command. To start, see
     [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood).
 
 For detailed class-level documentation, see the [JavaDoc](/api/latest/).

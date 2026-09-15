@@ -11,7 +11,7 @@
 -->
 # Accessing File Metadata
 
-Inspecting metadata before reading is useful for understanding file structure, choosing which columns to project, validating files in a pipeline, or building tooling. Hardwood exposes the full Parquet metadata hierarchy without reading any row data.
+Hardwood exposes the full Parquet metadata hierarchy of a file without reading any row data.
 
 !!! example "Try it yourself"
     Want to run it or explore the capabilities yourself? The [**Metadata Explorer**](https://github.com/hardwood-hq/hardwood-examples/tree/main/metadata-explorer) example describes a Parquet file from its footer alone — version, schema, and per-row-group column statistics.

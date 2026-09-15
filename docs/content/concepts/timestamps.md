@@ -12,18 +12,18 @@
 # Timestamp Semantics
 
 The Parquet TIMESTAMP logical type carries an `isAdjustedToUTC` flag that picks between two
-genuinely different kinds of value. Hardwood splits its accessor surface along the same line:
+different kinds of value. Hardwood splits its accessor surface along the same line:
 `getTimestamp` returns an `Instant` and `getLocalTimestamp` returns a `LocalDateTime`.
 
 ## Two kinds of timestamp
 
 - **`isAdjustedToUTC = true`** is an absolute point on the global timeline. The stored value counts
   time units since the Unix epoch in UTC, and it identifies the same moment everywhere. Java's
-  `Instant` models exactly this: a count from the epoch with no attached zone, comparable across
+  `Instant` models this: a count from the epoch with no attached zone, comparable across
   systems.
 - **`isAdjustedToUTC = false`** is a wall-clock reading — a calendar date and time-of-day with no
   zone information. "2026-06-04 09:00" means whatever local clock recorded it; it does *not* pin a
-  moment until a zone is supplied externally. Java's `LocalDateTime` models exactly this.
+  moment until a zone is supplied externally. Java's `LocalDateTime` models it.
 
 The two are not interconvertible without a time zone, and silently treating one as the other shifts
 values by the local UTC offset — the classic source of off-by-hours bugs. A single accessor

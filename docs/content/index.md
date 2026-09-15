@@ -38,7 +38,7 @@ including an interactive TUI for exploring a file's schema, row groups, pages, a
 
 ## Quick Example
 
-Here's how you read a file with the [row-based API](how-to/row-reader.md):
+Reading a file with the [row-based API](how-to/row-reader.md):
 
 ```java
 import dev.hardwood.InputFile;
@@ -59,7 +59,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-And here's how you [write a file](how-to/write-row-by-row.md):
+[Writing a file](how-to/write-row-by-row.md) row by row:
 
 ```java
 import dev.hardwood.OutputFile;
@@ -78,10 +78,10 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), sc
 }
 ```
 
-Ready? [Set up Hardwood in your project](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
+[Set up Hardwood in your project](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 Alternatively, [install the Hardwood CLI](reference/cli.md) for working with Parquet files on the command line.
 
-Prefer to learn by running code? The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples — one per concept — that you can clone and run with a single command.
+The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples — one per concept — that you can clone and run with a single command.
 
 ## Status and Limitations
 

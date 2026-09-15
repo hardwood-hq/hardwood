@@ -13,11 +13,9 @@
 
 This is a hands-on lesson. By the end you will have opened a real Parquet file, printed its
 schema, read rows with typed accessors, narrowed the read with a projection and a filter, and
-summed a column the fast columnar way. Follow the steps in order and run each snippet — every
-one works as written.
+summed a column the fast columnar way. Follow the steps in order and run each snippet.
 
-It walks one path that works, start to finish — so just follow along rather than reaching for
-options. When you're done, the [how-to guides](../how-to/index.md) cover the full range of
+When you're done, the [how-to guides](../how-to/index.md) cover the full range of
 choices, and the [background pages](../concepts/parquet-layout.md) explain how Parquet files
 and the reader APIs work underneath.
 
@@ -105,7 +103,7 @@ try (ParquetFileReader reader =
 }
 ```
 
-You just read typed values straight out of Parquet — no decoding ceremony, one row at a time.
+Each accessor returned a typed value, one row at a time.
 
 ## Step 4 — Read less
 
@@ -115,7 +113,7 @@ A whole file is rarely what you want. Three builder options narrow the read, and
 - **Filter** — a predicate pushed down to skip data that can't match.
 - **`head(n)`** — stop after `n` rows.
 
-Read only the two columns you need, keep just the high-value trips, and cap at ten:
+Read only the two columns you need, keep the high-value trips, and cap at ten:
 
 ```java
 import dev.hardwood.InputFile;
@@ -142,7 +140,7 @@ try (ParquetFileReader reader =
 }
 ```
 
-You get at most ten trips whose fare is over $100, reading just two columns. Because the filter
+You get at most ten trips whose fare is over $100, reading two columns. Because the filter
 is pushed down, row groups and pages that can't contain a match are skipped before they're
 decoded.
 

@@ -13,7 +13,7 @@
 
 Most of Hardwood's behavior — column projection, predicate pushdown, parallel decode, split
 reading, etc. — follows directly from how the Parquet format arranges
-bytes on disk, which this page describes.
+bytes on disk.
 
 To read this hierarchy programmatically at runtime, see [Inspect File Metadata](../how-to/metadata.md).
 
@@ -90,7 +90,7 @@ records each chunk's compressed and uncompressed size, codec, and statistics.
 
 ### Page
 
-A column chunk is divided into pages, and the page is where compression and encoding actually
+A column chunk is divided into pages, and the page is where compression and encoding
 happen. A chunk typically begins with one **dictionary page** — the column's distinct values —
 followed by **data pages** whose entries are indices into that dictionary. Each page is
 compressed independently, so the page is the smallest unit Hardwood decompresses and decodes,

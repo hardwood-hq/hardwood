@@ -11,7 +11,7 @@
 -->
 # CLI
 
-The `hardwood` CLI lets you inspect and convert Parquet files from the command line — useful for exploring datasets, debugging file structure, and quick format conversions without writing Java code. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
+The `hardwood` CLI inspects and converts Parquet files from the command line. Its commands run non-interactively, for use in scripts and by [AI coding agents](#use-with-ai-coding-agents), and [`hardwood dive`](#interactive-exploration-dive) opens an interactive terminal UI for exploring a file by hand. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
 
 Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). You can also
 run the CLI via Docker without installing it locally — see the [Docker section below](#docker).
@@ -227,8 +227,8 @@ Absent is not the same as empty. `0 B`, `0`, and `""` are values the writer
 recorded; `—` says it recorded none.
 
 Absent is not the same as inapplicable either. `—` marks a quantity that could
-have been written and was not, so it is worth knowing about — rewriting the file
-with statistics or a page index fills it in. A quantity that cannot exist for the
+have been written and was not; rewriting the file with statistics or a page
+index fills it in. A quantity that cannot exist for the
 row at hand reads `N/A` instead: an index page has no data encoding, whatever the
 writer does. Only `—` says something is missing.
 
@@ -345,10 +345,8 @@ navigable session. Typical things to reach for it for:
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
 
-The keybar at the bottom of every screen lists the keys that are
-actually meaningful in the current context — so the menus above show the
-full vocabulary, but the keybar tells you which subset is live right
-now.
+The keybar at the bottom of every screen lists the keys that
+apply in the current context; the menus above list every key.
 
 Available screens:
 

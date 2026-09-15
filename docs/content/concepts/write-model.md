@@ -37,9 +37,9 @@ A column chunk's metadata — its compressed and uncompressed sizes, its page of
 
 A file of any size is a sequence of row groups, each buffered, flushed and forgotten, so peak memory follows whichever target cuts a row group, whatever the size of the file. `rowGroupTargetRows` is usually the one that cuts, since it binds for any record narrower than about 128 bytes; `rowGroupBufferTargetBytes` takes over above that and is what keeps records wider than expected from making a row group unboundedly large.
 
-`rowGroupBufferTargetBytes` is measured on the bytes the writer actually retains: the level streams a byte per entry, the dictionary indices, each column's value store, and the dictionaries themselves. A row group passes it by at most one record, since a record cannot be split across row groups. So peak heap for one writer follows the target. Two things sit on top of it. The buffers hold more than they are charged for while they grow: the value stores grow by half again, and the level streams, a `BYTE_ARRAY` column's packed content and every dictionary's value array and hash table double. And a column's buffers have a floor under them, so a schema with enough columns that each one's share of the target falls below that floor opens at a multiple of it — measured, 200 columns against a 1 MiB target hold about 2.4 MB before a record arrives, while a thousand columns against the default 128 MiB target stay inside it, their shares being far above the floor. Neither scales with how much you write.
+`rowGroupBufferTargetBytes` is measured on the bytes the writer retains: the level streams a byte per entry, the dictionary indices, each column's value store, and the dictionaries themselves. A row group passes it by at most one record, since a record cannot be split across row groups. So peak heap for one writer follows the target. Two things sit on top of it. The buffers hold more than they are charged for while they grow: the value stores grow by half again, and the level streams, a `BYTE_ARRAY` column's packed content and every dictionary's value array and hash table double. And a column's buffers have a floor under them, so a schema with enough columns that each one's share of the target falls below that floor opens at a multiple of it — measured, 200 columns against a 1 MiB target hold about 2.4 MB before a record arrives, while a thousand columns against the default 128 MiB target stay inside it, their shares being far above the floor. Neither scales with how much you write.
 
-Where the **row target** cuts first — which it does for any record retaining less than about 128 bytes, at the defaults — peak heap is instead the row count times what a record retains. That is worth knowing per schema, and it follows from what each column keeps:
+Where the **row target** cuts first — which it does for any record retaining less than about 128 bytes, at the defaults — peak heap is instead the row count times what a record retains, which follows from what each column keeps:
 
 | A column retains, per record | |
 | --- | --- |
@@ -55,7 +55,7 @@ Multiply by your row target, and by the number of writers running in the same JV
 
 Batches and records are *arrival* units. Pages, column chunks and row groups are *layout* units. The writer maps one to the other, and the caller does not see the seam: a batch's values are distributed into per-column buffers, the row group is flushed once what those hold reaches the row-group target, and its pages are cut as it is written out. A batch larger than the row group is split at the boundary.
 
-This is why there is no explicit "end row group" call, and why submitting one large batch and streaming a thousand small ones produce the same file. The targets are the whole vocabulary for layout, and they mean different things:
+This is why there is no explicit "end row group" call, and why submitting one large batch and streaming a thousand small ones produce the same file. Layout is set by the targets alone, and each governs something different:
 
 - **Page size** governs read granularity: a page is the unit a reader decompresses to reach any value in it, so smaller pages prune finer and cost more metadata. It is measured in *encoded* bytes — the values at the width the chunk's encoding gives them, so a dictionary column is measured in indices — and the page is cut before the value that would cross the target. Under a delta encoding, whose width depends on the values, the cut charges the width the type would have taken `PLAIN`, so those pages land below the target.
 - **Row-group rows** governs split sizing and row-group-level pruning, and defaults to 1,048,576. A row group is self-contained, so it is the boundary a file partitions on across separate readers, and it is the granularity at which a reader skips on column-chunk statistics. It does not govern how much of the read runs in parallel: Hardwood decodes *pages* concurrently within a row group, so parallelism is bounded by pages and columns rather than by banding. Unlike a byte target it needs no estimate and does not vary with the data.
@@ -65,9 +65,9 @@ A row group is cut at whichever of the two row-group targets is reached first. N
 
 ## How the writer picks an encoding
 
-Under the default `AUTO` policy, the writer buffers the row group, and then — knowing what the chunk actually holds — compares the size of a dictionary page plus an index stream against the same values written `PLAIN`, and takes the smaller. The choice is per column chunk, so the same column may be dictionary-encoded in one row group and `PLAIN` in the next as its cardinality changes.
+Under the default `AUTO` policy, the writer buffers the row group, and then — knowing what the chunk holds — compares the size of a dictionary page plus an index stream against the same values written `PLAIN`, and takes the smaller. The choice is per column chunk, so the same column may be dictionary-encoded in one row group and `PLAIN` in the next as its cardinality changes.
 
-Two consequences are worth knowing. A chunk is encoded one way throughout — no chunk mixes a dictionary with `PLAIN` overflow pages, and no dictionary page is written for a chunk that ends up `PLAIN`. And naming an encoding explicitly opts out of the comparison entirely: that column builds no dictionary in any row group of the file.
+A chunk is encoded one way throughout — no chunk mixes a dictionary with `PLAIN` overflow pages, and no dictionary page is written for a chunk that ends up `PLAIN`. And naming an encoding explicitly opts out of the comparison entirely: that column builds no dictionary in any row group of the file.
 
 The deciding gives up early where it can. A chunk stops interning once repeated size probes find the dictionary losing to `PLAIN`, which keeps a high-cardinality column from hashing a whole row group's values into a table that is then thrown away. Such a chunk is written `PLAIN`, and is the only one under `AUTO` that cannot state its `distinct_count`. A dictionary needs no size limit of its own: it is part of what the chunk holds, and so is counted against `rowGroupBufferTargetBytes` like everything else the writer retains.
 
@@ -75,7 +75,7 @@ The deciding gives up early where it can. A chunk stops interning once repeated 
 
 Both the reader and the writer let a field be addressed by position as well as by name, and the positions do not always mean the same thing:
 
-- On the **reader**, a field index is a position among an accessor's **projected** children — what the read actually materializes, in projected schema order.
+- On the **reader**, a field index is a position among an accessor's **projected** children — what the read materializes, in projected schema order.
 - On the **writer**, a field index is a position in the struct as **declared** in the schema being written.
 
 Where a whole file is read into its own schema, the two orders coincide, and copying a record field by field — `getFieldName(i)` on one side, `setString(i, …)` on the other — is well defined. As soon as a projection drops or reorders fields, the reader's index `i` and the writer's index `i` name different fields, silently, because both are valid positions.

@@ -11,7 +11,7 @@
 -->
 # Parquet-Java Compatibility
 
-If you have existing code that uses Apache parquet-java's `ParquetReader<Group>` API and want to switch to Hardwood without rewriting it, the `hardwood-parquet-java-compat` module provides a drop-in replacement. It implements the same `org.apache.parquet.*` interfaces backed by Hardwood's reader, so you get Hardwood's performance with minimal code changes.
+If you have existing code that uses Apache parquet-java's `ParquetReader<Group>` API and want to switch to Hardwood without rewriting it, the `hardwood-parquet-java-compat` module provides a drop-in replacement. It implements the same `org.apache.parquet.*` interfaces backed by Hardwood's reader.
 
 !!! warning "Experimental"
     The `hardwood-parquet-java-compat` module is experimental; its API surface and behavior may change in future releases without prior deprecation. This module is not yet available from Maven Central; instead, it needs to be built from source.

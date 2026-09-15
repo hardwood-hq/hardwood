@@ -13,9 +13,7 @@
 
 You rarely want every row of a Parquet file. Hardwood gives a `RowReader` five controls for
 narrowing what comes back — `filter`, `head`, `tail`, `skip`, and the `byteRange` row-group
-predicate. They compose predictably once you hold one idea: **row selection counts over the
-result set, not over the file.** For the step-by-step recipes, see
-[Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-controls.md).
+predicate. **Row selection counts over the result set, not over the file.**
 
 ## Two questions: which rows, and where they live
 
@@ -51,7 +49,7 @@ combine with a filter — see [Currently supported combinations](#currently-supp
 With **no filter**, every row matches, so the result set *is* the whole file and a logical
 position coincides with a physical one. That is the case where `skip(n)` can be a true seek:
 it begins at physical row `n`, and earlier row groups are never opened — an O(1-row-group) jump
-that fetches none of the bytes in between. `head(n)` is simply the first `n` rows of the file.
+that fetches none of the bytes in between. `head(n)` is the first `n` rows of the file.
 
 Add a filter and the coincidence breaks. Row-group statistics bound the *values* in a group, not
 the *count* of rows that match, so the reader cannot know how many matches lie ahead without
@@ -72,7 +70,7 @@ Reach for `byteRange` to decide *which bytes a reader owns*; reach for `filter`/
 decide *which rows it returns*. Using `skip` to position a scan physically under a filter is the
 wrong tool — that is what `byteRange` is for.
 
-## Which do I reach for?
+## Choosing a control
 
 | You want…                                          | Use                              |
 |----------------------------------------------------|----------------------------------|
