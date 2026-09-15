@@ -498,3 +498,14 @@ jobs:
         # -Dnative clears the `native` tag exclusion, so this covers the native
         # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
         run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
+
+  docs-prose-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
+
+      - name: 'Check docs prose'
+        run: python3 tools/docs-prose-check.py
