@@ -24,6 +24,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -90,6 +91,21 @@ class DictionaryFixedLenByteArrayPushDownTest {
     /// A `code` literal, which the column stores as the four bytes of its ASCII spelling.
     private static byte[] code(String value) {
         return value.getBytes(StandardCharsets.US_ASCII);
+    }
+
+    @Test
+    void rowReaderEvaluatesPresentCodeFromDictionaryIds() throws Exception {
+        try (ParquetFileReader filteredReader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rows = filteredReader.buildRowReader()
+                     .filter(FilterPredicate.eq("code", "aa06"))
+                     .build()) {
+            int count = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                count++;
+            }
+            assertThat(count).isEqualTo(1024);
+        }
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {
