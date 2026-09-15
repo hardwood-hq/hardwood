@@ -54,7 +54,9 @@ public class RowGroupFilterEvaluator {
     /// @param dictionaries source of the row group's dictionaries, or `null` to skip the dictionary
     ///        checks
     /// @param logContext where this row group is, for the warning raised when a column's
-    ///        statistics bounds turn out to be unusable
+    ///        statistics bounds turn out to be unusable, or `null` to decide without reporting
+    ///        — for a dry run whose only purpose is to record which sources a real decision
+    ///        would consult, so that the real decision raises each warning once
     /// @return the statistics decision for the row group
     public static FilterDecision decideRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,

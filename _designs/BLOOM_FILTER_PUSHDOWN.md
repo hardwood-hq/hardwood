@@ -61,7 +61,7 @@ A `null` source short-circuits every bloom check to "cannot drop", so the bloom 
 
 ### Callers
 
-Bloom pruning is wired in a single place. `RowGroupIterator.filterRowGroups` constructs a `RowGroupBloomFilterSource` for each row group under test and passes it to `decideRowGroup`. This is the only statistics/bloom evaluation site: both multi-file scans and the single-file reader path run through the same iterator, so the single-file path reaches it there too. `ParquetFileReader.filterRowGroups` applies only the byte-range `RowGroupPredicate` (split selection) and never constructs a bloom source or evaluates statistics.
+Bloom pruning is wired in a single place. `RowGroupIterator.filterRowGroups` constructs a `RowGroupBloomFilterSource` for each row group under test and passes it to `decideRowGroup`. The pass's filter reads are planned and prefetched — coalesced across row groups and fetched in parallel — before the decision loop runs; see [BLOOM_FILTER_IO_COALESCING.md](BLOOM_FILTER_IO_COALESCING.md). This is the only statistics/bloom evaluation site: both multi-file scans and the single-file reader path run through the same iterator, so the single-file path reaches it there too. `ParquetFileReader.filterRowGroups` applies only the byte-range `RowGroupPredicate` (split selection) and never constructs a bloom source or evaluates statistics.
 
 Row groups dropped by a bloom filter are counted in the existing `RowGroupFilterEvent.rowGroupsSkipped`, alongside statistics drops.
 
