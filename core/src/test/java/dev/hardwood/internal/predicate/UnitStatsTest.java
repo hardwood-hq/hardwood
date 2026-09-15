@@ -61,6 +61,8 @@ class UnitStatsTest {
         ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1);
         ResolvedPredicate groupIsNull = new ResolvedPredicate.IsNullPredicate(0, 2, 3);
         ResolvedPredicate groupIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 2, 3);
+        ResolvedPredicate listIsNull = new ResolvedPredicate.IsNullPredicate(0, 1, 3);
+        ResolvedPredicate listIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1, 3);
         // An optional MAP, answered from its required key one level down.
         ResolvedPredicate mapIsNull = new ResolvedPredicate.IsNullPredicate(0, 1, 2);
         ResolvedPredicate mapIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1, 2);
@@ -106,13 +108,31 @@ class UnitStatsTest {
                         new long[]{ 0, 0, 40, 60 }, CANNOT_MATCH),
                 Arguments.of("group IS NOT NULL, group always present", groupIsNotNull, 40L,
                         new long[]{ 0, 0, 40, 60 }, ALWAYS_MATCHES),
+                Arguments.of("group IS NOT NULL, group always absent", groupIsNotNull, 100L,
+                        new long[]{ 0, 100, 0, 0 }, CANNOT_MATCH),
+                // The group is present on every row and the leaf below it null on every row: the
+                // null count, read as the group's, would answer both predicates the wrong way.
+                Arguments.of("group IS NULL, group always present, leaf always null", groupIsNull, 100L,
+                        new long[]{ 0, 0, 100, 0 }, CANNOT_MATCH),
+                Arguments.of("group IS NOT NULL, group always present, leaf always null", groupIsNotNull,
+                        100L, new long[]{ 0, 0, 100, 0 }, ALWAYS_MATCHES),
                 Arguments.of("group IS NOT NULL, histogram short of the rows", groupIsNotNull, 40L,
                         new long[]{ 0, 0, 40, 50 }, MIGHT_MATCH),
                 // The null count equals the row count, which a fallback to it would read as the
                 // group absent throughout.
+                Arguments.of("group IS NULL, no histogram", groupIsNull, 100L, null, MIGHT_MATCH),
                 Arguments.of("group IS NOT NULL, no histogram", groupIsNotNull, 100L, null, MIGHT_MATCH),
                 Arguments.of("group IS NULL, histogram of the wrong length", groupIsNull, 100L,
                         new long[]{ 30, 70, 0 }, MIGHT_MATCH),
+                Arguments.of("group IS NOT NULL, histogram of the wrong length", groupIsNotNull, 100L,
+                        new long[]{ 0, 100, 0 }, MIGHT_MATCH),
+                // An optional LIST of optional elements, present at level 1 and non-null at level 3.
+                // Every row holds one null and one non-null element, so the null count equals the
+                // row count although no list is absent, and it answers neither predicate.
+                Arguments.of("list IS NULL, one null element per row, no histogram", listIsNull, 100L, null,
+                        MIGHT_MATCH),
+                Arguments.of("list IS NOT NULL, one null element per row, no histogram", listIsNotNull, 100L,
+                        null, MIGHT_MATCH),
                 // Every row holds an empty map, which writes one key entry below the key's level,
                 // so the key's null count equals the row count although no map is null. Read as a
                 // leaf's, that count would promise IS NULL on every row and rule out IS NOT NULL.
