@@ -51,8 +51,9 @@ actual values.
 ### Deliberate non-promises
 
 - **Floating point** (`FLOAT`, `DOUBLE`, `FLOAT16`): NaN sits outside the min/max
-  ordering and `nan_count` is not consumed (#607), so a fully-satisfying interval may
-  still hide non-matching NaN rows. FP value leaves never yield `ALWAYS_MATCHES`.
+  ordering, so a fully-satisfying interval may still hide non-matching NaN rows. A
+  recorded `nan_count` of zero rules a NaN row out (#1016), but does not promote the
+  interval to a full match; that is #898. FP value leaves never yield `ALWAYS_MATCHES`.
 - **`IS NULL` on a group a definition level separates from its leaf, from the null count**:
   that leaf counts a null wherever the group is present with a null below it, and below a
   `LIST` or a `MAP` it writes one value per element, so `null_count == numRows` does not prove
