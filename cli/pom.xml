@@ -675,8 +675,11 @@
 
       <!-- SchemaCommandTest checks the emitted Protobuf with the real compiler. Maven
            downloads it so the build needs no protoc on the PATH, and every platform
-           runs the same pinned version. A fixed destFileName keeps one path on
-           Linux, macOS and Windows. -->
+           runs the same pinned version. The file name carries the platform classifier,
+           so builds from different platforms sharing one target directory (a host and a
+           container on a bind mount) each run their own binary. The download follows
+           skipSurefire, so a build that skips the tests does not need a protoc binary for
+           its platform. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
@@ -688,6 +691,7 @@
               <goal>copy</goal>
             </goals>
             <configuration>
+              <skip>${skipSurefire}</skip>
               <artifactItems>
                 <artifactItem>
                   <groupId>com.google.protobuf</groupId>
@@ -696,7 +700,7 @@
                   <classifier>${os.detected.classifier}</classifier>
                   <type>exe</type>
                   <outputDirectory>${project.build.directory}/protoc</outputDirectory>
-                  <destFileName>protoc.exe</destFileName>
+                  <destFileName>protoc-${os.detected.classifier}.exe</destFileName>
                 </artifactItem>
               </artifactItems>
             </configuration>
@@ -726,7 +730,7 @@
           <skipTests>${skipSurefire}</skipTests>
           <argLine>${cli.test.argLine}</argLine>
           <systemPropertyVariables>
-            <protoc.path>${project.build.directory}/protoc/protoc.exe</protoc.path>
+            <protoc.path>${project.build.directory}/protoc/protoc-${os.detected.classifier}.exe</protoc.path>
           </systemPropertyVariables>
         </configuration>
       </plugin>

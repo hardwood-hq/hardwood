@@ -201,9 +201,8 @@ final class AvroSchemaEmitter {
                         || keyPrim.logicalType() instanceof LogicalType.EnumType
                         || keyPrim.logicalType() instanceof LogicalType.JsonType);
         if (!representable) {
-            String description = key == null ? "missing key" : SchemaCommand.describeKeyType(key);
             throw new IllegalArgumentException("Avro map keys must be STRING, ENUM, or JSON; map '" + mapName
-                    + "' has key " + description);
+                    + "' has " + SchemaCommand.describeKey(key));
         }
     }
 }

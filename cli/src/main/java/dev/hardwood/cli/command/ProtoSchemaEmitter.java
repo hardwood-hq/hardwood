@@ -160,7 +160,7 @@ final class ProtoSchemaEmitter {
         };
         if (!representable) {
             throw new IllegalArgumentException("Protobuf map keys must be an integer, bool, or string scalar; map '"
-                    + group.name() + "' has key " + SchemaCommand.describeKeyType(key));
+                    + group.name() + "' has " + SchemaCommand.describeKey(key));
         }
         return primitiveToProtoType((SchemaNode.PrimitiveNode) key);
     }

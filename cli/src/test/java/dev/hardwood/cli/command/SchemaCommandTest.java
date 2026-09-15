@@ -232,6 +232,17 @@ class SchemaCommandTest implements SchemaCommandContract {
                         + "map 'stamps' has key INT96");
     }
 
+    /// A MAP-annotated group without a repeated `key_value` child has no resolvable key.
+    @Test
+    void rejectsMissingProtoMapKeyClearly() {
+        SchemaNode.GroupNode map = new SchemaNode.GroupNode("broken", RepetitionType.OPTIONAL, ConvertedType.MAP,
+                new LogicalType.MapType(), List.of(), 0, 0);
+
+        assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Protobuf map keys must be an integer, bool, or string scalar; map 'broken' has no key");
+    }
+
     @Test
     void distinguishesSameNamedFixedLeavesUnderDifferentParents(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
@@ -291,7 +302,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     void rejectsMissingAvroMapKeyClearly() {
         assertThatThrownBy(() -> AvroSchemaEmitter.validateAvroMapKey(null, "broken"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Avro map keys must be STRING, ENUM, or JSON; map 'broken' has key missing key");
+                .hasMessage("Avro map keys must be STRING, ENUM, or JSON; map 'broken' has no key");
     }
 
     /// Two legal raw names that capitalize to one type candidate must resolve by raw
@@ -967,8 +978,9 @@ class SchemaCommandTest implements SchemaCommandContract {
 
     /// The `protoc` binary Maven copied into `target/protoc` during
     /// `generate-test-resources`, handed over by the `protoc.path` system property.
-    /// The dependency plugin does not keep the executable bit, so this method restores
-    /// it. A binary that is absent is a setup failure, not a reason to skip.
+    /// The dependency plugin does not keep the executable bit, so this method sets it on
+    /// every call: `canExecute()` is not a reliable probe for a root user on a bind mount.
+    /// A binary that is absent is a setup failure, not a reason to skip.
     private static String protocPath() {
         String path = System.getProperty("protoc.path");
         if (path == null) {
@@ -978,7 +990,7 @@ class SchemaCommandTest implements SchemaCommandContract {
         if (!protoc.isFile()) {
             fail("protoc is missing at " + path + ". Run the generate-test-resources phase first.");
         }
-        if (!protoc.canExecute() && !protoc.setExecutable(true)) {
+        if (!protoc.setExecutable(true)) {
             fail("Cannot make protoc executable at " + path);
         }
         return path;

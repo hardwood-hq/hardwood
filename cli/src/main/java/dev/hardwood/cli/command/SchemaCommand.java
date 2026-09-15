@@ -80,12 +80,16 @@ public class SchemaCommand implements Command<CommandInvocation> {
         return candidate;
     }
 
-
-    static String describeKeyType(SchemaNode key) {
-        if (key instanceof SchemaNode.PrimitiveNode prim) {
-            return prim.logicalType() == null ? prim.type().toString() : prim.type() + " (" + prim.logicalType() + ")";
+    /// Describes a map key for a rejection message, completing "map 'm' has …". A
+    /// malformed MAP group resolves no key at all.
+    static String describeKey(SchemaNode key) {
+        if (key == null) {
+            return "no key";
         }
-        return "group '" + key.name() + "'";
+        if (key instanceof SchemaNode.PrimitiveNode prim) {
+            return "key " + (prim.logicalType() == null ? prim.type().toString() : prim.type() + " (" + prim.logicalType() + ")");
+        }
+        return "key group '" + key.name() + "'";
     }
 
     static String capitalize(String s) {
