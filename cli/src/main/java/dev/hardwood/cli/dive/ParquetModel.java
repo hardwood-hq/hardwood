@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -57,6 +58,12 @@ public final class ParquetModel implements AutoCloseable {
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
+    /// Cumulative row counts, one entry longer than the row-group list:
+    /// `rowGroupFirstRows[i]` is the absolute index of row group `i`'s first
+    /// row, and the last entry is the file's row count. Built once at
+    /// construction — the metadata it sums is immutable for the session, and
+    /// [#rowGroupOf] is asked once per keystroke on the Data preview.
+    private final long[] rowGroupFirstRows;
     /// Cached set of all group node paths in the schema; computed once on
     /// first call to [#allGroupPaths]. Schema is immutable per session, so
     /// the result is safe to memoise.
@@ -106,6 +113,19 @@ public final class ParquetModel implements AutoCloseable {
         this.metadata = reader.getFileMetaData();
         this.schema = reader.getFileSchema();
         this.facts = computeFacts();
+        this.rowGroupFirstRows = computeRowGroupFirstRows();
+    }
+
+    private long[] computeRowGroupFirstRows() {
+        List<RowGroup> rowGroups = metadata.rowGroups();
+        long[] firstRows = new long[rowGroups.size() + 1];
+        long cumulative = 0;
+        for (int i = 0; i < rowGroups.size(); i++) {
+            firstRows[i] = cumulative;
+            cumulative += rowGroups.get(i).numRows();
+        }
+        firstRows[rowGroups.size()] = cumulative;
+        return firstRows;
     }
 
     public static ParquetModel open(InputFile inputFile, String displayPath) throws IOException {
@@ -175,6 +195,49 @@ public final class ParquetModel implements AutoCloseable {
 
     public RowGroup rowGroup(int index) {
         return metadata.rowGroups().get(index);
+    }
+
+    /// The absolute index of the first row of `rowGroupIndex`, counting from
+    /// the start of the file.
+    ///
+    /// @throws IndexOutOfBoundsException if there is no such row group
+    public long firstRowOf(int rowGroupIndex) {
+        if (rowGroupIndex < 0 || rowGroupIndex >= rowGroupCount()) {
+            throw new IndexOutOfBoundsException("Row group " + rowGroupIndex + " is out of range for "
+                    + displayPath + ", which has " + rowGroupCount() + " row groups");
+        }
+        return rowGroupFirstRows[rowGroupIndex];
+    }
+
+    /// The row group the absolute row index `row` falls in.
+    ///
+    /// Rejects a row past the end rather than clamping to the last row group:
+    /// a position that silently answers with a different one is worse than no
+    /// answer.
+    ///
+    /// @throws IndexOutOfBoundsException if `row` is negative or past the last
+    ///         row of the file
+    public int rowGroupOf(long row) {
+        long totalRows = rowGroupFirstRows[rowGroupFirstRows.length - 1];
+        if (row < 0 || row >= totalRows) {
+            throw new IndexOutOfBoundsException(
+                    "Row " + row + " is out of range for " + displayPath + ", which has " + totalRows + " rows");
+        }
+        return rowGroupOf(rowGroupFirstRows, row);
+    }
+
+    /// The search itself, over the cumulative counts alone, so that the empty
+    /// row groups a foreign writer may leave in a file can be exercised
+    /// without one on disk.
+    static int rowGroupOf(long[] firstRows, long row) {
+        int found = Arrays.binarySearch(firstRows, row);
+        int rowGroupIndex = found >= 0 ? found : -found - 2;
+        // Empty row groups repeat their predecessor's cumulative count, so the
+        // search can land on one; no row is ever inside them.
+        while (firstRows[rowGroupIndex + 1] <= row) {
+            rowGroupIndex++;
+        }
+        return rowGroupIndex;
     }
 
     public ColumnChunk chunk(int rowGroupIndex, int columnIndex) {

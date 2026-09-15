@@ -56,6 +56,12 @@ public class ConvertCommand implements Command<CommandInvocation> {
     @Option(shortName = 'n', name = "rows", defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
     String n;
 
+    @Option(name = "skip", description = "Number of rows to skip before converting, counted from 0. Cannot be combined with --row-group.")
+    Long skip;
+
+    @Option(name = "row-group", description = "Convert the rows of a single row group, counted from 0. Cannot be combined with --skip.")
+    Integer rowGroup;
+
     @Option(name = "null-string", description = "CSV field to write for a null value (default: an empty field). CSV output only.")
     String nullString;
 
@@ -71,14 +77,15 @@ public class ConvertCommand implements Command<CommandInvocation> {
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
-            int rowLimit = RowLimits.parse(n);
+            RowLimits.RowWindow window = RowLimits.resolveWindow(
+                    reader.getFileMetaData(), skip, rowGroup, RowLimits.parse(n));
             ColumnProjection projection = parseColumnProjection();
             FileSchema fileSchema = reader.getFileSchema();
             List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
             PrintWriter out = openOutput();
             String effectiveNullString = nullString == null ? "" : nullString;
-            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
+            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, window)) {
                 switch (format) {
                     case CSV -> writeCsv(out, fields, rowReader, projection, effectiveNullString);
                     case JSON -> writeJson(out, fields, rowReader);

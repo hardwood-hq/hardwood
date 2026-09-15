@@ -39,14 +39,19 @@ import dev.tamboui.widgets.table.TableState;
 
 /// Projected-row preview. `firstRow` / `pageSize` define which rows are currently
 /// loaded; `←/→` scrolls the visible column window for wide schemas; `PgDn`/`PgUp`
-/// (or `Shift+↓/↑`) flip pages. [ParquetModel#readPreviewPage] maintains a
-/// forward-only cursor across calls, so stepping forward never re-iterates from
-/// row 0 — only backward moves (`PgUp`, `g` jump-to-top) recreate the reader.
+/// (or `Shift+↓/↑`) flip pages; `:` jumps to a row or a row group.
+/// [ParquetModel#readPreviewPage] builds a bounded cursor per call, so any page
+/// costs the same whichever direction the reader moved to reach it.
 public final class DataPreviewScreen {
 
     private static final int COLUMN_SPACING = 1;
     private static final int MIN_PARTIAL_COLUMN_WIDTH = 8;
     private static final int VALUE_TRUNCATE = 32;
+
+    /// The `:` box: wide enough for the longest refusal it prints, tall
+    /// enough for the input, the hint and the keys, plus two borders.
+    private static final int JUMP_MODAL_WIDTH = 48;
+    private static final int JUMP_MODAL_HEIGHT = 6;
 
     /// A sliding ±10×viewport row window of pre-formatted Data preview
     /// rows. Within-window navigation (PgUp/PgDn that stays inside the
@@ -71,11 +76,42 @@ public final class DataPreviewScreen {
         return loadPage(model, 0, pageSize, 0, true);
     }
 
+    /// The screen opened at `firstRow`, with that row selected — what the
+    /// Row groups screens push when the reader asks to see a group's records.
+    public static ScreenState.DataPreview stateAt(ParquetModel model, long firstRow) {
+        return loadPage(model, firstRow, Keys.viewportStride(), 0, true);
+    }
+
+    /// Opens the preview on the first row of `rowGroupIndex`, and reports
+    /// whether it did. What the Row groups screens do with `d`.
+    public static boolean openAtRowGroup(ParquetModel model, NavigationStack stack, int rowGroupIndex) {
+        if (!hasRows(model, rowGroupIndex)) {
+            return false;
+        }
+        stack.push(stateAt(model, model.firstRowOf(rowGroupIndex)));
+        return true;
+    }
+
+    /// Whether a row group has records to show. An empty one starts where its
+    /// successor does, so opening the preview on it would show another
+    /// group's rows under its number.
+    public static boolean hasRows(ParquetModel model, int rowGroupIndex) {
+        return rowGroupIndex >= 0 && rowGroupIndex < model.rowGroupCount()
+                && model.rowGroup(rowGroupIndex).numRows() > 0;
+    }
+
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
         long total = model.facts().totalRows();
         if (state.modalRow() >= 0) {
             return handleModal(event, state, stack, model);
+        }
+        if (state.jump() != null) {
+            return handleJump(event, state, stack, model, total);
+        }
+        if (isJumpPrompt(event)) {
+            stack.replaceTop(withJump(state, new ScreenState.DataPreview.JumpPrompt("", null)));
+            return true;
         }
         // Plain ↑/↓ moves the selected-row cursor inside the current page; Shift+↑/↓
         // pages (handled by the PgDn/PgUp branches below). Enter opens the
@@ -186,8 +222,10 @@ public final class DataPreviewScreen {
         if (state.pageSize() == viewport) {
             return;
         }
-        stack.replaceTop(loadPage(model, state.firstRow(), viewport,
-                state.columnScroll(), state.logicalTypes()));
+        // The prompt survives the re-load: it is a mode the reader is in, not
+        // a property of the page, and `loadPage` builds a state without one.
+        stack.replaceTop(withJump(loadPage(model, state.firstRow(), viewport,
+                state.columnScroll(), state.logicalTypes()), state.jump()));
     }
 
     /// Block borders (top + bottom) and the header row are 3 cells of chrome
@@ -250,6 +288,44 @@ public final class DataPreviewScreen {
             buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
+        if (state.jump() != null) {
+            buffer.setStyle(area, Theme.dim());
+            renderJumpPrompt(buffer, area, state.jump());
+        }
+    }
+
+    /// The `:` prompt, in the same centred bordered box as the record modal
+    /// and the help overlay: what has been typed, and — once an `Enter` has
+    /// been refused — why nothing moved.
+    private static void renderJumpPrompt(Buffer buffer, Rect screenArea,
+                                         ScreenState.DataPreview.JumpPrompt prompt) {
+        int width = Math.min(JUMP_MODAL_WIDTH, Math.max(1, screenArea.width() - 4));
+        int height = Math.min(JUMP_MODAL_HEIGHT, Math.max(1, screenArea.height()));
+        Rect area = new Rect(
+                screenArea.left() + (screenArea.width() - width) / 2,
+                screenArea.top() + (screenArea.height() - height) / 2,
+                width, height);
+        Clear.INSTANCE.render(area, buffer);
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(
+                new Span(" : ", Theme.primary()),
+                new Span(prompt.input() + "\u2588", Theme.primary())));
+        lines.add(Line.empty());
+        lines.add(prompt.error() == null
+                ? Line.from(new Span(" a row, or rg followed by a row group", Theme.dim()))
+                : Line.from(new Span(" " + prompt.error(), Theme.accent())));
+        lines.add(Line.from(new Span(" Enter go \u00b7 Esc cancel", Theme.dim())));
+        Paragraph.builder()
+                .block(Block.builder()
+                        .title(" Jump to ")
+                        .borders(Borders.ALL)
+                        .borderType(BorderType.ROUNDED)
+                        .build())
+                .text(Text.from(lines))
+                .left()
+                .build()
+                .render(area, buffer);
     }
 
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ParquetModel model,
@@ -456,7 +532,9 @@ public final class DataPreviewScreen {
     }
 
     public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
-        if (state.modalRow() >= 0) {
+        // Both boxes carry their own keys, so the keybar stands down while one
+        // of them is open rather than offering keys the box has taken.
+        if (state.modalRow() >= 0 || state.jump() != null) {
             return "";
         }
         long total = model.facts().totalRows();
@@ -478,8 +556,97 @@ public final class DataPreviewScreen {
                 .add(canPage, "[PgDn/PgUp or Shift+↓↑] page")
                 .add(canPage, "[g/G] start/end")
                 .add(anyLogical, "[t] logical types")
+                .add(total > 1, "[:] jump to row")
                 .add(true, "[Esc] back")
                 .build();
+    }
+
+    private static boolean isJumpPrompt(KeyEvent event) {
+        return event.code() == KeyCode.CHAR && event.character() == ':'
+                && !event.hasCtrl() && !event.hasAlt();
+    }
+
+    /// The `:` prompt. Typing edits the target, `Enter` seeks to it, `Esc`
+    /// closes the prompt and leaves the view where it was. A target outside
+    /// the file leaves the prompt open with the typed text intact and the
+    /// reason under it, rather than seeking to the nearest row that does
+    /// exist.
+    private static boolean handleJump(KeyEvent event, ScreenState.DataPreview state,
+                                      NavigationStack stack, ParquetModel model, long total) {
+        ScreenState.DataPreview.JumpPrompt prompt = state.jump();
+        if (event.isCancel()) {
+            stack.replaceTop(withJump(state, null));
+            return true;
+        }
+        if (event.isConfirm()) {
+            stack.replaceTop(jumped(state, prompt.input(), model, total));
+            return true;
+        }
+        if (event.isDeleteBackward()) {
+            String input = prompt.input();
+            String trimmed = input.isEmpty() ? input : input.substring(0, input.length() - 1);
+            stack.replaceTop(withJump(state, new ScreenState.DataPreview.JumpPrompt(trimmed, null)));
+            return true;
+        }
+        if (event.code() == KeyCode.CHAR) {
+            char c = event.character();
+            if (c >= ' ' && c != 127) {
+                stack.replaceTop(withJump(state,
+                        new ScreenState.DataPreview.JumpPrompt(prompt.input() + c, null)));
+                return true;
+            }
+        }
+        // Every other key is swallowed: a prompt that let PgDn through would
+        // move the view out from under the target being typed.
+        return true;
+    }
+
+    /// Resolves what was typed and either seeks to it, closing the prompt, or
+    /// keeps the prompt open carrying the reason it could not.
+    private static ScreenState.DataPreview jumped(ScreenState.DataPreview state, String input,
+                                                  ParquetModel model, long total) {
+        JumpTarget target = parseJump(input, model, total);
+        if (target.error() != null) {
+            return withJump(state, new ScreenState.DataPreview.JumpPrompt(input, target.error()));
+        }
+        return withJump(moveTo(state, target.row(), model, total, ScrollBias.TOP), null);
+    }
+
+    /// A resolved jump target: an absolute row, or the reason there isn't one.
+    private record JumpTarget(long row, String error) {
+    }
+
+    /// Accepts an absolute row — `120` — or a row group — `rg 1`, `rg1`.
+    /// Both count from zero, as `hardwood print --row-index` and
+    /// `hardwood inspect columns --row-group` do.
+    private static JumpTarget parseJump(String input, ParquetModel model, long total) {
+        String text = input.trim();
+        if (text.isEmpty()) {
+            return new JumpTarget(0, "Type a row, or rg followed by a row group");
+        }
+        boolean byRowGroup = text.length() > 2
+                && (text.charAt(0) == 'r' || text.charAt(0) == 'R')
+                && (text.charAt(1) == 'g' || text.charAt(1) == 'G');
+        String digits = byRowGroup ? text.substring(2).trim() : text;
+        long number;
+        try {
+            number = Long.parseLong(digits);
+        }
+        catch (NumberFormatException e) {
+            return new JumpTarget(0, "Type a row, or rg followed by a row group");
+        }
+        if (byRowGroup) {
+            int rowGroupCount = model.rowGroupCount();
+            if (number < 0 || number >= rowGroupCount) {
+                return new JumpTarget(0, Fmt.fmt("Row group %,d is outside 0–%,d",
+                        number, rowGroupCount - 1));
+            }
+            return new JumpTarget(model.firstRowOf(Math.toIntExact(number)), null);
+        }
+        if (number < 0 || number >= total) {
+            return new JumpTarget(0, Fmt.fmt("Row %,d is outside 0–%,d", number, total - 1));
+        }
+        return new JumpTarget(number, null);
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
@@ -711,6 +878,13 @@ public final class DataPreviewScreen {
             }
         }
         return 0;
+    }
+
+    private static ScreenState.DataPreview withJump(ScreenState.DataPreview s,
+                                                    ScreenState.DataPreview.JumpPrompt jump) {
+        return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
+                s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
+                s.expandedColumns(), s.modalCursorLine(), s.modalScroll(), jump);
     }
 
     private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
