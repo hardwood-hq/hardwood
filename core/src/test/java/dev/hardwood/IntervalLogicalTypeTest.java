@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.TestInstance;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
@@ -131,5 +134,39 @@ class IntervalLogicalTypeTest {
             assertThat(first.days()).isEqualTo(15);
             assertThat(first.milliseconds()).isEqualTo(3_600_000);
         }
+    }
+
+    /// parquet-java writes `converted_type=INTERVAL` beside the `LogicalType` union's `UNKNOWN`
+    /// member, as the union has no `INTERVAL` member. The converted type decides the column's
+    /// annotation, so the column reads and filters as an interval rather than as a `NULL` column.
+    @Test
+    void testParquetJavaFooterIsReadAsInterval() throws IOException {
+        Path parquetJavaFile = Paths.get("src/test/resources/interval_parquet_java_test.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetJavaFile))) {
+            ColumnSchema column = fileReader.getFileSchema().getColumn("duration");
+            assertThat(column.logicalType()).isEqualTo(LogicalType.interval());
+
+            try (RowReader rowReader = fileReader.rowReader()) {
+                rowReader.next();
+                assertThat(rowReader.getInterval("duration")).isEqualTo(row0);
+                assertThat(rowReader.getValue("duration")).isEqualTo(row0);
+            }
+
+            assertThat(filteredIds(fileReader, FilterPredicate.eq("duration", row1))).containsExactly(2);
+            assertThat(filteredIds(fileReader, FilterPredicate.notEq("duration", row1))).containsExactly(1);
+            assertThat(filteredIds(fileReader, FilterPredicate.in("duration", row0, row1))).containsExactly(1, 2);
+        }
+    }
+
+    private static List<Integer> filteredIds(ParquetFileReader fileReader, FilterPredicate filter)
+            throws IOException {
+        List<Integer> ids = new ArrayList<>();
+        try (RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                ids.add(rowReader.getInt("id"));
+            }
+        }
+        return ids;
     }
 }

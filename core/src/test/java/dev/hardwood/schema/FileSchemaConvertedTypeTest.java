@@ -72,6 +72,35 @@ class FileSchemaConvertedTypeTest {
                 .isEqualTo(timestamp);
     }
 
+    /// parquet-java writes `INTERVAL` as `converted_type = INTERVAL` beside the union's `UNKNOWN`
+    /// member, since the union has no `INTERVAL` member. `UNKNOWN` beside a converted type yields to
+    /// it, for any converted type and under the same drop rule, while `UNKNOWN` alone stays `NULL`.
+    @Test
+    void aConvertedTypeBesideUnknownDecidesTheAnnotation() {
+        assertThat(resolveColumn(PhysicalType.FIXED_LEN_BYTE_ARRAY, 12, ConvertedType.INTERVAL, LogicalType.nullType())
+                .logicalType()).isEqualTo(LogicalType.interval());
+        assertThat(resolveColumn(PhysicalType.BYTE_ARRAY, null, ConvertedType.UTF8, LogicalType.nullType())
+                .logicalType()).isEqualTo(LogicalType.string());
+        assertThat(resolveColumn(PhysicalType.INT32, null, ConvertedType.UTF8, LogicalType.nullType())
+                .logicalType()).isNull();
+        assertThat(resolveColumn(PhysicalType.INT32, null, null, LogicalType.nullType())
+                .logicalType()).isEqualTo(LogicalType.nullType());
+
+        SchemaElement legacyTimestamp = new SchemaElement(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                RepetitionType.OPTIONAL, null, ConvertedType.TIMESTAMP_MICROS, null, null, null,
+                LogicalType.nullType());
+        assertThat(LeafAnnotation.dropFault(legacyTimestamp))
+                .isEqualTo("TIMESTAMP_MICROS is read from INT64, but the column is FIXED_LEN_BYTE_ARRAY");
+    }
+
+    private static ColumnSchema resolveColumn(PhysicalType type, Integer typeLength, ConvertedType convertedType,
+                                              LogicalType logicalType) {
+        SchemaElement root = SchemaElement.group(ROOT, RepetitionType.REQUIRED, 1);
+        SchemaElement leaf = new SchemaElement(
+                COLUMN, type, typeLength, RepetitionType.OPTIONAL, null, convertedType, null, null, null, logicalType);
+        return FileSchema.fromSchemaElements(List.of(root, leaf)).getColumn(COLUMN);
+    }
+
     /// Build a one-column schema whose single leaf carries only the given
     /// `convertedType` (no modern logical type), and return the resolved column.
     private static ColumnSchema resolveColumn(PhysicalType type, ConvertedType convertedType) {

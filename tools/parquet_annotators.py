@@ -674,24 +674,33 @@ def annotate_element_at_path_as_decimal(path: str, name_path, *,
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
-def annotate_column_as_interval(path: str, column_name: str, *, legacy_only: bool = False) -> None:
+def annotate_column_as_interval(path: str, column_name: str, *, form: str = 'union') -> None:
     """Rewrite `path` so that the named FIXED_LEN_BYTE_ARRAY(12) column carries the INTERVAL annotation.
 
-    By default writes the modern `LogicalType.IntervalType` union (field 9). When
-    `legacy_only=True`, writes only the legacy `converted_type=INTERVAL` (value 21)
-    and clears any modern `logicalType` — simulating files from older writers
-    (parquet-mr, Spark, Hive) that predate the LogicalType union.
+    `form` selects the footer:
+
+    - `'union'` writes the `LogicalType` union's field 9, which `parquet.thrift` reserves for
+      INTERVAL without defining a member. No writer emits it.
+    - `'converted'` writes only the legacy `converted_type=INTERVAL` (value 21) and clears any
+      `logicalType`, as writers predating the `LogicalType` union do.
+    - `'parquet-java'` writes `converted_type=INTERVAL` beside the union's `UNKNOWN` member
+      (field 11), as parquet-java 1.11 and later do.
     """
     data_before_footer, file_metadata = _read_parquet_footer(path)
 
     matched = False
     for el in file_metadata.schema:
         if el.name == column_name:
-            if legacy_only:
+            if form == 'union':
+                el.logicalType = _parquet.LogicalType(INTERVAL=_parquet.IntervalType())
+            elif form == 'converted':
                 el.logicalType = None
                 el.converted_type = 21  # ConvertedType.INTERVAL
+            elif form == 'parquet-java':
+                el.logicalType = _parquet.LogicalType(UNKNOWN=_parquet.NullType())
+                el.converted_type = 21  # ConvertedType.INTERVAL
             else:
-                el.logicalType = _parquet.LogicalType(INTERVAL=_parquet.IntervalType())
+                raise ValueError(f"Unknown INTERVAL annotation form {form!r}")
             matched = True
             break
     if not matched:

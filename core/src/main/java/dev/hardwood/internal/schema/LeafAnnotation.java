@@ -30,18 +30,17 @@ public final class LeafAnnotation {
     /// physical column and decoded wrong or not at all (e.g. a `DECIMAL` read as
     /// an unscaled integer, a `DATE` as a raw `INT32`).
     ///
-    /// When both annotations are present the modern `logicalType()` wins. Only
+    /// When both annotations are present the modern `logicalType()` wins, except for
+    /// `UNKNOWN`: beside a `converted_type` it yields to it. `UNKNOWN` states that the column
+    /// stores only nulls, and a converted type beside it is a writer's stand-in for an
+    /// annotation the union cannot express; parquet-java writes `INTERVAL` this way. Only
     /// primitive-level annotations are mapped here; the group-level `LIST`, `MAP`,
     /// and `MAP_KEY_VALUE` map to `null`.
     public static LogicalType effective(SchemaElement element) {
-        if (element.logicalType() != null) {
+        if (!convertedTypeDecides(element)) {
             return element.logicalType();
         }
-        ConvertedType converted = element.convertedType();
-        if (converted == null) {
-            return null;
-        }
-        return switch (converted) {
+        return switch (element.convertedType()) {
             case UTF8 -> LogicalType.string();
             case ENUM -> LogicalType.enumType();
             case JSON -> LogicalType.json();
@@ -84,6 +83,12 @@ public final class LeafAnnotation {
         return LogicalTypeConverter.conversionFault(element.type(), element.typeLength(), annotation);
     }
 
+    /// Whether the element's `converted_type`, rather than its `logicalType`, decides its annotation.
+    private static boolean convertedTypeDecides(SchemaElement element) {
+        return element.convertedType() != null
+                && (element.logicalType() == null || element.logicalType() instanceof LogicalType.NullType);
+    }
+
     /// The legacy `TIMESTAMP_MILLIS` and `TIMESTAMP_MICROS` annotate an `INT64` only, while the
     /// `TIMESTAMP` they map to is also read from a `FIXED_LEN_BYTE_ARRAY(12)`. Standing alone on
     /// anything but an `INT64`, the legacy annotation is faulted where [#effective] would carry it
@@ -92,7 +97,7 @@ public final class LeafAnnotation {
         ConvertedType converted = element.convertedType();
         boolean legacyTimestamp = converted == ConvertedType.TIMESTAMP_MILLIS
                 || converted == ConvertedType.TIMESTAMP_MICROS;
-        if (element.logicalType() != null || !legacyTimestamp || element.type() == PhysicalType.INT64) {
+        if (!convertedTypeDecides(element) || !legacyTimestamp || element.type() == PhysicalType.INT64) {
             return null;
         }
         return converted + " is read from INT64, but the column is " + element.type();

@@ -109,7 +109,9 @@ Notes on individual rows:
   a signed 96-bit little-endian count of the unit.
 - **`NULL`.** A conforming file stores only nulls there, so no comparison matches, and no order is
   defined over values that do not exist. A file that stores values anyway is compared by what it
-  stores under equality, as a column exceeding an `INT(8)` annotation is.
+  stores under equality, as a column exceeding an `INT(8)` annotation is. A footer that gives
+  `UNKNOWN` beside a `converted_type` annotates the column with the converted type, so parquet-java's
+  `INTERVAL` columns (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) take the `INTERVAL` row.
 - **`intersects`** decides row groups, not rows. It drops a row group whose bounding box does not
   overlap the query box and returns every row of the others, nulls included, so its answer depends
   on the file's bounding boxes and on whether metadata filtering is on. A query box with
@@ -271,7 +273,7 @@ The **Relevance** column estimates how often a real query meets the difference.
 | 14 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use `isNull` | Medium for shim users; fails loudly |
 | 15 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 12 | Low; needs a literal of another width |
 | 16 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
-| 17 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | throws | the row | none (read as `INTEGER`) | Hardwood defect [#1217](https://github.com/hardwood-hq/hardwood/issues/1217): the column is read as `NULL` | Medium for `INTERVAL` data from parquet-java |
+| 17 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | the row | the row | none (read as `INTEGER`) | DuckDB defect: reads the column as `INTEGER` | Low; DuckDB only |
 
 In short: code moving from parquet-java should check negations over nullable columns (1). Code
 comparing with DuckDB should use `BigDecimal` for decimals (4), and should expect Hardwood to

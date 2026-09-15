@@ -3408,10 +3408,27 @@ pq.write_table(
 annotate_column_as_interval(
     'core/src/test/resources/interval_legacy_converted_type_test.parquet',
     'duration',
-    legacy_only=True)
+    form='converted')
 
 print("\nGenerated interval_legacy_converted_type_test.parquet:")
 print("  - Same data, only the legacy converted_type=INTERVAL annotation set")
+
+# Same shape again, with the footer parquet-java writes: `converted_type=INTERVAL` beside the
+# LogicalType union's UNKNOWN member, since the union has no INTERVAL member.
+pq.write_table(
+    interval_table,
+    'core/src/test/resources/interval_parquet_java_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+annotate_column_as_interval(
+    'core/src/test/resources/interval_parquet_java_test.parquet',
+    'duration',
+    form='parquet-java')
+
+print("\nGenerated interval_parquet_java_test.parquet:")
+print("  - Same data, converted_type=INTERVAL beside logicalType=UNKNOWN")
 
 # Legacy converted-type coverage (hardwood-hq/hardwood#529). Every primitive
 # `converted_type` that predates the LogicalType union, written with no modern
@@ -6133,7 +6150,7 @@ for pred_name, pred_rg_size, pred_dictionary, pred_bloom in [
         bloom_filter_options=_pred_bloom(pred_opaque_table) if pred_bloom else None,
     )
     annotate_column_as_bson(pred_path, 'bson')
-    annotate_column_as_interval(pred_path, 'iv')
+    annotate_column_as_interval(pred_path, 'iv', form='parquet-java')
     annotate_element_at_path_as_decimal(pred_path, ['dec_ba'], precision=30, scale=3)
     annotate_element_at_path_as_geometry(pred_path, ['geom'])
 

@@ -25,6 +25,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A logical type annotation a column's physical type cannot carry, or one this release does not recognize, is ignored, and the column is read as its physical type ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
+- `INTERVAL` columns written by parquet-java, which carry `converted_type = INTERVAL` beside `logicalType = UNKNOWN`, are read and filtered as `INTERVAL` instead of as `NULL` columns ([#1217](https://github.com/hardwood-hq/hardwood/issues/1217)).
+
 - A `ParquetFileReader` no longer retains a read's `RowGroupIterator` after the reader consuming it is closed ([#1170](https://github.com/hardwood-hq/hardwood/issues/1170)).
 
 - A multi-file read opens each file as it reaches it, rather than opening every file when the reader is built, so the time to the first row no longer grows with the number of files ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).

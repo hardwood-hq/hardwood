@@ -194,7 +194,10 @@ caller-side opt-in:
 UTC-normalized `Instant`, matching the parquet-format backward-compatibility rule for these
 annotations. Unsigned columns preserve the stored bit pattern — reinterpret with
 `Integer.toUnsignedLong` / `Long.toUnsignedString` for the unsigned magnitude. When a file carries
-both a `converted_type` and a modern `logicalType`, the `logicalType` takes precedence.
+both a `converted_type` and a modern `logicalType`, the `logicalType` takes precedence, except where
+the `logicalType` is `UNKNOWN`: then the `converted_type` decides. parquet-java writes `INTERVAL`
+columns in that form, as `converted_type = INTERVAL` beside `logicalType = UNKNOWN`, and they read
+as `INTERVAL`.
 
 The MAP group annotation has a legacy form too: some older parquet-mr / Hive / Impala files annotate
 only the inner repeated `key_value` group with `MAP_KEY_VALUE` and leave the outer group unannotated.
