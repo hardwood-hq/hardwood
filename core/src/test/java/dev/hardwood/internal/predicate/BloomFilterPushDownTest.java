@@ -29,6 +29,7 @@ import org.apache.parquet.format.Util;
 import org.apache.parquet.format.XxHash;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
@@ -54,7 +55,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 ///
 /// The discriminating cases use values that fall *inside* the column's statistics min/max range —
 /// so statistics alone keep the row group — but were never written, so only the bloom filter can
-/// prove their absence.
+/// prove their absence. [SignedZero] runs the signed-zero and NaN cases against a separate fixture.
 class BloomFilterPushDownTest {
 
     /// A position with nothing to point at: these cases assert decisions, not diagnostics.
@@ -368,15 +369,110 @@ class BloomFilterPushDownTest {
         assertThat(source.forColumn(rowGroup.columns().size())).isNull();
     }
 
+    /// Bloom-filter pruning for FLOAT and DOUBLE columns containing only `-0.0`, against
+    /// `bloom_filter_signed_zero_test.parquet`.
+    ///
+    /// Statistics are disabled in the fixture so these assertions exercise bloom-filter decisions
+    /// directly.
+    @Nested
+    class SignedZero {
+
+        private static ParquetFileReader signedZeroReader;
+        private static InputFile signedZeroFile;
+        private static RowGroup signedZeroRowGroup;
+        private static FileSchema signedZeroSchema;
+
+        @BeforeAll
+        static void open() throws Exception {
+            signedZeroFile = InputFile.of(Paths.get("src/test/resources/bloom_filter_signed_zero_test.parquet"));
+            signedZeroReader = ParquetFileReader.open(signedZeroFile);
+            signedZeroRowGroup = signedZeroReader.getFileMetaData().rowGroups().getFirst();
+            signedZeroSchema = FileSchema.fromSchemaElements(signedZeroReader.getFileMetaData().schema());
+        }
+
+        @AfterAll
+        static void close() throws Exception {
+            signedZeroReader.close();
+        }
+
+        @Test
+        void floatSignedZeroUsesBloomFilter() throws IOException {
+            assertThat(statisticsDrop(FilterPredicate.eq("float_value", 0.0f))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.eq("float_value", 0.0f))).isTrue();
+            assertThat(bloomDrop(FilterPredicate.eq("float_value", -0.0f))).isFalse();
+        }
+
+        @Test
+        void doubleSignedZeroUsesBloomFilter() throws IOException {
+            assertThat(statisticsDrop(FilterPredicate.eq("double_value", 0.0))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.eq("double_value", 0.0))).isTrue();
+            assertThat(bloomDrop(FilterPredicate.eq("double_value", -0.0))).isFalse();
+        }
+
+        @Test
+        void nanRemainsConservative() throws IOException {
+            assertThat(bloomDrop(FilterPredicate.eq("float_value", Float.NaN))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.eq("double_value", Double.NaN))).isFalse();
+        }
+
+        @Test
+        void floatSignedZeroInListUsesBloomFilter() throws IOException {
+            assertThat(statisticsDrop(FilterPredicate.in("float_value", 0.0f))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.in("float_value", 0.0f))).isTrue();
+            assertThat(bloomDrop(FilterPredicate.in("float_value", -0.0f))).isFalse();
+        }
+
+        @Test
+        void doubleSignedZeroInListUsesBloomFilter() throws IOException {
+            assertThat(statisticsDrop(FilterPredicate.in("double_value", 0.0d))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.in("double_value", 0.0d))).isTrue();
+            assertThat(bloomDrop(FilterPredicate.in("double_value", -0.0d))).isFalse();
+        }
+
+        @Test
+        void nanProbeInListDisablesBloomDrop() throws IOException {
+            double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
+            float customFloatNan = Float.intBitsToFloat(0x7fc00001);
+            assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0f, Float.NaN))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.in("double_value", 5.0d, Double.NaN))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.in("float_value", 5.0f, customFloatNan))).isFalse();
+            assertThat(bloomDrop(FilterPredicate.in("double_value", 5.0d, customNan))).isFalse();
+        }
+
+        @Test
+        void infinityInListUsesBloomFilter() throws IOException {
+            // Fixture stores -0.0; +Inf and -Inf are absent, so bloom filter drops them.
+            assertThat(bloomDrop(FilterPredicate.in("float_value", Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY))).isTrue();
+            assertThat(bloomDrop(FilterPredicate.in("double_value", Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY))).isTrue();
+        }
+
+        private static boolean bloomDrop(FilterPredicate filter) throws IOException {
+            return bloomDropIn(filter, signedZeroFile, signedZeroRowGroup, signedZeroSchema);
+        }
+
+        private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
+            return statisticsDropIn(filter, signedZeroRowGroup, signedZeroSchema);
+        }
+    }
+
     private static boolean bloomDrop(FilterPredicate filter) throws IOException {
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup,
-                new RowGroupBloomFilterSource(inputFile, rowGroup), null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
+        return bloomDropIn(filter, inputFile, rowGroup, schema);
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
+        return statisticsDropIn(filter, rowGroup, schema);
+    }
+
+    private static boolean bloomDropIn(FilterPredicate filter, InputFile file, RowGroup group, FileSchema fileSchema)
+            throws IOException {
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, fileSchema);
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, group,
+                new RowGroupBloomFilterSource(file, group), null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
+    }
+
+    private static boolean statisticsDropIn(FilterPredicate filter, RowGroup group, FileSchema fileSchema) throws IOException {
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, fileSchema);
+        return RowGroupFilterEvaluator.decideRowGroup(resolved, group, null, null, UNNAMED, BoundsReadability.ALL) == FilterDecision.CANNOT_MATCH;
     }
 
     /// A `BloomFilterHeader` thrift struct followed by a minimal one-block (32-byte) bitset holding
