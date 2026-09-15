@@ -8,6 +8,7 @@
 package dev.hardwood.tools.predicateaudit;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -195,6 +196,7 @@ final class Cases {
                 l.addAll(List.of(wallClock, wallClock.plusNanos(1), LocalDateTime.MAX, LocalDateTime.MIN,
                         LocalDateTime.of(2300, 1, 1, 0, 0), wallClock.toInstant(ZoneOffset.UTC), probe));
             }
+            case TS12_MS_UTC, TS12_NS_UTC, TS12_US_LOCAL -> ts12Literals(l, column, probe);
             case INT96 -> int96Literals(l, probe);
             case DEC_I32, DEC_I64, DEC_FLBA, DEC_BA -> decimalLiterals(l, column, probe);
             case STRING, ENUM, JSON -> l.addAll(List.of(new String((byte[]) probe, StandardCharsets.UTF_8), "", "～", "é",
@@ -223,6 +225,31 @@ final class Cases {
             }
         }
         return l;
+    }
+
+    /// Literals for a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`: the typed literal at the probe row, one
+    /// nanosecond past it, before the epoch, past year 9999 and past the `INT64` nanosecond range, at
+    /// the ends of `Instant`; the literal of the other timestamp kind and a `long`; and byte literals
+    /// of the probe row, one count past it and one byte short.
+    private static void ts12Literals(List<Object> l, Col column, Object probe) {
+        BigInteger nanos = Columns.ts12Nanos(Columns.PROBE_ROW);
+        BigInteger[] seconds = nanos.subtract(nanos.mod(BigInteger.valueOf(Oracle.unitNanos(column.sem()))))
+                .divideAndRemainder(BigInteger.valueOf(1_000_000_000L));
+        Instant atProbe = Instant.ofEpochSecond(seconds[0].longValueExact(), seconds[1].longValueExact());
+        List<Instant> instants = List.of(atProbe, atProbe.plusNanos(1), Instant.parse("1969-12-31T23:59:59.999999999Z"),
+                Instant.parse("9999-12-31T23:59:59.999999999Z"), Instant.parse("2300-01-01T00:00:00Z"),
+                Instant.parse("-5000-01-01T00:00:00Z"));
+        if (column.sem() == Sem.TS12_US_LOCAL) {
+            instants.forEach(instant -> l.add(LocalDateTime.ofInstant(instant, ZoneOffset.UTC)));
+            l.addAll(List.of(LocalDateTime.MAX, LocalDateTime.MIN, atProbe));
+        }
+        else {
+            l.addAll(instants);
+            l.addAll(List.of(Instant.MAX, Instant.MIN, LocalDateTime.ofInstant(atProbe, ZoneOffset.UTC)));
+        }
+        byte[] past = ((byte[]) probe).clone();
+        past[0]++;
+        l.addAll(List.of(probe, past, new byte[11], 0L));
     }
 
     private static void int96Literals(List<Object> l, Object probe) {

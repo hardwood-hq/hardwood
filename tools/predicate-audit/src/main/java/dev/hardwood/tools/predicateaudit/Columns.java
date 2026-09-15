@@ -37,7 +37,8 @@ final class Columns {
     /// What a column is, as far as the rule is concerned: its physical type and annotation.
     enum Sem {
         BOOL, I32, I64, INT8S, UINT8, UINT32, UINT64, F32, F64, F16, DATE, TIME_MS, TIME_US, TIME_NS,
-        TS_MS_UTC, TS_US_UTC, TS_NS_UTC, TS_MS_LOCAL, TS_US_LOCAL, INT96, DEC_I32, DEC_I64, DEC_FLBA, DEC_BA,
+        TS_MS_UTC, TS_US_UTC, TS_NS_UTC, TS_MS_LOCAL, TS_US_LOCAL, TS12_MS_UTC, TS12_NS_UTC, TS12_US_LOCAL, INT96,
+        DEC_I32, DEC_I64, DEC_FLBA, DEC_BA,
         STRING, ENUM, JSON, BSON, BA, FLBA, UUID, INTERVAL, NULL_I32, GEOM, ZZ
     }
 
@@ -127,6 +128,34 @@ final class Columns {
         }
         return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
                 .putLong(nanosOfDay).putInt(Math.toIntExact(day)).array();
+    }
+
+    /// Fifty years of 365.25 days, in nanoseconds: the step between the rows of the `ts12` columns.
+    private static final BigInteger TS12_STEP_NANOS = BigInteger.valueOf(50L * 31_557_600L * 1_000_000_000L);
+
+    /// The instant row `row` of the `ts12` columns stands for, in nanoseconds since the epoch: fifty
+    /// years a row either side of row 300, which passes the `INT64` nanosecond range in both
+    /// directions, except the nanosecond before the epoch at row 3 and the last nanosecond of year
+    /// 9999 at row 6.
+    static BigInteger ts12Nanos(int row) {
+        return switch (row) {
+            case 3 -> BigInteger.valueOf(-1);
+            case 6 -> BigInteger.valueOf(253_402_300_799L).multiply(BigInteger.valueOf(1_000_000_000L))
+                    .add(BigInteger.valueOf(999_999_999L));
+            default -> BigInteger.valueOf(offset(row)).multiply(TS12_STEP_NANOS).add(BigInteger.valueOf(row * 1_000_001L));
+        };
+    }
+
+    /// The twelve bytes a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` stores for `nanos`, floored to a
+    /// unit of `unitNanos`: the count's two's complement, least significant byte first.
+    static byte[] ts12(BigInteger nanos, long unitNanos) {
+        BigInteger count = nanos.subtract(nanos.mod(BigInteger.valueOf(unitNanos))).divide(BigInteger.valueOf(unitNanos));
+        byte[] bigEndian = fixedDecimal(count, 12);
+        byte[] littleEndian = new byte[12];
+        for (int i = 0; i < 12; i++) {
+            littleEndian[i] = bigEndian[11 - i];
+        }
+        return littleEndian;
     }
 
     static byte[] fixedDecimal(BigInteger unscaled, int width) {
@@ -230,6 +259,19 @@ final class Columns {
         return c;
     }
 
+    /// `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, which no parquet-java release up to 1.18.1 writes: the
+    /// pinned one writes plain fixed-width bytes, and `derive_fixtures.py` adds the annotation and the
+    /// bounds afterwards.
+    static List<Col> ts12() {
+        List<Col> c = new ArrayList<>();
+        c.add(new Col("__row__", Sem.I64, 0, 0, row -> (long) row, false));
+        c.add(new Col("zz", Sem.ZZ, 0, 0, row -> utf8("z"), false));
+        c.add(new Col("ts12_ns", Sem.TS12_NS_UTC, 0, 12, row -> ts12(ts12Nanos(row), 1L), true));
+        c.add(new Col("ts12_us_local", Sem.TS12_US_LOCAL, 0, 12, row -> ts12(ts12Nanos(row), 1_000L), true));
+        c.add(new Col("ts12_ms", Sem.TS12_MS_UTC, 0, 12, row -> ts12(ts12Nanos(row), 1_000_000L), true));
+        return c;
+    }
+
     /// Columns DuckDB cannot read in the same file as the flat ones.
     static List<Col> exotic() {
         List<Col> c = new ArrayList<>();
@@ -284,7 +326,7 @@ final class Columns {
 
     /// The flat columns as read from the variant whose annotations the physical type cannot carry.
     static List<Col> dropped() {
-        return remap(flat(), Map.of("itv", Sem.FLBA, "str", Sem.BA));
+        return remap(flat(), Map.of("uuid", Sem.FLBA, "str", Sem.BA));
     }
 
     // ==================== Nested ====================

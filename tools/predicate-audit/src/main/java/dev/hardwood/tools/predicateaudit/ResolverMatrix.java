@@ -56,6 +56,7 @@ final class ResolverMatrix {
         Map<String, Rows> files = new LinkedHashMap<>();
         files.put("flat_single", Matrix.flatRows(Columns.flat()));
         files.put("exotic_single", Matrix.flatRows(Columns.exotic()));
+        files.put("ts12_single", Matrix.flatRows(Columns.ts12()));
         files.put("legacy_single", Matrix.flatRows(Columns.legacy()));
         files.put("dropped_single", Matrix.flatRows(Columns.dropped()));
         files.put("nested_single", null);

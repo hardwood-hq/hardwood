@@ -286,12 +286,14 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
 - **`ParquetReaderCompatTest`**: `Binary` literals on `DECIMAL` and `FLOAT16` answer as parquet-java.
 - **`tools/predicate-audit`**, run by hand when the rule, pruning or a compared engine changes; CI
   compiles it but does not run it:
-  - **Matrix:** about 68,000 predicate cells through the same five paths, checked against a second
+  - **Matrix:** about 72,000 predicate cells through the same five paths, checked against a second
     oracle of this rule that takes stored values from the fixture generator rather than from the
     reader. parquet-java writes the fixtures in the same four layouts: the per-column table, the
     `BSON`, `NULL` and `GEOMETRY` columns, a low-cardinality copy that is dictionary-encoded
     throughout, and nested structs with a `LIST`. Footer rewrites derive converted-type-only and
-    dropped-annotation variants from the per-column table.
+    dropped-annotation variants from the per-column table, and annotate the `TIMESTAMP` columns over
+    `FIXED_LEN_BYTE_ARRAY(12)` that parquet-java writes as plain bytes, with bounds in the order of
+    their values.
   - **Resolver matrix:** every literal kind and operator against every column and group, including
     `VARIANT` groups written by a footer rewrite.
   - **Consultation checks:** Bloom filters (against a copy with zeroed bitsets) and dictionaries are

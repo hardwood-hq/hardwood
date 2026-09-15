@@ -59,6 +59,7 @@ final class FixtureWriter {
         for (Layout layout : LAYOUTS) {
             write(directory.resolve("flat_" + layout.name() + ".parquet"), Columns.flat(), layout);
             write(directory.resolve("exotic_" + layout.name() + ".parquet"), Columns.exotic(), layout);
+            write(directory.resolve("ts12_" + layout.name() + ".parquet"), Columns.ts12(), layout);
             Layout dictionaryEverywhere = layout.name().equals("dict") || layout.name().equals("bloom")
                     ? new Layout(layout.name(), layout.rowGroupRows(), layout.pageRows(), true, layout.bloom(),
                             WriterVersion.PARQUET_2_0)
@@ -160,6 +161,10 @@ final class FixtureWriter {
             case FLBA -> Types.primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY, repetition).length(column.width()).named(name);
             case UUID -> fixed(repetition, 16, LogicalTypeAnnotation.uuidType(), name);
             case INTERVAL -> fixed(repetition, 12, LogicalTypeAnnotation.intervalType(), name);
+            // No parquet-java release up to 1.18.1 accepts TIMESTAMP on a FIXED_LEN_BYTE_ARRAY, so
+            // derive_fixtures.py annotates it.
+            case TS12_MS_UTC, TS12_NS_UTC, TS12_US_LOCAL ->
+                    Types.primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY, repetition).length(12).named(name);
             case NULL_I32 -> int32(repetition, LogicalTypeAnnotation.unknownType(), name);
             case GEOM -> binary(repetition, LogicalTypeAnnotation.geometryType(null), name);
         };

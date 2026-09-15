@@ -23,7 +23,7 @@ The script:
 
 ## What it measures
 
-- **Matrix** (`matrix.tsv`): about 68,000 predicate cells, each read through five paths.
+- **Matrix** (`matrix.tsv`): about 72,000 predicate cells, each read through five paths.
   - **Paths:** the `RowReader` by default, forced onto its record-level path and without metadata filtering; the `ColumnReader` with and without metadata filtering.
   - **Cases:** every literal kind a column takes and some it does not, around stored values, in gaps, past the carrier's range and at type edge cases (`NaN` payloads, signed zeros, sub-unit instants, padded decimals, non-canonical `INT96`), under every operator, `not` form and set form.
   - **Fixture groups**, each in single row group, multiple row groups, dictionary and Bloom filter layouts:
@@ -32,6 +32,7 @@ The script:
     |---|---|
     | `flat` | one column per row of the design's per-column table |
     | `exotic` | `BSON`, `NULL`, `GEOMETRY` |
+    | `ts12` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` at every unit, past the `INT64` nanosecond range; annotated and given bounds by `derive_fixtures.py` |
     | `legacy` | converted types only |
     | `dropped` | annotations the physical type cannot carry |
     | `lowcard` | 40 distinct values, so every chunk is dictionary-encoded |

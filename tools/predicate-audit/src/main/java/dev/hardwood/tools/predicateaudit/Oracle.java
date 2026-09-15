@@ -93,6 +93,8 @@ final class Oracle {
     private static final BigInteger INT64_MAX = BigInteger.valueOf(Long.MAX_VALUE);
     private static final BigInteger INT96_MIN = INT32_MIN.multiply(NANOS_PER_DAY).add(INT64_MIN);
     private static final BigInteger INT96_MAX = INT32_MAX.multiply(NANOS_PER_DAY).add(INT64_MAX);
+    private static final BigInteger COUNT96_MIN = BigInteger.ONE.shiftLeft(95).negate();
+    private static final BigInteger COUNT96_MAX = BigInteger.ONE.shiftLeft(95).subtract(BigInteger.ONE);
     private static final HexFormat HEX = HexFormat.of();
 
     // ==================== Refusal ====================
@@ -165,6 +167,8 @@ final class Oracle {
             case TIME_US, TIME_NS -> literal instanceof LocalTime || literal instanceof Long;
             case TS_MS_UTC, TS_US_UTC, TS_NS_UTC -> literal instanceof Instant || literal instanceof Long;
             case TS_MS_LOCAL, TS_US_LOCAL -> literal instanceof LocalDateTime || literal instanceof Long;
+            case TS12_MS_UTC, TS12_NS_UTC -> literal instanceof Instant || (literal instanceof byte[] && !ordered);
+            case TS12_US_LOCAL -> literal instanceof LocalDateTime || (literal instanceof byte[] && !ordered);
             case INT96 -> literal instanceof Instant || (literal instanceof byte[] && !ordered);
             case DEC_I32 -> literal instanceof BigDecimal || literal instanceof Integer;
             case DEC_I64 -> literal instanceof BigDecimal || literal instanceof Long;
@@ -189,6 +193,9 @@ final class Oracle {
             if (sem == Sem.INT96 && bytes.length != 12) {
                 return "INT96 literal not 12 bytes";
             }
+            if (isTs12(sem) && bytes.length != 12) {
+                return "TIMESTAMP literal not 12 bytes";
+            }
             return !ordered && fixedWidth(sem) && bytes.length != column.width() ? "width" : null;
         }
         if (ordered) {
@@ -211,9 +218,13 @@ final class Oracle {
         };
     }
 
+    private static boolean isTs12(Sem sem) {
+        return sem == Sem.TS12_MS_UTC || sem == Sem.TS12_NS_UTC || sem == Sem.TS12_US_LOCAL;
+    }
+
     private static boolean fixedWidth(Sem sem) {
         return switch (sem) {
-            case F16, INT96, DEC_FLBA, FLBA, UUID, INTERVAL -> true;
+            case F16, INT96, DEC_FLBA, FLBA, UUID, INTERVAL, TS12_MS_UTC, TS12_NS_UTC, TS12_US_LOCAL -> true;
             case BOOL, I32, I64, INT8S, UINT8, UINT32, UINT64, F32, F64, DATE, TIME_MS, TIME_US, TIME_NS, TS_MS_UTC,
                  TS_US_UTC, TS_NS_UTC, TS_MS_LOCAL, TS_US_LOCAL, DEC_I32, DEC_I64, DEC_BA, STRING, ENUM, JSON, BSON, BA,
                  NULL_I32, GEOM, ZZ -> false;
@@ -228,6 +239,9 @@ final class Oracle {
         BigInteger[] quotientAndRemainder = nanos.divideAndRemainder(BigInteger.valueOf(unitNanos(sem)));
         if (quotientAndRemainder[1].signum() != 0) {
             return "finer than the unit";
+        }
+        if (isTs12(sem)) {
+            return within(quotientAndRemainder[0], COUNT96_MIN, COUNT96_MAX) ? null : "96-bit range";
         }
         return within(quotientAndRemainder[0], INT64_MIN, INT64_MAX) ? null : "INT64 range";
     }
@@ -350,8 +364,8 @@ final class Oracle {
         return switch (sem) {
             case STRING, ENUM, JSON, BA, ZZ, BSON, FLBA, UUID -> true;
             case BOOL, I32, I64, INT8S, UINT8, UINT32, UINT64, F32, F64, F16, DATE, TIME_MS, TIME_US, TIME_NS, TS_MS_UTC,
-                 TS_US_UTC, TS_NS_UTC, TS_MS_LOCAL, TS_US_LOCAL, INT96, DEC_I32, DEC_I64, DEC_FLBA, DEC_BA, INTERVAL,
-                 NULL_I32, GEOM -> false;
+                 TS_US_UTC, TS_NS_UTC, TS_MS_LOCAL, TS_US_LOCAL, TS12_MS_UTC, TS12_NS_UTC, TS12_US_LOCAL, INT96, DEC_I32,
+                 DEC_I64, DEC_FLBA, DEC_BA, INTERVAL, NULL_I32, GEOM -> false;
         };
     }
 
@@ -359,17 +373,28 @@ final class Oracle {
 
     static long unitNanos(Sem sem) {
         return switch (sem) {
-            case TIME_MS, TS_MS_UTC, TS_MS_LOCAL -> 1_000_000L;
-            case TIME_US, TS_US_UTC, TS_US_LOCAL -> 1_000L;
-            case TIME_NS, TS_NS_UTC -> 1L;
+            case TIME_MS, TS_MS_UTC, TS_MS_LOCAL, TS12_MS_UTC -> 1_000_000L;
+            case TIME_US, TS_US_UTC, TS_US_LOCAL, TS12_US_LOCAL -> 1_000L;
+            case TIME_NS, TS_NS_UTC, TS12_NS_UTC -> 1L;
             case BOOL, I32, I64, INT8S, UINT8, UINT32, UINT64, F32, F64, F16, DATE, INT96, DEC_I32, DEC_I64, DEC_FLBA,
                  DEC_BA, STRING, ENUM, JSON, BSON, BA, FLBA, UUID, INTERVAL, NULL_I32, GEOM, ZZ ->
                 throw new IllegalStateException("No time unit on a " + sem + " column");
         };
     }
 
+    /// A stored time value in nanoseconds: an integer count of the unit, or the little-endian two's
+    /// complement count of a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`.
     private static BigInteger inNanos(Object stored, Sem sem) {
-        return unscaled(stored).multiply(BigInteger.valueOf(unitNanos(sem)));
+        BigInteger count = isTs12(sem) ? littleEndianCount((byte[]) stored) : unscaled(stored);
+        return count.multiply(BigInteger.valueOf(unitNanos(sem)));
+    }
+
+    private static BigInteger littleEndianCount(byte[] bytes) {
+        byte[] bigEndian = new byte[bytes.length];
+        for (int i = 0; i < bytes.length; i++) {
+            bigEndian[i] = bytes[bytes.length - 1 - i];
+        }
+        return new BigInteger(bigEndian);
     }
 
     static BigInteger nanos(Instant instant) {
