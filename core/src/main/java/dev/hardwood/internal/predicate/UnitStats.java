@@ -182,6 +182,43 @@ sealed interface UnitStats {
         }
     }
 
+    /// One page of a column chunk, sourced from the [Statistics] its own header carries, which is
+    /// all a file recording no page index offers per page.
+    ///
+    /// A `DataPageHeaderV2` counts the rows of its page. A v1 header counts values, which are the
+    /// page's rows for a column with no repeated node above it, since such a column writes one
+    /// entry per row. Below a repeated node a v1 page has no row count, and every proof that
+    /// needs one yields [FilterDecision#MIGHT_MATCH].
+    ///
+    /// The header carries no size statistics, so no definition level histogram reaches this unit.
+    ///
+    /// @param rowCount the page's rows, or [#UNKNOWN_ROW_COUNT] where the header does not give them
+    record InlinePageStats(Statistics statistics, long rowCount, BoundsReadability readability)
+            implements UnitStats {
+
+        @Override
+        public MinMaxStats minMax(ResolvedPredicate leaf) {
+            return MinMaxStats.of(statistics, leaf, readability);
+        }
+
+        @Override
+        public NullStats nulls() {
+            Long nullCount = statistics.nullCount();
+            return new NullStats(nullCount == null ? NullStats.UNKNOWN_NULL_COUNT : nullCount, rowCount);
+        }
+
+        @Override
+        public DefinitionLevelStats definitionLevels() {
+            return new DefinitionLevelStats(null, rowCount);
+        }
+
+        /// The caller names the page, which it reaches while scanning rather than by index.
+        @Override
+        public LogContext locate(LogContext enclosing) {
+            return enclosing;
+        }
+    }
+
     /// One page of a column chunk, sourced from the chunk's [ColumnIndex] at the page's position.
     ///
     /// A page the index flags as null-only is null on every row, so its null count is its row

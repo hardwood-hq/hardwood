@@ -28,11 +28,15 @@ import dev.hardwood.metadata.Statistics;
 /// recursive descent: recurse into `And` children, skip `Or` subtrees, keep
 /// leaves.
 ///
-/// [MinMaxStats#canDrop] is `false` for `IsNullPredicate` and
-/// `IsNotNullPredicate`, so including them in the result is harmless — they
-/// will never cause a page drop. They are included anyway so callers do not
-/// have to distinguish.
+/// A page this path drops is replaced by a page of nulls, which the per-row filter then rejects,
+/// so only a leaf a null row fails may drop one. `IS NULL` is the one leaf a null row satisfies,
+/// and it is left out of the result for that reason.
 public final class PageDropPredicates {
+
+    /// The row count of a page whose header does not carry one: a v1 `DataPageHeader` counts
+    /// values, which are rows only for a column with no repeated node above it. See
+    /// [UnitStats#UNKNOWN_ROW_COUNT].
+    public static final long UNKNOWN_ROW_COUNT = UnitStats.UNKNOWN_ROW_COUNT;
 
     private PageDropPredicates() {
     }
@@ -71,7 +75,10 @@ public final class PageDropPredicates {
             case ResolvedPredicate.FloatInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.DoubleInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.Float16InPredicate l -> add(out, l.columnIndex(), l);
-            case ResolvedPredicate.IsNullPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.IsNullPredicate ignored -> {
+                // Left out: a dropped page is replaced by nulls, which IS NULL matches, so
+                // dropping one would return its rows rather than skip them.
+            }
             case ResolvedPredicate.IsNotNullPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.EveryNonNullRowPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.NoRowPredicate l -> add(out, l.columnIndex(), l);
@@ -87,26 +94,30 @@ public final class PageDropPredicates {
     /// supplied inline page [Statistics] alone, that the page cannot match — i.e.
     /// the page can be skipped.
     ///
+    /// Each leaf is decided through [UnitStats#decide], the same decision a column chunk and a
+    /// page of the column index answer, so a page proves what its statistics support: its bounds
+    /// exclude the literal, or its null count accounts for every row it holds. Only
+    /// [FilterDecision#CANNOT_MATCH] is read; a page this path keeps is read and filtered as it
+    /// always was.
+    ///
     /// Returns `false` when `stats` is `null`, when its bounds are unusable — see
     /// [MinMaxStats] — or when no leaf can drop.
     ///
     /// @param leaves the AND-necessary leaves testing this page's column, empty where the file
     ///        this page belongs to records the column's bounds in an order this reader cannot
-    ///        read (see [BoundsReadability])
+    ///        read (see [BoundsReadability]), which is why the unit reads them as readable
     /// @param stats the page's inline statistics, or `null` if it carries none
+    /// @param rowCount the page's rows, or [#UNKNOWN_ROW_COUNT] where its header does not give
+    ///        them, which leaves every proof resting on a row count undecided
     /// @param logContext the page these statistics came from, for a discard to name
     public static boolean canDropPage(List<ResolvedPredicate> leaves, Statistics stats,
-            LogContext logContext) {
+            long rowCount, LogContext logContext) {
         if (leaves == null || leaves.isEmpty() || stats == null) {
             return false;
         }
+        UnitStats page = new UnitStats.InlinePageStats(stats, rowCount, BoundsReadability.ALL);
         for (ResolvedPredicate leaf : leaves) {
-            // Sourced per leaf: what makes bounds usable depends on the order the leaf
-            // compares them in. Readability was settled when the leaves were handed over,
-            // which is where the file they are read against is known.
-            MinMaxStats minMax = MinMaxStats.of(stats, leaf, BoundsReadability.ALL);
-            minMax.reportIfDiscarded(logContext);
-            if (minMax.canDrop(leaf)) {
+            if (page.decide(leaf, logContext) == FilterDecision.CANNOT_MATCH) {
                 return true;
             }
         }

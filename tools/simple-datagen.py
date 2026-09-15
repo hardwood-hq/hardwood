@@ -2892,6 +2892,38 @@ writer = pq.ParquetWriter(
 writer.write_table(inline_stats_table)
 writer.close()
 
+
+# Pages null on every row, read from inline statistics alone: one row group of 1000 rows in pages
+# of 100, with `value` and `address.city` null on rows [300, 600) while `address` stays present.
+# Written once with v1 data pages and once with v2, since only the latter counts rows.
+inline_null_pages_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), True),
+    ('address', pa.struct([('city', pa.string(), True)]), True),
+])
+inline_null_rows = range(300, 600)
+inline_null_pages_table = pa.table({
+    'id': list(range(1000)),
+    'value': [None if i in inline_null_rows else i for i in range(1000)],
+    'address': [{'city': None if i in inline_null_rows else f'c{i}'} for i in range(1000)],
+}, schema=inline_null_pages_schema)
+for page_version in ('1.0', '2.0'):
+    writer = pq.ParquetWriter(
+        f'core/src/test/resources/inline_null_pages_v{page_version[0]}.parquet',
+        schema=inline_null_pages_schema,
+        use_dictionary=False,
+        compression='NONE',
+        data_page_version=page_version,
+        max_rows_per_page=100,
+        write_statistics=True,
+        write_page_index=False,
+    )
+    writer.write_table(inline_null_pages_table, row_group_size=1000)
+    writer.close()
+
+print("\nGenerated inline_null_pages_v{1,2}.parquet:")
+print("  - 1 row group, 1000 rows in pages of 100, no page index; value and address.city null on rows 300-599")
+
 print("\nGenerated inline_page_stats.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
 print("  - Parquet v1 with inline DataPageHeader.statistics (no ColumnIndex)")

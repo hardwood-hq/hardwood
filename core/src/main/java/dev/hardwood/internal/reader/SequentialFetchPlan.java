@@ -672,22 +672,36 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// which case the caller emits a [PageInfo#nullPlaceholder] instead of the
         /// real page. Gated on `maxDefinitionLevel > 0` — required columns cannot
         /// represent nulls and must decode normally.
+        ///
+        /// A null count is held against the page's rows. A v2 header counts them. A v1 header
+        /// counts values, which are the rows of a column with no repeated node above it, since
+        /// such a column writes one entry per row; below a repeated node the page carries no row
+        /// count and is decided from its bounds alone.
         private boolean canDropByInlineStats(PageHeader header) {
             if (dropLeaves.isEmpty() || columnSchema.maxDefinitionLevel() == 0) {
                 return false;
             }
-            Statistics inline = switch (header.type()) {
+            Statistics inline;
+            long rowCount;
+            switch (header.type()) {
                 case DATA_PAGE -> {
                     DataPageHeader dp = header.dataPageHeader();
-                    yield dp == null ? null : dp.statistics();
+                    inline = dp == null ? null : dp.statistics();
+                    rowCount = dp == null || columnSchema.maxRepetitionLevel() > 0
+                            ? PageDropPredicates.UNKNOWN_ROW_COUNT
+                            : dp.numValues();
                 }
                 case DATA_PAGE_V2 -> {
                     DataPageHeaderV2 dp = header.dataPageHeaderV2();
-                    yield dp == null ? null : dp.statistics();
+                    inline = dp == null ? null : dp.statistics();
+                    rowCount = dp == null ? PageDropPredicates.UNKNOWN_ROW_COUNT : dp.numRows();
                 }
-                default -> null;
-            };
-            return PageDropPredicates.canDropPage(dropLeaves, inline,
+                default -> {
+                    inline = null;
+                    rowCount = PageDropPredicates.UNKNOWN_ROW_COUNT;
+                }
+            }
+            return PageDropPredicates.canDropPage(dropLeaves, inline, rowCount,
                     logContext.withPageIndex(currentPage));
         }
 

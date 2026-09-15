@@ -27,6 +27,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PageDropPredicatesTest {
 
     private static final int COLUMN = 0;
+
+    /// The rows a `DataPageHeaderV2` counts for the page under test.
+    private static final int ROWS = 100;
+
     private static final LogContext PAGE = new LogContext("orders.parquet", 0)
             .withColumn(FieldPath.of("order", "price")).withPageIndex(0);
 
@@ -80,9 +84,9 @@ class PageDropPredicatesTest {
     @Test
     void noLeavesKeepThePage() {
         assertThat(PageDropPredicates.canDropPage(List.of(), stats(intBytes(20), intBytes(30)),
-                PAGE)).isFalse();
+                ROWS, PAGE)).isFalse();
         assertThat(PageDropPredicates.canDropPage(null, stats(intBytes(20), intBytes(30)),
-                PAGE)).isFalse();
+                ROWS, PAGE)).isFalse();
     }
 
     @Test
@@ -93,22 +97,59 @@ class PageDropPredicatesTest {
                 new ResolvedPredicate.IntPredicate(COLUMN, Operator.GT, 25));
 
         assertThat(PageDropPredicates.canDropPage(leaves, stats(intBytes(10), intBytes(20)),
-                PAGE)).isTrue();
+                ROWS, PAGE)).isTrue();
+    }
+
+    // ==================== A page null on every row ====================
+
+    @Test
+    void aPageNullOnEveryRowDropsForALeafANullFails() {
+        // The page's null count accounts for every row it holds, so no row holds a value to
+        // compare, and IS NOT NULL has nothing to return either.
+        Statistics allNull = new Statistics(null, null, (long) ROWS, null, false);
+
+        assertThat(canDropPage(intEq(15), allNull)).isTrue();
+        assertThat(canDropPage(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1), allNull)).isTrue();
     }
 
     @Test
-    void nullPredicatesNeverDropAPage() {
-        assertThat(canDropPage(new ResolvedPredicate.IsNullPredicate(COLUMN, 1),
-                stats(intBytes(10), intBytes(20)))).isFalse();
-        assertThat(canDropPage(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1),
-                stats(intBytes(10), intBytes(20)))).isFalse();
+    void aPageNullOnEveryRowIsNotDroppedForIsNull() {
+        // A dropped page is replaced by nulls, which IS NULL matches, so it never reaches the
+        // leaves this path drops with — and cannot drop a page even when handed one directly.
+        Statistics allNull = new Statistics(null, null, (long) ROWS, null, false);
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(COLUMN, 1);
+
+        assertThat(PageDropPredicates.byColumn(isNull)).isEmpty();
+        assertThat(canDropPage(isNull, allNull)).isFalse();
+    }
+
+    @Test
+    void aPageWithoutARowCountKeepsItsNullCountUnread() {
+        // Below a repeated node a v1 header gives no row count, and a null count equal to the
+        // page's values proves nothing about its rows.
+        Statistics allNull = new Statistics(null, null, (long) ROWS, null, false);
+
+        assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), allNull,
+                PageDropPredicates.UNKNOWN_ROW_COUNT, PAGE)).isFalse();
+        assertThat(PageDropPredicates.canDropPage(
+                List.of(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1)), allNull,
+                PageDropPredicates.UNKNOWN_ROW_COUNT, PAGE)).isFalse();
+    }
+
+    @Test
+    void aPageWithNullsAmongValuesKeepsThePage() {
+        // Fewer nulls than rows proves nothing on its own, and the bounds hold the probe.
+        Statistics someNulls = new Statistics(intBytes(10), intBytes(20), ROWS - 1L, null, false);
+
+        assertThat(canDropPage(intEq(15), someNulls)).isFalse();
+        assertThat(canDropPage(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1), someNulls))
+                .isFalse();
     }
 
     // ==================== Fixtures ====================
 
     private static boolean canDropPage(ResolvedPredicate leaf, Statistics stats) {
-        return PageDropPredicates.canDropPage(List.of(leaf), stats,
-                PAGE);
+        return PageDropPredicates.canDropPage(List.of(leaf), stats, ROWS, PAGE);
     }
 
     private static ResolvedPredicate intEq(int value) {
