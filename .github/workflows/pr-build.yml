@@ -252,6 +252,13 @@ jobs:
       - name: 'Build and install parquet-java-compat'
         run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
 
+      - name: 'Compile predicate-audit'
+        # The tool is in the reactor only under `-Ppredicate-audit` and is run by hand, so
+        # nothing else compiles it, and it uses internal predicate APIs that change. This job
+        # has core and parquet-java at hand; compiling, with the Error Prone checks, is enough
+        # to catch a break.
+        run: ./mvnw -ntp -B -Ppredicate-audit compile -pl :hardwood-predicate-audit
+
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:

@@ -588,6 +588,12 @@
       </properties>
     </profile>
     <profile>
+      <id>predicate-audit</id>
+      <modules>
+        <module>tools/predicate-audit</module>
+      </modules>
+    </profile>
+    <profile>
       <id>performance-test</id>
       <modules>
         <module>performance-testing</module>

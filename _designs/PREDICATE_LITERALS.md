@@ -234,8 +234,8 @@ type:
 On conforming files from mainstream writers, with the typed literal of each column, Hardwood,
 parquet-java 1.17.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
 timestamps, decimals via `BigDecimal`, UUIDs, and `NaN` on files whose writer omits the bounds of a
-chunk holding `NaN`. The differences below were measured on fixtures written by parquet-java and
-PyArrow, each read by all three engines, and fall into three groups:
+chunk holding `NaN`. The differences below were measured with `tools/predicate-audit` (see Validation) on fixtures
+written by parquet-java and PyArrow, each read by all three engines, and fall into three groups:
 
 - **Hardwood follows its rule where another engine chose differently.** These are
   semantics, so a migrated query can silently return different rows.
@@ -284,3 +284,20 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
   resolved predicate or rejected with the full message.
 - **`FilterPredicateTest`**: build-time checks, copies and content equality of `byte[]` literals.
 - **`ParquetReaderCompatTest`**: `Binary` literals on `DECIMAL` and `FLOAT16` answer as parquet-java.
+- **`tools/predicate-audit`**, run by hand when the rule, pruning or a compared engine changes; CI
+  compiles it but does not run it:
+  - **Matrix:** about 68,000 predicate cells through the same five paths, checked against a second
+    oracle of this rule that takes stored values from the fixture generator rather than from the
+    reader. parquet-java writes the fixtures in the same four layouts: the per-column table, the
+    `BSON`, `NULL` and `GEOMETRY` columns, a low-cardinality copy that is dictionary-encoded
+    throughout, and nested structs with a `LIST`. Footer rewrites derive converted-type-only and
+    dropped-annotation variants from the per-column table.
+  - **Resolver matrix:** every literal kind and operator against every column and group, including
+    `VARIANT` groups written by a footer rewrite.
+  - **Consultation checks:** Bloom filters (against a copy with zeroed bitsets) and dictionaries are
+    shown to be read where the rule allows it and left unread where it does not.
+  - **Engine comparison:** the parquet-java and DuckDB comparison behind the table above, including
+    a PyArrow file for rows 3, 6 and 7, except for row 14 (the compatibility shim), which
+    `ParquetReaderCompatTest` covers.
+
+  `tools/predicate-audit/README.md` describes running and extending it.
