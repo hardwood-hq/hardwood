@@ -18,7 +18,7 @@
 
 Filter predicates apply at three levels, in this order:
 
-1. **Row group** — entire row groups whose statistics prove no rows can match are skipped. For `eq` and `in` predicates, two further sources skip a row group whose value range covers the target but which never stored it — the case min/max statistics cannot catch. A column's [Bloom filter](https://parquet.apache.org/docs/file-format/bloomfilter/) does so when present. So does the column chunk's dictionary page, when the chunk's `encoding_stats` show every data page is dictionary-encoded: the dictionary then lists every value the chunk holds, so a target missing from it cannot occur in any row. Both apply automatically; dictionary pages are read only for a row group that statistics and the Bloom filter did not already drop.
+1. **Row group** — entire row groups whose statistics prove no rows can match are skipped. For `eq` and `in` predicates, two further sources skip a row group whose value range covers the target but which never stored it, a case min/max statistics cannot catch. A column's [Bloom filter](https://parquet.apache.org/docs/file-format/bloomfilter/) does so when present. So does the column chunk's dictionary page, when the chunk's `encoding_stats` show every data page is dictionary-encoded: the dictionary then lists every value the chunk holds, so a target missing from it cannot occur in any row. Both apply automatically; dictionary pages are read only for a row group that statistics and the Bloom filter did not already drop.
 2. **Page** — within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, so the same skip also reduces network I/O.
 3. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that match.
 
@@ -75,7 +75,7 @@ For the full matrix of supported operators, comparable physical and logical type
 
 ### Null Handling
 
-Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
+Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate**, `notEq` included.
 
 `not(p)` preserves this behavior: rows where `p` is UNKNOWN stay UNKNOWN under negation and are dropped. The SQL identity `not(gt(x, v)) ≡ ltEq(x, v)` holds on all rows, including null ones.
 
@@ -160,18 +160,18 @@ FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600
 ```
 
 A `String` literal filters a text column: a `STRING`, an `ENUM`, a `JSON` or an unannotated
-`BYTE_ARRAY`, where its UTF-8 encoding is the stored bytes. On any other binary column — a
+`BYTE_ARRAY`, where its UTF-8 encoding is the stored bytes. On any other binary column (a
 `DECIMAL`, a `FLOAT16`, a `UUID`, an `INTERVAL`, a `BSON`, a `GEOMETRY`, a `GEOGRAPHY`, a `NULL`
-or an unannotated `FIXED_LEN_BYTE_ARRAY` — pass the annotation's literal type or a `byte[]`. A
+or an unannotated `FIXED_LEN_BYTE_ARRAY`), pass the annotation's literal type or a `byte[]`. A
 `byte[]` matches the stored bytes; on a `DECIMAL`, `FLOAT16` or `INT96` column it takes `eq`,
 `notEq` and `in`, and `lt`, `ltEq`, `gt` and `gtEq` take the `BigDecimal`, `float` or `Instant`
 literal.
 
-A column takes the literal type its annotation names — a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID`, a `TIMESTAMP` column an `Instant` or, where `isAdjustedToUTC = false`, a `LocalDateTime`, an `INT96` column an `Instant` — and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
+A column takes the literal type its annotation names (a `DECIMAL` column a `BigDecimal`, a `UUID` column a `UUID`, a `TIMESTAMP` column an `Instant` or, where `isAdjustedToUTC = false`, a `LocalDateTime`, an `INT96` column an `Instant`) and rejects a literal belonging to a different annotation with `IllegalArgumentException` at reader creation. It also takes the literal for its own physical type, for filtering on the stored value directly. For what each column takes and the order it compares in, see [Predicate literals by column type](../reference/query-controls.md#predicate-literals-by-column-type).
 
 `lt`, `ltEq`, `gt` and `gtEq` need a column whose type defines an order. An `INTERVAL`, a `GEOMETRY`, a `GEOGRAPHY` and a `NULL` column define none, and take `eq`, `notEq` and the set form only. A `BOOLEAN` column orders `false` before `true` and takes every operator but the set form, which `eq`, `notEq` and `isNotNull` already express.
 
-A literal the column cannot store — an `Instant` finer than its time unit, a `BigDecimal` past its scale, a value outside the range of the `INT32` or `INT64` behind it — is rejected for `eq`, `notEq` and the set forms, and answered exactly for `lt`, `ltEq`, `gt` and `gtEq`. See [Literals the column cannot hold](../reference/query-controls.md#literals-the-column-cannot-hold).
+A literal the column cannot store (an `Instant` finer than its time unit, a `BigDecimal` past its scale, a value outside the range of the `INT32` or `INT64` behind it) is rejected for `eq`, `notEq` and the set forms, and answered exactly for `lt`, `ltEq`, `gt` and `gtEq`. See [Literals the column cannot hold](../reference/query-controls.md#literals-the-column-cannot-hold).
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
 
@@ -244,7 +244,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-The filter column does not need to be in the projection — Hardwood reads the filter column's statistics for pushdown regardless.
+The filter column does not need to be in the projection; Hardwood reads the filter column's statistics for pushdown regardless.
 
 ## Row Limit
 
@@ -283,7 +283,7 @@ When combined with a filter, the limit applies to the number of **matching** row
 
 ## Split-Aware Reading
 
-When you partition a file across parallel readers — Flink `BulkFormat`, Spark file source, MapReduce-style splits — each reader is assigned a byte range and is responsible for only the row groups owned by it. Express this with `RowGroupPredicate.byteRange(start, end)`, passed to any builder's `filter(...)`:
+When you partition a file across parallel readers (Flink `BulkFormat`, Spark file source, MapReduce-style splits), each reader is assigned a byte range and is responsible for only the row groups owned by it. Express this with `RowGroupPredicate.byteRange(start, end)`, passed to any builder's `filter(...)`:
 
 ```java
 import dev.hardwood.reader.RowGroupPredicate;
@@ -299,11 +299,11 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-A row group is included if and only if its **midpoint** — the start of its first column chunk plus half of its on-disk compressed size — falls in `[start, end)`. This is the standard Hadoop-input-format split convention: across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range, regardless of where the split boundary falls inside the row group itself.
+A row group is included if and only if its **midpoint**, the start of its first column chunk plus half of its on-disk compressed size, falls in `[start, end)`. This is the standard Hadoop-input-format split convention: across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range, regardless of where the split boundary falls inside the row group itself.
 
 **Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. If you need true row-level windowing, combine `RowGroupPredicate` with [`RowReaderBuilder.skip(...)`](#skipping-rows-skip) and [`head(...)`](#row-limit).
 
-`RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection — both apply, and a row group is read if and only if it passes both:
+`RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection: both apply, and a row group is read if and only if it passes both:
 
 ```java
 ColumnReader col = fileReader.buildColumnReader("price")
@@ -320,11 +320,11 @@ ColumnReader col = fileReader.buildColumnReader("price")
         RowGroupPredicate.byteRange(otherStart, otherEnd)))
 ```
 
-The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `skip(N)` and `head(N)` index over the *row-group-filtered* sequence — `skip(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
+The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `skip(N)` and `head(N)` index over the *row-group-filtered* sequence: `skip(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
 
 ### Empty ranges
 
-`byteRange(start, end)` where `end < start` is a documented empty range — the reader yields zero rows. This matches callers that pass `splitStart + splitLength` and tolerate long overflow on tail splits (a tail split with `length = Long.MAX_VALUE` overflows to a negative end, which your reader will then treat as empty if no preceding split has already covered the rest of the file).
+`byteRange(start, end)` where `end < start` is a documented empty range, for which the reader yields zero rows. This matches callers that pass `splitStart + splitLength` and tolerate long overflow on tail splits (a tail split with `length = Long.MAX_VALUE` overflows to a negative end, which your reader will then treat as empty if no preceding split has already covered the rest of the file).
 
 ### Reading the Tail of a File
 
@@ -342,13 +342,13 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `skip(long)`.
+Tail mode cannot currently be combined with a filter predicate: the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `skip(long)`.
 
 ### Skipping Rows (`skip`)
 
-The `skip(long)` builder method is SQL `OFFSET`: it discards leading rows before reading. What "leading rows" means depends on whether a filter is present — see [Row Selection](../concepts/row-selection.md) for the model.
+The `skip(long)` builder method is SQL `OFFSET`: it discards leading rows before reading. What "leading rows" means depends on whether a filter is present; see [Row Selection](../concepts/row-selection.md) for the model.
 
-**Without a filter,** `skip(n)` is a physical absolute row index. Earlier row groups are not opened — their pages are not fetched or decoded — making this an O(1 row group) seek on remote backends, in contrast to walking `next()` from row 0.
+**Without a filter,** `skip(n)` is a physical absolute row index. Earlier row groups are not opened, and their pages are not fetched or decoded, making this an O(1 row group) seek on remote backends, in contrast to walking `next()` from row 0.
 
 ```java
 // Read rows starting at row 1,000,000 — earlier row groups are not opened.
@@ -366,7 +366,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 For multi-file readers, physical `skip(N)` is a global offset across the input files in order. Hardwood reads the footers of skipped files to count their rows, but skipped files' data pages are not fetched or decoded.
 
-**With a filter,** `skip(n)` is a *logical* offset over the matched rows — it discards the first `n` rows that match the predicate and returns the rest, exactly like SQL `OFFSET` after a `WHERE`. The O(1 row-group) seek does **not** apply: row-group statistics bound min/max values, not match *counts*, so the reader decodes earlier groups to count matches (groups whose statistics prove no match are still pruned). A `skip` past the number of matching rows yields an empty reader rather than throwing.
+**With a filter,** `skip(n)` is a *logical* offset over the matched rows: it discards the first `n` rows that match the predicate and returns the rest, exactly like SQL `OFFSET` after a `WHERE`. The O(1 row-group) seek does **not** apply: row-group statistics bound min/max values, not match *counts*, so the reader decodes earlier groups to count matches (groups whose statistics prove no match are still pruned). A `skip` past the number of matching rows yields an empty reader rather than throwing.
 
 ```java
 // Skip the first 150 rows matching the predicate, then read the next 20.
@@ -381,5 +381,5 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Compose `skip` with `head` for a bounded window — `skip(n).head(k)` returns at most `k` rows starting after the first `n` (physical rows without a filter, matched rows with one). `skip(N)` also composes with `filter(RowGroupPredicate)` (e.g. `byteRange`), indexing into the kept row-group sequence. `skip` is mutually exclusive with `tail`.
+Compose `skip` with `head` for a bounded window: `skip(n).head(k)` returns at most `k` rows starting after the first `n` (physical rows without a filter, matched rows with one). `skip(N)` also composes with `filter(RowGroupPredicate)` (e.g. `byteRange`), indexing into the kept row-group sequence. `skip` is mutually exclusive with `tail`.
 

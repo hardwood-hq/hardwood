@@ -11,15 +11,14 @@
 -->
 # How a Parquet File Is Laid Out
 
-Most of Hardwood's behavior — column projection, predicate pushdown, parallel decode, split
-reading, etc. — follows directly from how the Parquet format arranges
-bytes on disk.
+Most of Hardwood's behavior, such as column projection, predicate pushdown, parallel decode and
+split reading, follows directly from how the Parquet format arranges bytes on disk.
 
 To read this hierarchy programmatically at runtime, see [Inspect File Metadata](../how-to/metadata.md).
 
 ## The hierarchy
 
-A Parquet file is a nested structure — row groups holding column chunks holding pages — and the
+A Parquet file is a nested structure of row groups holding column chunks holding pages, and the
 metadata that records where each piece lives sits at the *end* of the file. Laid
 out as bytes on disk, from the first byte to the last:
 
@@ -48,11 +47,11 @@ out as bytes on disk, from the first byte to the last:
 +------------------------------------------------------------+
 ```
 
-The data comes first and the **footer** comes last — a Thrift metadata block describing every row
+The data comes first and the **footer** comes last: a Thrift metadata block describing every row
 group and column chunk (their byte offsets, sizes, compression codecs, and statistics, plus the
 schema and optional page index), followed by the footer length and a closing `PAR1`. A reader
 starts at that trailing magic, steps back four bytes to read the footer length, then reads the
-footer to learn where every row group, column chunk, and page lives — before touching any values.
+footer to learn where every row group, column chunk, and page lives before touching any values.
 
 ### File
 
@@ -67,7 +66,7 @@ A row group holds a contiguous range of rows, but stores them column by column. 
 file might be split into ten row groups of a million rows each. Row groups are the unit of:
 
 - **Parallelism and splitting.** Independent row groups can be decoded concurrently, and a file
-  can be partitioned across parallel readers at row-group boundaries — this is what
+  can be partitioned across parallel readers at row-group boundaries, which is what
   [split-aware reading](../how-to/query-controls.md#split-aware-reading) assigns by byte range.
 - **Coarse skipping.** Each column chunk carries min/max statistics; if a row group's statistics
   prove no row can match a predicate, the entire row group is skipped before any data is read.
@@ -75,30 +74,30 @@ file might be split into ten row groups of a million rows each. Row groups are t
 ### Column chunk
 
 The data for one column within one row group, stored contiguously. Because a column's values sit
-together — rather than interleaved with other columns as in a row-oriented format — they
+together (rather than interleaved with other columns as in a row-oriented format), they
 compress well (similar values adjacent) and can be read in isolation (projection). The footer
 records each chunk's compressed and uncompressed size, codec, and statistics.
 
 !!! info "2 GB column-chunk limit"
     A column chunk is addressed within Hardwood as a single in-memory region, so each chunk must
-    be at most 2 GB of *compressed* data — the limit is per chunk, not per file. Local
+    be at most 2 GB of *compressed* data. The limit is per chunk, not per file. Local
     memory-mapped files and S3-backed files may be arbitrarily large overall; the in-memory
     (`ByteBuffer`) backend additionally caps the *whole file* at 2 GB, and the `dive` TUI caps
     S3 files at 2 GB because its mmap-backed range cache uses `MappedByteBuffer`. For datasets
     that don't fit a single supported file, split the data into multiple files at write time and
-    read them as one — see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
+    read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
 ### Page
 
 A column chunk is divided into pages, and the page is where compression and encoding
-happen. A chunk typically begins with one **dictionary page** — the column's distinct values —
+happen. A chunk typically begins with one **dictionary page**, holding the column's distinct values,
 followed by **data pages** whose entries are indices into that dictionary. Each page is
 compressed independently, so the page is the smallest unit Hardwood decompresses and decodes,
 and therefore the smallest unit it can decode in parallel or skip.
 
 When a file carries a **Column Index** and **Offset Index** (per-page min/max statistics and
 byte offsets, stored near the footer), Hardwood can skip individual *pages* within a surviving
-row group — the second tier of [predicate pushdown](../how-to/query-controls.md#predicate-pushdown-filter).
+row group. This is the second tier of [predicate pushdown](../how-to/query-controls.md#predicate-pushdown-filter).
 On a remote backend like S3, a skipped page is never even fetched.
 
 ## Why the layout matters
@@ -116,10 +115,10 @@ Each capability elsewhere in the docs is the layout showing through:
 ## Logical structure: the schema
 
 Orthogonal to the physical hierarchy is the **schema**, also stored in the footer. Parquet's
-schema is a tree: leaf columns carry the actual values, and group nodes express nesting —
+schema is a tree: leaf columns carry the actual values, and group nodes express nesting:
 structs, lists, and maps. A leaf's position in that tree, together with Parquet's repetition and
 definition levels, encodes which values belong to which (possibly null, possibly empty) parent.
-How Hardwood surfaces that nesting differs between the two reader APIs — see
+How Hardwood surfaces that nesting differs between the two reader APIs; see
 [RowReader vs. ColumnReader](reader-models.md).
 
 ## Further reading

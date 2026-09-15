@@ -11,7 +11,7 @@
 -->
 # Geospatial Support
 
-Hardwood reads the [Parquet geospatial metadata layer](https://parquet.apache.org/docs/file-format/types/geospatial/) — GEOMETRY / GEOGRAPHY logical types and per-chunk `GeospatialStatistics` — and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
+Hardwood reads the [Parquet geospatial metadata layer](https://parquet.apache.org/docs/file-format/types/geospatial/) (GEOMETRY / GEOGRAPHY logical types and per-chunk `GeospatialStatistics`) and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group level. Hardwood does not decode WKB payloads itself. Geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
 
 !!! example "Try it yourself"
     Want to run it or explore the capabilities yourself? The [**Geospatial**](https://github.com/hardwood-hq/hardwood-examples/tree/main/geospatial) example reads a GEOMETRY column, pushes a bounding-box filter down to the row-group level, and decodes WKB points with JTS.
@@ -113,9 +113,9 @@ FilterPredicate.and(
 
 ### Limitations
 
-`intersects` is **coarse-grained**: Hardwood drops row groups whose bounding box is disjoint from the query box, but every row in a surviving row group is returned. Rows whose individual geometry falls outside the query box are emitted along with truly intersecting ones. Apply your own per-row check on the WKB payload (e.g. via JTS) when you need exact geometric filtering — the bounding-box pushdown still saves the I/O for non-overlapping chunks.
+`intersects` is **coarse-grained**: Hardwood drops row groups whose bounding box is disjoint from the query box, but every row in a surviving row group is returned. Rows whose individual geometry falls outside the query box are emitted along with intersecting ones. Apply your own per-row check on the WKB payload (e.g. via JTS) when you need exact geometric filtering; the bounding-box pushdown still saves the I/O for non-overlapping chunks.
 
-Negation of `intersects` is **not supported**: `FilterPredicate.not(FilterPredicate.intersects(...))`, or `not` over any predicate holding one, throws `IllegalArgumentException` at reader creation, naming the column. The chunk-level criterion for "no row intersects" requires bbox containment rather than overlap, and the per-row dual would require decoding every WKB payload inside the reader — which would pull a geometry library into the runtime. If you need "geometries outside this box", read without a spatial filter and apply the negation yourself against `getBinary("location")`.
+Negation of `intersects` is **not supported**: `FilterPredicate.not(FilterPredicate.intersects(...))`, or `not` over any predicate holding one, throws `IllegalArgumentException` at reader creation, naming the column. The chunk-level criterion for "no row intersects" requires bbox containment rather than overlap, and the per-row dual would require decoding every WKB payload inside the reader, which would pull a geometry library into the runtime. If you need "geometries outside this box", read without a spatial filter and apply the negation yourself against `getBinary("location")`.
 
 Both limitations are tracked by [hardwood#414](https://github.com/hardwood-hq/hardwood/issues/414), which proposes opt-in row-level evaluation via an optional WKB-decoder dependency.
 

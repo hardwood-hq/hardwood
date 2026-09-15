@@ -11,7 +11,7 @@
 -->
 # Avro Support
 
-If your application already works with Avro records — for instance in a Kafka or Spark pipeline — you can read Parquet files directly into `GenericRecord` instances instead of using Hardwood's own row API. The `hardwood-avro` module handles the schema conversion and record materialization, matching the behavior of parquet-java's `AvroReadSupport`. Add it alongside `hardwood-core`:
+If your application already works with Avro records, for instance in a Kafka or Spark pipeline, you can read Parquet files directly into `GenericRecord` instances instead of using Hardwood's own row API. The `hardwood-avro` module handles the schema conversion and record materialization, matching the behavior of parquet-java's `AvroReadSupport`. Add it alongside `hardwood-core`:
 
 ```xml
 <dependency>
@@ -76,7 +76,7 @@ AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
 
 Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`, and ENUM values as `String`. A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` has no Avro counterpart and is a `fixed` of its 12 stored bytes, as an `INT96` is. This matches the behavior of parquet-java's `AvroReadSupport`.
 
-Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type — including an unannotated `BYTE_ARRAY` key, whose bytes are not necessarily text — fails with an error naming the map's path and its key type. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
+Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type, including an unannotated `BYTE_ARRAY` key whose bytes are not necessarily text, fails with an error naming the map's path and its key type. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
 
 ## Avro names
 
@@ -84,7 +84,7 @@ Avro names that already match `[A-Za-z_][A-Za-z0-9_]*` remain unchanged. Other P
 
 Nested records use their Parquet value path to form their Avro namespace, so records with the same name in different branches do not clash. Converted names do not change when you project away a branch, or add, remove, or reorder columns whose Avro names do not collide with each other.
 
-Two Parquet names that differ only in characters the rewrite replaces — `a-b` and `a.b`, say — both become `a_b`, so one of them takes a `_2`, `_3`, … suffix. Suffixes skip names already taken by a sibling, so they depend on the whole set of sibling names: with siblings `a-b` and `a.b` alone the Avro names are `a_b` and `a_b_2`, and adding a third column literally named `a_b_2` shifts the second to `a_b_3`. Read `hardwood.parquetName` rather than assuming a suffix when a schema carries names that collide this way.
+Two Parquet names that differ only in characters the rewrite replaces, such as `a-b` and `a.b`, both become `a_b`, so one of them takes a `_2`, `_3`, … suffix. Suffixes skip names already taken by a sibling, so they depend on the whole set of sibling names: with siblings `a-b` and `a.b` alone the Avro names are `a_b` and `a_b_2`, and adding a third column literally named `a_b_2` shifts the second to `a_b_3`. Read `hardwood.parquetName` rather than assuming a suffix when a schema carries names that collide this way.
 
 A rewrite gives a field two names, and each side of the API takes one of them:
 
@@ -102,7 +102,7 @@ Two schema shapes have no valid Avro naming, and building a reader over either f
 - A group whose two children carry the same Parquet name. Avro records cannot hold two fields of one name, so the error names the duplicate and the value path it sits at.
 - A file whose root is named `interval` or `float16` and that carries a column of that logical type. Those two logical types convert to Avro `fixed` types with exactly those names and no namespace, which is also the root's full name. Excluding the column from the projection does not lift the rejection; read such a file through Hardwood's `RowReader`.
 
-A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field — not the usual `union [null, T]` nullable wrap, which is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
+A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field. The usual `union [null, T]` nullable wrap is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.
 
@@ -110,8 +110,8 @@ Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the 
 
 ## Lifecycle
 
-`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps — closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller. The two-`try`-with-resources pattern in the examples above reflects this.
+`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps. Closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller. The two-`try`-with-resources pattern in the examples above reflects this.
 
 ## Schema overrides
 
-Hardwood derives the Avro schema directly from the Parquet schema via `AvroSchemaConverter`. There is no equivalent of parquet-java's `AvroReadSupport.setRequestedProjection(...)` or `setAvroReadSchema(...)` — supplying an explicit Avro reader schema (for schema-evolution promotions, renames, or alias resolution) is not supported. Column projection (`ColumnProjection.columns(...)`) is the only way to narrow what is read; the Avro schema returned by `getSchema()` always matches the projected Parquet schema's converted form.
+Hardwood derives the Avro schema directly from the Parquet schema via `AvroSchemaConverter`. There is no equivalent of parquet-java's `AvroReadSupport.setRequestedProjection(...)` or `setAvroReadSchema(...)`: supplying an explicit Avro reader schema (for schema-evolution promotions, renames, or alias resolution) is not supported. Column projection (`ColumnProjection.columns(...)`) is the only way to narrow what is read; the Avro schema returned by `getSchema()` always matches the projected Parquet schema's converted form.

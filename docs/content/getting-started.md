@@ -86,7 +86,7 @@ Bindings are available for all popular logger implementations, for instance for 
 
 ### Compression Libraries
 
-Hardwood reads Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4 in both of its framings, and Brotli. It writes all of those except the Hadoop-framed `LZ4`, which the Parquet format deprecated in favour of `LZ4_RAW`; files already written with it are still read. The compression libraries are optional dependencies—add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
+Hardwood reads Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4 in both of its framings, and Brotli. It writes all of those except the Hadoop-framed `LZ4`, which the Parquet format deprecated in favour of `LZ4_RAW`; files already written with it are still read. The compression libraries are optional dependencies; add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
 
 Writing compresses with ZSTD where `zstd-jni` is on the classpath, and writes uncompressed pages where it is not, so add that dependency to get compressed output under the default configuration.
 
@@ -97,7 +97,7 @@ Writing compresses with ZSTD where `zstd-jni` is on the classpath, and writes un
 | LZ4 (`LZ4_RAW` and Hadoop-framed `LZ4`) | `at.yawk.lz4` | `lz4-java` |
 | Brotli | `com.aayushatharva.brotli4j` | `brotli4j` |
 
-When using the BOM, declare without a version — for example, to add Snappy:
+When using the BOM, declare without a version. For example, to add Snappy:
 
 **Maven:**
 
@@ -150,6 +150,6 @@ If you attempt to read a file using a compression codec whose library is not on 
 
 ## Read a File
 
-With the core dependency in place, you're ready to read. The [Read Your First Parquet File](tutorial/first-read.md) tutorial walks through it end-to-end against a real dataset — printing the schema, reading rows with typed accessors, narrowing the read with a projection and a filter, and summing a column the columnar way.
+With the core dependency in place, you're ready to read. The [Read Your First Parquet File](tutorial/first-read.md) tutorial walks through it end-to-end against a real dataset: printing the schema, reading rows with typed accessors, narrowing the read with a projection and a filter, and summing a column the columnar way.
 
-For the full API — column projection, predicate pushdown, column-oriented reading, and more — see the [How-to Guides](how-to/index.md). For example projects you can clone and run, see the [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository.
+For the full API, including column projection, predicate pushdown and column-oriented reading, see the [How-to Guides](how-to/index.md). For example projects you can clone and run, see the [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository.

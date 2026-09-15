@@ -24,13 +24,13 @@ For the drop-in API and its exact behavior, see
 Two goals are in tension, and Hardwood resolves them on different axes:
 
 - **Read what's out there.** Parquet files in the wild were written by many tools across many
-  years — parquet-mr, Arrow, Spark, Hive, PyArrow — using legacy encodings, deprecated types,
+  years (parquet-mr, Arrow, Spark, Hive, PyArrow) using legacy encodings, deprecated types,
   and annotations that newer specs dropped. Hardwood reads these transparently: most legacy
   list-encoding variants, INT96 timestamps, the legacy `converted_type` annotations that
   predate the modern logical-type union, `NULL`-typed columns, FLOAT16. The tolerance also
   extends *forward*: a logical-type annotation newer than Hardwood recognizes is ignored rather
   than rejected, and the column's physical type is exposed, so a file written by a tool that
-  has adopted a future logical type still reads. On the *input* side, Hardwood is liberal — if
+  has adopted a future logical type still reads. On the *input* side, Hardwood is liberal: if
   parquet-java can read it, Hardwood aims to.
 - **Don't silently produce wrong results.** On the *semantic* side, where a behavior is a matter
   of correctness rather than file compatibility, Hardwood chooses the well-defined answer even
@@ -46,7 +46,7 @@ Liberal on what bytes it accepts; strict on what those bytes are defined to mean
 
 The clearest case is `notEq` and its siblings. Hardwood applies uniform SQL three-valued logic
 to every comparison predicate: any comparison against a null column value yields UNKNOWN, and
-UNKNOWN rows are not returned. So `notEq("x", v)` does **not** return rows where `x` is null —
+UNKNOWN rows are not returned. So `notEq("x", v)` does **not** return rows where `x` is null,
 just as `eq`, `lt`, and the rest don't.
 
 parquet-java treats `null <> v` as true and so includes null rows in `notEq`, which breaks the
@@ -76,7 +76,7 @@ The match is by field path, never by position. A Parquet footer lists column chu
 of the schema's flattened leaves, so a column's ordinal belongs to the file that was written, not
 to the column; two files that declare the same columns in a different order describe the same
 data. Untouched columns aren't checked at all, so files may carry extra columns or drop unused
-ones — again liberal on the parts that don't affect correctness, strict on the parts that do. See
+ones: again liberal on the parts that don't affect correctness, strict on the parts that do. See
 [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
 ## The drop-in compat module
@@ -85,7 +85,7 @@ For callers who want parquet-java's *API* without rewriting code, the
 `hardwood-parquet-java-compat` module implements the `org.apache.parquet.*` interfaces backed by
 Hardwood. It is an API-compatibility shim, not a behavioral clone: filters routed through it
 still evaluate under Hardwood's semantics. The module is mutually exclusive with parquet-java on
-the classpath — see [parquet-java Compatibility](../how-to/compat.md).
+the classpath; see [parquet-java Compatibility](../how-to/compat.md).
 
 ## Further reading
 

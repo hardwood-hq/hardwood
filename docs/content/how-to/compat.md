@@ -17,12 +17,12 @@ If you have existing code that uses Apache parquet-java's `ParquetReader<Group>`
     The `hardwood-parquet-java-compat` module is experimental; its API surface and behavior may change in future releases without prior deprecation. This module is not yet available from Maven Central; instead, it needs to be built from source.
 
 !!! warning "Mutually exclusive with parquet-java"
-    This module provides its own type shims in the `org.apache.parquet.*` namespace. It **cannot** be used alongside `parquet-java` on the same classpath — pick one or the other.
+    This module provides its own type shims in the `org.apache.parquet.*` namespace. It **cannot** be used alongside `parquet-java` on the same classpath; pick one or the other.
 
 **Features:**
 
 - Provides `org.apache.parquet.*` namespace classes compatible with parquet-java
-- Includes Hadoop shims (`Path`, `Configuration`) — no Hadoop dependency required
+- Includes Hadoop shims (`Path`, `Configuration`), so no Hadoop dependency is required
 - Supports S3 reading via `HadoopInputFile` with the same `fs.s3a.*` configuration properties
 - Supports filter predicate pushdown with the standard `FilterApi` / `FilterCompat` classes
 
@@ -69,7 +69,7 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 }
 ```
 
-S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection — if missing, a clear error message indicates which dependency to add.
+S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection; if it is missing, the error message names the dependency to add.
 
 ## Filter Pushdown
 

@@ -81,7 +81,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), sc
 [Set up Hardwood in your project](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 Alternatively, [install the Hardwood CLI](reference/cli.md) for working with Parquet files on the command line.
 
-The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples — one per concept — that you can clone and run with a single command.
+The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples, one per concept, that you can clone and run with a single command.
 
 ## Status and Limitations
 

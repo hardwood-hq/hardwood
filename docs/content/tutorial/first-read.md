@@ -21,20 +21,20 @@ and the reader APIs work underneath.
 
 !!! example "Try it yourself"
     Want to run this as a standalone example? The [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood)
-    example mirrors these steps — opening a file, inspecting its schema and footer, reading a few
+    example mirrors these steps: opening a file, inspecting its schema and footer, reading a few
     rows, and summing a column.
 
 ## Before you start
 
 - Java 21 or newer (`java -version` to check).
 - Hardwood on the classpath. If you haven't set up a project yet, follow
-  [Getting Started](../getting-started.md) first — you need `hardwood-core`, and because the
+  [Getting Started](../getting-started.md) first. You need `hardwood-core`, and because the
   sample file is ZSTD-compressed, also add the `zstd-jni` dependency.
 
 ## Step 1 — Get a sample file
 
-Download a month of the public NYC Taxi & Limousine Commission yellow-cab trip data — a real
-Parquet file, about 60 MB:
+Download a month of the public NYC Taxi & Limousine Commission yellow-cab trip data, a real
+Parquet file of about 60 MB:
 
 ```bash
 curl -O https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2026-01.parquet
@@ -46,7 +46,7 @@ opens this file via `Path.of("yellow_tripdata_2026-01.parquet")`.
 ## Step 2 — See what's inside
 
 Before reading data, print the schema. This tells you the column names and types you'll use in
-the next steps — and introduces metadata access, which never touches row data:
+the next steps, and introduces metadata access, which never touches row data:
 
 ```java
 import dev.hardwood.InputFile;
@@ -109,9 +109,9 @@ Each accessor returned a typed value, one row at a time.
 
 A whole file is rarely what you want. Three builder options narrow the read, and they combine:
 
-- **Projection** — read only the columns you name; the rest are never fetched or decoded.
-- **Filter** — a predicate pushed down to skip data that can't match.
-- **`head(n)`** — stop after `n` rows.
+- **Projection**: read only the columns you name; the rest are never fetched or decoded.
+- **Filter**: a predicate pushed down to skip data that can't match.
+- **`head(n)`**: stop after `n` rows.
 
 Read only the two columns you need, keep the high-value trips, and cap at ten:
 
@@ -147,7 +147,7 @@ decoded.
 ## Step 5 — Sum a column the fast way
 
 When you want to aggregate a single column over the whole file, the `ColumnReader` hands you
-typed primitive arrays a batch at a time — no per-row calls. Total the fares:
+typed primitive arrays a batch at a time, with no per-row calls. Total the fares:
 
 ```java
 import dev.hardwood.InputFile;
@@ -190,13 +190,13 @@ Parquet with Hardwood.
 
 ## Where to go next
 
-- [Read Row by Row](../how-to/row-reader.md) — every typed accessor, plus nested structs, lists,
+- [Read Row by Row](../how-to/row-reader.md): every typed accessor, plus nested structs, lists,
   and maps.
-- [Read Column by Column](../how-to/column-reader.md) — the columnar API in full, including
+- [Read Column by Column](../how-to/column-reader.md): the columnar API in full, including
   nested data and hot-loop patterns.
-- [Filter, Project, Limit, and Split](../how-to/query-controls.md) — all the read-narrowing
+- [Filter, Project, Limit, and Split](../how-to/query-controls.md): all the read-narrowing
   options and how they compose.
-- [RowReader vs. ColumnReader](../concepts/reader-models.md) — *why* there are two reader
+- [RowReader vs. ColumnReader](../concepts/reader-models.md): *why* there are two reader
   APIs and how to choose.
-- [How a Parquet File Is Laid Out](../concepts/parquet-layout.md) — the structure that makes
+- [How a Parquet File Is Laid Out](../concepts/parquet-layout.md): the structure that makes
   projection and pushdown possible.

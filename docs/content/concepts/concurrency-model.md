@@ -14,7 +14,7 @@
 Hardwood is multi-threaded at its core: a single reader, driven by a single consumer thread,
 keeps a pool of worker threads busy decoding ahead of where the consumer is reading.
 
-For the knobs themselves — pool sizing and the JFR events that expose pipeline behavior — see
+For the knobs themselves (pool sizing and the JFR events that expose pipeline behavior), see
 [Configuration](../reference/configuration.md) and
 [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
@@ -23,7 +23,7 @@ For the knobs themselves — pool sizing and the JFR events that expose pipeline
 The Parquet layout makes parallelism natural: a column chunk is a sequence of independently
 compressed pages (see [How a Parquet File Is Laid Out](parquet-layout.md)). Decompressing and
 decoding a page is CPU-bound work that doesn't depend on its neighbors, so pages can be worked
-on concurrently. Hardwood exploits this without asking the caller to manage threads — you write
+on concurrently. Hardwood exploits this without asking the caller to manage threads: you write
 an ordinary single-threaded read loop, and the parallelism happens underneath it.
 
 ## The shared pool: `Hardwood` and `HardwoodContext`
@@ -41,7 +41,7 @@ that context comes into being:
   closes it.
 
 Share one context across many reads. The pool is the expensive, reusable resource; readers are
-cheap and short-lived. This matters most when reading many files — see below.
+cheap and short-lived. This matters most when reading many files, as described below.
 
 ## The assembly pipeline
 
@@ -60,7 +60,7 @@ keeping up with consumption.
 When a reader spans multiple files (via `Hardwood.openAll(...)`), prefetching crosses file
 boundaries: as the pages of file _N_ run low, pages of file _N+1_ are already being fetched and
 decoded. The transition between files doesn't stall the consumer. This is the main reason to open
-a multi-file reader rather than looping over single-file readers yourself — and the reason the
+a multi-file reader rather than looping over single-file readers yourself, and the reason the
 shared pool matters, since all the files draw on the same workers. See
 [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
@@ -68,7 +68,7 @@ shared pool matters, since all the files draw on the same workers. See
 
 - **Drive one reader from one thread.** A `RowReader` / `ColumnReader` / `ColumnReaders` instance
   is a stateful cursor meant to be advanced by a single consumer thread. The concurrency is
-  *internal* — you do not, and should not, call `next()` / `nextBatch()` on the same reader from
+  *internal*: do not call `next()` / `nextBatch()` on the same reader from
   multiple threads. This restricts advancing the cursor, not the data it returns: a `ColumnReader`
   allocates fresh batch arrays on every `nextBatch()` and never reuses them later, so you can fan a
   batch's arrays out to other threads for processing while the consumer thread moves on (see
@@ -80,10 +80,10 @@ shared pool matters, since all the files draw on the same workers. See
   `HardwoodContext` so they draw worker threads from one pool rather than each spinning up its
   own.
 - **Size the pool to the workload.** `HardwoodContext.create(n)` sets the number of
-  threads that decompress and decode pages — the bulk of the CPU — so `n` is the main throughput
+  threads that decompress and decode pages, which is the bulk of the CPU, so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
-  Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages —
-  fetching page bytes and assembling decoded values into batches — run on the JVM's virtual-thread
+  Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages,
+  fetching page bytes and assembling decoded values into batches, run on the JVM's virtual-thread
   carriers rather than this pool, so `n` does not bound them; for strict CPU isolation on a shared
   machine, also cap the carriers with `-Djdk.virtualThreadScheduler.parallelism`.
 

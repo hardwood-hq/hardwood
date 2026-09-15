@@ -30,7 +30,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
 
-`repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is required and positive for `FIXED_LEN_BYTE_ARRAY` and rejected for every other type — so a `UUID`, `INTERVAL`, `FLOAT16` or fixed-width `DECIMAL` column is declared through a `typeLength` overload:
+`repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is required and positive for `FIXED_LEN_BYTE_ARRAY` and rejected for every other type, so a `UUID`, `INTERVAL`, `FLOAT16` or fixed-width `DECIMAL` column is declared through a `typeLength` overload:
 
 ```java
 FileSchema schema = FileSchema.builder("event")
@@ -84,7 +84,7 @@ WriterConfig config = WriterConfig.builder()
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `pageTargetBytes(int)` | `1 MiB` | Encoded bytes before a data page is cut — the values as the chunk's chosen encoding writes them, so a dictionary column is measured in indices. A ceiling: the page is cut before the value that would cross it, and only a single value larger than the whole target can breach it. A named delta encoding lands below the target, since its width depends on the values. Must be at least 4 bytes. |
+| `pageTargetBytes(int)` | `1 MiB` | Encoded bytes before a data page is cut, counting the values as the chunk's chosen encoding writes them, so a dictionary column is measured in indices. A ceiling: the page is cut before the value that would cross it, and only a single value larger than the whole target can breach it. A named delta encoding lands below the target, since its width depends on the values. Must be at least 4 bytes. |
 | `rowGroupTargetRows(long)` | `1,048,576` | Records per row group. The control over how a file is banded: row groups hold exactly this many records apart from the last. Binds for records narrower than about 128 bytes; above that the buffer target below cuts first. Must be positive; a target above the structural ceiling of `Integer.MAX_VALUE - 8` records is that ceiling, so `Long.MAX_VALUE` means "cut on bytes alone". |
 | `rowGroupBufferTargetBytes(long)` | `128 MiB` | Bytes the writer holds for the open row group before cutting it: level streams, dictionary indices, value stores and dictionaries. The memory control, and the number peak heap follows; what reaches the file is smaller by whatever the encoding and the codec win. A row group passes it by at most one record. See [The Write Model](../concepts/write-model.md). Must be positive. |
 | `codec(CompressionCodec)` | `ZSTD`, or `UNCOMPRESSED` when the ZSTD library is absent | Codec each page body is compressed with. |
@@ -95,7 +95,7 @@ WriterConfig config = WriterConfig.builder()
 
 A row group is cut at whichever of the two row-group targets is reached first.
 
-Each option has a getter that reads the configured value back — `pageTargetBytes()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, and, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+Each option has a getter that reads the configured value back: `pageTargetBytes()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, and, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
 
 The footer's key-value metadata and its `created_by` identifier are set on the `ParquetFileWriter` itself; see [File Metadata](#file-metadata).
 
@@ -122,7 +122,7 @@ An encoding is legal only for some physical types:
 | `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` |
 | `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` |
 
-A policy naming a column whose type cannot carry it fails when the writer is created — a file-wide `BYTE_STREAM_SPLIT` over a schema holding a `BYTE_ARRAY` column included. A per-column override names the column by its **dotted leaf path** as the schema spells it, synthetic segments included: `readings.list.element`, not `readings`. A path matching no leaf column is rejected the same way.
+A policy naming a column whose type cannot carry it fails when the writer is created, including a file-wide `BYTE_STREAM_SPLIT` over a schema holding a `BYTE_ARRAY` column. A per-column override names the column by its **dotted leaf path** as the schema spells it, synthetic segments included: `readings.list.element`, not `readings`. A path matching no leaf column is rejected the same way.
 
 No policy demands a dictionary; it is an outcome `AUTO` may arrive at. A `BOOLEAN` column is never dictionary-encoded, so `AUTO` resolves it to `PLAIN` whatever its values are.
 
@@ -206,28 +206,28 @@ Some annotations narrow what their physical type may hold. Where one does, both 
 | `DECIMAL(p, s)` | an unscaled value of at most `p` digits |
 | `UNKNOWN` | no value at all; every row must be null, so the column is set through a setter taking a null mask |
 
-Every other annotation narrows nothing, and its column is not scanned per value. On a `DATE` column, every `INT32` is a day offset the reader materializes. On a `TIMESTAMP` column, every `INT64` and every twelve bytes of a `FIXED_LEN_BYTE_ARRAY(12)` is a timestamp in any of the three units. Neither leaves a value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type — a large unsigned value is spelled as a negative, which is also how the reader returns it.
+Every other annotation narrows nothing, and its column is not scanned per value. On a `DATE` column, every `INT32` is a day offset the reader materializes. On a `TIMESTAMP` column, every `INT64` and every twelve bytes of a `FIXED_LEN_BYTE_ARRAY(12)` is a timestamp in any of the three units. Neither leaves a value for the columnar API to reject. `INT(32)`, `INT(64)` and their unsigned forms likewise admit every value of their physical type; a large unsigned value is spelled as a negative, which is also how the reader returns it.
 
 Two checks are not annotations and always apply: a `FIXED_LEN_BYTE_ARRAY` value must be exactly the length the column declares, and a present value of a binary column must not be `null`. The value at a row a `Validity` marks null is never encoded, so it is never checked.
 
-An annotation over binary *content* is not a range, and the writer does not inspect it. A value passed to `bytes(...)` or `fixed(...)` is written as given, whether the column is annotated `STRING`, `ENUM`, `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY` — encoding a `STRING` column's values as UTF-8, and producing well-formed payloads under the others, is the caller's to do. Bytes that are not valid UTF-8 are written and read back as replacement characters rather than rejected. `StructBuilder.setString` takes a `String` and encodes it, so the row-oriented layer cannot produce that.
+An annotation over binary *content* is not a range, and the writer does not inspect it. A value passed to `bytes(...)` or `fixed(...)` is written as given, whether the column is annotated `STRING`, `ENUM`, `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY`. Encoding a `STRING` column's values as UTF-8, and producing well-formed payloads under the others, is the caller's to do. Bytes that are not valid UTF-8 are written and read back as replacement characters rather than rejected. `StructBuilder.setString` takes a `String` and encodes it, so the row-oriented layer cannot produce that.
 
-`PrecisionLossPolicy` governs **precision** only, and only on the row-oriented layer — the columnar API converts nothing, so nothing there can lose precision:
+`PrecisionLossPolicy` governs **precision** only, and only on the row-oriented layer. The columnar API converts nothing, so nothing there can lose precision:
 
 | Policy | Behaviour |
 |---|---|
 | `REJECT` (default) | Reject a value carrying digits the column's unit or scale cannot hold, naming the field. A value that is exact at the column's unit or scale is written normally. |
 | `TRUNCATE` | Drop the digits that do not fit: a `TIME` / `TIMESTAMP` value is floored to the column's unit, a `DECIMAL` rescaled with `RoundingMode.DOWN`. |
 
-A value the column cannot represent at all — a `LocalDate` beyond the `INT32` day range, an unscaled decimal wider than the declared precision — is rejected under either policy. This is a conversion check on the row-oriented layer, where a Java type wider than the column is what makes it reachable; the columnar API is handed the stored value directly.
+A value the column cannot represent at all, such as a `LocalDate` beyond the `INT32` day range or an unscaled decimal wider than the declared precision, is rejected under either policy. This is a conversion check on the row-oriented layer, where a Java type wider than the column is what makes it reachable; the columnar API is handed the stored value directly.
 
 ## Statistics Written
 
 Every column chunk carries `null_count`. `min` / `max` are computed under the column's `ColumnOrder` during encoding and written to the preferred `min_value` / `max_value` fields; the deprecated `min` / `max` fields are not written.
 
-- **Bounds are omitted where their order is undefined.** A column annotated `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST` or `MAP` writes its null count alone, parquet-format leaving those orderings unspecified — a bound in an order the reader cannot know would prune away live rows. An all-null chunk has no bounds to write either.
+- **Bounds are omitted where their order is undefined.** A column annotated `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST` or `MAP` writes its null count alone, parquet-format leaving those orderings unspecified; a bound in an order the reader cannot know would prune away live rows. An all-null chunk has no bounds to write either.
 - **Truncation.** `BYTE_ARRAY` bounds longer than `statisticsTruncationLength` are truncated and flagged inexact (`is_min_value_exact` / `is_max_value_exact` = `false`). Fixed-width types write those flags as `true`.
-- **`nan_count`** is written for every `FLOAT`, `DOUBLE` and `FLOAT16` chunk, including when it is zero — a recorded zero is what lets a reader prove a chunk holds no NaN. No other type writes the field.
+- **`nan_count`** is written for every `FLOAT`, `DOUBLE` and `FLOAT16` chunk, including when it is zero, since a recorded zero lets a reader prove a chunk holds no NaN. No other type writes the field.
 - **`distinct_count`** is written where the chunk still knows its cardinality exactly: any chunk under `AUTO` that interned its values to the end, whichever encoding the flush-time comparison then chose, and any `BOOLEAN` chunk, which knows its cardinality without a dictionary. It is absent for a chunk written under a named encoding, and for one that stopped interning part-way, which happens when repeated size probes find the dictionary losing to `PLAIN`.
 
 Page-level index structures (OffsetIndex, ColumnIndex), Bloom filters, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not yet written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
@@ -254,9 +254,9 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
 
 `key_value_metadata` is application-defined: Parquet does not interpret it, and the writer validates nothing beyond requiring a key. It is where `ARROW:schema`, the pandas descriptor, `org.apache.spark.sql.parquet.row.metadata` and the table-format stamps live.
 
-Entries reach the file in the order they were added. A `null` value writes a key carrying no value, which the format allows and which is what a reader reports as a `null` — so the map `FileMetaData.keyValueMetadata()` returns can be passed straight to `keyValueMetadata(Map)` to reproduce another file's metadata exactly. A file given no entries carries no `key_value_metadata` field at all.
+Entries reach the file in the order they were added. A `null` value writes a key carrying no value, which the format allows and which is what a reader reports as a `null`, so the map `FileMetaData.keyValueMetadata()` returns can be passed straight to `keyValueMetadata(Map)` to reproduce another file's metadata exactly. A file given no entries carries no `key_value_metadata` field at all.
 
-Because the methods are callable until `close()`, a value the caller knows only once the data is written — a row count, a digest over what was produced — can still be stamped on the file.
+Because the methods are callable until `close()`, a value the caller knows only once the data is written, such as a row count or a digest over what was produced, can still be stamped on the file.
 
 Reading the field back is covered in [Read File Metadata](../how-to/metadata.md).
 
@@ -286,7 +286,7 @@ Repetition is writable wherever a `LIST` or `MAP` annotation accounts for it. An
 
 Every other arrangement of repetition is rejected when the writer is created, since nothing in the schema says where its entries begin and end:
 
-- a `REPEATED` field — leaf or group — whose parent carries neither annotation;
+- a `REPEATED` field, leaf or group, whose parent carries neither annotation;
 - a `LIST` or `MAP` group that is itself `REPEATED`;
 - a `LIST` or `MAP` group holding anything other than its single `REPEATED` entry;
 - a `MAP` whose entry is a leaf rather than a group.

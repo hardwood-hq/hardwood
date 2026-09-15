@@ -11,8 +11,8 @@
 -->
 # The Layer Model
 
-`ColumnReader` hands you a column as flat, typed primitive arrays. For a nested column — a struct
-field, a list, a map, or any combination — those flat arrays need extra structure to say which
+`ColumnReader` hands you a column as flat, typed primitive arrays. For a nested column (a struct
+field, a list, a map, or any combination), those flat arrays need extra structure to say which
 leaf values belong to which record, and where the nulls and empty containers sit. The **layer
 model** is how `ColumnReader` expresses that structure without boxing or per-row objects. For
 worked code against it, see [Column-Oriented Reading](../how-to/column-reader.md).
@@ -24,8 +24,8 @@ worked code against it, see [Column-Oriented Reading](../how-to/column-reader.md
     [**Nested Data**](https://github.com/hardwood-hq/hardwood-examples/tree/main/nested-data) reads the
     same shapes through the Row API.
 
-> **A note on lineage.** The layer model — flat value arrays, offset buffers, and set-bit-present
-> validity bitmaps — takes inspiration from [Apache Arrow](https://arrow.apache.org/)'s columnar
+> **A note on lineage.** The layer model (flat value arrays, offset buffers, and set-bit-present
+> validity bitmaps) takes inspiration from [Apache Arrow](https://arrow.apache.org/)'s columnar
 > representation, so the shapes feel familiar if you come from an Arrow-based engine. The
 > resemblance is conceptual only: Hardwood implements no part of the Arrow specification, and the
 > buffers are plain Java arrays rather than an Arrow-bit-compatible layout.
@@ -85,7 +85,7 @@ Two rules govern how item counts flow down the chain:
 2. **REPEATED expands cardinality.** Items at layer `k+1` equal `getLayerOffsets(k)[count(k)]`.
    REPEATED layers carry both validity and offsets.
 
-The leaf array and `getLayerOffsets` carry **real items only** — phantom slots from null/empty
+The leaf array and `getLayerOffsets` carry **real items only**: phantom slots from null/empty
 parents at any `REPEATED` layer are excluded. `getValueCount()` returns the real leaf count.
 `STRUCT` layers do not expand or contract the item stream; only `REPEATED` layers add cardinality,
 via their offsets.
@@ -103,7 +103,7 @@ Those two rules generate the layer shape of any chain:
 | `list<optional struct { ... }>` | 2 | REPEATED, STRUCT |
 | `optional struct { map<string, int> }` | 2 | STRUCT, REPEATED |
 
-Maps report as `REPEATED` — the layer enum does not distinguish map-shape from list-shape; consult
+Maps report as `REPEATED`, since the layer enum does not distinguish map-shape from list-shape; consult
 `getColumnSchema()` if you need that distinction.
 
 ## How schema nodes map to layers
@@ -134,7 +134,7 @@ optional group contacts (LIST)  ──┐
 ```
 
 `getLayerCount()` is `2`, with kinds `[REPEATED, STRUCT]`. The list's own nullability is not a
-separate layer: a null `contacts` is recorded in `getLayerValidity(0)` of the `REPEATED` layer — the
+separate layer: a null `contacts` is recorded in `getLayerValidity(0)` of the `REPEATED` layer, giving the
 same layer shape a `required` list would have, differing only in that validity. Layer 1 is the
 `element` struct, which carries validity but no offsets, so `getLayerOffsets(1)` throws `Layer 1 is
 STRUCT, not REPEATED`.
@@ -142,8 +142,8 @@ STRUCT, not REPEATED`.
 ## Logical element versus physical encoding
 
 Schema *navigation* follows the same logical-over-physical split as layers.
-`SchemaNode.GroupNode.getListElement()` returns a list's **logical** element — *what* the element
-is — independent of whether the list is physically 2-level or 3-level. For `list<list<int>>` the
+`SchemaNode.GroupNode.getListElement()` returns a list's **logical** element (*what* the element
+is), independent of whether the list is physically 2-level or 3-level. For `list<list<int>>` the
 element is the inner `list<int>`; for `list<int>` it is the `int`. The encoding changes only *where*
 that element sits in the node tree.
 
@@ -152,7 +152,7 @@ non-repeated child below the synthetic `repeated group`; in a legacy 2-level lis
 *is* the element, so the returned node is itself `REPEATED`. Counted structurally, a list's nesting
 depth is the number of `repeated` nodes on the path (equivalently, the leaf's maximum repetition
 level), not the number of `LIST` annotations. To walk to the leaf logically, recurse
-`getListElement()` while the result `isList()` — uniform across both encodings. To inspect the raw
+`getListElement()` while the result `isList()`, which works the same for both encodings. To inspect the raw
 physical tree instead, walk `children()`.
 
 ## Counts at each layer

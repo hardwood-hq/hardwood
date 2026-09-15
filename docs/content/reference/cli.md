@@ -14,7 +14,7 @@
 The `hardwood` CLI inspects and converts Parquet files from the command line. Its commands run non-interactively, for use in scripts and by [AI coding agents](#use-with-ai-coding-agents), and [`hardwood dive`](#interactive-exploration-dive) opens an interactive terminal UI for exploring a file by hand. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
 
 Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). You can also
-run the CLI via Docker without installing it locally — see the [Docker section below](#docker).
+run the CLI via Docker without installing it locally; see the [Docker section below](#docker).
 
 !!! note "macOS"
     The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:
@@ -98,7 +98,7 @@ hardwood convert --format csv --null-string '\N' -f data.parquet
 `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, and `DOUBLE` values that carry no
 logical annotation or an `INT` annotation. Date, time, timestamp, decimal,
 UUID, interval, `FLOAT16`, `INT96`, and byte-array values are JSON strings.
-Decimals are always plain strings — `0.0000001`, never `1E-7`.
+Decimals are always plain strings: `0.0000001`, never `1E-7`.
 
 Nested values are native JSON: a struct is an object, a list or repeated field
 an array, and a map an object keyed by each map key's text. Values inside them
@@ -114,13 +114,13 @@ them, and CSV quotes a field that holds a line feed or a carriage return.
 
 Unsigned integers are JSON numbers, including values above the signed 64-bit
 range such as `18446744073709551615`. A JSON parser that represents numbers as
-IEEE 754 doubles — most JavaScript ones do — reads such a value at reduced
+IEEE 754 doubles (most JavaScript ones do) reads such a value at reduced
 precision; a parser with a big-integer mode reads it exactly.
 
 A null is `null` in JSON. In CSV it is an empty field, which an empty string
 value also produces, so the two read the same. Pass `--null-string VALUE` to
 write something else for a null; the CSV quoting rules apply to that value like
-any other. `--null-string` is a CSV option — combining it with `--format json`
+any other. `--null-string` is a CSV option; combining it with `--format json`
 is an error.
 
 `--null-string` covers whole fields and flattened struct leaves. A null nested
@@ -169,7 +169,7 @@ becomes `_`, a leading `_` is prepended to a name starting with a digit, and
 names that collide within one record or message after rewriting get a `_2`,
 `_3`, … suffix.
 
-A rewritten name keeps its Parquet name in the output — as a `doc` attribute
+A rewritten name keeps its Parquet name in the output, as a `doc` attribute
 in Avro:
 
 ```json
@@ -207,7 +207,7 @@ is absent, `0 B` for one that is present and empty. See
 [Absent values](#absent-values).
 
 Pass `--kv-key <name>` to print one entry's value in full, untruncated and with
-no substitutions, and no other output — safe to pipe into another tool:
+no substitutions, and no other output, so it is safe to pipe into another tool:
 
 ```shell
 hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
@@ -221,7 +221,7 @@ entry has no value.
 Every command and every `dive` screen renders a quantity the file does not carry
 as `—`. A column's `# Pages` without a page index, a page's `Min` and `Max`
 without statistics, a `Compression` with no uncompressed size to divide by, a
-key/value entry with no value — all read the same way, on both surfaces.
+key/value entry with no value: all read the same way, on both surfaces.
 
 Absent is not the same as empty. `0 B`, `0`, and `""` are values the writer
 recorded; `—` says it recorded none.
@@ -243,7 +243,7 @@ hardwood inspect columns -f data.parquet | awk -F'|' '$11 ~ /—/ {print $3}'
 ## Binary values
 
 A `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column with no logical-type annotation
-carries bytes the schema gives no interpretation for — text from a writer that
+carries bytes the schema gives no interpretation for: text from a writer that
 omitted the `STRING` annotation, or an opaque payload such as WKB geometry, a
 Protobuf message or a hash. Every command decides from the bytes themselves:
 well-formed UTF-8 with no control characters prints as text unless it starts
@@ -410,16 +410,16 @@ A tour through the main screens (click any shot to open it full size):
 
 <figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview — scrolled right across the column window</figcaption></figure>
 
-Every screen shares a four-region layout — a top bar with file identity, a
+Every screen shares a four-region layout: a top bar with file identity, a
 breadcrumb showing the navigation stack, the active screen body, and a keybar
 (all four visible in the Overview screenshot above).
 
 ### Typical drill path
 
 1. **Overview** → pick *Row groups* from the drill menu.
-2. **Row groups** → select a row, *Enter* — opens that row group's detail.
-3. **Row group detail** → *Enter* — opens its column chunks.
-4. **Column chunks** → select a column, *Enter* — opens the chunk detail.
+2. **Row groups** → select a row, *Enter* to open that row group's detail.
+3. **Row group detail** → *Enter* to open its column chunks.
+4. **Column chunks** → select a column, *Enter* to open the chunk detail.
 5. **Column chunk detail** (facts pane + drill menu) → pick *Pages*, *Column
    index*, *Offset index*, or *Dictionary*.
 6. Drill sub-screens (*Pages*, *Column index*, etc.) support *Esc* back up to
@@ -428,8 +428,8 @@ breadcrumb showing the navigation stack, the active screen body, and a keybar
 
 Alternative entry: from **Overview → Schema**, navigate the tree of group and
 primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
-*Column-across-row-groups* view — one row per row group showing that column's
-sizes, encoding, stats — and from there into the chunk detail.
+*Column-across-row-groups* view (one row per row group showing that column's
+sizes, encoding, stats), and from there into the chunk detail.
 
 ### Inline search
 
@@ -487,7 +487,7 @@ To make it permanent, add the line above to your shell's startup file (e.g. `~/.
 
 The repository ships an [Agent Skill](https://agentskills.io) at `skills/hardwood-cli/` that teaches an AI coding agent when and how to reach for the CLI while debugging Parquet read/write code (checking schema and physical/logical types, diagnosing why predicate pushdown or page skipping isn't happening, reading dictionary entries, and so on).
 
-For [Claude Code](https://claude.com/claude-code), it is packaged as the `hardwood` plugin, distributed from the [`hardwood-skills`](https://github.com/hardwood-hq/hardwood-skills) marketplace. Install it once — inside Claude Code, run:
+For [Claude Code](https://claude.com/claude-code), it is packaged as the `hardwood` plugin, distributed from the [`hardwood-skills`](https://github.com/hardwood-hq/hardwood-skills) marketplace. Install it once by running, inside Claude Code:
 
 ```text
 /plugin marketplace add hardwood-hq/hardwood-skills
@@ -496,7 +496,7 @@ For [Claude Code](https://claude.com/claude-code), it is packaged as the `hardwo
 
 After installing, the skill loads automatically in future sessions whenever a task involves a Parquet file. It drives the `hardwood` binary, so ensure `hardwood` is on your `PATH` (from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}) or the Docker image below).
 
-For other agent harnesses — or a Claude Code setup without the plugin — copy `skills/hardwood-cli/SKILL.md` into that tool's skills directory (for Claude Code that is `~/.claude/skills/hardwood-cli/`).
+For other agent harnesses, or a Claude Code setup without the plugin, copy `skills/hardwood-cli/SKILL.md` into that tool's skills directory (for Claude Code that is `~/.claude/skills/hardwood-cli/`).
 
 ## Docker
 
