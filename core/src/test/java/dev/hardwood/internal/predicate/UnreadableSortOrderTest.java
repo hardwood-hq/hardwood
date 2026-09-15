@@ -94,7 +94,7 @@ class UnreadableSortOrderTest {
 
         MinMaxStats stats = MinMaxStats.of(boundless, leaf, readability(geometry));
 
-        assertThat(stats).isInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+        assertThat(stats).isInstanceOf(MinMaxStats.NoBounds.class);
         assertThat(stats.discardReason()).isNull();
     }
 
@@ -185,18 +185,6 @@ class UnreadableSortOrderTest {
 
         assertThat(MinMaxStats.ofPage(columnIndex, 0, leaf,
                 readability(ints, List.of(ColumnOrder.UNKNOWN))).canDrop(leaf)).isFalse();
-    }
-
-    /// The null count needs no ordering, so it survives where the bounds do not.
-    @Test
-    void theNullCountSurvivesUnreadableBounds() {
-        FileSchema ints = intSchema();
-        ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.gt("v", 100), ints, List.of(ColumnOrder.UNKNOWN));
-        Statistics foreign = new Statistics(intBytes(0), intBytes(50), 7L, null, false);
-
-        assertThat(MinMaxStats.of(foreign, leaf,
-                readability(ints, List.of(ColumnOrder.UNKNOWN))).nullCount()).isEqualTo(7L);
     }
 
     /// Readability is asked in one file's ordinals; an ordinal outside that file is a wiring

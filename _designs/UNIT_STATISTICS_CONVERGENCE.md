@@ -72,10 +72,10 @@ Each statistic answers a `FilterDecision`.
 `MinMaxStats.ofPage` are the sourcing step of `ChunkStats` and `IndexPageStats`. `InlinePageStats`
 decodes the same `Statistics` shape as `ChunkStats`.
 
-`MinMaxStats` keeps its own null count. `decideLeaf` composes the interval proof with a proven-zero
-null count, and splitting that conjunction across two objects would return null rows to a caller
-that asked for a value. The copy cannot disagree with `NullStats`, both being sourced from the same
-unit in the same call.
+`MinMaxStats` holds bounds alone. Proving a value predicate on every row takes a proven-zero null
+count as well, since a null row satisfies none, so `decideLeaf` takes that as a parameter and
+`decide` passes what `NullStats` proves. The null count is sourced once, by `NullStats`, and a
+caller cannot leave the conjunction half-applied without saying so.
 
 ### Null counts
 

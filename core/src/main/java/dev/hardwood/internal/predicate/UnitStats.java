@@ -119,12 +119,13 @@ sealed interface UnitStats {
     }
 
     private FilterDecision decideValue(ResolvedPredicate leaf, LogContext logContext) {
-        if (nulls().allNull()) {
+        NullStats nulls = nulls();
+        if (nulls.allNull()) {
             return FilterDecision.CANNOT_MATCH;
         }
         MinMaxStats minMax = minMax(leaf);
         minMax.reportIfDiscarded(locate(logContext));
-        return minMax.decideLeaf(leaf);
+        return minMax.decideLeaf(leaf, nulls.noNulls());
     }
 
     private static IllegalArgumentException notALeaf(ResolvedPredicate predicate) {
@@ -153,7 +154,7 @@ sealed interface UnitStats {
         public MinMaxStats minMax(ResolvedPredicate leaf) {
             Statistics statistics = statistics();
             return statistics == null
-                    ? new MinMaxStats.NullCountOnlyStats(null, null)
+                    ? new MinMaxStats.NoBounds(null)
                     : MinMaxStats.of(statistics, leaf, readability);
         }
 
@@ -206,7 +207,7 @@ sealed interface UnitStats {
         @Override
         public MinMaxStats minMax(ResolvedPredicate leaf) {
             return nullPage()
-                    ? new MinMaxStats.NullCountOnlyStats(rowCount, null)
+                    ? new MinMaxStats.NoBounds(null)
                     : MinMaxStats.ofPage(columnIndex, pageIndex, leaf, readability);
         }
 

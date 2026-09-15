@@ -88,26 +88,26 @@ class FilterDecisionTest {
     @Test
     void intInDecisions() {
         ResolvedPredicate in = new ResolvedPredicate.IntInPredicate(0, new int[]{ 5, 42, 99 });
-        assertThat(intStats(42, 42, 0L).decideLeaf(in))
+        assertThat(intStats(42, 42).decideLeaf(in, true))
                 .isEqualTo(ALWAYS_MATCHES);
-        assertThat(intStats(42, 43, 0L).decideLeaf(in))
+        assertThat(intStats(42, 43).decideLeaf(in, true))
                 .isEqualTo(MIGHT_MATCH);
-        assertThat(intStats(6, 41, 0L).decideLeaf(in))
+        assertThat(intStats(6, 41).decideLeaf(in, true))
                 .isEqualTo(CANNOT_MATCH);
     }
 
     @Test
     void doubleInDecisions() {
         ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, false);
-        assertThat(doubleStats(42.0, 43.0, 0L).decideLeaf(in))
+        assertThat(doubleStats(42.0, 43.0).decideLeaf(in, true))
                 .isEqualTo(MIGHT_MATCH);
-        assertThat(doubleStats(6.0, 41.0, 0L).decideLeaf(in))
+        assertThat(doubleStats(6.0, 41.0).decideLeaf(in, true))
                 .isEqualTo(CANNOT_MATCH);
 
         // A stored NaN sits outside the bounds' ordering, so one NaN probe stops the whole list
         // from pruning: [10.0, 20.0] holds neither 5.0 nor NaN, and the unit is still kept.
         ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN }, false);
-        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(inWithNaN))
+        assertThat(doubleStats(10.0, 20.0).decideLeaf(inWithNaN, true))
                 .isEqualTo(MIGHT_MATCH);
     }
 
@@ -168,13 +168,13 @@ class FilterDecisionTest {
     @Test
     void floatInDecisions() {
         ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, 42.0f, 99.0f }, false);
-        assertThat(floatStats(42.0f, 43.0f, 0L).decideLeaf(in))
+        assertThat(floatStats(42.0f, 43.0f).decideLeaf(in, true))
                 .isEqualTo(MIGHT_MATCH);
-        assertThat(floatStats(6.0f, 41.0f, 0L).decideLeaf(in))
+        assertThat(floatStats(6.0f, 41.0f).decideLeaf(in, true))
                 .isEqualTo(CANNOT_MATCH);
 
         ResolvedPredicate inWithNaN = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, Float.NaN }, false);
-        assertThat(floatStats(10.0f, 20.0f, 0L).decideLeaf(inWithNaN))
+        assertThat(floatStats(10.0f, 20.0f).decideLeaf(inWithNaN, true))
                 .isEqualTo(MIGHT_MATCH);
     }
 
@@ -189,21 +189,20 @@ class FilterDecisionTest {
 
     @Test
     void nullsPreventAlwaysMatchesForValuePredicates() {
-        // [10, 20] fully satisfies GT 5, but nulls (or an unknown null count) may hide
-        // non-matching rows: a null row satisfies no value predicate.
+        // [10, 20] fully satisfies GT 5, but a unit not proven null-free may hide non-matching
+        // rows: a null row satisfies no value predicate. Which null count leaves it unproven —
+        // one above zero, or none recorded — is [NullStats]', and `UnitStatsTest` covers both.
         ResolvedPredicate gt = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.GT, 5);
-        assertThat(intStats(10, 20, 0L).decideLeaf(gt))
+        assertThat(intStats(10, 20).decideLeaf(gt, true))
                 .isEqualTo(ALWAYS_MATCHES);
-        assertThat(intStats(10, 20, 3L).decideLeaf(gt))
-                .isEqualTo(MIGHT_MATCH);
-        assertThat(intStats(10, 20, null).decideLeaf(gt))
+        assertThat(intStats(10, 20).decideLeaf(gt, false))
                 .isEqualTo(MIGHT_MATCH);
     }
 
     @Test
     void missingBoundsNeverPromiseAlwaysMatches() {
         ResolvedPredicate gt = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.GT, 5);
-        assertThat(noBounds(0L).decideLeaf(gt))
+        assertThat(noBounds().decideLeaf(gt, true))
                 .isEqualTo(MIGHT_MATCH);
     }
 
@@ -215,36 +214,36 @@ class FilterDecisionTest {
         // fully-satisfying interval cannot promise every row for FP columns.
         ResolvedPredicate gtDouble =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 1.0);
-        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(gtDouble))
+        assertThat(doubleStats(10.0, 20.0).decideLeaf(gtDouble, true))
                 .isEqualTo(MIGHT_MATCH);
 
         ResolvedPredicate gtFloat =
                 new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.GT, 1.0f);
-        assertThat(floatStats(10.0f, 20.0f, 0L).decideLeaf(gtFloat))
+        assertThat(floatStats(10.0f, 20.0f).decideLeaf(gtFloat, true))
                 .isEqualTo(MIGHT_MATCH);
 
         ResolvedPredicate inDouble =
                 new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 }, false);
-        assertThat(doubleStats(15.0, 15.0, 0L).decideLeaf(inDouble))
+        assertThat(doubleStats(15.0, 15.0).decideLeaf(inDouble, true))
                 .isEqualTo(MIGHT_MATCH);
 
         // CANNOT_MATCH is still proven by operators a NaN row never satisfies, such as EQ
         // outside the bounds — not by floating-point GT, which NaN rows may match (#1016).
         ResolvedPredicate eqOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.EQ, 25.0);
-        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(eqOutside))
+        assertThat(doubleStats(10.0, 20.0).decideLeaf(eqOutside, true))
                 .isEqualTo(CANNOT_MATCH);
 
         ResolvedPredicate gtOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 25.0);
-        assertThat(doubleStats(10.0, 20.0, 0L).decideLeaf(gtOutside))
+        assertThat(doubleStats(10.0, 20.0).decideLeaf(gtOutside, true))
                 .isEqualTo(MIGHT_MATCH);
 
         // A recorded nan_count of zero lets the bounds prove GT empty, but a fully-satisfying
         // interval is not promoted to ALWAYS_MATCHES (#898).
-        assertThat(nanFreeDoubleStats(10.0, 20.0, 0L).decideLeaf(gtOutside))
+        assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(gtOutside, true))
                 .isEqualTo(CANNOT_MATCH);
-        assertThat(nanFreeDoubleStats(10.0, 20.0, 0L).decideLeaf(gtDouble))
+        assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(gtDouble, true))
                 .isEqualTo(MIGHT_MATCH);
     }
 
@@ -290,7 +289,7 @@ class FilterDecisionTest {
 
             ResolvedPredicate leaf = new ResolvedPredicate.LongPredicate(0, op, literal);
             FilterDecision decision =
-                    longStats(min, max, 0L).decideLeaf(leaf);
+                    longStats(min, max).decideLeaf(leaf, true);
 
             int matching = 0;
             for (long value : values) {
@@ -381,7 +380,7 @@ class FilterDecisionTest {
 
     private static FilterDecision decideInt(FilterPredicate.Operator op, int value, int min, int max) {
         ResolvedPredicate leaf = new ResolvedPredicate.IntPredicate(0, op, value);
-        return intStats(min, max, 0L).decideLeaf(leaf);
+        return intStats(min, max).decideLeaf(leaf, true);
     }
 
     private static FilterDecision decideBinary(FilterPredicate.Operator op, String value,
@@ -389,30 +388,30 @@ class FilterDecisionTest {
         ResolvedPredicate leaf = new ResolvedPredicate.BinaryPredicate(
                 0, op, value.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
         return MinMaxStats.BinaryStats.of(min.getBytes(StandardCharsets.UTF_8),
-                max.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING, 0L).decideLeaf(leaf);
+                max.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING).decideLeaf(leaf, true);
     }
 
-    private static MinMaxStats intStats(int min, int max, Long nullCount) {
-        return MinMaxStats.IntStats.of(min, max, nullCount);
+    private static MinMaxStats intStats(int min, int max) {
+        return MinMaxStats.IntStats.of(min, max);
     }
 
-    private static MinMaxStats longStats(long min, long max, Long nullCount) {
-        return MinMaxStats.LongStats.of(min, max, nullCount);
+    private static MinMaxStats longStats(long min, long max) {
+        return MinMaxStats.LongStats.of(min, max);
     }
 
-    private static MinMaxStats floatStats(float min, float max, Long nullCount) {
-        return MinMaxStats.FloatStats.of(min, max, false, false, nullCount);
+    private static MinMaxStats floatStats(float min, float max) {
+        return MinMaxStats.FloatStats.of(min, max, false, false);
     }
 
-    private static MinMaxStats doubleStats(double min, double max, Long nullCount) {
-        return MinMaxStats.DoubleStats.of(min, max, false, false, nullCount);
+    private static MinMaxStats doubleStats(double min, double max) {
+        return MinMaxStats.DoubleStats.of(min, max, false, false);
     }
 
-    private static MinMaxStats nanFreeDoubleStats(double min, double max, Long nullCount) {
-        return MinMaxStats.DoubleStats.of(min, max, false, true, nullCount);
+    private static MinMaxStats nanFreeDoubleStats(double min, double max) {
+        return MinMaxStats.DoubleStats.of(min, max, false, true);
     }
 
-    private static MinMaxStats noBounds(Long nullCount) {
-        return new MinMaxStats.NullCountOnlyStats(nullCount, null);
+    private static MinMaxStats noBounds() {
+        return new MinMaxStats.NoBounds(null);
     }
 }

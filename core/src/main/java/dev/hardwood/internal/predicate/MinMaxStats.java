@@ -22,11 +22,10 @@ import dev.hardwood.metadata.Statistics;
 /// decoded and an `IN` predicate reads the same bounds as the comparison of the same width.
 ///
 /// Bounds the filter layer cannot compare against never become one of the typed variants at
-/// all. They become [NullCountOnlyStats], which keeps the one statistic that does not depend
-/// on them and carries why the rest were dropped. It proves nothing about a value predicate:
-/// [#canDrop] is `false` and [#decideLeaf] is [FilterDecision#MIGHT_MATCH]. Deciding that
-/// where the bounds are sourced keeps every comparator free of the question, and keeps a
-/// comparator added later from having to remember it.
+/// all. They become [NoBounds], which carries why they were dropped and proves nothing about a
+/// value predicate: [#canDrop] is `false` and [#decideLeaf] is [FilterDecision#MIGHT_MATCH].
+/// Deciding that where the bounds are sourced keeps every comparator free of the question, and
+/// keeps a comparator added later from having to remember it.
 sealed interface MinMaxStats {
 
     System.Logger LOG = System.getLogger(MinMaxStats.class.getName());
@@ -59,9 +58,6 @@ sealed interface MinMaxStats {
     String UNKNOWN_SORT_ORDER =
             "the order they were written in is one this reader cannot read";
 
-    /// The number of null values in the unit, or `null` if unknown.
-    Long nullCount();
-
     /// Why the file's bounds were discarded, or `null` where they were kept — or where the
     /// file wrote none to discard.
     default String discardReason() {
@@ -79,7 +75,7 @@ sealed interface MinMaxStats {
     /// can be traced back to the file that caused it. Silent when they were kept.
     ///
     /// Reporting only; the discard itself already took effect when the unit was sourced, since
-    /// unusable bounds become [NullCountOnlyStats], which drops nothing.
+    /// unusable bounds become [NoBounds], which drops nothing.
     ///
     /// Every discard is reported, with no attempt to collapse repeats. Statistics that will
     /// not compare are rare, and a reader who finds the volume unhelpful can raise the level
@@ -97,34 +93,29 @@ sealed interface MinMaxStats {
                 logContext.prefix(), discardReason);
     }
 
-    /// Whether the unit is proven to hold no nulls.
-    default boolean nullFree() {
-        Long nullCount = nullCount();
-        return nullCount != null && nullCount == 0;
-    }
-
     /// What these statistics prove about a value predicate, as a three-valued
     /// [FilterDecision].
     ///
-    /// [FilterDecision#ALWAYS_MATCHES] requires the whole `[min, max]` interval to satisfy
-    /// the predicate **and** a proven-zero null count — a null row satisfies no value
-    /// predicate, so without it a fully-matching range still cannot promise every row. That
-    /// conjunction is the reason to compose the two halves here rather than at each call
-    /// site: [#alwaysMatches] answers only the interval half, and dropping the null-count
-    /// half returns null rows to a caller that asked for a value.
+    /// [FilterDecision#ALWAYS_MATCHES] requires the whole `[min, max]` interval to satisfy the
+    /// predicate **and** a unit proven to hold no nulls — a null row satisfies no value
+    /// predicate, so a fully-matching interval alone cannot promise every row. The null count
+    /// is [NullStats]', so the caller passes what it proves: [#alwaysMatches] answers the
+    /// interval half, and a caller that left the other half out would return null rows to a
+    /// reader that asked for a value.
     ///
     /// Truncated (inexact) bounds are safe by construction: they only widen the interval,
     /// and a predicate satisfied by the widened interval is satisfied by the actual values.
     ///
     /// `IS NULL` and `IS NOT NULL` are not value predicates and do not come here. [UnitStats]
     /// decides them from the null count or the definition level histogram, and drops a unit
-    /// null on every row from the null count against the unit's row count before these bounds
-    /// are consulted — something this cannot see, holding no row count of its own.
-    default FilterDecision decideLeaf(ResolvedPredicate leaf) {
+    /// null on every row before these bounds are consulted.
+    ///
+    /// @param nullFree whether the unit is proven to hold no nulls
+    default FilterDecision decideLeaf(ResolvedPredicate leaf, boolean nullFree) {
         if (canDrop(leaf)) {
             return FilterDecision.CANNOT_MATCH;
         }
-        if (!nullFree()) {
+        if (!nullFree) {
             return FilterDecision.MIGHT_MATCH;
         }
         return alwaysMatches(leaf) ? FilterDecision.ALWAYS_MATCHES : FilterDecision.MIGHT_MATCH;
@@ -136,94 +127,92 @@ sealed interface MinMaxStats {
     /// the page header, decoded as the given leaf reads them.
     static MinMaxStats of(Statistics stats, ResolvedPredicate leaf, BoundsReadability readability) {
         if (stats.isMinMaxDeprecated()) {
-            return new NullCountOnlyStats(stats.nullCount(), DEPRECATED_SORT_ORDER);
+            return new NoBounds(DEPRECATED_SORT_ORDER);
         }
         Long nanCount = stats.nanCount();
-        return sourced(stats.minValue(), stats.maxValue(), stats.nullCount(),
-                nanCount != null && nanCount == 0, leaf, readability);
+        return sourced(stats.minValue(), stats.maxValue(), nanCount != null && nanCount == 0,
+                leaf, readability);
     }
 
     /// The [ColumnIndex] entry for one page of a column chunk.
     static MinMaxStats ofPage(ColumnIndex columnIndex, int pageIndex, ResolvedPredicate leaf,
             BoundsReadability readability) {
-        long[] nullCounts = columnIndex.nullCounts();
         long[] nanCounts = columnIndex.nanCounts();
         return sourced(columnIndex.minValues().get(pageIndex), columnIndex.maxValues().get(pageIndex),
-                nullCounts != null ? Long.valueOf(nullCounts[pageIndex]) : null,
                 nanCounts != null && nanCounts[pageIndex] == 0, leaf, readability);
     }
 
-    /// Decodes the pair as the leaf reads it, yielding [NullCountOnlyStats] where the file
-    /// wrote no bounds, where they are in an order this reader cannot read, where the leaf reads
-    /// none, or where the pair does not hold together.
+    /// Decodes the pair as the leaf reads it, yielding [NoBounds] where the file wrote none,
+    /// where they are in an order this reader cannot read, where the leaf reads none, or where
+    /// the pair does not hold together.
     ///
     /// `nanFree` is whether the unit records a `nan_count` of zero. Only the floating-point
     /// variants read it: their bounds exclude `NaN`, so it is what lets them rule out a `NaN`
     /// row.
-    private static MinMaxStats sourced(byte[] min, byte[] max, Long nullCount, boolean nanFree,
+    private static MinMaxStats sourced(byte[] min, byte[] max, boolean nanFree,
             ResolvedPredicate leaf, BoundsReadability readability) {
         if (min == null || max == null) {
             // Nothing was written, so nothing was discarded; a half-present pair prunes no
             // more than an absent one. This comes first so that a column whose annotation names
             // no order, and whose writer therefore recorded no bounds, reports no discard.
-            return new NullCountOnlyStats(nullCount, null);
+            return new NoBounds(null);
         }
         if (!readability.readable(ResolvedPredicate.leafColumnIndex(leaf))) {
             // Not decoded either: an order this reader cannot name may lay the bytes out in a
             // way the leaf's decoder does not expect.
-            return new NullCountOnlyStats(nullCount, UNKNOWN_SORT_ORDER);
+            return new NoBounds(UNKNOWN_SORT_ORDER);
         }
         return switch (leaf) {
             case ResolvedPredicate.IntPredicate ignored -> IntStats.of(
-                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max));
             case ResolvedPredicate.IntInPredicate ignored -> IntStats.of(
-                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max));
             case ResolvedPredicate.UnsignedIntPredicate ignored -> UnsignedIntStats.of(
-                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max));
             case ResolvedPredicate.UnsignedIntInPredicate ignored -> UnsignedIntStats.of(
-                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max), nullCount);
+                    StatisticsDecoder.decodeInt(min), StatisticsDecoder.decodeInt(max));
             case ResolvedPredicate.UnsignedLongPredicate ignored -> UnsignedLongStats.of(
-                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max));
             case ResolvedPredicate.UnsignedLongInPredicate ignored -> UnsignedLongStats.of(
-                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max));
             case ResolvedPredicate.LongPredicate ignored -> LongStats.of(
-                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max));
             case ResolvedPredicate.LongInPredicate ignored -> LongStats.of(
-                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max), nullCount);
+                    StatisticsDecoder.decodeLong(min), StatisticsDecoder.decodeLong(max));
             case ResolvedPredicate.BooleanPredicate ignored -> BooleanStats.of(
-                    StatisticsDecoder.decodeBoolean(min), StatisticsDecoder.decodeBoolean(max), nullCount);
+                    StatisticsDecoder.decodeBoolean(min), StatisticsDecoder.decodeBoolean(max));
             case ResolvedPredicate.FloatPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
+                    p.ieee754TotalOrder(), nanFree);
             // A binary16 bound is a float once decoded, so it needs no variant of its own.
             case ResolvedPredicate.Float16Predicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
+                    p.ieee754TotalOrder(), nanFree);
             case ResolvedPredicate.DoublePredicate p -> DoubleStats.of(
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
-            case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.comparison(), nullCount);
-            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.comparison(), nullCount);
+                    p.ieee754TotalOrder(), nanFree);
+            case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.comparison());
+            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.comparison());
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
+                    p.ieee754TotalOrder(), nanFree);
             case ResolvedPredicate.FloatInPredicate p -> FloatStats.of(
                     StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
+                    p.ieee754TotalOrder(), nanFree);
             case ResolvedPredicate.DoubleInPredicate p -> DoubleStats.of(
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                    p.ieee754TotalOrder(), nanFree, nullCount);
+                    p.ieee754TotalOrder(), nanFree);
             // These leaves read no bounds, so there is nothing to decode and nothing to
             // validate. What the file wrote is not discarded; it is simply not their business.
-            case ResolvedPredicate.IsNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.IsNotNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.NoRowPredicate ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.GeospatialPredicate ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.And ignored -> new NullCountOnlyStats(nullCount, null);
-            case ResolvedPredicate.Or ignored -> new NullCountOnlyStats(nullCount, null);
+            case ResolvedPredicate.IsNullPredicate ignored -> new NoBounds(null);
+            case ResolvedPredicate.IsNotNullPredicate ignored -> new NoBounds(null);
+            case ResolvedPredicate.EveryNonNullRowPredicate ignored -> new NoBounds(null);
+            case ResolvedPredicate.NoRowPredicate ignored -> new NoBounds(null);
+            case ResolvedPredicate.GeospatialPredicate ignored -> new NoBounds(null);
+            case ResolvedPredicate.And ignored -> new NoBounds(null);
+            case ResolvedPredicate.Or ignored -> new NoBounds(null);
         };
     }
 
@@ -254,12 +243,10 @@ sealed interface MinMaxStats {
 
     // ==================== The typed bounds ====================
 
-    /// Everything left when there are no bounds to compare against — because the file wrote
-    /// none, because this leaf reads none, or because the pair it wrote was discarded as
-    /// unusable, which `discardReason` is what tells apart.
-    ///
-    /// The null count survives all three, and decides `IS NOT NULL` on its own.
-    record NullCountOnlyStats(Long nullCount, String discardReason) implements MinMaxStats {
+    /// No bounds to compare against — because the file wrote none, because this leaf reads
+    /// none, or because the pair it wrote was discarded as unusable, which `discardReason` is
+    /// what tells apart.
+    record NoBounds(String discardReason) implements MinMaxStats {
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
@@ -273,10 +260,10 @@ sealed interface MinMaxStats {
     }
 
     /// `INT32` bounds, including those of an `INT32`-backed `DECIMAL`.
-    record IntStats(int min, int max, Long nullCount) implements MinMaxStats {
+    record IntStats(int min, int max) implements MinMaxStats {
 
-        static MinMaxStats of(int min, int max, Long nullCount) {
-            return min > max ? new NullCountOnlyStats(nullCount, INVERTED) : new IntStats(min, max, nullCount);
+        static MinMaxStats of(int min, int max) {
+            return min > max ? new NoBounds(INVERTED) : new IntStats(min, max);
         }
 
         @Override
@@ -303,10 +290,10 @@ sealed interface MinMaxStats {
     }
 
     /// `INT64` bounds, including those of an `INT64`-backed `DECIMAL`.
-    record LongStats(long min, long max, Long nullCount) implements MinMaxStats {
+    record LongStats(long min, long max) implements MinMaxStats {
 
-        static MinMaxStats of(long min, long max, Long nullCount) {
-            return min > max ? new NullCountOnlyStats(nullCount, INVERTED) : new LongStats(min, max, nullCount);
+        static MinMaxStats of(long min, long max) {
+            return min > max ? new NoBounds(INVERTED) : new LongStats(min, max);
         }
 
         @Override
@@ -344,12 +331,12 @@ sealed interface MinMaxStats {
     ///
     /// A membership test compares each probe in place with `Integer.compareUnsigned`, so an `IN`
     /// list costs no copy per row group or page.
-    record UnsignedIntStats(int min, int max, Long nullCount) implements MinMaxStats {
+    record UnsignedIntStats(int min, int max) implements MinMaxStats {
 
-        static MinMaxStats of(int min, int max, Long nullCount) {
+        static MinMaxStats of(int min, int max) {
             return bias(min) > bias(max)
-                    ? new NullCountOnlyStats(nullCount, INVERTED)
-                    : new UnsignedIntStats(min, max, nullCount);
+                    ? new NoBounds(INVERTED)
+                    : new UnsignedIntStats(min, max);
         }
 
         private static int bias(int value) {
@@ -382,12 +369,12 @@ sealed interface MinMaxStats {
     }
 
     /// `INT64` bounds of a column annotated `INT(64, isSigned = false)`; see [UnsignedIntStats].
-    record UnsignedLongStats(long min, long max, Long nullCount) implements MinMaxStats {
+    record UnsignedLongStats(long min, long max) implements MinMaxStats {
 
-        static MinMaxStats of(long min, long max, Long nullCount) {
+        static MinMaxStats of(long min, long max) {
             return bias(min) > bias(max)
-                    ? new NullCountOnlyStats(nullCount, INVERTED)
-                    : new UnsignedLongStats(min, max, nullCount);
+                    ? new NoBounds(INVERTED)
+                    : new UnsignedLongStats(min, max);
         }
 
         private static long bias(long value) {
@@ -418,13 +405,13 @@ sealed interface MinMaxStats {
     }
 
     /// `BOOLEAN` bounds, compared as `0` and `1`.
-    record BooleanStats(boolean min, boolean max, Long nullCount) implements MinMaxStats {
+    record BooleanStats(boolean min, boolean max) implements MinMaxStats {
 
-        static MinMaxStats of(boolean min, boolean max, Long nullCount) {
+        static MinMaxStats of(boolean min, boolean max) {
             // false sorts below true, so only a true minimum with a false maximum is inverted.
             return min && !max
-                    ? new NullCountOnlyStats(nullCount, INVERTED)
-                    : new BooleanStats(min, max, nullCount);
+                    ? new NoBounds(INVERTED)
+                    : new BooleanStats(min, max);
         }
 
         @Override
@@ -454,15 +441,14 @@ sealed interface MinMaxStats {
     /// comparators compare against, not whether the bounds hold together; see
     /// [StatisticsFilterSupport#canDropFloat]. So is `nanFree`, whether the unit records a
     /// `nan_count` of zero, which decides whether the bounds can rule out a `NaN` row.
-    record FloatStats(float min, float max, boolean ieee754TotalOrder, boolean nanFree, Long nullCount)
+    record FloatStats(float min, float max, boolean ieee754TotalOrder, boolean nanFree)
             implements MinMaxStats {
 
-        static MinMaxStats of(float min, float max, boolean ieee754TotalOrder, boolean nanFree,
-                Long nullCount) {
+        static MinMaxStats of(float min, float max, boolean ieee754TotalOrder, boolean nanFree) {
             String reason = floatingPointReason(min, max, ieee754TotalOrder);
             return reason != null
-                    ? new NullCountOnlyStats(nullCount, reason)
-                    : new FloatStats(min, max, ieee754TotalOrder, nanFree, nullCount);
+                    ? new NoBounds(reason)
+                    : new FloatStats(min, max, ieee754TotalOrder, nanFree);
         }
 
         @Override
@@ -492,15 +478,14 @@ sealed interface MinMaxStats {
 
     /// `DOUBLE` bounds. See [FloatStats] for what `ieee754TotalOrder` and `nanFree` are doing
     /// here.
-    record DoubleStats(double min, double max, boolean ieee754TotalOrder, boolean nanFree, Long nullCount)
+    record DoubleStats(double min, double max, boolean ieee754TotalOrder, boolean nanFree)
             implements MinMaxStats {
 
-        static MinMaxStats of(double min, double max, boolean ieee754TotalOrder, boolean nanFree,
-                Long nullCount) {
+        static MinMaxStats of(double min, double max, boolean ieee754TotalOrder, boolean nanFree) {
             String reason = floatingPointReason(min, max, ieee754TotalOrder);
             return reason != null
-                    ? new NullCountOnlyStats(nullCount, reason)
-                    : new DoubleStats(min, max, ieee754TotalOrder, nanFree, nullCount);
+                    ? new NoBounds(reason)
+                    : new DoubleStats(min, max, ieee754TotalOrder, nanFree);
         }
 
         @Override
@@ -522,32 +507,32 @@ sealed interface MinMaxStats {
     }
 
     /// Byte-string bounds, compared in the column's order.
-    record BinaryStats(byte[] min, byte[] max, Comparison comparison, Long nullCount) implements MinMaxStats {
+    record BinaryStats(byte[] min, byte[] max, Comparison comparison) implements MinMaxStats {
 
-        static MinMaxStats of(byte[] min, byte[] max, Comparison comparison, Long nullCount) {
+        static MinMaxStats of(byte[] min, byte[] max, Comparison comparison) {
             // parquet.thrift leaves the type-defined order of an INT96 undefined, and no order its
             // bounds are recorded in follows the instant on every value, since the nanoseconds of
             // the day are not bounded by one day. The bounds are never read, which is a property
             // of the type rather than a flaw in the file, so nothing is reported as discarded.
             if (comparison == Comparison.INT96_INSTANT) {
-                return new NullCountOnlyStats(nullCount, null);
+                return new NoBounds(null);
             }
             // Bounds written in the order of the column's values say nothing about the order of
             // their bytes; the value's own comparison, which the resolver pairs with this one,
             // reads them instead.
             if (comparison == Comparison.STORED_BYTES) {
-                return new NullCountOnlyStats(nullCount, null);
+                return new NoBounds(null);
             }
             if (comparison == Comparison.FIXED_TIMESTAMP
                     && (min.length != Flba12Timestamps.WIDTH || max.length != Flba12Timestamps.WIDTH)) {
-                return new NullCountOnlyStats(nullCount, NOT_THE_COLUMN_WIDTH);
+                return new NoBounds(NOT_THE_COLUMN_WIDTH);
             }
             // -100 sorts below +100 as a two's complement number and above it as a byte
             // string, so only the column's own order tells a decimal's bounds apart from an
             // inverted pair.
             return comparison.compare(min, max) > 0
-                    ? new NullCountOnlyStats(nullCount, INVERTED)
-                    : new BinaryStats(min, max, comparison, nullCount);
+                    ? new NoBounds(INVERTED)
+                    : new BinaryStats(min, max, comparison);
         }
 
         @Override

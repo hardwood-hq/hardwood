@@ -47,7 +47,7 @@ class MinMaxStatsTest {
         // When isMinMaxDeprecated is true, minValue/maxValue must be null so that
         // canDropLeaf conservatively returns false (never drops the row group).
         assertThat(stats)
-                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .isInstanceOf(MinMaxStats.NoBounds.class)
                 .extracting(MinMaxStats::discardReason)
                 .isEqualTo("they come from the deprecated min/max fields, which compare signed");
     }
@@ -64,11 +64,11 @@ class MinMaxStatsTest {
                 List.of(new byte[8]), ColumnIndex.BoundaryOrder.UNORDERED, new long[] { 0 }, null, null, null);
 
         assertThat(MinMaxStats.of(shortMax, leaf, BoundsReadability.ALL))
-                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .isInstanceOf(MinMaxStats.NoBounds.class)
                 .extracting(MinMaxStats::discardReason)
                 .isEqualTo("one of them is not the width of the column's values");
         assertThat(MinMaxStats.ofPage(shortMaxPage, 0, leaf, BoundsReadability.ALL))
-                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .isInstanceOf(MinMaxStats.NoBounds.class)
                 .extracting(MinMaxStats::discardReason)
                 .isEqualTo("one of them is not the width of the column's values");
     }
@@ -81,7 +81,7 @@ class MinMaxStatsTest {
 
         MinMaxStats stats = MinMaxStats.of(nonDeprecated, GT_MINUS_FIVE, BoundsReadability.ALL);
 
-        assertThat(stats).isEqualTo(new MinMaxStats.IntStats(1, 100, 0L));
+        assertThat(stats).isEqualTo(new MinMaxStats.IntStats(1, 100));
     }
 
     @Test
@@ -107,7 +107,7 @@ class MinMaxStatsTest {
         // A unit is decoded for the leaf it is then asked about, so a mismatch is a wiring
         // mistake in the reader rather than anything a file can cause. It fails loudly rather
         // than answering "cannot prove anything", which would silently disable pruning.
-        MinMaxStats int32 = MinMaxStats.IntStats.of(10, 20, 0L);
+        MinMaxStats int32 = MinMaxStats.IntStats.of(10, 20);
         ResolvedPredicate longLeaf = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
 
         assertThatThrownBy(() -> int32.canDrop(longLeaf))
@@ -126,9 +126,8 @@ class MinMaxStatsTest {
                 new Statistics(intBytes(10), intBytes(20), 0L, null, false),
                 new ResolvedPredicate.IsNullPredicate(0, 1), BoundsReadability.ALL);
 
-        assertThat(stats).isInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+        assertThat(stats).isInstanceOf(MinMaxStats.NoBounds.class);
         assertThat(stats.discardReason()).isNull();
-        assertThat(stats.nullCount()).isZero();
     }
 
     @Test

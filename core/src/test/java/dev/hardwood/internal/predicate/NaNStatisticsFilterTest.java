@@ -176,7 +176,7 @@ class NaNStatisticsFilterTest {
                 leaf, BoundsReadability.ALL);
 
         assertThat(stats)
-                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .isInstanceOf(MinMaxStats.NoBounds.class)
                 .extracting(MinMaxStats::discardReason)
                 .isEqualTo("one of them is NaN, which sorts above every finite value");
     }

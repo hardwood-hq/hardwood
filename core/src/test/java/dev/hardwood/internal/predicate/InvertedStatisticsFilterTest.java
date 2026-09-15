@@ -59,7 +59,7 @@ class InvertedStatisticsFilterTest {
     @ParameterizedTest(name = "{1} on inverted {0} bounds")
     @MethodSource("columnsAndOperators")
     void invertedBoundsNeverPromiseAlwaysMatches(Column column, Operator op) {
-        assertThat(column.inverted().decideLeaf(column.leaf(op)))
+        assertThat(column.inverted().decideLeaf(column.leaf(op), true))
                 .as("inverted bounds prove nothing and must never skip per-row filtering")
                 .isEqualTo(FilterDecision.MIGHT_MATCH);
     }
@@ -67,7 +67,7 @@ class InvertedStatisticsFilterTest {
     @ParameterizedTest(name = "{0} IN on inverted bounds")
     @MethodSource("inColumns")
     void invertedBoundsNeverPromiseAlwaysMatchesForInPredicates(Column column) {
-        assertThat(column.inverted().decideLeaf(column.leaf(null)))
+        assertThat(column.inverted().decideLeaf(column.leaf(null), true))
                 .isEqualTo(FilterDecision.MIGHT_MATCH);
     }
 
@@ -77,7 +77,7 @@ class InvertedStatisticsFilterTest {
     @MethodSource({ "columns", "inColumns" })
     void invertedBoundsAreDiscardedWithTheirReason(Column column) {
         assertThat(column.inverted())
-                .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
+                .isInstanceOf(MinMaxStats.NoBounds.class)
                 .extracting(MinMaxStats::discardReason).isEqualTo(INVERTED);
     }
 
@@ -86,7 +86,7 @@ class InvertedStatisticsFilterTest {
     void orderedBoundsAreKept(Column column) {
         assertThat(column.ordered())
                 .as("bounds the right way round are kept and decoded")
-                .isNotInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+                .isNotInstanceOf(MinMaxStats.NoBounds.class);
     }
 
     // ==================== Ordered bounds still prune ====================
@@ -98,7 +98,7 @@ class InvertedStatisticsFilterTest {
     void orderedBoundsStillPrune(Column column) {
         // Every probe sits strictly inside [low, high], so "everything is >= the probe" is
         // false for the low end and the unit cannot match "< probe".
-        assertThat(column.ordered().decideLeaf(column.leaf(Operator.LT_EQ)))
+        assertThat(column.ordered().decideLeaf(column.leaf(Operator.LT_EQ), true))
                 .isEqualTo(FilterDecision.MIGHT_MATCH);
         assertThat(column.ordered().canDrop(column.leaf(Operator.GT)))
                 .as("the probe is inside [low, high], so GT cannot be ruled out")
@@ -109,11 +109,11 @@ class InvertedStatisticsFilterTest {
     void orderedIntBoundsStillDropAndPromise() {
         Column column = intColumn();
         ResolvedPredicate below = new ResolvedPredicate.IntPredicate(0, Operator.EQ, 5);
-        assertThat(column.ordered().decideLeaf(below))
+        assertThat(column.ordered().decideLeaf(below, true))
                 .isEqualTo(FilterDecision.CANNOT_MATCH);
 
         ResolvedPredicate everything = new ResolvedPredicate.IntPredicate(0, Operator.GT, 5);
-        assertThat(column.ordered().decideLeaf(everything))
+        assertThat(column.ordered().decideLeaf(everything, true))
                 .isEqualTo(FilterDecision.ALWAYS_MATCHES);
     }
 
@@ -127,11 +127,11 @@ class InvertedStatisticsFilterTest {
     void typeDefinedZeroBoundsAreNotInverted() {
         MinMaxStats floatStats = MinMaxStats.of(stats(floatBytes(0.0f), floatBytes(-0.0f)),
                 new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 5.0f, false), BoundsReadability.ALL);
-        assertThat(floatStats).isNotInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+        assertThat(floatStats).isNotInstanceOf(MinMaxStats.NoBounds.class);
 
         MinMaxStats doubleStats = MinMaxStats.of(stats(doubleBytes(0.0), doubleBytes(-0.0)),
                 new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false), BoundsReadability.ALL);
-        assertThat(doubleStats).isNotInstanceOf(MinMaxStats.NullCountOnlyStats.class);
+        assertThat(doubleStats).isNotInstanceOf(MinMaxStats.NoBounds.class);
 
         // And they still prune a value neither zero can be.
         assertThat(doubleStats.canDrop(new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false)))
@@ -243,8 +243,9 @@ class InvertedStatisticsFilterTest {
                 intBytes(10), intBytes(20));
     }
 
-    /// Statistics with a proven-zero null count, so that [FilterDecision#ALWAYS_MATCHES] is
-    /// reachable and the always-match side of the bug is actually exercised.
+    /// The bounds under test. The cases pass `decideLeaf` a null-free unit, so that
+    /// [FilterDecision#ALWAYS_MATCHES] is reachable and the always-match side of the bug is
+    /// actually exercised.
     private static Statistics stats(byte[] min, byte[] max) {
         return new Statistics(min, max, 0L, null, false);
     }

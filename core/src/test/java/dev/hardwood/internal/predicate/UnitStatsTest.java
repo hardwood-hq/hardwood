@@ -96,6 +96,10 @@ class UnitStatsTest {
                 Arguments.of("value, bounds straddle it", gt15, 0L, null, MIGHT_MATCH),
                 Arguments.of("value, bounds satisfy it, some nulls", gt5, 40L, null, MIGHT_MATCH),
                 Arguments.of("value, every row null", gt5, 100L, null, CANNOT_MATCH),
+                // Bounds prove every row matches only over a unit proven null-free, which a unit
+                // recording no null count is not.
+                Arguments.of("value, bounds satisfy it, null count unknown", gt5,
+                        NullStats.UNKNOWN_NULL_COUNT, null, MIGHT_MATCH),
                 Arguments.of("group IS NULL, group always absent", groupIsNull, 100L,
                         new long[]{ 30, 70, 0, 0 }, ALWAYS_MATCHES),
                 Arguments.of("group IS NULL, group always present", groupIsNull, 40L,
@@ -159,6 +163,20 @@ class UnitStatsTest {
         assertThat(first.decide(gt5, UNNAMED)).isEqualTo(MIGHT_MATCH);
         assertThat(second.decide(isNotNull, UNNAMED)).isEqualTo(CANNOT_MATCH);
         assertThat(second.decide(gt5, UNNAMED)).isEqualTo(CANNOT_MATCH);
+    }
+
+    @Test
+    void theNullCountSurvivesUnreadableBounds() {
+        // Bounds recorded in an order this reader cannot read are dropped where they are sourced
+        // (#1179). The null count needs no ordering, so the unit still answers a null predicate
+        // from it, and only the value predicate is left undecided.
+        RowGroup rowGroup = new RowGroup(List.of(chunkWith(0L, null)), 1000, ROWS);
+        UnitStats unreadable = UnitStats.ChunkStats.of(rowGroup, 0, columnIndex -> false);
+
+        assertThat(unreadable.decide(new ResolvedPredicate.IsNotNullPredicate(0, 1), UNNAMED))
+                .isEqualTo(ALWAYS_MATCHES);
+        assertThat(unreadable.decide(new ResolvedPredicate.IntPredicate(0, Operator.GT, 5), UNNAMED))
+                .isEqualTo(MIGHT_MATCH);
     }
 
     @Test
