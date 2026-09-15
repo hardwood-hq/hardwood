@@ -7,6 +7,7 @@
  */
 package dev.hardwood;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -16,13 +17,22 @@ import java.util.stream.LongStream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import dev.hardwood.jfr.AbstractJfrRecorderTest;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.PageDropPredicates;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.PageIterator;
+import dev.hardwood.internal.reader.SequentialFetchPlan;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,67 +45,69 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The null pages record no bounds, so only their null count can drop them. One fixture is
 /// written with v1 data pages, the other with v2.
 ///
-/// Every read goes through the row reader and through the column readers, and the decoded pages
-/// of the filtered column are counted across both, so a page kept where it could be dropped
-/// shows up even though the per-row filter would still return the right rows.
-class InlineNullPageDropTest extends AbstractJfrRecorderTest {
-
-    private static final String PAGE_DECODED = "dev.hardwood.PageDecoded";
-
-    /// Each read of the fixture decodes the filtered column's pages once, through the row reader
-    /// and through the column readers.
-    private static final int READS = 2;
+/// Each case asserts two things. The rows come from a read through the row reader and a read
+/// through the column readers, which must agree with each other and with the predicate. The
+/// pages come from walking the column's [SequentialFetchPlan] directly and counting what it
+/// reads, so a page kept where it could be dropped fails the test even though the per-row
+/// filter would still return the right rows. Neither fixture carries a page index, so the plan
+/// walked here is the one both readers use.
+class InlineNullPageDropTest {
 
     @ParameterizedTest
     @ValueSource(strings = { "v1", "v2" })
     void aValuePredicateReadsNoPageNullOnEveryRow(String pageVersion) throws Exception {
         Path file = fixture(pageVersion);
+        FilterPredicate filter = FilterPredicate.eq("value", 650L);
 
-        assertReads(file, FilterPredicate.eq("value", 650L), "value", ids(650, 651));
+        assertReads(file, filter, "value", ids(650, 651));
 
         // Page [600, 700) holds the literal; the other six pages with values drop on their
         // bounds, and the three null pages on their null count.
-        assertThat(decodedPages("value")).isEqualTo(READS);
+        assertThat(pagesRead(file, "value", filter)).isEqualTo(1);
     }
 
     @ParameterizedTest
     @ValueSource(strings = { "v1", "v2" })
     void isNotNullReadsNoPageNullOnEveryRow(String pageVersion) throws Exception {
         Path file = fixture(pageVersion);
+        FilterPredicate filter = FilterPredicate.isNotNull("value");
 
-        assertReads(file, FilterPredicate.isNotNull("value"), "value", nonNullIds());
+        assertReads(file, filter, "value", nonNullIds());
 
-        assertThat(decodedPages("value")).isEqualTo(7 * READS);
+        assertThat(pagesRead(file, "value", filter)).isEqualTo(7);
     }
 
     @ParameterizedTest
     @ValueSource(strings = { "v1", "v2" })
     void isNullReadsEveryPage(String pageVersion) throws Exception {
         Path file = fixture(pageVersion);
+        FilterPredicate filter = FilterPredicate.isNull("value");
 
-        assertReads(file, FilterPredicate.isNull("value"), "value", ids(300, 600));
+        assertReads(file, filter, "value", ids(300, 600));
 
-        assertThat(decodedPages("value")).isEqualTo(10 * READS);
+        assertThat(pagesRead(file, "value", filter)).isEqualTo(10);
     }
 
     @ParameterizedTest
     @ValueSource(strings = { "v1", "v2" })
     void aLeafBelowAPresentStructDropsItsNullPages(String pageVersion) throws Exception {
         Path file = fixture(pageVersion);
+        FilterPredicate filter = FilterPredicate.isNotNull("address.city");
 
-        assertReads(file, FilterPredicate.isNotNull("address.city"), "address.city", nonNullIds());
+        assertReads(file, filter, "address.city", nonNullIds());
 
-        assertThat(decodedPages("city")).isEqualTo(7 * READS);
+        assertThat(pagesRead(file, "address.city", filter)).isEqualTo(7);
     }
 
     @ParameterizedTest
     @ValueSource(strings = { "v1", "v2" })
     void isNullOnALeafBelowAPresentStructReturnsItsNullRows(String pageVersion) throws Exception {
         Path file = fixture(pageVersion);
+        FilterPredicate filter = FilterPredicate.isNull("address.city");
 
-        assertReads(file, FilterPredicate.isNull("address.city"), "address.city", ids(300, 600));
+        assertReads(file, filter, "address.city", ids(300, 600));
 
-        assertThat(decodedPages("city")).isEqualTo(10 * READS);
+        assertThat(pagesRead(file, "address.city", filter)).isEqualTo(10);
     }
 
     // ==================== Fixtures ====================
@@ -104,9 +116,9 @@ class InlineNullPageDropTest extends AbstractJfrRecorderTest {
         return Paths.get("src/test/resources/inline_null_pages_" + pageVersion + ".parquet");
     }
 
-    /// Reads `file` under `filter` through the row reader and through the column readers, asserts
-    /// that both return exactly the rows `expectedIds` names, and stops the recording.
-    private void assertReads(Path file, FilterPredicate filter, String column, List<Long> expectedIds)
+    /// Reads `file` under `filter` through the row reader and through the column readers, and
+    /// asserts that both return exactly the rows `expectedIds` names.
+    private static void assertReads(Path file, FilterPredicate filter, String column, List<Long> expectedIds)
             throws Exception {
         List<Long> rowIds = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
@@ -131,14 +143,45 @@ class InlineNullPageDropTest extends AbstractJfrRecorderTest {
                 }
             }
         }
-        awaitEvents();
 
         assertThat(rowIds).as("row reader").containsExactlyElementsOf(expectedIds);
         assertThat(columnIds).as("column readers").containsExactlyElementsOf(expectedIds);
     }
 
-    private long decodedPages(String column) {
-        return events(PAGE_DECODED).filter(event -> column.equals(event.getString("column"))).count();
+    /// Walks the fetch plan for `column` under `filter` and returns the number of pages it
+    /// reads. A page the inline statistics drop is emitted as a null placeholder carrying no
+    /// data, and is not counted.
+    private static int pagesRead(Path file, String column, FilterPredicate filter) throws IOException {
+        FileMetaData fileMetaData;
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            fileMetaData = reader.getFileMetaData();
+            schema = reader.getFileSchema();
+        }
+
+        ColumnSchema columnSchema = schema.getColumn(column);
+        int columnIndex = schema.getColumns().indexOf(columnSchema);
+        assertThat(columnIndex).as("column '%s' must exist in the fixture", column).isNotNegative();
+        ColumnChunk columnChunk = fileMetaData.rowGroups().get(0).columns().get(columnIndex);
+
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        List<ResolvedPredicate> dropLeaves =
+                PageDropPredicates.byColumn(resolved).getOrDefault(columnIndex, List.of());
+
+        int pagesRead = 0;
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             InputFile inputFile = InputFile.of(file)) {
+            inputFile.open();
+            SequentialFetchPlan plan = SequentialFetchPlan.build(inputFile, columnSchema, columnChunk,
+                    context, 0, inputFile.name(), 0L, dropLeaves);
+            PageIterator pages = plan.pages();
+            while (pages.hasNext()) {
+                if (!pages.next().isNullPlaceholder()) {
+                    pagesRead++;
+                }
+            }
+        }
+        return pagesRead;
     }
 
     private static List<Long> ids(long fromInclusive, long toExclusive) {

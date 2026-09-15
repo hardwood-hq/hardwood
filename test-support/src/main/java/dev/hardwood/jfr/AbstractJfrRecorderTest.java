@@ -59,6 +59,15 @@ import jdk.jfr.consumer.RecordingStream;
 /// stopping the recording cannot settle that race. Measure such a read through an
 /// application-level counter instead — `S3InputFile.networkBytesFetched()` is
 /// final once the reader is closed, and is what the S3 tests assert on.
+///
+/// An event that misses one recording's flush is not lost to the JVM: it can surface
+/// in the next test's recording, where it inflates a count that test believes it
+/// caused. An exact count of events emitted off the test thread is therefore
+/// unreliable in both directions, and on a loaded machine both directions do occur.
+/// No wait and no filter on the event's own fields makes such a count reliable,
+/// because the stray events name the same file and column as the wanted ones.
+/// Assert that an event is present and that its fields are right; take counts from
+/// an application-level counter.
 public abstract class AbstractJfrRecorderTest {
 
     private RecordingStream recording;
