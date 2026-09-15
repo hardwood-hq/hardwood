@@ -15,6 +15,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.LogicalType;
@@ -24,6 +25,7 @@ import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
@@ -239,8 +241,9 @@ class UnsignedIntegerFilterTest {
         }
     }
 
-    /// A conjunct the batch compiler has no matcher for takes the whole predicate off the batch
-    /// path, so the unsigned column is compared by the indexed record-level leaf instead.
+    /// A filter the batch compiler cannot take — two conjunctions over the same two columns — puts
+    /// the unsigned column on the indexed record-level leaf. Every `name` is `keep`, so the filter is
+    /// exactly `v > 7`.
     @Test
     void anUnsignedColumnOrdersUnsignedOnTheRecordPath() throws Exception {
         FileSchema mixed = FileSchema.builder("schema")
@@ -257,13 +260,13 @@ class UnsignedIntegerFilterTest {
                 writer.rowWriter().writeRow(row -> row.setInt("v", v).setString("name", "keep"));
             }
         }
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.and(FilterPredicate.gt("v", SEVEN), FilterPredicate.eq("name", "keep")),
+                FilterPredicate.and(FilterPredicate.gt("v", SEVEN), FilterPredicate.eq("name", "never")));
+        assertTakesRecordPath(filter, mixed);
         try (ParquetFileReader reader = ParquetFileReader.open(
                     InputFile.of(ByteBuffer.wrap(out.toByteArray())));
-                RowReader rows = reader.buildRowReader()
-                        .filter(FilterPredicate.and(
-                                FilterPredicate.gt("v", SEVEN),
-                                FilterPredicate.eq("name", "keep")))
-                        .build()) {
+                RowReader rows = reader.buildRowReader().filter(filter).build()) {
             List<Integer> matched = new ArrayList<>();
             while (rows.hasNext()) {
                 rows.next();
@@ -344,5 +347,16 @@ class UnsignedIntegerFilterTest {
             }
             return matched;
         }
+    }
+
+    /// Fails unless `filter` over `schema` falls back to the record-level filter. Which leaves the
+    /// batch compiler supports changes over time, so a test that relies on the record path asserts
+    /// it rather than trusting the filter's shape.
+    private static void assertTakesRecordPath(FilterPredicate filter, FileSchema schema) {
+        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                projected::toProjectedIndex))
+                .as("filter %s must take the record path", filter)
+                .isNull();
     }
 }

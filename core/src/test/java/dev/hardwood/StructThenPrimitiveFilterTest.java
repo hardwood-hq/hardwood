@@ -65,14 +65,12 @@ class StructThenPrimitiveFilterTest {
     /// The guard: filter on the top-level primitive `score`, which sits after
     /// the `point` struct (so its field index 3 differs from leaf index 4).
     ///
-    /// The predicate must be evaluated on the record-side path
-    /// (`RecordFilterCompiler` → the row reader's record matcher), where columns are
-    /// addressed through the reader's indexed accessors. To force that path
-    /// reliably we AND in a predicate on the `tag` string column: a `BYTE_ARRAY`
-    /// predicate is not drain-side eligible (`BatchFilterCompiler` returns null
-    /// for it), and one non-eligible leaf makes the whole query fall back. (An
-    /// `OR` is NOT sufficient — `OR` of column-local leaves is drain-side
-    /// eligible on current `main`.)
+    /// The predicate is evaluated on the record-side path (`RecordFilterCompiler` →
+    /// the row reader's record matcher), where columns are addressed through the
+    /// reader's indexed accessors. The `point` struct is what puts it there: a file
+    /// with a struct column is read by the nested row reader, which has no drain-side
+    /// filter, whichever leaves the predicate holds. The `tag` conjunct does not force
+    /// the path — a string comparison compiles to a batch matcher on a flat file.
     ///
     /// `tag` is "keep" for every row, so the result is exactly `score > 55` →
     /// ids 2, 3, 4. A reader that read `score` at leaf index 4 instead of field

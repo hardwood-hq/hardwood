@@ -16,6 +16,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
@@ -23,6 +26,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
 import jdk.jfr.consumer.RecordedEvent;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -73,13 +77,16 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
 
     @Test
     void rowReaderFallbackReportsCountsForItsFile() throws Exception {
-        // A string predicate has no drain-side matcher, so this read goes through the
-        // per-record wrapper instead — the path where the counts are gathered one
-        // evaluation at a time.
+        // `label = 'rg2_150'` spelled as two conjunctions over `label` and `id`, which the
+        // drain-side compiler rejects, so this read goes through the per-record wrapper — the
+        // path where the counts are gathered one evaluation at a time. Every `id` is positive,
+        // so the second conjunction matches nothing.
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.and(FilterPredicate.eq("label", "rg2_150"), FilterPredicate.gt("id", 0L)),
+                FilterPredicate.and(FilterPredicate.eq("label", "rg2_150"), FilterPredicate.lt("id", 0L)));
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
-             RowReader rows = reader.buildRowReader()
-                     .filter(FilterPredicate.eq("label", "rg2_150"))
-                     .build()) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
+            assertTakesRecordPath(filter, reader.getFileSchema());
             assertThat(countRows(rows)).isEqualTo(1);
         }
         awaitEvents();
@@ -231,5 +238,16 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
             count++;
         }
         return count;
+    }
+
+    /// Fails unless `filter` over `schema` falls back to the record-level filter. Which leaves the
+    /// batch compiler supports changes over time, so a test that relies on the record path asserts
+    /// it rather than trusting the filter's shape.
+    private static void assertTakesRecordPath(FilterPredicate filter, FileSchema schema) {
+        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        assertThat(BatchFilterCompiler.tryCompile(FilterPredicateResolver.resolve(filter, schema), schema,
+                projected::toProjectedIndex))
+                .as("filter %s must take the record path", filter)
+                .isNull();
     }
 }

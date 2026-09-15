@@ -21,7 +21,6 @@ import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
-import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.schema.FileSchema;
 
@@ -184,6 +183,81 @@ class BatchFilterCompilerTest {
         assertInstanceOf(IsNullBatchMatcher.class, result[0]);
     }
 
+    @Test
+    void singleBinaryLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+        ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.LT,
+                new byte[]{'m'}, Comparison.BYTE_STRING);
+
+        ColumnBatchMatcher[] result = compileMatchers(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+    }
+
+    @Test
+    void singleBinaryInLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+        ResolvedPredicate predicate = new ResolvedPredicate.BinaryInPredicate(0,
+                new byte[][]{{'a'}, {'b', 'c'}}, Comparison.BYTE_STRING);
+
+        ColumnBatchMatcher[] result = compileMatchers(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+    }
+
+    /// Every order a slice comparison implements is eligible, decimals included — the matcher takes
+    /// the comparison and compares in it, rather than the compiler admitting only byte strings. The
+    /// instant orders are left out: no slice comparison implements them, so they fall back (see
+    /// [IneligibleShapes#binaryLeafInInstantOrder_returnsNull()]).
+    @Test
+    void binaryLeaf_everySliceOrderAndOperator_isEligible() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+
+        for (Comparison comparison : Comparison.values()) {
+            boolean instantOrder = switch (comparison) {
+                case BYTE_STRING, STORED_BYTES, FIXED_DECIMAL, VARIABLE_DECIMAL -> false;
+                case FIXED_TIMESTAMP, INT96_INSTANT -> true;
+            };
+            if (instantOrder) {
+                continue;
+            }
+            for (Operator op : Operator.values()) {
+                ColumnBatchMatcher[] result = compileMatchers(
+                        new ResolvedPredicate.BinaryPredicate(0, op, new byte[]{'m'}, comparison),
+                        schema, IntUnaryOperator.identity());
+
+                assertNotNull(result, "no batch matcher for binary " + comparison + " " + op);
+                assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+            }
+        }
+    }
+
+    /// An `INT96` column's bytes reach the batch as they are stored, so equality on them is
+    /// decided on the batch path like any other byte string.
+    @Test
+    void storedBytesLeafOnInt96Column_isEligible() {
+        FileSchema schema = schema(leaf("ts", PhysicalType.INT96));
+        byte[] stored = new byte[12];
+
+        ColumnBatchMatcher[] eq = compileMatchers(
+                new ResolvedPredicate.BinaryPredicate(0, Operator.EQ, stored, Comparison.STORED_BYTES),
+                schema, IntUnaryOperator.identity());
+        ColumnBatchMatcher[] in = compileMatchers(
+                new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{stored}, Comparison.STORED_BYTES),
+                schema, IntUnaryOperator.identity());
+
+        assertNotNull(eq);
+        assertInstanceOf(BinaryBatchMatcher.class, eq[0]);
+        assertNotNull(in);
+        assertInstanceOf(BinaryBatchMatcher.class, in[0]);
+    }
+
     @Nested
     class IneligibleShapes {
 
@@ -205,44 +279,52 @@ class BatchFilterCompilerTest {
         }
 
         @Test
-        void andWithBinaryChild_returnsNull() {
-            // BinaryPredicate is unsupported. As a child of an otherwise-eligible
-            // And, it must poison the whole compile so the query falls back rather
-            // than the supported leaves silently running on a partial conjunction.
+        void binaryLeafInInstantOrder_returnsNull() {
+            // An INT96 and a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP compare by instant, which no batch
+            // matcher implements. Both columns reach the batch as a BinaryBatchValues, so a matcher
+            // would compare their 12 bytes in a byte order: wrong rows, silently, instead of a
+            // fallback.
+            byte[] instant = new byte[12];
+            FileSchema int96 = schema(leaf("ts", PhysicalType.INT96));
+            FileSchema fixedTimestamp = schema(SchemaElement.fixedLengthPrimitive("ts", 12, RepetitionType.OPTIONAL));
+            assertInstantOrderFallsBack(int96, instant, Comparison.INT96_INSTANT);
+            assertInstantOrderFallsBack(fixedTimestamp, instant, Comparison.FIXED_TIMESTAMP);
+        }
+
+        private static void assertInstantOrderFallsBack(FileSchema schema, byte[] instant, Comparison comparison) {
+            for (Operator op : Operator.values()) {
+                ResolvedPredicate binary = new ResolvedPredicate.BinaryPredicate(0, op, instant, comparison);
+                assertNull(BatchFilterCompiler.tryCompile(binary, schema, IntUnaryOperator.identity()),
+                        comparison + " " + op);
+            }
+            ResolvedPredicate binaryIn = new ResolvedPredicate.BinaryInPredicate(0,
+                    new byte[][]{instant}, comparison);
+            assertNull(BatchFilterCompiler.tryCompile(binaryIn, schema, IntUnaryOperator.identity()),
+                    comparison + " in");
+        }
+
+        @Test
+        void andWithIneligibleBinaryChild_returnsNull() {
             FileSchema schema = schema(
                     leaf("id", PhysicalType.INT64),
-                    leaf("name", PhysicalType.BYTE_ARRAY));
+                    leaf("ts", PhysicalType.INT96));
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
                     new ResolvedPredicate.BinaryPredicate(1, Operator.EQ,
-                            new byte[]{'h', 'i'}, Comparison.BYTE_STRING)));
+                            new byte[12], Comparison.INT96_INSTANT)));
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
         @Test
-        void binaryLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
-            ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
-                    new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        /// `PredicatePathAgreementTest` reads the record-level path by `or`-ing each predicate with
-        /// `lt("zz", new byte[0])` on a required `BYTE_ARRAY` column. That read depends on an `or`
-        /// holding such a comparison staying off the batch path, even when its other child compiles.
-        @Test
-        void orWithUnsignedBytesComparison_returnsNull() {
+        void andWithIneligibleChild_returnsNull() {
+            // An ineligible leaf must poison the whole compile rather than let its eligible
+            // siblings run on a partial conjunction.
             FileSchema schema = schema(
                     leaf("id", PhysicalType.INT64),
-                    SchemaElement.primitive("zz", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED));
-            ResolvedPredicate predicate = FilterPredicateResolver.resolve(FilterPredicate.or(
-                    FilterPredicate.gt("id", 5L),
-                    FilterPredicate.lt("zz", new byte[0])), schema);
-
-            ResolvedPredicate.Or or = assertInstanceOf(ResolvedPredicate.Or.class, predicate);
-            ResolvedPredicate.BinaryPredicate bytes =
-                    assertInstanceOf(ResolvedPredicate.BinaryPredicate.class, or.children().get(1));
-            assertEquals(Comparison.BYTE_STRING, bytes.comparison());
+                    SchemaElement.fixedLengthPrimitive("half", 2, RepetitionType.OPTIONAL));
+            ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                    new ResolvedPredicate.Float16Predicate(1, Operator.EQ, 1.5f)));
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 

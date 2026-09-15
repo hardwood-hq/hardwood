@@ -57,8 +57,8 @@ import dev.hardwood.schema.FileSchema;
 ///   one survivor bitmap. This is the row reader's drain-side merge, in the
 ///   mode where the merger runs the matchers itself because there are no
 ///   worker threads to have run them already.
-/// - **Record matcher** — otherwise (nested paths, binary/string, unsupported
-///   operators) the compiled [RowMatcher] is evaluated per record over a
+/// - **Record matcher** — otherwise (nested paths, float16, geospatial,
+///   unsupported operators) the compiled [RowMatcher] is evaluated per record over a
 ///   batch-backed [StructAccessor] view of the predicate columns, giving full
 ///   parity with the row reader's filtered result.
 final class SelectionEngine {
