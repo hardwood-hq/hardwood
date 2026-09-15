@@ -118,7 +118,7 @@ while (columns.nextBatch()) {
 }
 ```
 
-The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. It is the *returned arrays* that are detached and safe to read elsewhere, not the reader. (For `getBinaryValues()` the byte buffer is capacity-sized — see above — but it too is fresh per batch.)
+The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. The *returned arrays* are detached and safe to read on other threads. (For `getBinaryValues()` the byte buffer is capacity-sized — see above — but it too is fresh per batch.)
 
 ### Nested and Repeated Columns
 

@@ -12,9 +12,8 @@
 # Timestamp Semantics
 
 The Parquet TIMESTAMP logical type carries an `isAdjustedToUTC` flag that picks between two
-genuinely different kinds of value. Hardwood splits its accessor surface along the same line — a
-`getTimestamp` that returns `Instant` and a `getLocalTimestamp` that returns `LocalDateTime` —
-rather than papering over the difference with a single accessor.
+genuinely different kinds of value. Hardwood splits its accessor surface along the same line:
+`getTimestamp` returns an `Instant` and `getLocalTimestamp` returns a `LocalDateTime`.
 
 ## Two kinds of timestamp
 
@@ -34,9 +33,8 @@ API keeps them distinct.
 ## The split accessor pair
 
 Because the column's flag already records which kind it is, each accessor enforces the matching
-flag rather than guessing: `getTimestamp` is the `Instant` accessor and `getLocalTimestamp` the
-`LocalDateTime` one, and calling the wrong one for a column is a programming error that throws — the
-column's semantics, not the caller's expectation, win. The exact runtime contract (which flag each
+flag: `getTimestamp` is the `Instant` accessor and `getLocalTimestamp` the `LocalDateTime` one, and
+calling the wrong one for a column is a programming error that throws. The exact runtime contract (which flag each
 requires, the exception thrown) lives in [Typed Accessors](../reference/accessors.md). When a
 column's kind isn't known statically, branching on the flag — or the generic `getValue` accessor,
 which returns `Instant` or `LocalDateTime` per the flag — recovers the right type without a guess.
@@ -54,8 +52,8 @@ returns `LocalTime` either way and the flag is purely informational.
 
 ## Two physical carriers
 
-The TIMESTAMP annotation is stored in two physical types, and the choice between them is about
-range, not precision. Both count the same three units, milliseconds, microseconds and nanoseconds,
+The TIMESTAMP annotation is stored in two physical types, which differ in the range they span.
+Both count the same three units, milliseconds, microseconds and nanoseconds,
 since the epoch. An `INT64` spans about 292 million years either side of 1970 in milliseconds and
 292,000 years in microseconds, but only about 585 years in nanoseconds, from 1677 to 2262. A
 `FIXED_LEN_BYTE_ARRAY(12)` holds the count in 96 bits, which spans every `Instant` in any unit.

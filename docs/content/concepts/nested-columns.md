@@ -142,11 +142,11 @@ STRUCT, not REPEATED`.
 
 ## Logical element versus physical encoding
 
-The same logical-over-physical split governs schema *navigation*, not just layers.
+Schema *navigation* follows the same logical-over-physical split as layers.
 `SchemaNode.GroupNode.getListElement()` returns a list's **logical** element — *what* the element
 is — independent of whether the list is physically 2-level or 3-level. For `list<list<int>>` the
 element is the inner `list<int>`; for `list<int>` it is the `int`. The encoding changes only *where*
-that element sits in the node tree, never what `getListElement()` resolves it to.
+that element sits in the node tree.
 
 The returned node keeps all its physical attributes. In a standard 3-level list the element is the
 non-repeated child below the synthetic `repeated group`; in a legacy 2-level list the repeated field

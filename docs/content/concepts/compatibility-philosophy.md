@@ -12,9 +12,8 @@
 # Compatibility Philosophy
 
 Hardwood aims to read every file that Apache parquet-java reads, while in a few specific places
-applying *stricter* semantics than parquet-java does. That combination is deliberate, and the
-principle behind it makes the individual divergences read as a consistent stance rather than a
-list of quirks.
+applying *stricter* semantics than parquet-java does. Each of those divergences follows from the
+principle described below.
 
 For the drop-in API and its exact behavior, see
 [parquet-java Compatibility](../how-to/compat.md); for the filter semantics, see
@@ -63,8 +62,7 @@ The looser behavior is one explicit composition away when you want it:
 FilterPredicate.or(FilterPredicate.notEq("x", v), FilterPredicate.isNull("x"));
 ```
 
-Making null-inclusion explicit, rather than hiding it inside one operator's special case, is the
-point — the reader can see in the code which rows the filter admits.
+Written this way, the null-inclusion is explicit, and the code shows which rows the filter admits.
 
 ### Schema validation across multiple files
 

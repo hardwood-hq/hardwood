@@ -101,8 +101,7 @@ want two.
 
 Nothing forces a single choice per file. A pipeline can open a `ColumnReader` to compute an
 aggregate over one column and a `RowReader` elsewhere to materialize matching records — both
-against the same file, sharing one [context and worker pool](concurrency-model.md). Pick per task,
-not per program.
+against the same file, sharing one [context and worker pool](concurrency-model.md).
 
 ## Further reading
 

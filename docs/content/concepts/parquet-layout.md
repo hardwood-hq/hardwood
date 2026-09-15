@@ -13,15 +13,14 @@
 
 Most of Hardwood's behavior — column projection, predicate pushdown, parallel decode, split
 reading, etc. — follows directly from how the Parquet format arranges
-bytes on disk. Understanding that layout makes the rest of Hardwood's behavior fall out as
-consequences rather than rules to memorize.
+bytes on disk, which this page describes.
 
 To read this hierarchy programmatically at runtime, see [Inspect File Metadata](../how-to/metadata.md).
 
 ## The hierarchy
 
 A Parquet file is a nested structure — row groups holding column chunks holding pages — and the
-metadata that records where each piece lives sits at the *end* of the file, not the start. Laid
+metadata that records where each piece lives sits at the *end* of the file. Laid
 out as bytes on disk, from the first byte to the last:
 
 ```
@@ -58,7 +57,7 @@ footer to learn where every row group, column chunk, and page lives — before t
 ### File
 
 The unit you open. Its defining feature is that the schema and the byte offsets of everything in
-the file are in the footer at the *end*, not the start. A reader seeks to the tail, reads the
+the file are in the footer at the *end*. A reader seeks to the tail, reads the
 footer, and from then on knows the exact byte range of every piece of data without scanning. A
 read of three columns out of fifty touches only those three columns' bytes.
 

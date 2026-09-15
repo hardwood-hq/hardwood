@@ -79,7 +79,7 @@ shared pool matters, since all the files draw on the same workers. See
   [split-aware reading](../how-to/query-controls.md#split-aware-reading). Have them share a single
   `HardwoodContext` so they draw worker threads from one pool rather than each spinning up its
   own.
-- **Size the pool to the workload, not the file.** `HardwoodContext.create(n)` sets the number of
+- **Size the pool to the workload.** `HardwoodContext.create(n)` sets the number of
   threads that decompress and decode pages — the bulk of the CPU — so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
   Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages —

@@ -24,8 +24,7 @@ Selection has two independent axes, and each control belongs to exactly one of t
 - **Which rows you want — the logical result.** A `FilterPredicate` (`WHERE`), and the
   positional controls `head`, `tail`, and `skip`.
 - **Where data lives in the file — the physical layout.** `RowGroupPredicate.byteRange(...)`,
-  at row-group granularity. This is the lever for splitting a file across parallel readers, not
-  for shaping what a single reader returns.
+  at row-group granularity. This is the lever for splitting a file across parallel readers.
 
 Keeping these apart is what makes the controls predictable: physical positioning is `byteRange`'s
 job, and nothing else's.
