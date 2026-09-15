@@ -848,6 +848,12 @@ public sealed interface FilterPredicate
             this.value = Objects.requireNonNull(value, "value").clone();
         }
 
+        /// Returns a copy of the stored bytes.
+        @Override
+        public byte[] value() {
+            return value.clone();
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -877,8 +883,16 @@ public sealed interface FilterPredicate
 
     record UUIDColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
 
-        public UUIDColumnPredicate {
-            requireColumn(column);
+        public UUIDColumnPredicate(String column, Operator op, byte[] value) {
+            this.column = requireColumn(column);
+            this.op = op;
+            this.value = Objects.requireNonNull(value, "value").clone();
+        }
+
+        /// Returns a copy of the UUID's 16 bytes.
+        @Override
+        public byte[] value() {
+            return value.clone();
         }
 
         @Override
@@ -904,6 +918,12 @@ public sealed interface FilterPredicate
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
+        /// Returns a copy of the probes.
+        @Override
+        public int[] values() {
+            return values.clone();
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -922,6 +942,12 @@ public sealed interface FilterPredicate
         public LongInPredicate(String column, long[] values) {
             this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
+        }
+
+        /// Returns a copy of the probes.
+        @Override
+        public long[] values() {
+            return values.clone();
         }
 
         @Override
@@ -944,6 +970,12 @@ public sealed interface FilterPredicate
             this.values = Objects.requireNonNull(values, "values").clone();
         }
 
+        /// Returns a copy of the probes.
+        @Override
+        public float[] values() {
+            return values.clone();
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -962,6 +994,12 @@ public sealed interface FilterPredicate
         public DoubleInPredicate(String column, double[] values) {
             this.column = requireColumn(column);
             this.values = Objects.requireNonNull(values, "values").clone();
+        }
+
+        /// Returns a copy of the probes.
+        @Override
+        public double[] values() {
+            return values.clone();
         }
 
         @Override
@@ -989,6 +1027,16 @@ public sealed interface FilterPredicate
             }
         }
 
+        /// Returns a copy of the probes, each probe copied too.
+        @Override
+        public byte[][] values() {
+            byte[][] copy = new byte[values.length][];
+            for (int i = 0; i < values.length; i++) {
+                copy[i] = values[i].clone();
+            }
+            return copy;
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -1013,6 +1061,12 @@ public sealed interface FilterPredicate
                 String argument = "values[" + i + "]";
                 requireWellFormed(column, Objects.requireNonNull(this.values[i], argument), argument);
             }
+        }
+
+        /// Returns a copy of the probes.
+        @Override
+        public String[] values() {
+            return values.clone();
         }
 
         @Override

@@ -315,9 +315,10 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs, "a String");
                 requireTextColumn(p.column(), cs);
-                byte[][] probes = new byte[p.values().length][];
+                String[] values = p.values();
+                byte[][] probes = new byte[values.length][];
                 for (int i = 0; i < probes.length; i++) {
-                    probes[i] = p.values()[i].getBytes(StandardCharsets.UTF_8);
+                    probes[i] = values[i].getBytes(StandardCharsets.UTF_8);
                 }
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), probes,
                         Comparison.BYTE_STRING);

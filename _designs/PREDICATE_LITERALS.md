@@ -174,8 +174,8 @@ replaces each malformed sequence with U+FFFD, and that string does not match the
 from. Such a row is filtered with its `byte[]`.
 
 The factories are the supported way to build a predicate; the records are public only because the
-sealed `FilterPredicate` permits them. `byte[]` factories copy their array, and array-valued records
-compare by content.
+sealed `FilterPredicate` permits them. Array-valued records copy the arrays they are built from and the
+arrays their accessors return, and compare by content.
 
 ## Nulls and composition
 

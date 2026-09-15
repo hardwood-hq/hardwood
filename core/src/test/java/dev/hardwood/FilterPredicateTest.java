@@ -739,6 +739,53 @@ class FilterPredicateTest {
         assertThat(p.values()).containsExactly(1.5, 2.5);
     }
 
+    /// Changing an array a predicate hands out, or one its record constructor was given, must not
+    /// change the predicate.
+    @Test
+    void everyArrayValuedPredicateKeepsItsOwnArrays() {
+        FilterPredicate.IntInPredicate ints = (FilterPredicate.IntInPredicate) FilterPredicate.in("c", 1, 2);
+        ints.values()[0] = 9;
+        assertThat(ints).isEqualTo(FilterPredicate.in("c", 1, 2));
+
+        FilterPredicate.LongInPredicate longs = (FilterPredicate.LongInPredicate) FilterPredicate.in("c", 1L, 2L);
+        longs.values()[0] = 9L;
+        assertThat(longs).isEqualTo(FilterPredicate.in("c", 1L, 2L));
+
+        FilterPredicate.FloatInPredicate floats = (FilterPredicate.FloatInPredicate) FilterPredicate.in("c", 1.5f, 2.5f);
+        floats.values()[0] = 9f;
+        assertThat(floats).isEqualTo(FilterPredicate.in("c", 1.5f, 2.5f));
+
+        FilterPredicate.DoubleInPredicate doubles = (FilterPredicate.DoubleInPredicate) FilterPredicate.in("c", 1.5, 2.5);
+        doubles.values()[0] = 9.0;
+        assertThat(doubles).isEqualTo(FilterPredicate.in("c", 1.5, 2.5));
+
+        FilterPredicate.StringInPredicate strings = (FilterPredicate.StringInPredicate) FilterPredicate.in("c", "a", "b");
+        strings.values()[0] = "z";
+        assertThat(strings).isEqualTo(FilterPredicate.in("c", "a", "b"));
+
+        FilterPredicate.BinaryInPredicate binaries = (FilterPredicate.BinaryInPredicate) FilterPredicate.in("c",
+                new byte[] { 1 }, new byte[] { 2 });
+        binaries.values()[0][0] = 9;
+        binaries.values()[1] = new byte[] { 9 };
+        assertThat(binaries).isEqualTo(FilterPredicate.in("c", new byte[] { 1 }, new byte[] { 2 }));
+
+        FilterPredicate.BinaryColumnPredicate binary = (FilterPredicate.BinaryColumnPredicate) FilterPredicate.eq("c",
+                new byte[] { 1 });
+        binary.value()[0] = 9;
+        assertThat(binary).isEqualTo(FilterPredicate.eq("c", new byte[] { 1 }));
+
+        UUID uuid = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        FilterPredicate.UUIDColumnPredicate uuids = (FilterPredicate.UUIDColumnPredicate) FilterPredicate.eq("c", uuid);
+        uuids.value()[15] = 9;
+        assertThat(uuids).isEqualTo(FilterPredicate.eq("c", uuid));
+
+        byte[] given = new byte[16];
+        FilterPredicate.UUIDColumnPredicate constructed = new FilterPredicate.UUIDColumnPredicate("c",
+                FilterPredicate.Operator.EQ, given);
+        given[15] = 9;
+        assertThat(constructed.value()).containsExactly(new byte[16]);
+    }
+
     @Test
     void testOverloadResolutionMatrix() {
         // Primitive overloads bind correctly
