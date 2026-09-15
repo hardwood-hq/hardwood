@@ -145,17 +145,17 @@
                 <artifactItem>
                   <groupId>org.apache.parquet</groupId>
                   <artifactId>parquet-hadoop</artifactId>
-                  <version>1.16.0</version>
+                  <version>1.18.1</version>
                 </artifactItem>
                 <artifactItem>
                   <groupId>org.apache.parquet</groupId>
                   <artifactId>parquet-column</artifactId>
-                  <version>1.16.0</version>
+                  <version>1.18.1</version>
                 </artifactItem>
                 <artifactItem>
                   <groupId>org.apache.parquet</groupId>
                   <artifactId>parquet-common</artifactId>
-                  <version>1.16.0</version>
+                  <version>1.18.1</version>
                 </artifactItem>
                 <artifactItem>
                   <groupId>org.apache.hadoop</groupId>

@@ -28,7 +28,6 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
-import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -789,13 +788,13 @@ class FilterPredicateResolverTest {
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("h", signedNaN), schema))
                 .usingRecursiveComparison().withStrictTypeChecking().withComparatorForType(Float::compare, Float.class)
                 .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.Float16Predicate(0, FilterPredicate.Operator.EQ, Float.NaN, false),
+                        new ResolvedPredicate.Float16Predicate(0, FilterPredicate.Operator.EQ, Float.NaN),
                         new ResolvedPredicate.BinaryPredicate(0, FilterPredicate.Operator.EQ, signedNaN,
                                 Comparison.STORED_BYTES))));
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.in("h", signedNaN), schema))
                 .usingRecursiveComparison().withStrictTypeChecking().withComparatorForType(Float::compare, Float.class)
                 .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.Float16InPredicate(0, new float[] { Float.NaN }, false),
+                        new ResolvedPredicate.Float16InPredicate(0, new float[] { Float.NaN }),
                         new ResolvedPredicate.BinaryInPredicate(0, new byte[][] { signedNaN }, Comparison.STORED_BYTES))));
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.lt("h", signedNaN), schema))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -1439,78 +1438,26 @@ class FilterPredicateResolverTest {
                         null, null, null, null, null, null)));
     }
 
-    // ==================== Column order propagation (#595) ====================
-
-    @Test
-    void floatTypeDefinedOrderMarksPredicateForWidening() {
-        FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("f", 1.0f), schema, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
-        assertThat(((ResolvedPredicate.FloatPredicate) resolved).ieee754TotalOrder()).isFalse();
-    }
-
-    @Test
-    void floatIeee754OrderMarksPredicateExact() {
-        FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("f", 1.0f), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
-        assertThat(((ResolvedPredicate.FloatPredicate) resolved).ieee754TotalOrder()).isTrue();
-    }
-
-    @Test
-    void doubleAbsentColumnOrdersDefaultsToTypeDefined() {
-        FileSchema schema = schemaWithLogicalType("d", PhysicalType.DOUBLE, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("d", 1.0), schema, List.of());
-        assertThat(((ResolvedPredicate.DoublePredicate) resolved).ieee754TotalOrder()).isFalse();
-    }
-
-    @Test
-    void float16TypeDefinedOrderMarksPredicateForWidening() {
-        FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                LogicalType.float16());
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.Float16Predicate.class);
-        assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isFalse();
-    }
-
-    @Test
-    void float16Ieee754OrderMarksPredicateExact() {
-        FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
-                LogicalType.float16());
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
-        assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isTrue();
-    }
-
     // ==================== Set forms ====================
 
     @Test
     void resolveDoubleInOnDoubleColumn() {
         FileSchema schema = schemaWithLogicalType("d", PhysicalType.DOUBLE, null);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.in("d", 1.5, 2.5), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+                FilterPredicate.in("d", 1.5, 2.5), schema);
         assertThat(resolved).isInstanceOf(ResolvedPredicate.DoubleInPredicate.class);
         ResolvedPredicate.DoubleInPredicate dp = (ResolvedPredicate.DoubleInPredicate) resolved;
         assertThat(dp.columnIndex()).isEqualTo(0);
         assertThat(dp.values()).containsExactly(1.5, 2.5);
-        assertThat(dp.ieee754TotalOrder()).isTrue();
-
-        ResolvedPredicate defaultOrder = FilterPredicateResolver.resolve(
-                FilterPredicate.in("d", 1.5, 2.5), schema, List.of());
-        assertThat(((ResolvedPredicate.DoubleInPredicate) defaultOrder).ieee754TotalOrder()).isFalse();
     }
 
     @Test
     void resolveFloatInOnFloatColumn() {
         FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.in("f", 0.1f, Float.NaN), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
-        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.FloatInPredicate.class, p -> {
-            assertThat(p.values()).containsExactly(0.1f, Float.NaN);
-            assertThat(p.ieee754TotalOrder()).isTrue();
-        });
+                FilterPredicate.in("f", 0.1f, Float.NaN), schema);
+        assertThat(resolved).isInstanceOfSatisfying(ResolvedPredicate.FloatInPredicate.class,
+                p -> assertThat(p.values()).containsExactly(0.1f, Float.NaN));
     }
 
     @Test
@@ -1736,31 +1683,23 @@ class FilterPredicateResolverTest {
     void negatedSetFormsBecomeConjunctionsOfNotEq() {
         FileSchema floatSchema = schemaWithLogicalType("c", PhysicalType.FLOAT, null);
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f, Float.NaN)),
-                floatSchema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER)))
+                floatSchema))
                 .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, true),
-                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, Float.NaN, true))));
+                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f),
+                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, Float.NaN))));
 
         FileSchema doubleSchema = schemaWithLogicalType("c", PhysicalType.DOUBLE, null);
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5, Double.NaN)),
-                doubleSchema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER)))
+                doubleSchema))
                 .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5, true),
-                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, Double.NaN, true))));
-
-        // Without a declared column order the negated probes widen signed zeros like the set does.
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f)), floatSchema))
-                .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, false))));
-        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5)), doubleSchema))
-                .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5, false))));
+                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5),
+                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, Double.NaN))));
 
         FileSchema float16Schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
                 new LogicalType.Float16Type());
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f)), float16Schema))
                 .isEqualTo(new ResolvedPredicate.And(List.of(
-                        new ResolvedPredicate.Float16Predicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, false))));
+                        new ResolvedPredicate.Float16Predicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f))));
 
         FileSchema dateSchema = schemaWithLogicalType("c", PhysicalType.INT32, new LogicalType.DateType());
         assertThat(FilterPredicateResolver.resolve(

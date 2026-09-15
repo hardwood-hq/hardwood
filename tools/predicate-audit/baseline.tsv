@@ -15,16 +15,20 @@ roundtrip-throw	flat_single	597	time_ms	getTime
 roundtrip-throw	legacy_single	597	time_ms	getTime
 roundtrip-throw	dropped_single	597	time_ms	getTime
 
-# Design row 1: three-valued logic; parquet-java returns the null rows under notEq and a one-value notIn.
+# Design row 1: three-valued logic; parquet-java returns the null rows under notEq and notIn.
 engine	int.noteq-nulls	578 #e83a022e	599 #5fc7cf6b	578 #e83a022e
 engine	int.notin-one	578 #e83a022e	599 #5fc7cf6b	578 #e83a022e
+engine	int.notin-two	577 #c5c0bddf	598 #307a926c	577 #c5c0bddf
 
-# Design row 2: parquet-java notIn of more than one value returns every row.
-engine	int.notin-two	577 #c5c0bddf	600 #36444e2d	577 #c5c0bddf
+# Design row 2: parquet-java compares an IEEE_754_TOTAL_ORDER column by total order: NaN payloads differ, a negative NaN sorts first.
+engine	float.eq-nan	3 [10, 20, 30]	1 [10]	3 [10, 20, 30]
+engine	float.gt	272 #b8234a74	271 #b2b6b912	272 #b8234a74
+engine	double.gteq-nan	3 [10, 20, 30]	1 [10]	3 [10, 20, 30]
+engine	float16.gt	289 #a8d4d263	288 #c7d4b385	289 #a8d4d263
 
-# Design row 3: parquet-java and DuckDB prune a row group holding NaN outside its bounds.
-engine	pyarrow.eq-nan	1 [2]	0 []	0 []
-engine	pyarrow.gt-past-bounds	5 [2, 4, 5, 6, 7]	4 [4, 5, 6, 7]	4 [4, 5, 6, 7]
+# Design row 3: DuckDB prunes a row group holding NaN outside its bounds.
+engine	pyarrow.eq-nan	1 [2]	1 [2]	0 []
+engine	pyarrow.gt-past-bounds	5 [2, 4, 5, 6, 7]	5 [2, 4, 5, 6, 7]	4 [4, 5, 6, 7]
 
 # Design row 4: an int literal on a DECIMAL is the unscaled value; DuckDB compares it as a number.
 engine	dec_i32.eq-int	1 [310]	1 [310]	0 []
@@ -36,38 +40,36 @@ engine	dec_i32.eq-past-scale	THROW IllegalArgumentException: Column 'dec_i32' ho
 engine	pyarrow.eq-nanosecond	1 [4]	1 [4]	8 [0, 1, 2, 3, 4, 5, 6, 7]
 engine	pyarrow.gt-nanosecond	3 [5, 6, 7]	3 [5, 6, 7]	0 []
 
-# Design row 7: Float.compare / Double.compare order; DuckDB treats -0.0 as 0.0.
+# Design row 7: Float.compare / Double.compare order; DuckDB treats -0.0 as 0.0. parquet-java's
+# lt-zero also counts the negative NaN of row 2.
 engine	float.eq-negative-zero	1 [300]	1 [300]	2 [300, 302]
-engine	float.lt-zero	287 #b94188b9	287 #b94188b9	286 #81d8d2d3
+engine	float.lt-zero	287 #b94188b9	288 #da505dfd	286 #81d8d2d3
 engine	pyarrow.eq-zero	1 [0]	1 [0]	2 [0, 4]
 engine	pyarrow.lt-zero	4 [4, 5, 6, 7]	4 [4, 5, 6, 7]	3 [5, 6, 7]
 
 # Design row 8: an unsigned column takes a bit-pattern literal; DuckDB compares the number.
 engine	uint32.lt-minus-one	579 #e10198e0	579 #e10198e0	0 []
 
-# Design row 9: a byte[] on FLOAT16 is the stored bytes; parquet-java compares the float.
-engine	float16.eq-nan-bytes	1 [10]	3 [10, 20, 30]	n/a
-
-# Design row 10: INTERVAL defines no conversion between components; DuckDB normalises.
+# Design row 9: INTERVAL defines no conversion between components; DuckDB normalises.
 engine	interval.eq-normalised	0 []	n/a	1 [310]
 
-# Design row 11: parquet-java orders a Binary on INT96 as a signed big-endian integer.
+# Design row 10: parquet-java orders a Binary on INT96 as a signed big-endian integer.
 engine	int96.gt	279 #ac30d4a1	308 #71bd9950	279 #ac30d4a1
 
-# Design row 12: parquet-java's Bloom filter tests bytes where its rows test the value.
+# Design row 11: parquet-java's Bloom filter tests bytes where its rows test the value.
 engine	dec_ba.eq-minimal-bytes-of-padded	0 []	single: 1 [301] / multi: 1 [301] / dict: 1 [301] / bloom: 0 [] / 	n/a
 
-# Design row 13: a value past its INT(8) annotation; DuckDB narrows it.
+# Design row 12: a value past its INT(8) annotation; DuckDB narrows it.
 engine	int8.past-annotation	1 [598]	1 [598]	0 []
 
-# Design row 15: a byte[] of another width on a fixed-width DECIMAL is refused; parquet-java's dictionary and Bloom filter drop the row.
+# Design row 14: a byte[] of another width on a fixed-width DECIMAL is refused; parquet-java's dictionary and Bloom filter drop the row.
 engine	dec_flba.eq-one-byte	THROW IllegalArgumentException: Column 'dec_flba' holds a byte string of 9 bytes; the equality literal 14 (1 bytes) is not a value it can hold	single: 1 [310] / multi: 1 [310] / dict: 0 [] / bloom: 0 [] / 	n/a
 
 # DuckDB cannot read a DELTA_BYTE_ARRAY DECIMAL (dictionary layout); not a predicate difference, so not in the design.
 engine	dec_ba.eq-value	1 [301]	n/a	single: 1 [301] / multi: 1 [301] / dict: THROW SQLException: Invalid Error: Delta Byte Array encoding is only supported for string/blob data / bloom: 1 [301] /
 
-# Design row 16, and DuckDB's DELTA_BYTE_ARRAY read failure.
+# Design row 15, and DuckDB's DELTA_BYTE_ARRAY read failure.
 engine	dec_ba.eq-zero	1 [300]	single: 1 [300] / multi: 1 [300] / dict: 1 [300] / bloom: 0 [] / 	single: 1 [300] / multi: 1 [300] / dict: THROW SQLException: Invalid Error: Delta Byte Array encoding is only supported for string/blob data / bloom: 1 [300] /
 
-# Design row 17: DuckDB reads parquet-java's INTERVAL as INTEGER.
+# Design row 16: DuckDB reads parquet-java's INTERVAL as INTEGER.
 engine	interval.parquet-java-encoding	1 [310]	1 [310]	0 []

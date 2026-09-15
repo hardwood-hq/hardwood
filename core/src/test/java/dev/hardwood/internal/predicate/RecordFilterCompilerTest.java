@@ -250,7 +250,7 @@ class RecordFilterCompilerTest {
         FileSchema schema = doubleSchema("col");
         double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
         double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY });
         assertTrue(matchesRow(in, doubleStub("col", 2.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", 4.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", -0.0, false), schema));
@@ -267,7 +267,7 @@ class RecordFilterCompilerTest {
     void testFloatInOnFloatColumn() {
         FileSchema schema = floatSchema("col");
         float customFloatNan = Float.intBitsToFloat(0x7fc00001);
-        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, -0.0f, Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY }, false);
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, -0.0f, Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY });
         assertTrue(matchesRow(in, floatStub("col", 0.5f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", -0.0f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", Float.NaN, false), schema));
@@ -284,7 +284,7 @@ class RecordFilterCompilerTest {
         // Row-level complement with pruning out of the picture: the negation of an
         // IN list must accept exactly the non-null rows the IN form rejects.
         FileSchema schema = doubleSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, -0.0, Double.NaN }, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, -0.0, Double.NaN });
         ResolvedPredicate notIn = ResolvedPredicate.negate(in);
         // Shapes: width-correct DoublePredicate NOT_EQ leaves.
         assertThat(notIn).isInstanceOf(ResolvedPredicate.And.class);
@@ -302,7 +302,7 @@ class RecordFilterCompilerTest {
     @Test
     void testNotFloatInOnFloatColumnIsRowLevelComplement() {
         FileSchema schema = floatSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, 0.1f, Float.NaN }, false);
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 0.5f, 0.1f, Float.NaN });
         ResolvedPredicate notIn = ResolvedPredicate.negate(in);
         List<ResolvedPredicate> leaves = ((ResolvedPredicate.And) notIn).children();
         assertThat(leaves).hasSize(3);

@@ -481,9 +481,9 @@ public final class ParquetFileWriter implements Closeable {
     ///
     /// Every column declares the type-defined order — the one every statistics collector
     /// computes in, floats included: their NaN exclusion and signed-zero normalization are the
-    /// type-defined convention, and under the IEEE 754 total order a NaN is an ordinary value
-    /// sorting beyond the infinities, so bounds that exclude it would let a total-order reader
-    /// drop a page that holds one.
+    /// type-defined convention. The IEEE 754 total order requires exact zero bounds and the
+    /// smallest and largest `NaN` as the bounds of an all-`NaN` chunk, neither of which the
+    /// collectors record.
     private List<ColumnOrder> columnOrders() {
         return Collections.nCopies(schema.getColumnCount(), ColumnOrder.TYPE_DEFINED_ORDER);
     }

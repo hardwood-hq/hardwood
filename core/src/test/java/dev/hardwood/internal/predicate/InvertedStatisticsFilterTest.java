@@ -124,27 +124,18 @@ class InvertedStatisticsFilterTest {
     /// reject. The usability check applies the same widening, so it must not read the pair as
     /// inverted.
     @Test
-    void typeDefinedZeroBoundsAreNotInverted() {
+    void zeroBoundsAreNotInverted() {
         MinMaxStats floatStats = MinMaxStats.of(stats(floatBytes(0.0f), floatBytes(-0.0f)),
-                new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 5.0f, false), BoundsReadability.ALL);
+                new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 5.0f), BoundsReadability.ALL);
         assertThat(floatStats).isNotInstanceOf(MinMaxStats.NoBounds.class);
 
         MinMaxStats doubleStats = MinMaxStats.of(stats(doubleBytes(0.0), doubleBytes(-0.0)),
-                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false), BoundsReadability.ALL);
+                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0), BoundsReadability.ALL);
         assertThat(doubleStats).isNotInstanceOf(MinMaxStats.NoBounds.class);
 
         // And they still prune a value neither zero can be.
-        assertThat(doubleStats.canDrop(new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, false)))
+        assertThat(doubleStats.canDrop(new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0)))
                 .isTrue();
-    }
-
-    /// The IEEE 754 total order is unambiguous — `-0` sorts below `+0` — so the same pair is
-    /// genuinely the wrong way round there.
-    @Test
-    void ieee754ZeroBoundsTheWrongWayRoundAreInverted() {
-        MinMaxStats doubleStats = MinMaxStats.of(stats(doubleBytes(0.0), doubleBytes(-0.0)),
-                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, 5.0, true), BoundsReadability.ALL);
-        assertThat(doubleStats.discardReason()).isEqualTo(INVERTED);
     }
 
     // ==================== Fixtures ====================
@@ -192,11 +183,11 @@ class InvertedStatisticsFilterTest {
                 intColumn(),
                 new Column("INT64", op -> new ResolvedPredicate.LongPredicate(0, op, 15L),
                         longBytes(10L), longBytes(20L)),
-                new Column("FLOAT", op -> new ResolvedPredicate.FloatPredicate(0, op, 15.0f, false),
+                new Column("FLOAT", op -> new ResolvedPredicate.FloatPredicate(0, op, 15.0f),
                         floatBytes(10.0f), floatBytes(20.0f)),
-                new Column("FLOAT16", op -> new ResolvedPredicate.Float16Predicate(0, op, 15.0f, false),
+                new Column("FLOAT16", op -> new ResolvedPredicate.Float16Predicate(0, op, 15.0f),
                         float16Bytes(10.0f), float16Bytes(20.0f)),
-                new Column("DOUBLE", op -> new ResolvedPredicate.DoublePredicate(0, op, 15.0, false),
+                new Column("DOUBLE", op -> new ResolvedPredicate.DoublePredicate(0, op, 15.0),
                         doubleBytes(10.0), doubleBytes(20.0)),
                 new Column("BOOLEAN", op -> new ResolvedPredicate.BooleanPredicate(0, op, false),
                         new byte[]{ 0 }, new byte[]{ 1 }),
@@ -222,9 +213,9 @@ class InvertedStatisticsFilterTest {
                         new byte[][]{ utf8("mango") },
                         ResolvedPredicate.BinaryPredicate.Comparison.BYTE_STRING), utf8("apple"), utf8("peach")),
                 new Column("FLOAT IN", op -> new ResolvedPredicate.FloatInPredicate(0,
-                        new float[]{ 15.0f }, false), floatBytes(10.0f), floatBytes(20.0f)),
+                        new float[]{ 15.0f }), floatBytes(10.0f), floatBytes(20.0f)),
                 new Column("DOUBLE IN", op -> new ResolvedPredicate.DoubleInPredicate(0,
-                        new double[]{ 15.0 }, false), doubleBytes(10.0), doubleBytes(20.0)));
+                        new double[]{ 15.0 }), doubleBytes(10.0), doubleBytes(20.0)));
     }
 
     /// The columns whose leaf carries an ordered operator, which is every one but `BOOLEAN`: its

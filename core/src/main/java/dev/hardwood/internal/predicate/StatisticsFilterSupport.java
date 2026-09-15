@@ -46,18 +46,17 @@ final class StatisticsFilterSupport {
     ///
     /// @param nanFree whether the unit records a `nan_count` of zero
     static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max,
-            boolean ieee754TotalOrder, boolean nanFree) {
+            boolean nanFree) {
         if (!nanFree && naNRowSatisfies(op, Float.isNaN(value))) {
             return false;
         }
         // Under the type-defined ordering the spec leaves +0/-0 ambiguous: a +0 min may hide -0, a
         // -0 max may hide +0. Float.compare's total order separates them (-0 < +0), which could
         // wrongly drop the opposite zero, so widen each zero bound to its total-order extreme. The
-        // IEEE 754 total order is unambiguous, so its bounds are already exact and left as-is.
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0f) ? -0.0f : min;
-            max = (max == 0.0f) ? 0.0f : max;
-        }
+        // bounds are widened whatever order the file declares, because the predicate is resolved
+        // once for every file of a read and those files may declare different orders.
+        min = (min == 0.0f) ? -0.0f : min;
+        max = (max == 0.0f) ? 0.0f : max;
         return switch (op) {
             case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
             case NOT_EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
@@ -71,16 +70,13 @@ final class StatisticsFilterSupport {
     /// Determines if a range can be dropped given `DOUBLE` min/max statistics. See
     /// [#canDropFloat] for what the bounds are assumed to be and what `nanFree` decides.
     static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max,
-            boolean ieee754TotalOrder, boolean nanFree) {
+            boolean nanFree) {
         if (!nanFree && naNRowSatisfies(op, Double.isNaN(value))) {
             return false;
         }
-        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
-        // the unambiguous IEEE 754 total order.
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0) ? -0.0 : min;
-            max = (max == 0.0) ? 0.0 : max;
-        }
+        // See canDropFloat: widen ±0 bounds.
+        min = (min == 0.0) ? -0.0 : min;
+        max = (max == 0.0) ? 0.0 : max;
         return switch (op) {
             case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
             case NOT_EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;
@@ -201,13 +197,10 @@ final class StatisticsFilterSupport {
     /// A `NaN` probe stops the list from pruning at all. Stored `NaN` values sit outside the
     /// min/max ordering, so no interval can prove one absent — where an unusable *bound* is
     /// caught when the unit is sourced, this is a property of the probe.
-    static boolean canDropFloatIn(float[] values, float min, float max, boolean ieee754TotalOrder) {
-        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
-        // the unambiguous IEEE 754 total order.
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0f) ? -0.0f : min;
-            max = (max == 0.0f) ? 0.0f : max;
-        }
+    static boolean canDropFloatIn(float[] values, float min, float max) {
+        // See canDropFloat: widen ±0 bounds.
+        min = (min == 0.0f) ? -0.0f : min;
+        max = (max == 0.0f) ? 0.0f : max;
         for (float value : values) {
             if (Float.isNaN(value)) {
                 return false;
@@ -221,13 +214,10 @@ final class StatisticsFilterSupport {
         return true;
     }
 
-    static boolean canDropDoubleIn(double[] values, double min, double max, boolean ieee754TotalOrder) {
-        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
-        // the unambiguous IEEE 754 total order.
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0) ? -0.0 : min;
-            max = (max == 0.0) ? 0.0 : max;
-        }
+    static boolean canDropDoubleIn(double[] values, double min, double max) {
+        // See canDropFloat: widen ±0 bounds.
+        min = (min == 0.0) ? -0.0 : min;
+        max = (max == 0.0) ? 0.0 : max;
         for (double value : values) {
             if (Double.isNaN(value)) {
                 return false;

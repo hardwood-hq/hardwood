@@ -142,7 +142,7 @@ class UnreadableSortOrderTest {
     void boundsUnderAnUnrecognizedColumnOrderDoNotPrune() {
         FileSchema ints = intSchema();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.gt("v", 100), ints, List.of(ColumnOrder.UNKNOWN));
+                FilterPredicate.gt("v", 100), ints);
         Statistics foreign = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
 
         assertThat(MinMaxStats.of(foreign, leaf,
@@ -153,7 +153,7 @@ class UnreadableSortOrderTest {
     void boundsUnderTheTypeDefinedOrderStillPrune() {
         FileSchema ints = intSchema();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.gt("v", 100), ints, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
+                FilterPredicate.gt("v", 100), ints);
         Statistics stats = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
 
         assertThat(MinMaxStats.of(stats, leaf,
@@ -178,7 +178,7 @@ class UnreadableSortOrderTest {
     void pageBoundsUnderAnUnrecognizedColumnOrderDoNotPrune() {
         FileSchema ints = intSchema();
         ResolvedPredicate leaf = FilterPredicateResolver.resolve(
-                FilterPredicate.gt("v", 100), ints, List.of(ColumnOrder.UNKNOWN));
+                FilterPredicate.gt("v", 100), ints);
         ColumnIndex columnIndex = new ColumnIndex(new boolean[] { false },
                 List.of(intBytes(0)), List.of(intBytes(50)),
                 ColumnIndex.BoundaryOrder.UNORDERED, new long[] { 0L }, null, null, null);

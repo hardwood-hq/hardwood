@@ -229,7 +229,7 @@ class PageFilterEvaluatorTest {
         ColumnIndex columnIndex = new ColumnIndex(new boolean[2],
                 List.of(floatBytes(1.0f), floatBytes(3.0f)), List.of(floatBytes(2.0f), floatBytes(4.0f)),
                 ColumnIndex.BoundaryOrder.UNORDERED, null, null, null, new long[]{ 0, 1 });
-        ResolvedPredicate gt = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 4.5f, false);
+        ResolvedPredicate gt = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 4.5f);
 
         assertThat(MinMaxStats.ofPage(columnIndex, 0, gt, BoundsReadability.ALL).canDrop(gt)).isTrue();
         assertThat(MinMaxStats.ofPage(columnIndex, 1, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
@@ -518,7 +518,7 @@ class PageFilterEvaluatorTest {
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
         RowRanges ranges = evaluatePages(doubleIdx, oi, 90,
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }, false));
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 150.0, 350.0 }));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
@@ -531,14 +531,14 @@ class PageFilterEvaluatorTest {
         OffsetIndex oi = offsetIndex(30, 30, 30);
 
         RowRanges ranges = evaluatePages(floatIdx, oi, 90,
-                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, 350.0f }, false));
+                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, 350.0f }));
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
         assertTrue(ranges.overlapsPage(60, 90));
 
         // NaN probe keeps every page.
         RowRanges nanRanges = evaluatePages(floatIdx, oi, 90,
-                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, Float.NaN }, false));
+                new ResolvedPredicate.FloatInPredicate(0, new float[]{ 150.0f, Float.NaN }));
         assertTrue(nanRanges.overlapsPage(0, 90));
     }
 
@@ -566,7 +566,7 @@ class PageFilterEvaluatorTest {
         try (InputFile inputFile = InputFile.of(file)) {
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
             ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(
-                    0, new float[]{ 150.0f, 350.0f }, false);
+                    0, new float[]{ 150.0f, 350.0f });
             RowRanges ranges = PageFilterEvaluator.computeMatchingRows(in, rowGroup, buffers,
                     new LogContext("float-in.parquet", 0), BoundsReadability.ALL);
             assertTrue(ranges.overlapsPage(0, 30));

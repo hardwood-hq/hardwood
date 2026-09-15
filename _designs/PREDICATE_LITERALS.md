@@ -41,6 +41,10 @@ u    INT(32, isSigned = false)
    `FLOAT16`, `INT96` and `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, which order by the value
    their bytes encode; there a `byte[]` takes equality and the set form only. A type that defines no
    order takes no ordered operator.
+   The column's order is the one its type defines, `Float.compare` for `FLOAT` and `FLOAT16` and
+   `Double.compare` for `DOUBLE`. The `ColumnOrder` a file declares in its footer decides only how
+   that file's bounds are read, never which rows match: the same values select the same rows
+   whether their file declares `TYPE_ORDER` or `IEEE_754_TOTAL_ORDER`.
    ```java
    lt("dec", new BigDecimal("2.00"))   // ✓ by value
    lt("dec", new byte[] { 0x7D })      // ✗ a DECIMAL does not order as its bytes
@@ -241,7 +245,7 @@ type:
 ## Relation to parquet-java and DuckDB
 
 On conforming files from mainstream writers, with the typed literal of each column, Hardwood,
-parquet-java 1.17.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
+parquet-java 1.18.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
 millisecond and microsecond timestamps, decimals via `BigDecimal`, UUIDs, and `NaN` on files whose
 writer omits the bounds of a chunk holding `NaN`. The differences below were measured with
 `tools/predicate-audit` (see Validation) on fixtures written by parquet-java and PyArrow, each read
@@ -258,22 +262,21 @@ The **Relevance** column estimates how often a real query meets the difference.
 | # | Data | Predicate | Hardwood | parquet-java | DuckDB | Cause | Relevance |
 |---|---|---|---|---|---|---|---|
 | 1 | `INT32 i`: `20, 22, null` | `notEq(i, 20)` | `22` | `22, null` | `22` | Rule: three-valued logic | **High** for code migrated from parquet-java: nulls under `notEq` / `notIn` |
-| 2 | `INT32 i`: `20, 22, 24, null` | `not(in(i, 20, 22))` | `24` | all 4 rows | `24` | parquet-java defect: `notIn` of more than one value | Medium, parquet-java users |
-| 3 | `DOUBLE d`, PyArrow: row group `1.0, 2.0, NaN, 3.0` with bounds `[1.0, 3.0]` | `gt(d, 5.0)`, `eq(d, NaN)` | includes `NaN` | row group dropped | row group dropped | Engine defects: pruning ignores `NaN` outside the bounds | Medium on float data with `NaN` (Arrow writers) |
+| 2 | `FLOAT f` with `IEEE_754_TOTAL_ORDER` (what parquet-java writes by default since 1.18.0): `NaN` as `7fc00000`, `ffc00000` and `7f800001`; `FLOAT16 f16`: `NaN` as `00 7E` and `00 FE` | `eq(f, Float.NaN)`; `gt(f, 10.0f)`; `gt(f16, 1.0f)` | all three; all three; both | `7fc00000` only; `7fc00000` and `7f800001`; `00 7E` only | all three; all three; both | Rule: `Float.compare`, where every `NaN` is one value above every number; parquet-java compares a column that declares the total order by it, which tells `NaN` payloads apart and sorts a negative `NaN` below `-Infinity` | Low; needs a `NaN` other than the canonical `7fc00000` |
+| 3 | `DOUBLE d`, PyArrow: row group `1.0, 2.0, NaN, 3.0` with bounds `[1.0, 3.0]` | `gt(d, 5.0)`, `eq(d, NaN)` | includes `NaN` | includes `NaN` | row group dropped | DuckDB defect: pruning ignores `NaN` outside the bounds | Medium on float data with `NaN` (Arrow writers) |
 | 4 | `DECIMAL(9, 2)` over `INT32`: `1.25` | `eq(dec, 125)` | `1.25` | `1.25` | none (`125.00`) | Rule: `int` is the unscaled value | Medium; `BigDecimal` is the natural literal |
 | 5 | same | `eq(dec, 1.255)` | throws | no spelling | none | Rule 4: equality literal the column cannot hold | Low; fails loudly |
 | 6 | `TIMESTAMP(NANOS)`, PyArrow: `t`, `t+1ns` … `t+7ns` | `gt(ts, t+4ns)` | `t+5ns` … `t+7ns` | same | none (`eq` returns all) | DuckDB defect: reads nanoseconds as microseconds | Low; nanosecond-exact filters only |
 | 7 | `DOUBLE d`: `-0.0, +0.0` | `eq(d, 0.0)` | `+0.0` | `+0.0` | both | Rule: `Double.compare`, as parquet-java | Low |
 | 8 | `UINT_32 u`: `0, 4000000000` | `lt(u, -1)` | both (`-1` is `0xFFFFFFFF`) | both | none | Rule: bit-pattern literal, as parquet-java | Low; unsigned columns are rare on the JVM |
-| 9 | `FLOAT16 f`: `NaN` stored as `00 7E` and `00 FE` | `eq(f, new byte[] {0x00, 0x7E})` | `00 7E` only | both | no spelling | Rule 2: `byte[]` is the stored bytes; the shim converts parquet-java's `Binary` to `float` and agrees with it | Low |
-| 10 | `INTERVAL iv`: 310 months, 0 days, 310 s | `eq(iv, new PqInterval(0, 9300, 310_000))` | none | no spelling | the row (normalised) | Rule: `INTERVAL` defines no conversion between components | Low |
-| 11 | `INT96 ts` | `gt(ts, …)` | by instant | by bytes as a signed big-endian integer | by instant | parquet-java's comparator; the shim refuses an ordered `Binary` | Low |
-| 12 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |
-| 13 | `INT32` annotated `INT(8)` storing `1000` | `eq(i8, 1000)` | the row | the row | none (reads `-24`) | Non-conforming file; Hardwood follows `getInt` | Low |
-| 14 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use `isNull` | Medium for shim users; fails loudly |
-| 15 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 12 | Low; needs a literal of another width |
-| 16 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
-| 17 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | the row | the row | none (read as `INTEGER`) | DuckDB defect: reads the column as `INTEGER` | Low; DuckDB only |
+| 9 | `INTERVAL iv`: 310 months, 0 days, 310 s | `eq(iv, new PqInterval(0, 9300, 310_000))` | none | no spelling | the row (normalised) | Rule: `INTERVAL` defines no conversion between components | Low |
+| 10 | `INT96 ts` | `gt(ts, …)` | by instant | by bytes as a signed big-endian integer | by instant | parquet-java's comparator; the shim refuses an ordered `Binary` | Low |
+| 11 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |
+| 12 | `INT32` annotated `INT(8)` storing `1000` | `eq(i8, 1000)` | the row | the row | none (reads `-24`) | Non-conforming file; Hardwood follows `getInt` | Low |
+| 13 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use `isNull` | Medium for shim users; fails loudly |
+| 14 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 11 | Low; needs a literal of another width |
+| 15 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
+| 16 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | the row | the row | none (read as `INTEGER`) | DuckDB defect: reads the column as `INTEGER` | Low; DuckDB only |
 
 In short: code moving from parquet-java should check negations over nullable columns (1). Code
 comparing with DuckDB should use `BigDecimal` for decimals (4), and should expect Hardwood to
@@ -317,7 +320,7 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
   - **Consultation checks:** Bloom filters (against a copy with zeroed bitsets) and dictionaries are
     shown to be read where the rule allows it and left unread where it does not.
   - **Engine comparison:** the parquet-java and DuckDB comparison behind the table above, including
-    a PyArrow file for rows 3, 6 and 7, except for row 14 (the compatibility shim), which
+    a PyArrow file for rows 3, 6 and 7, except for row 13 (the compatibility shim), which
     `ParquetReaderCompatTest` covers.
   - **Accessor round-trip:** every value an accessor returns, passed back as an `eq` literal,
     matches its own row, except a `String` read from bytes that are not UTF-8.

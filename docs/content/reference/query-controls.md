@@ -110,7 +110,8 @@ creation. Filtering on a shredded variant's sub-paths is in progress, tracked by
 [#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
 A `FLOAT` column compares by the `Float.compare` total order and a `DOUBLE` column by
-`Double.compare`, so all `NaN` values equal each other and `-0.0` differs from `+0.0`.
+`Double.compare`, so all `NaN` values equal each other and `-0.0` differs from `+0.0`. This holds
+whatever `ColumnOrder` the file declares, `IEEE_754_TOTAL_ORDER` included.
 
 A `BigDecimal` literal is rescaled to the column's scale before it is compared. A column with
 more scale than the literal pads it, so `99.99` against a `DECIMAL(scale = 4)` column compares

@@ -96,7 +96,7 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "float16 {0} with a NaN bound")
     @EnumSource(Operator.class)
     void float16NaNNeverDrops(Operator op) {
-        ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, 1.0f, false);
+        ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, 1.0f);
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(float16Bytes(Float.NaN), float16Bytes(10.0f), 0L, null, false), leaf, BoundsReadability.ALL);
 
@@ -110,7 +110,7 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "float16 {0}(NaN) on usable bounds expectDrop={1}")
     @EnumSource(Operator.class)
     void float16NaNProbeRoutesThroughTheFloatTable(Operator op) {
-        ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, Float.NaN, false);
+        ResolvedPredicate leaf = new ResolvedPredicate.Float16Predicate(0, op, Float.NaN);
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(float16Bytes(1.0f), float16Bytes(10.0f), 0L, null, false), leaf,
                 BoundsReadability.ALL);
@@ -127,12 +127,12 @@ class NaNStatisticsFilterTest {
     @Test
     void float16NonNaNProbeRoutesThroughTheFloatTable() {
         ResolvedPredicate gtAboveMax =
-                new ResolvedPredicate.Float16Predicate(0, Operator.GT, 20.0f, false);
+                new ResolvedPredicate.Float16Predicate(0, Operator.GT, 20.0f);
         MinMaxStats gtStats = MinMaxStats.of(
                 new Statistics(float16Bytes(1.0f), float16Bytes(10.0f), 0L, null, false),
                 gtAboveMax, BoundsReadability.ALL);
         ResolvedPredicate eqOutside =
-                new ResolvedPredicate.Float16Predicate(0, Operator.EQ, 100.0f, false);
+                new ResolvedPredicate.Float16Predicate(0, Operator.EQ, 100.0f);
         MinMaxStats eqStats = MinMaxStats.of(
                 new Statistics(float16Bytes(1.0f), float16Bytes(10.0f), 0L, null, false),
                 eqOutside, BoundsReadability.ALL);
@@ -147,11 +147,11 @@ class NaNStatisticsFilterTest {
     @ParameterizedTest(name = "nan_count={0} expectDrop={1}")
     @MethodSource
     void nanCountDecidesWhetherTheBoundsRuleOutANaNRow(Long nanCount, boolean expectDrop) {
-        ResolvedPredicate doubleGt = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 20.0, false);
+        ResolvedPredicate doubleGt = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 20.0);
         MinMaxStats doubleStats = MinMaxStats.of(
                 new Statistics(doubleBytes(1.0), doubleBytes(10.0), 0L, null, false, true, true, nanCount),
                 doubleGt, BoundsReadability.ALL);
-        ResolvedPredicate float16Gt = new ResolvedPredicate.Float16Predicate(0, Operator.GT, 20.0f, false);
+        ResolvedPredicate float16Gt = new ResolvedPredicate.Float16Predicate(0, Operator.GT, 20.0f);
         MinMaxStats float16Stats = MinMaxStats.of(
                 new Statistics(float16Bytes(1.0f), float16Bytes(10.0f), 0L, null, false, true, true, nanCount),
                 float16Gt, BoundsReadability.ALL);
@@ -170,7 +170,7 @@ class NaNStatisticsFilterTest {
     /// A NaN bound is discarded rather than compared against, and says so.
     @Test
     void naNBoundsAreDiscardedAtTheSource() {
-        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 1.0, false);
+        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 1.0);
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(doubleBytes(Double.NaN), doubleBytes(10.0), 0L, null, false),
                 leaf, BoundsReadability.ALL);
@@ -181,17 +181,16 @@ class NaNStatisticsFilterTest {
                 .isEqualTo("one of them is NaN, which sorts above every finite value");
     }
 
-    @ParameterizedTest(name = "double {0}({1}) on [{2},{3}] ieee754TotalOrder={4} nanFree={5} expectDrop={6}")
+    @ParameterizedTest(name = "double {0}({1}) on [{2},{3}] nanFree={4} expectDrop={5}")
     @MethodSource
     void doubleOperatorTable(Operator op, double value, double min, double max,
-            boolean ieee754TotalOrder, boolean nanFree, boolean expectDrop) {
-        assertThat(StatisticsFilterSupport.canDropDouble(op, value, min, max, ieee754TotalOrder, nanFree))
+            boolean nanFree, boolean expectDrop) {
+        assertThat(StatisticsFilterSupport.canDropDouble(op, value, min, max, nanFree))
                 .isEqualTo(expectDrop);
     }
 
     static Stream<Arguments> doubleOperatorTable() {
-        // One row per operator per probe kind, each run under both column orders and carrying
-        // two expectations: where NaN rows may be present, and where nan_count proves there are
+        // One row per operator per probe kind, each carrying two expectations: where NaN rows may be present, and where nan_count proves there are
         // none. Without that proof the bounds cannot rule out a NaN row, so every operator a NaN
         // row satisfies keeps the unit — NOT_EQ, GT, GT_EQ against a number, EQ, LT_EQ, GT_EQ
         // against NaN (#1016); GT(NaN) drops either way, since nothing sorts above NaN. With the
@@ -221,11 +220,11 @@ class NaNStatisticsFilterTest {
         return rows.stream();
     }
 
-    @ParameterizedTest(name = "float {0}({1}) on [{2},{3}] ieee754TotalOrder={4} nanFree={5} expectDrop={6}")
+    @ParameterizedTest(name = "float {0}({1}) on [{2},{3}] nanFree={4} expectDrop={5}")
     @MethodSource
     void floatOperatorTable(Operator op, float value, float min, float max,
-            boolean ieee754TotalOrder, boolean nanFree, boolean expectDrop) {
-        assertThat(StatisticsFilterSupport.canDropFloat(op, value, min, max, ieee754TotalOrder, nanFree))
+            boolean nanFree, boolean expectDrop) {
+        assertThat(StatisticsFilterSupport.canDropFloat(op, value, min, max, nanFree))
                 .isEqualTo(expectDrop);
     }
 
@@ -254,33 +253,23 @@ class NaNStatisticsFilterTest {
         return rows.stream();
     }
 
-    /// Order-aware ±0 pruning (#595). Under the type-defined ordering (`ieee754TotalOrder == false`)
-    /// the spec leaves `+0`/`-0` ambiguous, so a zero bound is widened and the opposite zero is not
-    /// dropped. Under the IEEE 754 total order the bounds are exact, so `-0 < +0` prunes precisely.
+    /// The spec leaves `+0`/`-0` ambiguous under the type-defined ordering, so a zero bound is
+    /// widened and the opposite zero is not dropped. The bounds are widened whatever order a file
+    /// declares, since the predicate is resolved once for every file of a read.
     @Test
-    void typeDefinedZeroBoundDoesNotDropOppositeZero() {
+    void zeroBoundDoesNotDropOppositeZero() {
         // min = +0, max = +0 may also hold -0 → == -0 must not drop.
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, -0.0f, 0.0f, 0.0f, false, false)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, -0.0, 0.0, 0.0, false, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, -0.0f, 0.0f, 0.0f, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, -0.0, 0.0, 0.0, false)).isFalse();
         // max = -0, min = -0 may also hold +0 → == +0 must not drop.
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 0.0f, -0.0f, -0.0f, false, false)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, 0.0, -0.0, -0.0, false, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 0.0f, -0.0f, -0.0f, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, 0.0, -0.0, -0.0, false)).isFalse();
     }
 
     @Test
-    void ieee754ZeroBoundPrunesExactly() {
-        // Total order is unambiguous: min = +0 genuinely excludes -0 → == -0 prunes.
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, -0.0f, 0.0f, 0.0f, true, false)).isTrue();
-        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, -0.0, 0.0, 0.0, true, false)).isTrue();
-        // max = -0 genuinely excludes +0 → == +0 prunes.
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 0.0f, -0.0f, -0.0f, true, false)).isTrue();
-        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, 0.0, -0.0, -0.0, true, false)).isTrue();
-    }
-
-    @Test
-    void zeroBoundsStillPruneNonZeroValuesUnderBothOrders() {
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 5.0f, -0.0f, 0.0f, false, false)).isTrue();
-        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 5.0f, -0.0f, 0.0f, true, false)).isTrue();
+    void zeroBoundsStillPruneNonZeroValues() {
+        assertThat(StatisticsFilterSupport.canDropFloat(Operator.EQ, 5.0f, -0.0f, 0.0f, false)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropDouble(Operator.EQ, 5.0, -0.0, 0.0, false)).isTrue();
     }
 
     /// Writer-to-reader regression (#1016): the writer keeps `NaN` out of the bounds and records
@@ -334,9 +323,9 @@ class NaNStatisticsFilterTest {
 
         assertThat(statistics.nanCount()).isEqualTo(0L);
         for (ResolvedPredicate leaf : List.of(
-                new ResolvedPredicate.DoublePredicate(0, Operator.GT, 10.0, false),
-                new ResolvedPredicate.DoublePredicate(0, Operator.GT_EQ, 10.0, false),
-                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, Double.NaN, false))) {
+                new ResolvedPredicate.DoublePredicate(0, Operator.GT, 10.0),
+                new ResolvedPredicate.DoublePredicate(0, Operator.GT_EQ, 10.0),
+                new ResolvedPredicate.DoublePredicate(0, Operator.EQ, Double.NaN))) {
             assertThat(MinMaxStats.of(statistics, leaf, BoundsReadability.ALL).canDrop(leaf))
                     .as("%s", leaf)
                     .isTrue();
@@ -365,32 +354,28 @@ class NaNStatisticsFilterTest {
     /// and once where the unit is proven `NaN`-free.
     private static void addDoubleRows(List<Arguments> rows, Operator op, double value, double min,
             double max, boolean dropsWhereNaNMayBePresent, boolean dropsWhereNaNFree) {
-        for (boolean ieee754TotalOrder : new boolean[]{false, true}) {
-            rows.add(Arguments.of(op, value, min, max, ieee754TotalOrder, false, dropsWhereNaNMayBePresent));
-            rows.add(Arguments.of(op, value, min, max, ieee754TotalOrder, true, dropsWhereNaNFree));
-        }
+        rows.add(Arguments.of(op, value, min, max, false, dropsWhereNaNMayBePresent));
+        rows.add(Arguments.of(op, value, min, max, true, dropsWhereNaNFree));
     }
 
     /// See [#addDoubleRows].
     private static void addFloatRows(List<Arguments> rows, Operator op, float value, float min,
             float max, boolean dropsWhereNaNMayBePresent, boolean dropsWhereNaNFree) {
-        for (boolean ieee754TotalOrder : new boolean[]{false, true}) {
-            rows.add(Arguments.of(op, value, min, max, ieee754TotalOrder, false, dropsWhereNaNMayBePresent));
-            rows.add(Arguments.of(op, value, min, max, ieee754TotalOrder, true, dropsWhereNaNFree));
-        }
+        rows.add(Arguments.of(op, value, min, max, false, dropsWhereNaNMayBePresent));
+        rows.add(Arguments.of(op, value, min, max, true, dropsWhereNaNFree));
     }
 
     /// Whether the leaf drops a unit with these bounds, sourced the way the evaluators source
     /// them so that the usability check runs.
     private static boolean dropsDouble(Operator op, double value, double min, double max) {
-        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, op, value, false);
+        ResolvedPredicate leaf = new ResolvedPredicate.DoublePredicate(0, op, value);
         return MinMaxStats.of(new Statistics(doubleBytes(min), doubleBytes(max), 0L, null, false), leaf, BoundsReadability.ALL)
                 .canDrop(leaf);
     }
 
     /// See [#dropsDouble].
     private static boolean dropsFloat(Operator op, float value, float min, float max) {
-        ResolvedPredicate leaf = new ResolvedPredicate.FloatPredicate(0, op, value, false);
+        ResolvedPredicate leaf = new ResolvedPredicate.FloatPredicate(0, op, value);
         return MinMaxStats.of(new Statistics(floatBytes(min), floatBytes(max), 0L, null, false), leaf, BoundsReadability.ALL)
                 .canDrop(leaf);
     }

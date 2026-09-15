@@ -74,7 +74,7 @@ jdk.incubator.vector`, shade uberjar).
 The corpus generators write with parquet-java, so the module gains compile-scope
 `org.apache.parquet:parquet-avro` and `parquet-hadoop` plus the `hadoop-common` and
 `hadoop-mapreduce-client-core` runtime dependencies — the same coordinates the
-`end-to-end` module already declares (parquet 1.17.1, hadoop 3.4.3, versions managed
+`end-to-end` module already declares (parquet 1.18.1, hadoop 3.4.3, versions managed
 in `test-bom`). Only the generators touch these; the benchmark bodies read through
 Hardwood alone.
 

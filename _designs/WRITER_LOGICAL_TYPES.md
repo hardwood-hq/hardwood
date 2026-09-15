@@ -320,9 +320,10 @@ writer has emitted bounds since stage 11 without it.
 - It is the order every collector implements, including the float and double collectors, whose
   NaN exclusion and signed-zero normalization are the type-defined convention.
 - The spec's recommendation to prefer `IEEE754TotalOrder` for floating-point columns does not
-  apply to bounds computed this way. Under the total order NaN is an ordinary value that sorts
-  beyond the infinities, so excluding it from the bounds — which the type-defined order requires
-  — would let a total-order reader drop a page that contains one.
+  apply to bounds computed this way. The total order requires the exact smallest and largest
+  non-NaN values, where the collectors record any zero minimum as `-0.0` and any zero maximum as
+  `+0.0`, and it requires the smallest and largest `NaN` as the bounds of an all-`NaN` chunk, where
+  the collectors record none.
 
 ## Testing
 

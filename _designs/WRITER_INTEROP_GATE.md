@@ -35,7 +35,7 @@ commit of the #901 fix, and passes after it.
 
 ## The strict reader
 
-**parquet-java** (`org.apache.parquet`, 1.17.1) is the reader. It is the canonical
+**parquet-java** (`org.apache.parquet`, 1.18.1) is the reader. It is the canonical
 implementation, so what it accepts is the operative definition of a conformant file, and
 it is already on `parquet-testing-runner`'s test classpath — the module carries
 `parquet-avro`, `parquet-hadoop` and `hadoop-common` at test scope and runs on every PR,

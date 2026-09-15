@@ -98,7 +98,7 @@ class FilterDecisionTest {
 
     @Test
     void doubleInDecisions() {
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, false);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 });
         assertThat(doubleStats(42.0, 43.0).decideLeaf(in, true))
                 .isEqualTo(MIGHT_MATCH);
         assertThat(doubleStats(6.0, 41.0).decideLeaf(in, true))
@@ -106,7 +106,7 @@ class FilterDecisionTest {
 
         // A stored NaN sits outside the bounds' ordering, so one NaN probe stops the whole list
         // from pruning: [10.0, 20.0] holds neither 5.0 nor NaN, and the unit is still kept.
-        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN }, false);
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN });
         assertThat(doubleStats(10.0, 20.0).decideLeaf(inWithNaN, true))
                 .isEqualTo(MIGHT_MATCH);
     }
@@ -114,10 +114,10 @@ class FilterDecisionTest {
     @Test
     void doubleInSignedZeroBoundsWidenUnderTheTypeDefinedOrder() {
         // The type-defined order widens the pair to [-0.0, +0.0], which contains both zeroes.
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0, -0.0 }, +0.0, -0.0, false))
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0, -0.0 }, +0.0, -0.0))
                 .isFalse();
         // Probes genuinely outside the widened pair still drop.
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, +0.0, -0.0, false))
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, +0.0, -0.0))
                 .isTrue();
     }
 
@@ -127,42 +127,36 @@ class FilterDecisionTest {
         double max = 20.0;
 
         // Exact boundary hits must NOT drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ min }, min, max, false)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ max }, min, max, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ min }, min, max)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ max }, min, max)).isFalse();
 
         // Points just outside boundary must drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextDown(min) }, min, max, false)).isTrue();
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextUp(max) }, min, max, false)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextDown(min) }, min, max)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextUp(max) }, min, max)).isTrue();
 
         // Straddling outside: probes on both sides of [min, max] but none inside -> must drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 25.0 }, min, max, false)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 25.0 }, min, max)).isTrue();
 
         // One probe inside and one probe outside -> must NOT drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 15.0 }, min, max, false)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 15.0, 25.0 }, min, max, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 15.0 }, min, max)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 15.0, 25.0 }, min, max)).isFalse();
 
-        // Under IEEE 754 total order, -0.0 < +0.0
-        // Bounds [-0.0, -0.0]: +0.0 is strictly above max -> drops
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, -0.0, -0.0, true)).isTrue();
-        // Bounds [+0.0, +0.0]: -0.0 is strictly below min -> drops
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ -0.0 }, +0.0, +0.0, true)).isTrue();
-
-        // Under type-defined order (!ieee754TotalOrder):
+        // A zero bound is widened to cover both zeroes:
         // Bounds [-0.0, -0.0] widens max to +0.0 -> contains +0.0 -> cannot drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, -0.0, -0.0, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, -0.0, -0.0)).isFalse();
         // Bounds [+0.0, +0.0] widens min to -0.0 -> contains -0.0 -> cannot drop
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ -0.0 }, +0.0, +0.0, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ -0.0 }, +0.0, +0.0)).isFalse();
     }
 
     @Test
     void floatInDecisions() {
-        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, 42.0f, 99.0f }, false);
+        ResolvedPredicate in = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, 42.0f, 99.0f });
         assertThat(floatStats(42.0f, 43.0f).decideLeaf(in, true))
                 .isEqualTo(MIGHT_MATCH);
         assertThat(floatStats(6.0f, 41.0f).decideLeaf(in, true))
                 .isEqualTo(CANNOT_MATCH);
 
-        ResolvedPredicate inWithNaN = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, Float.NaN }, false);
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 5.0f, Float.NaN });
         assertThat(floatStats(10.0f, 20.0f).decideLeaf(inWithNaN, true))
                 .isEqualTo(MIGHT_MATCH);
     }
@@ -170,8 +164,8 @@ class FilterDecisionTest {
     @Test
     void floatInSignedZeroDispatch() {
         // The same widening of zero bounds as the DOUBLE list, at float width.
-        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ -0.0f }, +0.0f, +0.0f, false)).isFalse();
-        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ -0.0f }, +0.0f, +0.0f, true)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ -0.0f }, +0.0f, +0.0f)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropFloatIn(new float[]{ +0.0f }, -0.0f, -0.0f)).isFalse();
     }
 
     // ==================== Null-count gating ====================
@@ -212,7 +206,7 @@ class FilterDecisionTest {
                 .isEqualTo(MIGHT_MATCH);
 
         ResolvedPredicate inDouble =
-                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 }, false);
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 });
         assertThat(doubleStats(15.0, 15.0).decideLeaf(inDouble, true))
                 .isEqualTo(MIGHT_MATCH);
 
@@ -389,15 +383,15 @@ class FilterDecisionTest {
     }
 
     private static MinMaxStats floatStats(float min, float max) {
-        return MinMaxStats.FloatStats.of(min, max, false, false);
+        return MinMaxStats.FloatStats.of(min, max, false);
     }
 
     private static MinMaxStats doubleStats(double min, double max) {
-        return MinMaxStats.DoubleStats.of(min, max, false, false);
+        return MinMaxStats.DoubleStats.of(min, max, false);
     }
 
     private static MinMaxStats nanFreeDoubleStats(double min, double max) {
-        return MinMaxStats.DoubleStats.of(min, max, false, true);
+        return MinMaxStats.DoubleStats.of(min, max, true);
     }
 
     private static MinMaxStats noBounds() {

@@ -1,88 +1,80 @@
-# Plan: Surface `ColumnOrder` and apply it to float/double pruning (#595)
+# Plan: Surface `ColumnOrder` and read float/double bounds under it (#595)
 
 **Status: Implemented**
 
 ## Context
 
 The Parquet footer carries an optional `FileMetaData.column_orders` field (Thrift field 7): a
-`list<ColumnOrder>` with one entry per leaf column, in schema order. `ColumnOrder` is a union with
-two members:
+`list<ColumnOrder>` with one entry per leaf column, in schema order. `ColumnOrder` is a union whose
+members name the order a column's `min`/`max` statistics are written in:
 
 | Union field | Member | Meaning |
 |---|---|---|
 | 1 | `TypeDefinedOrder` (`TYPE_ORDER`) | Order defined by the physical/logical type. For `FLOAT`/`DOUBLE` this is *signed comparison of the represented value* with documented NaN / ±0 compatibility rules. |
-| 2 | `IEEE754TotalOrder` (`IEEE_754_TOTAL_ORDER`) | The IEEE 754 total order. |
+| 2 | `IEEE754TotalOrder` (`IEEE_754_TOTAL_ORDER`) | The IEEE 754 total order, for `FLOAT`, `DOUBLE` and `FLOAT16` only. |
 
-Hardwood prunes `FLOAT`/`DOUBLE` row groups and pages with `Float.compare` / `Double.compare`, which
-implement the IEEE 754 *total order*.
+PyArrow writes `TYPE_ORDER` for every column. parquet-java writes `IEEE_754_TOTAL_ORDER` for
+`FLOAT`, `DOUBLE` and `FLOAT16` columns since 1.18.0, and `TYPE_ORDER` for the others. A dataset
+built by both writers mixes the two orders across its files.
 
-### What is and isn't a problem
+The column order describes the statistics only. Predicates compare values by `Float.compare` /
+`Double.compare` whatever order a file declares (see `PREDICATE_LITERALS.md`), so the order decides
+how a unit's bounds are read, never which rows match.
 
-For `FLOAT`/`DOUBLE`, `TYPE_ORDER` and total order diverge only at **NaN** and **±0.0**. Everywhere
-else they are identical, so the choice of order is irrelevant for pruning every finite, non-zero value.
+### Where the orders differ
 
-- **NaN** bounds are already neutralised: `MinMaxStats` discards a pair holding NaN where it sources
-  the bounds, so no comparator is ever handed one and no such unit is pruned.
-- **±0.0**: a spec-compliant `TYPE_ORDER` writer normalises zero bounds to `-0.0` for min and `+0.0`
-  for max. PyArrow 24.0.0 does exactly this: a float column whose minimum is zero is written with min
-  `-0.0` (raw `0x00000080`) and a column whose maximum is zero with max `+0.0` (raw `0x00000000`).
-  With these normalised bounds, total-order pruning is already correct. For writers that do not
-  normalise, the spec instead gives readers a compatibility rule — a `+0` min may also cover `-0`, a
-  `-0` max may also cover `+0` — which the [order-aware widening](#order-aware-0-pruning) below applies.
+`Float.compare` orders every number as the IEEE 754 total order does, `-0.0` below `+0.0` included,
+and treats every `NaN` as one value above `+Infinity`. `TYPE_ORDER` and the total order therefore
+differ for pruning only at **NaN** and **±0.0**:
 
-PyArrow and parquet-mr emit `TYPE_ORDER` for every column, floats included. For these the widening is
-a no-op (their bounds are already normalised); it exists to honour the spec's reader rule for the
-type-defined order, keeping non-normalising and older files correct.
+- **NaN**: under both orders a writer keeps `NaN` out of the bounds and records `nan_count`; only a
+  unit whose every non-null value is `NaN` carries `NaN` bounds under the total order. `MinMaxStats`
+  discards a pair holding `NaN` where it sources the bounds, so no comparator is handed one, and
+  `nan_count` decides whether the bounds rule out a `NaN` row.
+- **±0.0**: under `TYPE_ORDER` the spec leaves the zeroes interchangeable. A writer should record a
+  zero minimum as `-0.0` and a zero maximum as `+0.0` (PyArrow 24.0.0 does), and a reader should
+  assume a `+0` minimum may hide `-0` and a `-0` maximum may hide `+0`. Under the total order the
+  zero bounds are exact.
 
 ## Design
 
 ### Surface the field
 
-- New public enum `dev.hardwood.metadata.ColumnOrder` with `TYPE_DEFINED_ORDER`,
+- Public enum `dev.hardwood.metadata.ColumnOrder` with `TYPE_DEFINED_ORDER`,
   `IEEE754_TOTAL_ORDER`, and `UNKNOWN`.
-- `FileMetaData` gains a `List<ColumnOrder> columnOrders` component. When `column_orders` is absent
+- `FileMetaData` has a `List<ColumnOrder> columnOrders` component. When `column_orders` is absent
   the list is empty (the implicit, type-defined ordering applies to all columns).
 - `ColumnOrderReader` decodes one `ColumnOrder` union from the Thrift Compact stream;
   `FileMetaDataReader` decodes field 7 into the list.
 
-A union member Hardwood does not recognise (a future ordering with a field id other than 1 or 2)
-decodes to `ColumnOrder.UNKNOWN`. This follows the reader's existing convention for non-fatal unknown
-union/enum members — `LogicalType` skips and yields `null`, `Encoding` maps to `Encoding.UNKNOWN` —
-rather than failing the file open. The decoded value is surfaced on `FileMetaData.columnOrders` so a
-caller can inspect it; pruning is unaffected because a column with an unrecognised order simply falls
-back to the same total-order comparison used for the recognised orders.
+A union member Hardwood does not recognise (any field id other than 1 or 2) decodes to
+`ColumnOrder.UNKNOWN`, following the reader's convention for non-fatal unknown union/enum members:
+`LogicalType` skips and yields `null`, `Encoding` maps to `Encoding.UNKNOWN`. `BoundsReadability`
+reads each file's own `column_orders` and marks the bounds of a column under an unrecognised order
+unreadable, so they prune nothing.
 
-### Order-aware ±0 pruning
+### ±0 widening
 
-The decoded order is threaded to the pruning site so each float/double leaf prunes by its own
-ordering. `FilterPredicateResolver` looks up the leaf's `ColumnOrder` and records a single
-`ieee754TotalOrder` boolean on the resolved `FloatPredicate` / `Float16Predicate` / `DoublePredicate`
-(`true` only for `IEEE754_TOTAL_ORDER`). `StatisticsFilterSupport.canDropFloat` / `canDropDouble` then:
+`StatisticsFilterSupport.canDropFloat` / `canDropDouble` and the `IN`-list variants widen a zero
+bound to its total-order extreme (`min` ⇒ `-0.0`, `max` ⇒ `+0.0`) before the `Float.compare` checks,
+and `MinMaxStats` applies the same widening before it tests a pair for inversion, so `(+0, -0)` is
+not read as inverted.
 
-- **Type-defined / absent / unrecognized order** (`ieee754TotalOrder == false`) — the spec leaves
-  `±0` ambiguous (a `+0` min may hide `-0`, a `-0` max may hide `+0`), so a zero bound is widened to
-  its total-order extreme (`min` ⇒ `-0.0`, `max` ⇒ `+0.0`) before the `Float.compare` checks. Widening
-  only enlarges the candidate range, so it can never cause an incorrect drop.
-- **IEEE 754 total order** (`ieee754TotalOrder == true`) — `-0 < +0` is unambiguous and the stored
-  bounds are exact, so no widening is applied and `±0` prunes precisely.
-
-This matches the spec, which states the `±0` compatibility rule only for the type-defined order. Real
-writers (PyArrow, parquet-mr) emit the type-defined order, so they take the widening path.
-
-The order is resolved once per reader from the first file's `column_orders` and applies to the whole
-read. `column_orders` is not part of schema-compatibility validation, so in principle a sibling file
-of a multi-file read could declare a different order; in practice a writer emits a uniform order
-across a dataset. The only divergence that could mis-prune — a reference file declaring
-`IEEE754_TOTAL_ORDER` (skip widening) while a sibling is type-defined (needs widening) — requires the
-IEEE 754 total order, which no writer currently emits.
+The widening applies under every declared order. A predicate is resolved once per read, against the
+first file's schema, and applies to the row groups of every file; the files of one read may declare
+different orders, so a flag taken from one file would skip the widening on a sibling that needs it.
+Widening only enlarges the candidate range, so on a total-order column it costs a unit whose zero
+bound excludes the opposite zero, which the record-level filter then drops, and never a matching row.
 
 ## Testing
 
 - `ColumnOrderReaderTest` decodes the `TYPE_ORDER`, `IEEE_754_TOTAL_ORDER`, unrecognised, and empty
   union forms from raw Thrift bytes.
-- `ColumnOrdersTest` asserts `column_orders` is surfaced as `TYPE_DEFINED_ORDER` for a real PyArrow
-  fixture.
-- `FilterPredicateResolverTest` asserts the `ieee754TotalOrder` flag is set from a leaf's
-  `ColumnOrder` (type-defined / IEEE754 / absent).
-- `NaNStatisticsFilterTest` asserts a type-defined `±0` bound is not dropped by a `== ∓0` predicate,
-  an IEEE754 `±0` bound prunes precisely, and non-zero predicates still prune under both orders.
+- `ColumnOrdersTest` asserts `column_orders` is surfaced as `TYPE_DEFINED_ORDER` for a PyArrow
+  fixture; `TotalOrderFloatReadTest` (`parquet-testing-runner`) asserts `IEEE754_TOTAL_ORDER` and
+  `nan_count` are surfaced for a file written by parquet-java, and that zero and `NaN` predicates
+  return the rows they match.
+- `NaNStatisticsFilterTest` asserts a `±0` bound is not dropped by a `== ∓0` predicate and that
+  non-zero predicates still prune against zero bounds.
+- `MixedColumnOrderPruningTest` reads a total-order file followed by a type-defined file whose
+  `+0` minimum hides a `-0`, and asserts `eq(f, -0.0f)` returns that row.

@@ -182,28 +182,22 @@ sealed interface MinMaxStats {
             case ResolvedPredicate.BooleanPredicate ignored -> BooleanStats.of(
                     StatisticsDecoder.decodeBoolean(min), StatisticsDecoder.decodeBoolean(max));
             case ResolvedPredicate.FloatPredicate p -> FloatStats.of(
-                    StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max), nanFree);
             // A binary16 bound is a float once decoded, so it needs no variant of its own.
             case ResolvedPredicate.Float16Predicate p -> FloatStats.of(
-                    StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max), nanFree);
             case ResolvedPredicate.DoublePredicate p -> DoubleStats.of(
-                    StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max), nanFree);
             case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.comparison());
             case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.comparison());
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
-                    StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max), nanFree);
             case ResolvedPredicate.FloatInPredicate p -> FloatStats.of(
-                    StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max), nanFree);
             case ResolvedPredicate.DoubleInPredicate p -> DoubleStats.of(
-                    StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
-                    p.ieee754TotalOrder(), nanFree);
+                    StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max), nanFree);
             // These leaves read no bounds, so there is nothing to decode and nothing to
             // validate. What the file wrote is not discarded; it is simply not their business.
             case ResolvedPredicate.IsNullPredicate ignored -> new NoBounds(null);
@@ -227,17 +221,15 @@ sealed interface MinMaxStats {
     /// Why a floating-point pair cannot be compared against, or `null` when it can — over
     /// `double` for both widths, since a `float` widens exactly and both the `NaN` test and
     /// the ordering are the same question at either.
-    private static String floatingPointReason(double min, double max, boolean ieee754TotalOrder) {
+    private static String floatingPointReason(double min, double max) {
         if (Double.isNaN(min) || Double.isNaN(max)) {
             return NOT_A_NUMBER;
         }
-        // The comparators widen a ±0 bound under the type-defined ordering, where the spec
-        // leaves the two zeroes interchangeable; the same widening applies here so that
-        // legitimate bounds of (+0, -0) are not read as inverted.
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0) ? -0.0 : min;
-            max = (max == 0.0) ? 0.0 : max;
-        }
+        // The comparators widen a ±0 bound, as the spec directs under the type-defined ordering;
+        // the same widening applies here so that legitimate bounds of (+0, -0) are not read as
+        // inverted.
+        min = (min == 0.0) ? -0.0 : min;
+        max = (max == 0.0) ? 0.0 : max;
         return Double.compare(min, max) > 0 ? INVERTED : null;
     }
 
@@ -437,31 +429,30 @@ sealed interface MinMaxStats {
 
     /// `FLOAT` bounds, and the `FLOAT16` ones that widen exactly onto them.
     ///
-    /// `ieee754TotalOrder` is carried rather than applied here because it changes what the
-    /// comparators compare against, not whether the bounds hold together; see
-    /// [StatisticsFilterSupport#canDropFloat]. So is `nanFree`, whether the unit records a
-    /// `nan_count` of zero, which decides whether the bounds can rule out a `NaN` row.
-    record FloatStats(float min, float max, boolean ieee754TotalOrder, boolean nanFree)
+    /// `nanFree`, whether the unit records a `nan_count` of zero, is carried rather than applied
+    /// here because it decides whether the bounds can rule out a `NaN` row, not whether they hold
+    /// together; see [StatisticsFilterSupport#canDropFloat].
+    record FloatStats(float min, float max, boolean nanFree)
             implements MinMaxStats {
 
-        static MinMaxStats of(float min, float max, boolean ieee754TotalOrder, boolean nanFree) {
-            String reason = floatingPointReason(min, max, ieee754TotalOrder);
+        static MinMaxStats of(float min, float max, boolean nanFree) {
+            String reason = floatingPointReason(min, max);
             return reason != null
                     ? new NoBounds(reason)
-                    : new FloatStats(min, max, ieee754TotalOrder, nanFree);
+                    : new FloatStats(min, max, nanFree);
         }
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
             return switch (leaf) {
                 case ResolvedPredicate.FloatPredicate p -> StatisticsFilterSupport.canDropFloat(
-                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
+                        p.op(), p.value(), min, max, nanFree);
                 case ResolvedPredicate.Float16Predicate p -> StatisticsFilterSupport.canDropFloat(
-                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
+                        p.op(), p.value(), min, max, nanFree);
                 case ResolvedPredicate.FloatInPredicate p -> StatisticsFilterSupport.canDropFloatIn(
-                        p.values(), min, max, ieee754TotalOrder);
+                        p.values(), min, max);
                 case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.canDropFloatIn(
-                        p.values(), min, max, ieee754TotalOrder);
+                        p.values(), min, max);
                 default -> throw wrongWidth("FLOAT", leaf);
             };
         }
@@ -476,25 +467,24 @@ sealed interface MinMaxStats {
         }
     }
 
-    /// `DOUBLE` bounds. See [FloatStats] for what `ieee754TotalOrder` and `nanFree` are doing
-    /// here.
-    record DoubleStats(double min, double max, boolean ieee754TotalOrder, boolean nanFree)
+    /// `DOUBLE` bounds. See [FloatStats] for what `nanFree` is doing here.
+    record DoubleStats(double min, double max, boolean nanFree)
             implements MinMaxStats {
 
-        static MinMaxStats of(double min, double max, boolean ieee754TotalOrder, boolean nanFree) {
-            String reason = floatingPointReason(min, max, ieee754TotalOrder);
+        static MinMaxStats of(double min, double max, boolean nanFree) {
+            String reason = floatingPointReason(min, max);
             return reason != null
                     ? new NoBounds(reason)
-                    : new DoubleStats(min, max, ieee754TotalOrder, nanFree);
+                    : new DoubleStats(min, max, nanFree);
         }
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
             return switch (leaf) {
                 case ResolvedPredicate.DoublePredicate p -> StatisticsFilterSupport.canDropDouble(
-                        p.op(), p.value(), min, max, ieee754TotalOrder, nanFree);
+                        p.op(), p.value(), min, max, nanFree);
                 case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
-                        p.values(), min, max, ieee754TotalOrder);
+                        p.values(), min, max);
                 default -> throw wrongWidth("DOUBLE", leaf);
             };
         }

@@ -30,7 +30,6 @@ import dev.hardwood.internal.reader.TimestampAccessorKind;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.schema.TextColumns;
-import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.FilterPredicate;
@@ -110,26 +109,12 @@ public class FilterPredicateResolver {
         ResolvedPredicate of(FilterPredicate.Operator op, BigInteger value);
     }
 
-    /// Resolves a [FilterPredicate] tree without column-order information. Float/double leaves are
-    /// treated as type-defined, so statistics pruning widens `±0` bounds (the conservative default).
+    /// Resolves a [FilterPredicate] tree into a [ResolvedPredicate] tree.
     ///
     /// @param predicate the user-facing predicate tree
     /// @param schema the file schema for column resolution and type validation
     /// @return a fully resolved predicate tree ready for evaluation
     public static ResolvedPredicate resolve(FilterPredicate predicate, FileSchema schema) {
-        return resolve(predicate, schema, List.of());
-    }
-
-    /// Resolves a [FilterPredicate] tree into a [ResolvedPredicate] tree.
-    ///
-    /// @param predicate the user-facing predicate tree
-    /// @param schema the file schema for column resolution and type validation
-    /// @param columnOrders the file's decoded `column_orders` (empty if absent), used to mark
-    ///        float/double leaves that use the IEEE 754 total order so statistics pruning can skip
-    ///        the `±0` widening for them
-    /// @return a fully resolved predicate tree ready for evaluation
-    public static ResolvedPredicate resolve(FilterPredicate predicate, FileSchema schema,
-            List<ColumnOrder> columnOrders) {
         return switch (predicate) {
             case DateColumnPredicate p -> {
                 ColumnSchema cs = dateColumn(p.column(), leafColumn(p.column(), schema, p.op()));
@@ -260,30 +245,25 @@ public class FilterPredicateResolver {
                     for (float value : p.values()) {
                         rejectUnholdableHalf(p.column(), Operator.EQ, value);
                     }
-                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values(),
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                    yield new ResolvedPredicate.Float16InPredicate(cs.columnIndex(), p.values());
                 }
                 validateType(p.column(), PhysicalType.FLOAT, cs, "a float");
-                yield new ResolvedPredicate.FloatInPredicate(cs.columnIndex(), p.values(),
-                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                yield new ResolvedPredicate.FloatInPredicate(cs.columnIndex(), p.values());
             }
             case FloatColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
                     rejectUnholdableHalf(p.column(), p.op(), p.value());
-                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value(),
-                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value());
                 }
                 validateType(p.column(), PhysicalType.FLOAT, cs, "a float");
-                yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value(),
-                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case DoubleColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
                 validateType(p.column(), PhysicalType.DOUBLE, cs, "a double");
-                yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value(),
-                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value());
             }
             case BooleanColumnPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema, p.op());
@@ -301,7 +281,7 @@ public class FilterPredicateResolver {
                 if (!isEquality(p.op())) {
                     throw notByteOrdered(p.column(), cs, orderingLiteral);
                 }
-                ResolvedPredicate equal = storedBytesEqual(p.column(), cs, p.value(), columnOrders);
+                ResolvedPredicate equal = storedBytesEqual(p.column(), cs, p.value());
                 yield p.op() == Operator.EQ ? equal : ResolvedPredicate.negate(equal);
             }
             case FilterPredicate.StringColumnPredicate p -> {
@@ -376,13 +356,12 @@ public class FilterPredicateResolver {
                     yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values(),
                             Comparison.BYTE_STRING);
                 }
-                yield storedBytesMember(p.column(), cs, p.values(), columnOrders);
+                yield storedBytesMember(p.column(), cs, p.values());
             }
             case DoubleInPredicate p -> {
                 ColumnSchema cs = leafColumn(p.column(), schema);
                 validateType(p.column(), PhysicalType.DOUBLE, cs, "a double");
-                yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(),
-                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values());
             }
             case FilterPredicate.IsNullPredicate p -> {
                 NullTarget target = resolveNullTarget(p.column(), schema);
@@ -395,13 +374,13 @@ public class FilterPredicateResolver {
                         target.leafDefinitionLevel());
             }
             case And a -> new ResolvedPredicate.And(a.filters().stream()
-                    .map(f -> resolve(f, schema, columnOrders))
+                    .map(f -> resolve(f, schema))
                     .toList());
             case Or o -> new ResolvedPredicate.Or(o.filters().stream()
-                    .map(f -> resolve(f, schema, columnOrders))
+                    .map(f -> resolve(f, schema))
                     .toList());
             case Not n -> {
-                ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema, columnOrders);
+                ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema);
                 rejectNegatedIntersects(n.delegate());
                 yield ResolvedPredicate.negate(resolvedDelegate);
             }
@@ -416,14 +395,6 @@ public class FilterPredicateResolver {
                         p.xmin(), p.ymin(), p.xmax(), p.ymax());
             }
         };
-    }
-
-    /// `true` when the leaf at `columnIndex` declares the IEEE 754 total order, whose signed-zero
-    /// statistics are exact. Any other case — type-defined order, an absent (empty) `column_orders`,
-    /// an out-of-range index, or an unrecognized order — yields `false`, so pruning widens `±0`.
-    private static boolean isIeee754TotalOrder(int columnIndex, List<ColumnOrder> columnOrders) {
-        return columnIndex < columnOrders.size()
-                && columnOrders.get(columnIndex) == ColumnOrder.IEEE754_TOTAL_ORDER;
     }
 
     // ==================== Column resolution ====================
@@ -702,8 +673,7 @@ public class FilterPredicateResolver {
     /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none. A `FIXED_LEN_BYTE_ARRAY(12)`
     /// `TIMESTAMP` and a fixed-width `DECIMAL` hold each value under one encoding, so there the value
     /// alone decides.
-    private static ResolvedPredicate storedBytesEqual(String columnName, ColumnSchema columnSchema, byte[] value,
-            List<ColumnOrder> columnOrders) {
+    private static ResolvedPredicate storedBytesEqual(String columnName, ColumnSchema columnSchema, byte[] value) {
         int columnIndex = columnSchema.columnIndex();
         ResolvedPredicate bytes = new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ, value,
                 Comparison.STORED_BYTES);
@@ -717,7 +687,7 @@ public class FilterPredicateResolver {
         }
         if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
             return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16Predicate(columnIndex, Operator.EQ,
-                    float16ToFloat(columnName, value), isIeee754TotalOrder(columnIndex, columnOrders)), bytes));
+                    float16ToFloat(columnName, value)), bytes));
         }
         if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             rejectUnholdableWidth(columnName, columnSchema, Operator.EQ, value);
@@ -728,8 +698,7 @@ public class FilterPredicateResolver {
     }
 
     /// Whether a row stores exactly one of `values`, as [#storedBytesEqual] decides it for each.
-    private static ResolvedPredicate storedBytesMember(String columnName, ColumnSchema columnSchema, byte[][] values,
-            List<ColumnOrder> columnOrders) {
+    private static ResolvedPredicate storedBytesMember(String columnName, ColumnSchema columnSchema, byte[][] values) {
         int columnIndex = columnSchema.columnIndex();
         ResolvedPredicate bytes = new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
                 Comparison.STORED_BYTES);
@@ -747,7 +716,7 @@ public class FilterPredicateResolver {
         }
         if (columnSchema.logicalType() instanceof LogicalType.Float16Type) {
             return new ResolvedPredicate.And(List.of(new ResolvedPredicate.Float16InPredicate(columnIndex,
-                    float16Probes(columnName, values), isIeee754TotalOrder(columnIndex, columnOrders)), bytes));
+                    float16Probes(columnName, values)), bytes));
         }
         if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             for (byte[] value : values) {

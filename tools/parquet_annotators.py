@@ -40,8 +40,10 @@ File-level metadata helpers:
 - `clear_key_value_metadata_value` — drop the optional `value` field from one
   named entry in the file-level `key_value_metadata` list, leaving the key.
 
-Only the subset of parquet.thrift that PyArrow emits, plus the LogicalType
-union, is modelled in the embedded IDL.
+Only the subset of parquet.thrift that PyArrow and parquet-java emit, plus the
+LogicalType union, is modelled in the embedded IDL. Reading a footer fails when
+re-serialising it does not reproduce its bytes, since a field the IDL does not
+model would otherwise be dropped from the rewritten file.
 """
 
 import io
@@ -135,6 +137,7 @@ struct Statistics {
   6: optional binary min_value;
   7: optional bool is_max_value_exact;
   8: optional bool is_min_value_exact;
+  9: optional i64 nan_count;
 }
 struct SizeStatistics {
   1: optional i64 unencoded_byte_array_data_bytes;
@@ -207,7 +210,8 @@ struct RowGroup {
   7: optional i16 ordinal;
 }
 struct TypeDefinedOrder {}
-union ColumnOrder { 1: TypeDefinedOrder TYPE_ORDER }
+struct IEEE754TotalOrder {}
+union ColumnOrder { 1: TypeDefinedOrder TYPE_ORDER; 2: IEEE754TotalOrder IEEE_754_TOTAL_ORDER }
 struct EncryptionAlgorithm {}
 struct FileMetaData {
   1: required i32 version;
@@ -244,14 +248,26 @@ def _read_parquet_footer(path: str):
     file_metadata = _parquet.FileMetaData()
     file_metadata.read(proto)
 
+    reserialized = _serialize_footer(file_metadata)
+    if reserialized != footer_bytes:
+        raise ValueError(
+            f"{path} has a footer of {len(footer_bytes)} bytes that re-serializes to "
+            f"{len(reserialized)} bytes; it holds a field the embedded parquet.thrift IDL "
+            f"does not model, which rewriting the file would drop")
+
     return raw[:footer_start], file_metadata
+
+
+def _serialize_footer(file_metadata) -> bytes:
+    """Serialize `file_metadata` with the Thrift compact protocol."""
+    out = TMemoryBuffer()
+    file_metadata.write(TCompactProtocolFactory().get_protocol(out))
+    return out.getvalue()
 
 
 def _write_parquet_footer(path: str, data_before_footer: bytes, file_metadata) -> None:
     """Re-serialize `file_metadata` and write the Parquet file back to `path`."""
-    out = TMemoryBuffer()
-    file_metadata.write(TCompactProtocolFactory().get_protocol(out))
-    new_footer = out.getvalue()
+    new_footer = _serialize_footer(file_metadata)
 
     with open(path, 'wb') as f:
         f.write(data_before_footer)

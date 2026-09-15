@@ -41,36 +41,15 @@ public sealed interface ResolvedPredicate {
     record UnsignedLongPredicate(int columnIndex, FilterPredicate.Operator op, long value)
             implements ResolvedPredicate {}
 
-    /// `ieee754TotalOrder` carries the column's decoded [dev.hardwood.metadata.ColumnOrder]: `true`
-    /// only when it is the IEEE 754 total order, which orders `-0` below `+0` unambiguously, so
-    /// statistics min/max are exact. Under any other ordering (type-defined / absent / unrecognized)
-    /// the Parquet spec leaves `±0` ambiguous — a `+0` min may hide `-0` — so statistics pruning
-    /// widens `±0` bounds. The 3-arg convenience constructor defaults it to `false` (the conservative,
-    /// widening case) for callers that do not consult statistics (record/batch matching).
-    record FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value,
-            boolean ieee754TotalOrder) implements ResolvedPredicate {
-        public FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value) {
-            this(columnIndex, op, value, false);
-        }
-    }
+    record FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value) implements ResolvedPredicate {}
 
     /// User-facing `FloatColumnPredicate` against a column whose physical type is
     /// `FIXED_LEN_BYTE_ARRAY(2)` annotated `Float16Type`. Carried as a separate
     /// resolved type so evaluators can dispatch to the 2-byte decode path for
     /// both record values and stats min/max.
-    record Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value,
-            boolean ieee754TotalOrder) implements ResolvedPredicate {
-        public Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value) {
-            this(columnIndex, op, value, false);
-        }
-    }
+    record Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value) implements ResolvedPredicate {}
 
-    record DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value,
-            boolean ieee754TotalOrder) implements ResolvedPredicate {
-        public DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value) {
-            this(columnIndex, op, value, false);
-        }
-    }
+    record DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value) implements ResolvedPredicate {}
     /// A comparison against a `BOOLEAN` column, which carries `EQ` or `NOT_EQ` and nothing else.
     ///
     /// The column holds two values and nothing between them, so
@@ -247,17 +226,16 @@ public sealed interface ResolvedPredicate {
         }
     }
     /// Membership against a `FLOAT` column, each probe compared by [Float#compare].
-    /// `ieee754TotalOrder` is as on [FloatPredicate].
-    record FloatInPredicate(int columnIndex, float[] values, boolean ieee754TotalOrder)
+    record FloatInPredicate(int columnIndex, float[] values)
             implements ResolvedPredicate {}
 
     /// Membership against a `DOUBLE` column, each probe compared by [Double#compare].
-    record DoubleInPredicate(int columnIndex, double[] values, boolean ieee754TotalOrder)
+    record DoubleInPredicate(int columnIndex, double[] values)
             implements ResolvedPredicate {}
 
     /// Membership against a `FLOAT16` column, each probe a half compared with the decoded stored
-    /// half by [Float#compare]. `ieee754TotalOrder` is as on [Float16Predicate].
-    record Float16InPredicate(int columnIndex, float[] values, boolean ieee754TotalOrder)
+    /// half by [Float#compare].
+    record Float16InPredicate(int columnIndex, float[] values)
             implements ResolvedPredicate {}
 
     /// Every non-null row of the leaf, and no null one: the answer to an ordered predicate whose
@@ -446,12 +424,9 @@ public sealed interface ResolvedPredicate {
                     p.op(), p.value());
             case UnsignedLongPredicate p -> new UnsignedLongPredicate(mapped(p.columnIndex(), columnMapping),
                     p.op(), p.value());
-            case FloatPredicate p -> new FloatPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
-                    p.ieee754TotalOrder());
-            case Float16Predicate p -> new Float16Predicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
-                    p.ieee754TotalOrder());
-            case DoublePredicate p -> new DoublePredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
-                    p.ieee754TotalOrder());
+            case FloatPredicate p -> new FloatPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
+            case Float16Predicate p -> new Float16Predicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
+            case DoublePredicate p -> new DoublePredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
             case BooleanPredicate p -> new BooleanPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
                     p.comparison());
@@ -463,12 +438,9 @@ public sealed interface ResolvedPredicate {
                     p.values());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.comparison());
-            case FloatInPredicate p -> new FloatInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
-                    p.ieee754TotalOrder());
-            case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
-                    p.ieee754TotalOrder());
-            case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
-                    p.ieee754TotalOrder());
+            case FloatInPredicate p -> new FloatInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            case Float16InPredicate p -> new Float16InPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case IsNullPredicate p -> new IsNullPredicate(
                     mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
             case IsNotNullPredicate p -> new IsNotNullPredicate(
@@ -511,12 +483,9 @@ public sealed interface ResolvedPredicate {
                     p.value());
             case UnsignedLongPredicate p -> new UnsignedLongPredicate(p.columnIndex(), p.op().invert(),
                     p.value());
-            case FloatPredicate p -> new FloatPredicate(p.columnIndex(), p.op().invert(), p.value(),
-                    p.ieee754TotalOrder());
-            case Float16Predicate p -> new Float16Predicate(p.columnIndex(), p.op().invert(), p.value(),
-                    p.ieee754TotalOrder());
-            case DoublePredicate p -> new DoublePredicate(p.columnIndex(), p.op().invert(), p.value(),
-                    p.ieee754TotalOrder());
+            case FloatPredicate p -> new FloatPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case Float16Predicate p -> new Float16Predicate(p.columnIndex(), p.op().invert(), p.value());
+            case DoublePredicate p -> new DoublePredicate(p.columnIndex(), p.op().invert(), p.value());
             case BooleanPredicate p -> new BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(),
                     p.comparison());
@@ -571,24 +540,21 @@ public sealed interface ResolvedPredicate {
             case FloatInPredicate p -> {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (float value : p.values()) {
-                    notEqs.add(new FloatPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
-                            p.ieee754TotalOrder()));
+                    notEqs.add(new FloatPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
                 }
                 yield new And(notEqs);
             }
             case Float16InPredicate p -> {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (float value : p.values()) {
-                    notEqs.add(new Float16Predicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
-                            p.ieee754TotalOrder()));
+                    notEqs.add(new Float16Predicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
                 }
                 yield new And(notEqs);
             }
             case DoubleInPredicate p -> {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (double value : p.values()) {
-                    notEqs.add(new DoublePredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
-                            p.ieee754TotalOrder()));
+                    notEqs.add(new DoublePredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
                 }
                 yield new And(notEqs);
             }
