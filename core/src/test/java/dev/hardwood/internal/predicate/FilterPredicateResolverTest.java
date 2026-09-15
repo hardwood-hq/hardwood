@@ -1234,16 +1234,17 @@ class FilterPredicateResolverTest {
 
     // ==================== Ordered operators ====================
 
-    /// parquet-format defines no order over these values, so comparing them answers in an order
-    /// nobody wrote: an `INTERVAL`'s little-endian components sort 256 months below 1 month.
+    /// These values have no order, so comparing them answers in an order nobody wrote: an
+    /// `INTERVAL`'s little-endian components sort 256 months below 1 month. The refusal names the
+    /// literals the column does take, so a literal of another type is not sent on to equality.
     @ParameterizedTest(name = "{0}")
     @MethodSource
     void anOrderedOperatorIsRefusedOnAColumnWithNoOrder(String name, FileSchema schema,
-            FilterPredicate ordered, String annotation) {
+            FilterPredicate ordered, String annotation, String literals) {
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(ordered, schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'c' is annotated " + annotation + ", whose values"
-                        + " parquet-format puts in no order; it takes equality and set membership only");
+                .hasMessage("Column 'c' is annotated " + annotation + ", which defines no order; it takes "
+                        + literals + " literals with eq, notEq and in only");
     }
 
     static Stream<Arguments> anOrderedOperatorIsRefusedOnAColumnWithNoOrder() {
@@ -1256,15 +1257,19 @@ class FilterPredicateResolverTest {
         FileSchema nullColumn = schemaWithLogicalType("c", PhysicalType.INT32, new LogicalType.NullType());
         return Stream.of(
                 Arguments.of("INTERVAL, byte literal", interval,
-                        FilterPredicate.lt("c", new byte[12]), "INTERVAL"),
+                        FilterPredicate.lt("c", new byte[12]), "INTERVAL", "PqInterval and byte[]"),
                 Arguments.of("INTERVAL, PqInterval literal", interval,
                         new FilterPredicate.IntervalColumnPredicate("c", FilterPredicate.Operator.GT,
-                                new PqInterval(1, 0, 0)), "INTERVAL"),
+                                new PqInterval(1, 0, 0)), "INTERVAL", "PqInterval and byte[]"),
                 Arguments.of("GEOMETRY", geometry, FilterPredicate.gtEq("c", new byte[] { 1 }),
-                        "GEOMETRY(OGC:CRS84)"),
+                        "GEOMETRY(OGC:CRS84)", "byte[]"),
+                Arguments.of("GEOMETRY, a literal type it does not take", geometry, FilterPredicate.lt("c", 1),
+                        "GEOMETRY(OGC:CRS84)", "byte[]"),
                 Arguments.of("GEOGRAPHY", geography, FilterPredicate.ltEq("c", new byte[] { 1 }),
-                        "GEOGRAPHY(OGC:CRS84, SPHERICAL)"),
-                Arguments.of("NULL", nullColumn, FilterPredicate.lt("c", 1), "NULL"));
+                        "GEOGRAPHY(OGC:CRS84, SPHERICAL)", "byte[]"),
+                Arguments.of("NULL", nullColumn, FilterPredicate.lt("c", 1), "NULL", "int"),
+                Arguments.of("NULL, a literal type it does not take", nullColumn, FilterPredicate.lt("c", 1L),
+                        "NULL", "int"));
     }
 
     /// Equality asks whether a stored value *is* the literal, which the stored bytes answer

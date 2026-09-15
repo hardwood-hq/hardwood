@@ -73,10 +73,11 @@ import dev.hardwood.row.PqInterval;
 ///
 /// - `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0`
 ///   values; to match either zero, use `in(column, 0.0, -0.0)`.
-/// - `NaN` sorts above every finite value. `eq(NaN)` matches only `NaN`
-///   (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against
-///   any value never match `NaN` rows; `gt` and `gtEq` against a finite value
-///   always include `NaN` rows.
+/// - `NaN` sorts above every other value, and every `NaN` equals every other.
+///   `eq(NaN)` matches only `NaN` (whereas IEEE `NaN == anything` is always
+///   false). `lt` against any value, and `ltEq` against a number, never match
+///   `NaN` rows; `gt` and `gtEq` against a number, and `ltEq` and `gtEq`
+///   against `NaN`, include them.
 ///
 /// `in(column, float...)` and `in(column, double...)` apply the same total order to each
 /// listed value. `in(column, float...)` takes a `FLOAT` or `FLOAT16` column and
@@ -128,11 +129,8 @@ public sealed interface FilterPredicate
     enum Operator {
         EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ;
 
-        /// Returns the logical inverse of this operator, used to push NOT through leaf predicates.
-        /// For example, `NOT(GT(x, 5))` becomes `LT_EQ(x, 5)`.
-        ///
-        /// `NOT_EQ.invert()` returns `EQ`, which enables full pushdown (unlike the conservative
-        /// fallback for arbitrary NOT predicates).
+        /// Returns the logical inverse of this operator, which `not` applies to each leaf below it.
+        /// For example, `not(gt(x, 5))` becomes `ltEq(x, 5)`.
         public Operator invert() {
             return switch (this) {
                 case EQ -> NOT_EQ;
@@ -294,8 +292,9 @@ public sealed interface FilterPredicate
 
     /// Creates an equals predicate for a text column, one of `STRING`, `ENUM`, `JSON` and an
     /// unannotated `BYTE_ARRAY`. The value compares as its UTF-8 bytes, which is what such a
-    /// column stores. Any other column rejects a `String` with `IllegalArgumentException` at
-    /// reader creation.
+    /// column stores. A row storing bytes that are not well-formed UTF-8 matches no `String`,
+    /// including the one `getString` returns for it; filter it with its `byte[]`. Any other
+    /// column rejects a `String` with `IllegalArgumentException` at reader creation.
     static FilterPredicate eq(String column, String value) {
         return new StringColumnPredicate(column, Operator.EQ, value);
     }
@@ -690,12 +689,24 @@ public sealed interface FilterPredicate
         return Objects.requireNonNull(column, "column");
     }
 
-    /// Rejects a null child of `and` / `or`, naming it by its position.
-    private static List<FilterPredicate> requireFilters(List<FilterPredicate> filters) {
+    /// Rejects `and` / `or` over no children, and a null child, naming it by its position.
+    private static List<FilterPredicate> requireFilters(List<FilterPredicate> filters, String combinator) {
+        if (filters.isEmpty()) {
+            throw new IllegalArgumentException(combinator + " predicate requires at least one child");
+        }
         for (int i = 0; i < filters.size(); i++) {
             Objects.requireNonNull(filters.get(i), "filters[" + i + "]");
         }
         return List.copyOf(filters);
+    }
+
+    /// Rejects a `NaN` bound of an `intersects` box. It compares false with every bound a unit
+    /// records, so the box would keep or drop units regardless of what they cover.
+    private static void requireBound(String column, String bound, double value) {
+        if (Double.isNaN(value)) {
+            throw new IllegalArgumentException("Column '" + column
+                    + "' is tested by intersects, whose bounds are numbers; " + bound + " is NaN");
+        }
     }
 
     /// Rejects a set form with no probe to test against.
@@ -751,7 +762,10 @@ public sealed interface FilterPredicate
 
     // ==================== GEOSPATIAL Predicates ====================
 
-    ///  Creates a predicate that matches column chunks whose bounding box intersects the given bounding box.
+    /// Creates a predicate that matches column chunks whose bounding box intersects the given bounding box.
+    ///
+    /// A box with `xmin > xmax` wraps across the antimeridian, covering `x >= xmin` or
+    /// `x <= xmax`. A `NaN` bound throws `IllegalArgumentException`.
     ///
     /// The rows a bounding box does not cover are not a bounding box, so the predicate has no
     /// inverse: `not` over it, or over any predicate holding one, throws
@@ -767,6 +781,8 @@ public sealed interface FilterPredicate
         return new And(Arrays.asList(left, right));
     }
 
+    /// Creates a conjunction of `filters`. At least one is required; none throws
+    /// `IllegalArgumentException`.
     static FilterPredicate and(FilterPredicate... filters) {
         return new And(Arrays.asList(Objects.requireNonNull(filters, "filters")));
     }
@@ -775,6 +791,8 @@ public sealed interface FilterPredicate
         return new Or(Arrays.asList(left, right));
     }
 
+    /// Creates a disjunction of `filters`. At least one is required; none throws
+    /// `IllegalArgumentException`.
     static FilterPredicate or(FilterPredicate... filters) {
         return new Or(Arrays.asList(Objects.requireNonNull(filters, "filters")));
     }
@@ -1169,14 +1187,14 @@ public sealed interface FilterPredicate
     record And(List<FilterPredicate> filters) implements FilterPredicate {
 
         public And {
-            filters = requireFilters(filters);
+            filters = requireFilters(filters, "AND");
         }
     }
 
     record Or(List<FilterPredicate> filters) implements FilterPredicate {
 
         public Or {
-            filters = requireFilters(filters);
+            filters = requireFilters(filters, "OR");
         }
     }
 
@@ -1195,6 +1213,10 @@ public sealed interface FilterPredicate
 
         public IntersectsPredicate {
             requireColumn(column);
+            requireBound(column, "xmin", xmin);
+            requireBound(column, "ymin", ymin);
+            requireBound(column, "xmax", xmax);
+            requireBound(column, "ymax", ymax);
         }
     }
 }

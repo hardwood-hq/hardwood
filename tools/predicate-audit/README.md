@@ -38,11 +38,12 @@ The script:
     | `lowcard` | 40 distinct values, so every chunk is dictionary-encoded |
     | `nested` | nulls at every level of a struct, and a `LIST` |
 
-- **Resolver** (`resolver.tsv`): one literal of every kind under every operator against every column and group, including `VARIANT` leaves, `MAP`s and repeated leaves, with each outcome and message. Also the build-time checks.
+- **Resolver** (`resolver.tsv`): one literal of every kind under every operator against every column and group, including `VARIANT` leaves, `MAP`s and repeated leaves, with each outcome and message. Also the build-time checks, each with the outcome the rule gives it.
 - **Consultation** (`consultation.tsv`): evidence that Bloom filters (a zeroed copy loses rows) and dictionaries (the `dev.hardwood.RowGroupFilter` JFR event) are consulted, so agreement is not an artefact of layouts the reader ignores. Each check states the expected outcome, including a Bloom filter left unread for a comparison that is not byte-exact.
+- **Accessor round-trip** (`roundtrip.tsv`): every value an accessor returns for the rows around each column's edge cases, passed back as an `eq` literal, is expected to match its own row. The exception the rule states is a `String` read from bytes that are not well-formed UTF-8. This is the one step that reads values through Hardwood's accessors.
 - **Engines** (`engines.tsv`): about 50 predicates in their Hardwood, parquet-java `filter2` and DuckDB SQL forms, with every engine's rows next to the rule's. It includes a PyArrow file for `NaN` bounds and nanosecond timestamps.
 
-`summary.md` tallies the matrix per group and layout, and lists every disagreement and every consultation check whose outcome is not the expected one.
+`summary.md` tallies the matrix per group and layout, and lists every disagreement, every consultation check whose outcome is not the expected one and every round-trip that does not.
 
 A step whose run fails names the log holding its stderr.
 

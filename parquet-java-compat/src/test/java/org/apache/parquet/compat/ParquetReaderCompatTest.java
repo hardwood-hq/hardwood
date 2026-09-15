@@ -418,6 +418,20 @@ class ParquetReaderCompatTest {
                         + "predicate takes an Instant");
     }
 
+    /// parquet-java spells a null test as a comparison with a null literal. The shim takes no null
+    /// literal: `isNull` / `isNotNull` on Hardwood's `FilterPredicate` express it.
+    @Test
+    void testFilterPushdownNullLiteralThrows() {
+        Path path = new Path("../core/src/test/resources/filter_pushdown_int.parquet");
+        FilterPredicate pred = eq(longColumn("id"), null);
+
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Null filter values are not supported for column: id");
+    }
+
     @Test
     void testFilterPushdownBinaryLiteralOnUnknownColumnThrows() {
         Path path = new Path("../core/src/test/resources/predicate/predicate_single.parquet");

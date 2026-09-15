@@ -29,6 +29,8 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.tools.predicateaudit.Columns.Col;
+import dev.hardwood.tools.predicateaudit.Columns.Sem;
 import dev.hardwood.tools.predicateaudit.Oracle.In;
 import dev.hardwood.tools.predicateaudit.Oracle.Intersects;
 import dev.hardwood.tools.predicateaudit.Oracle.IsNull;
@@ -59,8 +61,10 @@ final class ResolverMatrix {
         files.put("ts12_single", Matrix.flatRows(Columns.ts12()));
         files.put("legacy_single", Matrix.flatRows(Columns.legacy()));
         files.put("dropped_single", Matrix.flatRows(Columns.dropped()));
-        files.put("nested_single", null);
-        files.put("shapes", null);
+        files.put("nested_single", Matrix.flatRows(nestedLeaves()));
+        files.put("shapes", Matrix.flatRows(List.of(
+                new Col("__row__", Sem.I64, 0, 0, row -> (long) row, false),
+                new Col("st.inner.leaf", Sem.I32, 0, 0, row -> null, true))));
         int cells = 0;
         int accepted = 0;
         List<String> disagreements = new ArrayList<>();
@@ -85,11 +89,25 @@ final class ResolverMatrix {
                 }
             }
             FileSchema flat = schema(fixtures.resolve("flat_single.parquet"));
-            for (Map.Entry<String, Supplier<FilterPredicate>> special : buildTimeCases().entrySet()) {
-                out.println("build-time\t-\t" + special.getKey() + "\t?\t" + outcome(flat, special.getValue()));
+            for (Map.Entry<String, BuildTimeCase> special : buildTimeCases().entrySet()) {
+                cells++;
+                String hardwood = outcome(flat, special.getValue().predicate());
+                String line = "build-time\t-\t" + special.getKey() + "\t" + special.getValue().expected() + "\t" + hardwood;
+                out.println(line);
+                if (!hardwood.startsWith(special.getValue().expected())) {
+                    disagreements.add(line);
+                }
             }
         }
         return new Result(cells, accepted, disagreements);
+    }
+
+    /// The leaves of the nested fixture, beside its two top-level columns.
+    private static List<Col> nestedLeaves() {
+        List<Col> leaves = new ArrayList<>(Columns.nestedLeaves().values());
+        leaves.add(new Col("__row__", Sem.I64, 0, 0, row -> (long) row, false));
+        leaves.add(new Col("zz", Sem.ZZ, 0, 0, row -> Columns.utf8("z"), false));
+        return leaves;
     }
 
     private static FileSchema schema(Path file) throws Exception {
@@ -153,7 +171,7 @@ final class ResolverMatrix {
         }
     }
 
-    /// What the rule says, `ACCEPT` or `REFUSE (reason)`, or `?` for a column the oracle does not model.
+    /// What the rule says, `ACCEPT` or `REFUSE (reason)`, or `?` for a node the oracle does not model.
     private static String expectation(Rows rows, String file, String column, P predicate) {
         boolean nullTest = predicate instanceof IsNull;
         if (rows != null && rows.column(column) != null) {
@@ -171,25 +189,36 @@ final class ResolverMatrix {
         };
     }
 
-    private static Map<String, Supplier<FilterPredicate>> buildTimeCases() {
-        Map<String, Supplier<FilterPredicate>> cases = new LinkedHashMap<>();
-        cases.put("eq(str, (String) null)", () -> FilterPredicate.eq("str", (String) null));
-        cases.put("eq(ba, (byte[]) null)", () -> FilterPredicate.eq("ba", (byte[]) null));
-        cases.put("eq(dec_i32, (BigDecimal) null)", () -> FilterPredicate.eq("dec_i32", (BigDecimal) null));
-        cases.put("in(str, \"a\", null)", () -> FilterPredicate.in("str", "a", null));
-        cases.put("in(date, LocalDate.EPOCH, null)", () -> FilterPredicate.in("date", LocalDate.EPOCH, null));
-        cases.put("in(str, new String[0])", () -> FilterPredicate.in("str", new String[0]));
-        cases.put("eq(str, \"\\uD800\")", () -> FilterPredicate.eq("str", "\uD800"));
-        cases.put("eq(null, 1)", () -> FilterPredicate.eq(null, 1));
-        cases.put("not(null)", () -> FilterPredicate.not(null));
-        cases.put("and(eq(i32, 1), null)", () -> FilterPredicate.and(FilterPredicate.eq("i32", 1), null));
-        cases.put("eq(f16, NaN with payload 0x7fc00001)", () -> FilterPredicate.eq("f16", Float.intBitsToFloat(0x7fc00001)));
-        cases.put("eq(f16, 1.4E-45f)", () -> FilterPredicate.eq("f16", 1.4e-45f));
-        cases.put("lt(f16, 1.4E-45f)", () -> FilterPredicate.lt("f16", 1.4e-45f));
-        cases.put("eq(time_ms, LocalTime.MAX)", () -> FilterPredicate.eq("time_ms", LocalTime.MAX));
-        cases.put("lt(time_ms, LocalTime.MAX)", () -> FilterPredicate.lt("time_ms", LocalTime.MAX));
-        cases.put("not(gt(bool, true))", () -> FilterPredicate.not(FilterPredicate.gt("bool", true)));
-        cases.put("not(lt(date, LocalDate.MIN))", () -> FilterPredicate.not(FilterPredicate.lt("date", LocalDate.MIN)));
+    /// A predicate checked when it is built or resolved, and the prefix of the outcome the rule gives it.
+    private record BuildTimeCase(String expected, Supplier<FilterPredicate> predicate) {
+    }
+
+    private static Map<String, BuildTimeCase> buildTimeCases() {
+        String npe = "BUILD NullPointerException";
+        String invalid = "BUILD IllegalArgumentException";
+        Map<String, BuildTimeCase> cases = new LinkedHashMap<>();
+        cases.put("eq(str, (String) null)", new BuildTimeCase(npe, () -> FilterPredicate.eq("str", (String) null)));
+        cases.put("eq(ba, (byte[]) null)", new BuildTimeCase(npe, () -> FilterPredicate.eq("ba", (byte[]) null)));
+        cases.put("eq(dec_i32, (BigDecimal) null)", new BuildTimeCase(npe, () -> FilterPredicate.eq("dec_i32", (BigDecimal) null)));
+        cases.put("in(str, \"a\", null)", new BuildTimeCase(npe, () -> FilterPredicate.in("str", "a", null)));
+        cases.put("in(date, LocalDate.EPOCH, null)", new BuildTimeCase(npe, () -> FilterPredicate.in("date", LocalDate.EPOCH, null)));
+        cases.put("in(str, new String[0])", new BuildTimeCase(invalid, () -> FilterPredicate.in("str", new String[0])));
+        cases.put("eq(str, \"\\uD800\")", new BuildTimeCase(invalid, () -> FilterPredicate.eq("str", "\uD800")));
+        cases.put("eq(null, 1)", new BuildTimeCase(npe, () -> FilterPredicate.eq(null, 1)));
+        cases.put("not(null)", new BuildTimeCase(npe, () -> FilterPredicate.not(null)));
+        cases.put("and(eq(i32, 1), null)", new BuildTimeCase(npe, () -> FilterPredicate.and(FilterPredicate.eq("i32", 1), null)));
+        cases.put("and()", new BuildTimeCase(invalid, FilterPredicate::and));
+        cases.put("or()", new BuildTimeCase(invalid, FilterPredicate::or));
+        cases.put("intersects(geom, NaN, 0, 1, 1)", new BuildTimeCase(invalid, () -> FilterPredicate.intersects("geom", Double.NaN, 0, 1, 1)));
+        cases.put("eq(f16, NaN with payload 0x7fc00001)", new BuildTimeCase("ACCEPT",
+                () -> FilterPredicate.eq("f16", Float.intBitsToFloat(0x7fc00001))));
+        cases.put("eq(f16, 1.4E-45f)", new BuildTimeCase("REFUSE", () -> FilterPredicate.eq("f16", 1.4e-45f)));
+        cases.put("lt(f16, 1.4E-45f)", new BuildTimeCase("ACCEPT", () -> FilterPredicate.lt("f16", 1.4e-45f)));
+        cases.put("eq(time_ms, LocalTime.MAX)", new BuildTimeCase("REFUSE", () -> FilterPredicate.eq("time_ms", LocalTime.MAX)));
+        cases.put("lt(time_ms, LocalTime.MAX)", new BuildTimeCase("ACCEPT", () -> FilterPredicate.lt("time_ms", LocalTime.MAX)));
+        cases.put("not(gt(bool, true))", new BuildTimeCase("ACCEPT", () -> FilterPredicate.not(FilterPredicate.gt("bool", true))));
+        cases.put("not(lt(date, LocalDate.MIN))", new BuildTimeCase("ACCEPT",
+                () -> FilterPredicate.not(FilterPredicate.lt("date", LocalDate.MIN))));
         return cases;
     }
 }

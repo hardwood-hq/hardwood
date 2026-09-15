@@ -107,12 +107,15 @@ Notes on individual rows:
 - **`TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`.** The carrier comes from parquet-format after its
   2.14.0 release ([apache/parquet-format#601](https://github.com/apache/parquet-format/pull/601)):
   a signed 96-bit little-endian count of the unit.
-- **`NULL`.** A conforming file stores only nulls there, so no comparison matches. A file that
-  stores values anyway is compared by what it stores, as a column exceeding an `INT(8)` annotation is.
+- **`NULL`.** A conforming file stores only nulls there, so no comparison matches, and no order is
+  defined over values that do not exist. A file that stores values anyway is compared by what it
+  stores under equality, as a column exceeding an `INT(8)` annotation is.
 - **`intersects`** decides row groups, not rows. It drops a row group whose bounding box does not
   overlap the query box and returns every row of the others, nulls included, so its answer depends
-  on the file's bounding boxes and on whether metadata filtering is on. It has no inverse, and `not`
-  over it is rejected.
+  on the file's bounding boxes and on whether metadata filtering is on. A query box with
+  `xmin > xmax` wraps across the antimeridian, on `GEOMETRY` as on `GEOGRAPHY`: it covers `x >= xmin`
+  or `x <= xmax`. A `NaN` bound is rejected when the predicate is built. It has no inverse, and
+  `not` over it is rejected.
 
 ## Literals the column cannot hold
 
@@ -143,8 +146,6 @@ What a column can hold is set by its physical carrier, not by its annotation's v
   literal past the precision and a `TIME` of 25 hours are compared as given. `getInt` returns what
   a file stores even past its annotation, and the predicate follows it. (`getValue` on a signed
   `INT(8)` or `INT(16)` narrows such a value, so the two accessors disagree on those files.)
-- **Undecodable bytes** are a type error on any operator: a `FLOAT16` literal of other than 2 bytes,
-  an `INT96` or `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` literal of other than 12.
 
 ## Byte and string literals
 
@@ -165,6 +166,11 @@ A `String` is the literal of the columns `getString` reads: `STRING`, `ENUM`, `J
 `DECIMAL` means a number, not the bytes `31 2E 32 35`. A `String` that is not well-formed UTF-16 has
 no UTF-8 encoding and is rejected when built.
 
+A `String` matches the rows whose bytes are its UTF-8 encoding. Where a text column stores bytes
+that are not well-formed UTF-8, as an unannotated `BYTE_ARRAY` of binary data does, `getString`
+replaces each malformed sequence with U+FFFD, and that string does not match the row it was read
+from. Such a row is filtered with its `byte[]`.
+
 The factories are the supported way to build a predicate; the records are public only because the
 sealed `FilterPredicate` permits them. `byte[]` factories copy their array, and array-valued records
 compare by content.
@@ -181,13 +187,15 @@ lowered to the leaves by inverting each operator.
 At reader creation, a predicate the rule does not admit throws `IllegalArgumentException` naming
 the column and what it takes, e.g. `Column 'c' is annotated DATE, which takes LocalDate and int
 literals, not a BigDecimal`. That covers a literal type the column does not take, an equality
-literal it cannot hold, undecodable bytes, an ordered operator on an unordered type or with a
-`byte[]` on a value-ordered one, a `String` off a text column, a column below a repeated path, a
-comparison on a `VARIANT` leaf, and `not` over `intersects`.
+literal it cannot hold, an ordered operator on an unordered type or with a `byte[]` on a
+value-ordered one, a `String` off a text column, a column below a repeated path, a comparison on a
+`VARIANT` leaf, and `not` over `intersects`. An ordered operator on a type with no order is refused
+before the literal's type is looked at, and the message names the literals the column takes with
+`eq`, `notEq` and `in`.
 
 When the predicate is built, a null column name, literal or child throws `NullPointerException`
-naming the argument, and an empty set form or a malformed `String` throws
-`IllegalArgumentException`.
+naming the argument, and an empty set form, an `and` or `or` without children, a malformed `String`
+and a `NaN` bound of `intersects` throw `IllegalArgumentException`.
 
 ## Resolution
 
@@ -232,9 +240,10 @@ type:
 
 On conforming files from mainstream writers, with the typed literal of each column, Hardwood,
 parquet-java 1.17.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
-timestamps, decimals via `BigDecimal`, UUIDs, and `NaN` on files whose writer omits the bounds of a
-chunk holding `NaN`. The differences below were measured with `tools/predicate-audit` (see Validation) on fixtures
-written by parquet-java and PyArrow, each read by all three engines, and fall into three groups:
+millisecond and microsecond timestamps, decimals via `BigDecimal`, UUIDs, and `NaN` on files whose
+writer omits the bounds of a chunk holding `NaN`. The differences below were measured with
+`tools/predicate-audit` (see Validation) on fixtures written by parquet-java and PyArrow, each read
+by all three engines, and fall into three groups:
 
 - **Hardwood follows its rule where another engine chose differently.** These are
   semantics, so a migrated query can silently return different rows.
@@ -260,6 +269,9 @@ The **Relevance** column estimates how often a real query meets the difference.
 | 12 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |
 | 13 | `INT32` annotated `INT(8)` storing `1000` | `eq(i8, 1000)` | the row | the row | none (reads `-24`) | Non-conforming file; Hardwood follows `getInt` | Low |
 | 14 | any column, through `parquet-java-compat` | `FilterApi.eq(intColumn("x"), null)` | throws | the null rows | — | The shim supports no null literal; use `isNull` | Medium for shim users; fails loudly |
+| 15 | `DECIMAL(9, 2)` over `FIXED_LEN_BYTE_ARRAY(9)` storing `0.20` | `Binary` / `byte[]` `14` | throws | the row, except where the dictionary or Bloom filter drops it | no spelling | Rule 4, and the parquet-java defect of row 12 | Low; needs a literal of another width |
+| 16 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0` as no bytes, Bloom filter | `eq(dec, BigDecimal.ZERO)` | the row | none | the row | parquet-java defect: the Bloom filter tests the literal's bytes `00` | Low; needs an empty encoding |
+| 17 | `INTERVAL` written by parquet-java (`converted_type = INTERVAL`, `logicalType = UNKNOWN`) | `eq(iv, PqInterval)` | throws | the row | none (read as `INTEGER`) | Hardwood defect [#1217](https://github.com/hardwood-hq/hardwood/issues/1217): the column is read as `NULL` | Medium for `INTERVAL` data from parquet-java |
 
 In short: code moving from parquet-java should check negations over nullable columns (1). Code
 comparing with DuckDB should use `BigDecimal` for decimals (4), and should expect Hardwood to
@@ -301,5 +313,7 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
   - **Engine comparison:** the parquet-java and DuckDB comparison behind the table above, including
     a PyArrow file for rows 3, 6 and 7, except for row 14 (the compatibility shim), which
     `ParquetReaderCompatTest` covers.
+  - **Accessor round-trip:** every value an accessor returns, passed back as an `eq` literal,
+    matches its own row, except a `String` read from bytes that are not UTF-8.
 
   `tools/predicate-audit/README.md` describes running and extending it.

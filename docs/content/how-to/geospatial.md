@@ -80,7 +80,7 @@ for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
 
 ### Spatial Filter Pushdown
 
-`FilterPredicate.intersects(column, xmin, ymin, xmax, ymax)` produces a predicate that drops row groups and pages whose stored bounding box does not overlap the query box. The argument order follows the GeoJSON / WKT convention (bottom-left corner, then top-right corner). Antimeridian wrapping is handled automatically.
+`FilterPredicate.intersects(column, xmin, ymin, xmax, ymax)` produces a predicate that drops row groups and pages whose stored bounding box does not overlap the query box. The argument order follows the GeoJSON / WKT convention (bottom-left corner, then top-right corner). Antimeridian wrapping is handled automatically, both for a stored box and for a query box with `xmin > xmax`, which covers `x >= xmin` or `x <= xmax` on a `GEOMETRY` column as on a `GEOGRAPHY` one. A `NaN` bound throws `IllegalArgumentException` when the predicate is built.
 
 ```java
 import dev.hardwood.reader.FilterPredicate;

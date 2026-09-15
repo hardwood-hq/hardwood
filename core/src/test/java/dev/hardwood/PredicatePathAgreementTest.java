@@ -355,8 +355,8 @@ class PredicatePathAgreementTest {
         cases.add(new Case("nul", "not(in(1))", FilterPredicate.not(FilterPredicate.in("nul", 1)), matching(never())));
         cases.add(new Case("nul", "isNull", FilterPredicate.isNull("nul"), new MatchingNulls()));
         cases.add(new Case("nul", "lt(1), an ordered operator on a NULL column", FilterPredicate.lt("nul", 1),
-                new Rejected("Column 'nul' is annotated NULL, whose values parquet-format puts in no order; "
-                        + "it takes equality and set membership only")));
+                new Rejected("Column 'nul' is annotated NULL, which defines no order; "
+                        + "it takes int literals with eq, notEq and in only")));
 
         // --- GEOMETRY: equality over the WKB bytes ---
         byte[] pointAt200 = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN)
@@ -364,8 +364,8 @@ class PredicatePathAgreementTest {
         storedByteCases(cases, "geom", pointAt200);
         cases.add(new Case("geom", "lt(the WKB of row 200), an ordered operator on a GEOMETRY column",
                 binary("geom", Operator.LT, pointAt200),
-                new Rejected("Column 'geom' is annotated GEOMETRY(OGC:CRS84), whose values parquet-format puts in no order; "
-                        + "it takes equality and set membership only")));
+                new Rejected("Column 'geom' is annotated GEOMETRY(OGC:CRS84), which defines no order; "
+                        + "it takes byte[] literals with eq, notEq and in only")));
         cases.add(new Case("geom", "eq(a String on a GEOMETRY column)", FilterPredicate.eq("geom", "POINT"),
                 new Rejected("Column 'geom' is annotated GEOMETRY(OGC:CRS84), which takes byte[] literals, not a String")));
         cases.add(new Case("str", "eq(emoji at row 399)", FilterPredicate.eq("str", "😀"),
@@ -813,8 +813,8 @@ class PredicatePathAgreementTest {
                 FilterPredicate.not(FilterPredicate.in(column, literal)),
                 matching(notEqPhysical(bytes))));
 
-        String noOrder = "Column '" + column + "' is annotated INTERVAL, whose values"
-                + " parquet-format puts in no order; it takes equality and set membership only";
+        String noOrder = "Column '" + column + "' is annotated INTERVAL, which defines no order;"
+                + " it takes PqInterval and byte[] literals with eq, notEq and in only";
         cases.add(new Case(column, "lt(" + shown + "), an ordered operator on an INTERVAL column",
                 binary(column, Operator.LT, bytes), new Rejected(noOrder)));
         cases.add(new Case(column, "gtEq(" + literal + "), an ordered operator on an INTERVAL column",

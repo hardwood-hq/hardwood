@@ -31,10 +31,10 @@ sealed interface MinMaxStats {
 
     System.Logger LOG = System.getLogger(MinMaxStats.class.getName());
 
-    /// Read from the deprecated `min`/`max` Thrift fields, which compare unsigned whatever the
-    /// column's type is, so they carry the wrong order for every signed one.
+    /// Read from the deprecated `min`/`max` Thrift fields, which compare signed whatever the
+    /// column's type is, so they carry the wrong order for every unsigned integer and byte string.
     String DEPRECATED_SORT_ORDER =
-            "they come from the deprecated min/max fields, which compare unsigned";
+            "they come from the deprecated min/max fields, which compare signed";
 
     /// A floating-point pair containing `NaN` cannot be pruned against: `NaN` sorts above
     /// every finite value in `Double.compare`'s total order, so comparing against such a

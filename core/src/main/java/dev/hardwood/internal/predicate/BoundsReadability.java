@@ -25,8 +25,8 @@ import dev.hardwood.schema.FileSchema;
 /// this writer:
 ///
 /// - the annotation names no order — parquet-format defines none for `INTERVAL`, `GEOMETRY`,
-///   `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` and `MAP`, and asks that `INTERVAL` record no
-///   bounds at all;
+///   `GEOGRAPHY`, `VARIANT`, `LIST` and `MAP`, and asks that `INTERVAL` record no bounds at all,
+///   and a `NULL` column stores no values to order;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
 ///   as a column whose `min` / `max` are to be ignored;
 /// - the reader dropped the column's annotation, either because this build does not recognize
@@ -125,7 +125,7 @@ public interface BoundsReadability {
             case LogicalType.IntType ignored -> true;
             case LogicalType.DecimalType ignored -> true;
             case LogicalType.Float16Type ignored -> true;
-            // parquet-format leaves these unordered.
+            // parquet-format leaves these unordered, and a NULL column stores no values.
             case LogicalType.IntervalType ignored -> false;
             case LogicalType.NullType ignored -> false;
             case LogicalType.VariantType ignored -> false;

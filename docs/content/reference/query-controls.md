@@ -22,8 +22,8 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
 | Set operators | `in`, over every literal type but `boolean` |
 | Null operators | `isNull`, `isNotNull` (any type) |
-| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It skips row groups whose bounding box does not overlap the query box and returns every row of the others (see [Geospatial](../how-to/geospatial.md)). It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
-| Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
+| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It skips row groups whose bounding box does not overlap the query box and returns every row of the others (see [Geospatial](../how-to/geospatial.md)). A query box with `xmin > xmax` wraps across the antimeridian on either type; a `NaN` bound throws `IllegalArgumentException` when the predicate is built. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
+| Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions, and throw `IllegalArgumentException` when given none) |
 | Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
 
 All predicates, including those wrapped in `not`, are pushed down for row-group and page
@@ -103,7 +103,7 @@ of two values.
 | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
 | `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float`; a `byte[]` as the stored bytes |
 | `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
-| any | `NULL` | the literal for the physical type | nothing — every value is null, so no comparison matches |
+| any | `NULL` | the literal for the physical type | the stored value; a column that keeps to its annotation holds only nulls, so no comparison matches |
 | group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
 
 A predicate on a `VARIANT` column reaches the group's presence, not the values inside it. The
@@ -178,7 +178,10 @@ A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` 
 [`getString`](accessors.md#text-columns) reads. On any other binary column a `String`
 literal throws `IllegalArgumentException` at reader creation, naming the literals the column
 does take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
-no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built.
+no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built. A row whose
+stored bytes are not well-formed UTF-8 matches no `String` literal: `getString` replaces each
+malformed sequence with U+FFFD, so the string it returns for such a row does not match it. Filter
+such a row with its `byte[]`.
 
 An `INTERVAL` column's other literal is the `PqInterval` that [`getInterval`](accessors.md)
 returns. Each of its three components is stored as an unsigned 32-bit value.
@@ -245,7 +248,7 @@ one of seven reasons:
 | The minimum sorts above the maximum | `min` and `max` are the wrong way round in the column's order, so the pair brackets nothing |
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair is ordered by signed comparison whatever the column's type is, so its order is wrong for every unsigned integer and byte string |
-| The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `UNKNOWN`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order |
+| The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order, or a `NULL` column |
 | The column is `INT96` | The order the Parquet spec gives `INT96` bounds compares the day before the nanoseconds of the day, which does not follow the instant when the nanoseconds run past one day |
 | The column's annotation is dropped | An annotation the column's physical type cannot carry, or one this release does not recognize, so the column is read as its physical type while its bounds were recorded in the annotation's order |
 | The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |

@@ -692,6 +692,40 @@ class FilterPredicateTest {
                 .isInstanceOf(NullPointerException.class).hasMessage("column");
     }
 
+    /// A combinator needs a child: `and()` and `or()` of nothing would be constants no caller needs.
+    @Test
+    void everyCombinatorRejectsNoChildren() {
+        assertThatThrownBy(FilterPredicate::and)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AND predicate requires at least one child");
+        assertThatThrownBy(FilterPredicate::or)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("OR predicate requires at least one child");
+        assertThatThrownBy(() -> new FilterPredicate.And(List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("AND predicate requires at least one child");
+        assertThatThrownBy(() -> new FilterPredicate.Or(List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("OR predicate requires at least one child");
+    }
+
+    /// A `NaN` bound overlaps nothing and would silently keep or drop every row group.
+    @Test
+    void intersectsRejectsANaNBound() {
+        assertThatThrownBy(() -> FilterPredicate.intersects("g", Double.NaN, 0, 1, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'g' is tested by intersects, whose bounds are numbers; xmin is NaN");
+        assertThatThrownBy(() -> FilterPredicate.intersects("g", 0, Double.NaN, 1, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'g' is tested by intersects, whose bounds are numbers; ymin is NaN");
+        assertThatThrownBy(() -> FilterPredicate.intersects("g", 0, 0, Double.NaN, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'g' is tested by intersects, whose bounds are numbers; xmax is NaN");
+        assertThatThrownBy(() -> FilterPredicate.intersects("g", 0, 0, 1, Double.NaN))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'g' is tested by intersects, whose bounds are numbers; ymax is NaN");
+    }
+
     @Test
     void everyCombinatorRejectsANullChild() {
         FilterPredicate leaf = FilterPredicate.eq("c", 1);

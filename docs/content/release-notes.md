@@ -48,6 +48,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A filter predicate's literal must be a value the column's accessors return: a `String` filters only text columns, an `Instant` only UTC timestamps and a `LocalDate` only `DATE` columns. Other literals, ordered operators on types without an order, and equality literals the column cannot hold throw `IllegalArgumentException` ([#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
+- `intersects` with a `NaN` bound, and `and` / `or` with no children, throw `IllegalArgumentException` when the predicate is built ([#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
+
 - `getString` throws `IllegalArgumentException` on a column that does not hold text ([#1196](https://github.com/hardwood-hq/hardwood/issues/1196)).
 
 - `FilterPredicate.SignedBinaryColumnPredicate` is removed ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).

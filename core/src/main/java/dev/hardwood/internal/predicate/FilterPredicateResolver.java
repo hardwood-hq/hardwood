@@ -562,19 +562,22 @@ public class FilterPredicateResolver {
 
     /// Refuses `lt`, `ltEq`, `gt` and `gtEq` on a column whose annotation defines no order.
     ///
-    /// parquet-format defines a sort order for most annotations and none for `INTERVAL`,
-    /// `GEOMETRY`, `GEOGRAPHY` and `NULL`: an interval's months, days and milliseconds have no
-    /// fixed conversion between them, and a geometry is a shape. Comparing their stored bytes
-    /// would answer in an order nobody defined — for an `INTERVAL`, one that sorts 256 months
-    /// below 1 month, since the components are little-endian. Equality and the set form stay:
-    /// those ask whether a stored value *is* the literal, which the bytes answer.
+    /// parquet-format defines no sort order for `INTERVAL`, `GEOMETRY` and `GEOGRAPHY`: an
+    /// interval's months, days and milliseconds have no fixed conversion between them, and a
+    /// geometry is a shape. A `NULL` column stores no values to order. Comparing their stored bytes
+    /// would answer in an order nobody defined — for an `INTERVAL`, one that sorts 256 months below
+    /// 1 month, since the components are little-endian. Equality and the set form stay: those ask
+    /// whether a stored value *is* the literal, which the bytes answer.
+    ///
+    /// This runs before the literal's type is checked, so the refusal names the literals the column
+    /// takes: a caller holding a literal of another type learns both at once.
     private static void requireOrder(String columnName, ColumnSchema columnSchema, Operator op) {
         if (isEquality(op) || BoundsReadability.namesAnOrder(columnSchema.logicalType())) {
             return;
         }
         throw new IllegalArgumentException("Column '" + columnName + "' is annotated "
-                + columnSchema.logicalType() + ", whose values parquet-format puts in no order; "
-                + "it takes equality and set membership only");
+                + columnSchema.logicalType() + ", which defines no order; it takes "
+                + ColumnLiterals.taken(columnSchema) + " literals with eq, notEq and in only");
     }
 
     /// Refuses `not` over a predicate holding an `intersects`.

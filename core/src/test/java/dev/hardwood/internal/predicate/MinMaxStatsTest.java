@@ -49,7 +49,7 @@ class MinMaxStatsTest {
         assertThat(stats)
                 .isInstanceOf(MinMaxStats.NullCountOnlyStats.class)
                 .extracting(MinMaxStats::discardReason)
-                .isEqualTo("they come from the deprecated min/max fields, which compare unsigned");
+                .isEqualTo("they come from the deprecated min/max fields, which compare signed");
     }
 
     /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` bound of another width is no value of the column, so

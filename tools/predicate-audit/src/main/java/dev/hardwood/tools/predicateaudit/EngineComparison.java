@@ -229,7 +229,10 @@ final class EngineComparison {
                 "ts96 = TIMESTAMP '" + timestamp(Columns.int96Nanos(6)) + "'"));
         e.add(new Entry("int96.eq-bytes", "flat", new Leaf("ts96", Op.EQ, Columns.int96(Columns.int96Nanos(6), true)),
                 filter(() -> FilterApi.eq(FilterApi.binaryColumn("ts96"), binary(Columns.int96(Columns.int96Nanos(6), true)))), null));
-        e.add(new Entry("int96.gt", "flat", new Leaf("ts96", Op.GT, Instant.EPOCH.plusNanos(Columns.int96Nanos(Columns.PROBE_ROW))), null,
+        // parquet-java compares a Binary on INT96 as a signed big-endian integer, not as the instant.
+        e.add(new Entry("int96.gt", "flat", new Leaf("ts96", Op.GT, Instant.EPOCH.plusNanos(Columns.int96Nanos(Columns.PROBE_ROW))),
+                filter(() -> FilterApi.gt(FilterApi.binaryColumn("ts96"),
+                        binary(Columns.int96(Columns.int96Nanos(Columns.PROBE_ROW), true)))),
                 "ts96 > TIMESTAMP '" + timestamp(Columns.int96Nanos(Columns.PROBE_ROW)) + "'"));
         e.add(new Entry("dec_i32.eq-int", "flat", new Leaf("dec_i32", Op.EQ, 21),
                 filter(() -> FilterApi.eq(FilterApi.intColumn("dec_i32"), 21)), "dec_i32 = 21"));

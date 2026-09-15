@@ -97,7 +97,7 @@ FilterPredicate filter = FilterPredicate.or(
 Predicates on `float` and `double` columns use the `Float.compare` / `Double.compare` total order, not IEEE 754 equality. Two consequences matter in practice:
 
 - `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0` values; to match either zero, use `in("c", 0.0, -0.0)`.
-- `NaN` sorts above every finite value. `eq(Float.NaN)` matches only `NaN` (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against any value never match `NaN` rows; `gt` and `gtEq` against a finite value always include `NaN` rows.
+- `NaN` sorts above every other value, and every `NaN` equals every other. `eq(Float.NaN)` matches only `NaN` (whereas IEEE `NaN == anything` is always false). `lt` against any value, and `ltEq` against a number, never match `NaN` rows; `gt` and `gtEq` against a number, and `ltEq` and `gtEq` against `NaN`, include them.
 
 ```java
 // Match any NaN row
@@ -185,14 +185,13 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
 - **An unsatisfiable range prunes but does not push down further.** A comparison whose literal
   lies past the range the column's carrier holds matches every non-null row or none, and is
   decided from the null count alone.
-- **Two equality probes cannot use either.** `eq(NaN)`, or an `in` list holding one, is not
-  Bloom-pruned: raw-bit hashing distinguishes NaN payloads that `Double.compare` treats as equal,
-  so a miss cannot prove a NaN absent. An `eq` or `in` on a `DECIMAL` stored as
-  `BYTE_ARRAY` is pruned by neither, since such a column may hold the same number under more than
-  one byte string, so a miss on a probe's own bytes does not prove the value absent.
-- **An `INT96` comparison does not prune.** A comparison or set predicate on an `INT96` column
-  reads every row group and page and filters the rows one by one: neither the column's `min` /
-  `max` statistics, nor its dictionary, nor a Bloom filter decide it.
+- **Some equality probes skip the Bloom filter or the dictionary.** `eq(NaN)`, an `in` list
+  holding one, and a `float` on a `FLOAT16` column are not Bloom-pruned; the dictionary still
+  decides them. A `BigDecimal` on a `DECIMAL` stored as `BYTE_ARRAY` is pruned by neither.
+- **An `INT96` comparison with an `Instant` does not prune.** It reads every row group and page and
+  filters the rows one by one: neither the column's `min` / `max` statistics, nor its dictionary,
+  nor a Bloom filter decide it. An `eq` or `in` with the stored 12 bytes uses the Bloom filter and
+  the dictionary.
 
 ## Column Projection
 

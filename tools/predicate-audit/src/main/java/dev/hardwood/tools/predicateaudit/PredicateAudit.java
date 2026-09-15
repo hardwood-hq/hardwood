@@ -16,9 +16,9 @@ import java.util.List;
 /// Entry point of the predicate rule audit; see `tools/predicate-audit/README.md`.
 ///
 /// - `fixtures <dir>` writes the parquet-java fixtures.
-/// - `audit <fixtures> <report>` runs the matrix, the resolver matrix, the consultation checks and the
-///   engine comparison over fixtures and their derived variants, and writes `summary.md` beside the
-///   full results.
+/// - `audit <fixtures> <report>` runs the matrix, the resolver matrix, the consultation checks, the
+///   accessor round-trip and the engine comparison over fixtures and their derived variants, and
+///   writes `summary.md` beside the full results.
 public final class PredicateAudit {
 
     private PredicateAudit() {
@@ -46,9 +46,11 @@ public final class PredicateAudit {
         log("resolver", start);
         ConsultationChecks.Result consultation = ConsultationChecks.run(fixtures, report);
         log("consultation checks", start);
+        AccessorRoundTrip.Result roundTrip = AccessorRoundTrip.run(fixtures, report);
+        log("accessor round-trip", start);
         EngineComparison.Result engines = EngineComparison.run(fixtures, report);
         log("engines", start);
-        writeSummary(report, tallies, resolver, consultation, engines);
+        writeSummary(report, tallies, resolver, consultation, roundTrip, engines);
         System.out.println("report: " + report.resolve("summary.md"));
     }
 
@@ -57,7 +59,8 @@ public final class PredicateAudit {
     }
 
     private static void writeSummary(Path report, List<Matrix.Tally> tallies, ResolverMatrix.Result resolver,
-            ConsultationChecks.Result consultation, EngineComparison.Result engines) throws Exception {
+            ConsultationChecks.Result consultation, AccessorRoundTrip.Result roundTrip, EngineComparison.Result engines)
+            throws Exception {
         try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("summary.md")))) {
             out.println("# Predicate rule audit");
             out.println();
@@ -69,6 +72,9 @@ public final class PredicateAudit {
                     + resolver.disagreements().size() + " disagreeing with the rule (`resolver.tsv`)");
             out.println("- **Consultation:** " + consultation.checks() + " checks, " + consultation.unexpected().size()
                     + " not as expected (`consultation.tsv`)");
+            out.println("- **Accessor round-trip:** " + roundTrip.checks() + " values passed back as literals, "
+                    + roundTrip.disagreements().size() + " disagreeing with the rule, " + roundTrip.thrown().size()
+                    + " logical reads that threw (`roundtrip.tsv`)");
             out.println("- **Engines:** " + engines.predicates() + " predicates, " + engines.differing()
                     + " where an engine or Hardwood departs from the rule, or on the PyArrow file the engines from each other"
                     + " (`engines.tsv`)");
@@ -88,6 +94,15 @@ public final class PredicateAudit {
             tallies.stream().flatMap(t -> t.disagreements().stream()).forEach(out::println);
             resolver.disagreements().forEach(out::println);
             consultation.unexpected().forEach(out::println);
+            roundTrip.disagreements().forEach(out::println);
+            out.println("```");
+            out.println();
+            out.println("## Logical reads that threw");
+            out.println();
+            out.println("Expected only for a stored value past what its logical type represents, such as a `TIME` of 25 hours.");
+            out.println();
+            out.println("```");
+            roundTrip.thrown().forEach(out::println);
             out.println("```");
             out.println();
             out.println("## Bloom filter and dictionary consultation");
