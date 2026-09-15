@@ -129,6 +129,12 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// a fresh standalone one. Subsequent advances (with `chunkSize` <
     /// columnChunkLength) still create per-column handles lazily.
     private ChunkHandle firstChunkHandle;
+    /// Page headers the most recent [#pages] walk scanned, final once that walk runs to
+    /// exhaustion and zero for one abandoned before it. Counts every header the iterator read,
+    /// including those of pages a row mask or the inline statistics then kept it from emitting,
+    /// which is what separates a walk that stopped scanning early from one that read on and
+    /// discarded what it found.
+    private int scannedPages;
 
     private SequentialFetchPlan(InputFile inputFile, long columnChunkOffset, int columnChunkLength,
                                  int chunkSize, ColumnSchema columnSchema,
@@ -167,6 +173,11 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     @Override
     public PageIterator pages() {
         return new SequentialPageIterator();
+    }
+
+    /// Returns how many page headers the most recent [#pages] walk scanned. See [#scannedPages].
+    public int scannedPages() {
+        return scannedPages;
     }
 
     /// Returns the byte offset of this plan's first ChunkHandle (the
@@ -353,6 +364,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             nextPageComputed = true;
             if (nextPage == null) {
                 exhausted = true;
+                scannedPages = pageCount;
                 emitEvent();
             }
             return nextPage != null;

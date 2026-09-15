@@ -15,14 +15,12 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import jdk.jfr.consumer.RecordedEvent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,22 +32,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Constructs two fetch plans against the same column: one with
 /// [RowRanges#ALL] (baseline) and one with `[0, 200)` on a 2000-row
-/// fixture. The bounded plan must scan dramatically fewer pages; the
-/// `pageCount` field of [dev.hardwood.jfr.RowGroupScannedEvent] is the
-/// observable that distinguishes "stopped scanning" from "kept reading
-/// headers but dropped them".
-class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
+/// fixture. The bounded plan must scan dramatically fewer pages;
+/// [SequentialFetchPlan#scannedPages()] is the observable that distinguishes
+/// "stopped scanning" from "kept reading headers but dropped them", and it is
+/// final once the walk is drained.
+class SequentialFetchPlanEarlyExitTest {
 
     private static final Path FIXTURE =
             Paths.get("src/test/resources/misaligned_pages_no_index.parquet");
     private static final String COLUMN = "wide";
     private static final long TOTAL_ROWS = 2_000;
     private static final long BOUNDED_END = 200L;
-
-    /// Two synthetic row-group indices used to disambiguate the JFR events
-    /// emitted by the two iterations against the same file/column.
-    private static final int RG_INDEX_ALL = 0;
-    private static final int RG_INDEX_BOUNDED = 1;
+    private static final int ROW_GROUP = 0;
 
     @Test
     void testTrailingPageEarlyExitStopsHeaderScan() throws Exception {
@@ -60,12 +54,14 @@ class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
             schema = reader.getFileSchema();
         }
 
-        RowGroup rowGroup = fileMetaData.rowGroups().get(0);
+        RowGroup rowGroup = fileMetaData.rowGroups().get(ROW_GROUP);
         ColumnSchema columnSchema = schema.getColumn(COLUMN);
         int colIdx = schema.getColumns().indexOf(columnSchema);
         assertThat(colIdx).as("column '%s' must exist in the fixture", COLUMN).isNotNegative();
         ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
 
+        int allPages;
+        int boundedPages;
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              InputFile fileForAll = InputFile.of(FIXTURE);
              InputFile fileForBounded = InputFile.of(FIXTURE)) {
@@ -74,26 +70,23 @@ class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
 
             SequentialFetchPlan allPlan = SequentialFetchPlan.build(
                     fileForAll, columnSchema, columnChunk, context,
-                    RG_INDEX_ALL, fileForAll.name(), 0L,
+                    ROW_GROUP, fileForAll.name(), 0L,
                     List.of(), RowRanges.ALL, TOTAL_ROWS);
             drain(allPlan.pages());
+            allPages = allPlan.scannedPages();
 
             SequentialFetchPlan boundedPlan = SequentialFetchPlan.build(
                     fileForBounded, columnSchema, columnChunk, context,
-                    RG_INDEX_BOUNDED, fileForBounded.name(), 0L,
+                    ROW_GROUP, fileForBounded.name(), 0L,
                     List.of(), RowRanges.range(0, BOUNDED_END), TOTAL_ROWS);
             drain(boundedPlan.pages());
+            boundedPages = boundedPlan.scannedPages();
         }
-
-        awaitEvents();
-
-        int allPages = pageCountFor(RG_INDEX_ALL);
-        int boundedPages = pageCountFor(RG_INDEX_BOUNDED);
 
         // The unbounded run must scan at least a few pages — the
         // fixture is sized for many small pages on the wide column.
         assertThat(allPages)
-                .as("baseline pageCount for full column-chunk scan")
+                .as("baseline pages scanned for full column-chunk scan")
                 .isGreaterThan(20);
 
         // The bounded run keeps only the leading 10% of rows, so it should
@@ -101,7 +94,7 @@ class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
         // quarter is tight enough to fail if the early-exit guard is ever
         // removed (the bounded run would then equal `allPages`).
         assertThat(boundedPages)
-                .as("bounded pageCount must be strictly less than baseline")
+                .as("bounded pages scanned must be strictly less than baseline")
                 .isLessThan(allPages);
         assertThat(boundedPages)
                 .as("early exit must trim trailing scans (allPages=%d)", allPages)
@@ -112,17 +105,5 @@ class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
         while (iterator.hasNext()) {
             iterator.next();
         }
-    }
-
-    private int pageCountFor(int rowGroupIndex) {
-        List<RecordedEvent> matches = events("dev.hardwood.RowGroupScanned")
-                .filter(e -> e.getInt("rowGroupIndex") == rowGroupIndex)
-                .filter(e -> COLUMN.equals(e.getString("column")))
-                .toList();
-        assertThat(matches)
-                .as("expected exactly one RowGroupScanned event for rg=%d, column=%s",
-                        rowGroupIndex, COLUMN)
-                .hasSize(1);
-        return matches.get(0).getInt("pageCount");
     }
 }
