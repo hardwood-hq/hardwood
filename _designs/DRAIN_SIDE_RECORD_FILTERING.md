@@ -1,6 +1,6 @@
 ## Drain-Side Record Filtering (#250)
 
-**Status: Implemented and on by default** for any query that decomposes into column-local leaves on distinct top-level columns. The path trades single-threaded predicate throughput for cross-core parallelism: in end-to-end multi-column AND scenarios it beats the compiled per-row path (1.5–5× on the measured workloads, scaling with leaf count); in single-threaded JMH microbenchmarks it is 3.8–6.9× slower per row than the compiled path. The end-to-end wins come from running per-column matchers on the existing drain threads in parallel rather than serially on the consumer thread — see [Performance](#performance--end-to-end-full-coverage-recordfilterscenariosbenchmarktest--dperfruns5) for the full picture. It is taken even for single-leaf queries (the early leaf-count gate from v1 has been removed — see the rationale under [Eligibility](#eligibility)). Ineligible shapes fall back automatically to the row reader's own record matcher, via a `null` return from `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
+**Status: Implemented and on by default** for any query whose leaves are all column-local and supported and in which no column is read by two independent subtrees (see [Eligibility](#eligibility)). The path trades single-threaded predicate throughput for cross-core parallelism: in end-to-end multi-column AND scenarios it beats the compiled per-row path (1.5–5× on the measured workloads, scaling with leaf count); in single-threaded JMH microbenchmarks it is 3.8–6.9× slower per row than the compiled path. The end-to-end wins come from running per-column matchers on the existing drain threads in parallel rather than serially on the consumer thread — see [Performance](#performance--end-to-end) for the full picture. It is taken for single-leaf queries too. Ineligible shapes fall back automatically to the row reader's own record matcher, via a `null` return from `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
 
 ## Context
 
@@ -32,7 +32,7 @@ A leaf is **column-local** iff:
 
 - Its `FieldPath` is top-level (length 1), and
 - Its column maps to a non-negative projected index, and
-- Its `(type, op)` is one of: `long` / `double` / `int` / `float` / `binary` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn` / `DoubleIn` (the last on a `DOUBLE` or a `FLOAT` column, whose stored values are widened before comparison), `IsNull` / `IsNotNull`, `BinaryIn`. `binary` and `BinaryIn` cover a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column — strings, UUIDs, and decimals of either byte-array type.
+- Its `(type, op)` is one of: `long` / `double` / `int` / `float` / unsigned `int` / unsigned `long` / `binary` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn` / `UnsignedIntIn` / `UnsignedLongIn` / `FloatIn` / `DoubleIn` / `BinaryIn`, `IsNull` / `IsNotNull`, and the constant leaves `EveryNonNullRow` / `NoRow` that negation produces. `binary` and `BinaryIn` are eligible in every `Comparison` a slice comparison implements (see [Byte-array matchers](#byte-array-matchers)): strings, UUIDs, decimals of either byte-array type, and the stored bytes of any byte column. A binary leaf in an instant order, on an `INT96` or a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`, falls back.
 
 `Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial and `Float16` predicates, and any leaf on a fragment-less column make the entire query non-eligible.
 
@@ -41,7 +41,7 @@ The compiler walks the predicate tree bottom-up:
 - A subtree that lives entirely on one projected column collapses into a single `ColumnBatchMatcher` slot. Same-column leaves under an `And` chain through `AndBatchMatcher`; under an `Or` they chain through `OrBatchMatcher`. `id >= x AND id <= y` and `id < -5 OR id > 5` both end up as one composite in one column slot.
 - A subtree that spans multiple columns produces a `MergePlan` (`And` / `Or`) whose children are either `MergePlan.Column(projectedIndex)` references — for child subtrees that resolved to a single column — or nested merge plans.
 
-`tryCompile` returns a `CompiledBatchFilter(columnMatchers[], mergePlan)`: per-projected-column matcher slots (workers populate `Batch.matches` from these) plus a `MergePlan` the consumer walks to merge the per-column bitmaps. A subtree where the **same** column appears across two independent siblings (e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)`, where column `a` would need two different per-row predicates encoded in one `matches` array) is rejected — the per-column matcher model cannot represent it.
+`tryCompile` returns a `CompiledBatchFilter(columnMatchers[], mergePlan)`: per-projected-column matcher slots (workers populate `Batch.matches` from these) plus a `MergePlan` the consumer walks to merge the per-column bitmaps. Same-column single-leaf siblings under a mixed-column compound fold the same way: `id >= x AND id <= y AND value < z` produces one `AndBatchMatcher` on `id`, one matcher on `value`, and a two-child `MergePlan.And`. A subtree where the **same** column appears across two independent siblings (e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)`, where column `a` would need two different per-row predicates encoded in one `matches` array) is rejected — the per-column matcher model cannot represent it.
 
 ### Why `Or` is safe under "definitely matches" semantics
 
@@ -56,7 +56,7 @@ Each matcher emits bit `i` set iff row `i` **definitely** satisfies the leaf (NU
 
 Word-wise OR of the existing per-leaf bitmaps is the correct combine for both `OrBatchMatcher` (within one column) and the `MergePlan.Or` consumer walk (across columns) — no auxiliary null tracking, no extra passes.
 
-There is no separate leaf-count gate. The v1 prototype carried an `if (leaves.size() < 2) return null;` short-circuit on the theory that single-fragment queries pay drain-side overhead with no parallelism payoff; in practice the single-leaf drain-side path is within noise of the compiled path on the end-to-end benchmark (see the `single` row in the table below) and strictly wins once a matcher gains a vectorised body, so the gate was removed.
+There is no leaf-count gate: a single-leaf query takes the drain-side path too.
 
 ---
 
@@ -80,17 +80,20 @@ NULL semantics: each fragment writes "definitely matches" — false on NULL. Wor
 
 ### Byte-array matchers
 
-`Binary{Eq,NotEq,Lt,LtEq,Gt,GtEq,In}BatchMatcher` read the column's `BinaryBatchValues` and compare each value's `bytes[offsets[i], offsets[i + 1])` slice against the literal in place, through the slice overloads on `BinaryComparator` — no `byte[]` is materialised per row. They walk only the live rows of each word rather than comparing every slot and masking afterwards: a null slot holds no value (an empty slice for `BYTE_ARRAY`, undefined scratch for `FIXED_LEN_BYTE_ARRAY`), so comparing one would answer against bytes the row does not have. The compiler admits a binary leaf only on a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column: `BatchExchange` hands an `INT96` column the same `BinaryBatchValues`, and comparing its timestamp bytes would give wrong rows rather than a fallback.
+`Binary{Eq,NotEq,Lt,LtEq,Gt,GtEq,In}BatchMatcher` read the column's `BinaryBatchValues` and compare each value's `bytes[offsets[i], offsets[i + 1])` slice against the literal in place, through the slice overloads on `BinaryComparator` — no `byte[]` is materialised per row. A null slot holds no value (an empty slice for `BYTE_ARRAY`, undefined scratch for `FIXED_LEN_BYTE_ARRAY`), so a null row's bit must end clear: the byte-wise matchers walk only the live rows of each word, and the short-value matcher below compares every slot and clears the null rows' bits afterwards.
 
-The literal's `ResolvedPredicate.BinaryPredicate.Comparison` decides both the order and what equality means, and each matcher takes it at construction:
+The literal's `ResolvedPredicate.BinaryPredicate.Comparison` decides both the order and what equality means, and each matcher takes it at construction. `BinaryComparator.sliceOrder` maps each `Comparison` to the slice order it compares in, through a switch with no `default`; the compiler admits a binary leaf exactly when that order is not `NONE`, and the matchers read their order from the same method, so a new `Comparison` is answered in one place. Every column a binary leaf names (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) reaches the batch as a `BinaryBatchValues` holding the stored bytes, so the order alone decides eligibility.
 
-| `Comparison` | Order | Equality |
+| `Comparison` | Slice order | Equality |
 |---|---|---|
-| `BYTE_STRING` | unsigned lexicographic | byte equality |
-| `FIXED_DECIMAL` | signed; every value is padded to the column width, so widths always match | byte equality |
-| `VARIABLE_DECIMAL` | signed, sign-extending the shorter value to the longer — a `BYTE_ARRAY` decimal stores each value in the fewest bytes that hold it, so `0x7F` must not outrank `0x00 0x80` | `compare(...) == 0`, because the same number may be spelled with padding and `0x00 0x7F` is another `0x7F` |
+| `BYTE_STRING` | `UNSIGNED`: unsigned lexicographic | byte equality |
+| `STORED_BYTES` | `UNSIGNED`; the resolver builds it for equality and membership only | byte equality |
+| `FIXED_DECIMAL` | `SIGNED`; every value is padded to the column width, so widths always match | byte equality |
+| `VARIABLE_DECIMAL` | `SIGNED`, sign-extending the shorter value to the longer — a `BYTE_ARRAY` decimal stores each value in the fewest bytes that hold it, so `0x7F` must not outrank `0x00 0x80` | `compare(...) == 0`, because the same number may be spelled with padding and `0x00 0x7F` is another `0x7F` |
+| `FIXED_TIMESTAMP` | `NONE`: little-endian two's complement; the leaf falls back | — |
+| `INT96_INSTANT` | `NONE`: the instant a legacy `INT96` encodes; the leaf falls back | — |
 
-That last row is why equality is not unconditionally a byte comparison: `Comparison.byteExact()` reports whether a value has exactly one encoding in the column, and only then may equality test bytes. `BinaryInBatchMatcher` applies the same equality to each member.
+The `VARIABLE_DECIMAL` row is why equality is not unconditionally a byte comparison: `Comparison.byteExact()` reports whether a value has exactly one encoding in the column, and only then may equality test bytes. `BinaryInBatchMatcher` applies the same equality to each member.
 
 #### Short-value equality
 
@@ -151,15 +154,15 @@ The reader caches the bitmap the merge returned and advances through it with a `
 
 ### Correctness
 
-`DrainSideOracleTest` (`core/src/test/java/dev/hardwood/internal/predicate/DrainSideOracleTest.java`) is a three-way oracle: for every supported `(type, op)` and 2-column AND combination over `long`/`double` columns, build a synthetic batch (random + boundary + nulls) and assert that `RecordFilterEvaluator.matchesRow` (legacy), the compiled `RowMatcher` (today's path), and the drain-side `BatchMatcher` + intersect + iterate return the same surviving row indices.
+`DrainSideOracleTest` (`core/src/test/java/dev/hardwood/internal/predicate/DrainSideOracleTest.java`) builds a synthetic batch per supported column type (random + boundary + nulls) and asserts that the compiled `RowMatcher` and the drain-side `ColumnBatchMatcher`s + merge + iterate return the same surviving row indices, for every supported `(type, op)` as a single leaf and in cross-type `And` compounds. Byte-array leaves are additionally checked against a reference that does not go through `BinaryComparator` (decimals as `BigInteger`s, byte strings through `Arrays.compareUnsigned`), since both paths compare through it.
 
-`BatchMatcherTest` covers per-matcher behaviour including word-boundary cases, NaN ordering for double, and null exclusion.
+`ColumnBatchMatcherTest` covers per-matcher behaviour including word-boundary cases, NaN ordering for double, and null exclusion.
 
 The full `./mvnw verify` passes — the drain-side path runs by default for every eligible query in the existing test suite.
 
-### Performance — end-to-end, full coverage (`RecordFilterScenariosBenchmarkTest -Dperf.runs=5`)
+### Performance — end-to-end
 
-The numbers below were captured when the single-leaf gate still existed; rows annotated `fallback (gate)` / `gated → fallback` ran the compiled path on both runs at the time. With the gate now removed, those scenarios take the drain-side path too — at parity with compiled per the row-level data already present.
+The `Path` column records which path each scenario ran on when measured. The four `fallback` scenarios (`single`, `or`, `range`, `intIn5`) are all drain-eligible; the table holds no drain-side measurement for them. Byte-array leaves are measured by `RecordFilterBenchmarkTest`.
 
 10 M rows × `id: long, value: double, tag: int, flag: boolean`. Each scenario is its own `@Test` so JIT warmup ordering doesn't bias later cells. The numbers below were captured on the branch that introduced drain-side filtering against the previous compiled-only path on `main` — the comparison is a pre/post snapshot, not a runtime toggle.
 
@@ -171,18 +174,17 @@ The numbers below were captured when the single-leaf gate still existed; rows an
 | `and2`  selective ~0.1%                   — sparse    |         3.20  |     2.77   |    1.16×    | drain (2 cols)   |
 | `and2`  ~50% selectivity                  — half      |       107.12  |    45.45   |  **2.36×**  | drain (2 cols)   |
 | `and2`  empty result                      — no match  |         0.48  |     0.34   |    1.41×    | drain (2 cols)   |
-| `single`  one leaf                        — match-all |        48.99  |    47.95   |    1.02×    | fallback (gate)  |
-| `or`  long ‖ double                       — half      |        99.93  |    98.75   |    1.01×    | fallback (or)    |
-| `range`  id BETWEEN x AND y AND value < c — ~10% pass |         8.96  |     8.68   |    1.03×    | fallback (dup)   |
-| `intIn5`  selective ~5%                   — sparse    |        66.92  |    66.00   |    1.01×    | fallback (gate)  |
+| `single`  one leaf                        — match-all |        48.99  |    47.95   |    1.02×    | fallback         |
+| `or`  long ‖ double                       — half      |        99.93  |    98.75   |    1.01×    | fallback         |
+| `range`  id BETWEEN x AND y AND value < c — ~10% pass |         8.96  |     8.68   |    1.03×    | fallback         |
+| `intIn5`  selective ~5%                   — sparse    |        66.92  |    66.00   |    1.01×    | fallback         |
 
 What this maps:
 
 - **Drain wins everywhere it's eligible.** Every two-or-more-column AND beats compiled, with the ratio scaling roughly with leaf count: `and2` 1.46×, `and3` 1.94×, `and4` 5.06× — compiled's per-row work is linear in leaves, drain's is parallel across drain threads.
 - **`and4` is the cleanest signal.** A four-leaf AND that compiled has to evaluate serially on the consumer thread (114 ms) costs only 22 ms when the leaves run on four drain threads in parallel. That's the parallelism story in pure form.
 - **Selectivity matters.** Selective `and2` (~0.1%) is only 1.16× because the consumer-side iteration cost (`nextSetBit`) shrinks alongside compiled's per-row cost — both paths get cheap together. Mid-selectivity `and2` (~50%) widens to 2.36× because compiled still pays per-row work on every survivor while drain's bitmap-iteration cost per survivor is roughly the same.
-- **The four fallback rows (`single`, `or`, `range`, `intIn5`) all sit at ~1.0×** — the gate fires, drain returns null, the query takes the same record-matcher path on both runs. Confirms the gate works and that drain-side adds no overhead on ineligible queries.
-- **`range` (`id BETWEEN x AND y AND value < c`)** would benefit from drain if the compiler fused same-column comparisons into a `LongRangeBatchMatcher`. Currently it falls back. That's the most realistic eligibility expansion.
+- **The four fallback rows (`single`, `or`, `range`, `intIn5`) all sit at ~1.0×** — both runs took the record-matcher path, which shows that attempting `tryCompile` adds no overhead to a query that falls back.
 
 Predicate-only overhead per row, compound match-all (`and2`):
 
@@ -196,16 +198,16 @@ JMH, fork=1, warmup=3×1s, measurement=5×1s, single-threaded. `ns/op` is per-ro
 
 | Shape    | Compiled ns/op | DrainSide ns/op | Drain / Compiled | Notes                              |
 |----------|---------------:|----------------:|-----------------:|------------------------------------|
-| single   | 0.412          | gated → fallback | n/a              | Single-leaf gate trips.            |
+| single   | 0.412          | not measured    | n/a              | Single leaf.                       |
 | and2     | 0.479          | 3.311           | 6.9× slower      | 2 columns, lowest leaf count.      |
 | and3     | 0.561          | 3.551           | 6.3× slower      | 3 columns.                         |
 | and4     | 0.651          | 2.481           | 3.8× slower      | 4 columns — best per-leaf cost.    |
-| or2      | 0.413          | gated → fallback | n/a              | OR not eligible.                   |
-| nested   | 0.986          | gated → fallback | n/a              | OR-inside-AND not eligible.        |
-| intIn5   | 1.364          | gated → fallback | n/a              | Single-fragment IN-list.           |
-| intIn32  | 3.126          | gated → fallback | n/a              | Same.                              |
+| or2      | 0.413          | not measured    | n/a              | Cross-column `OR`.                 |
+| nested   | 0.986          | not measured    | n/a              | `OR` inside `AND`.                 |
+| intIn5   | 1.364          | not measured    | n/a              | Single-leaf IN-list.               |
+| intIn32  | 3.126          | not measured    | n/a              | Same.                              |
 
-The drain-side path is still slower single-threaded across every eligible shape — the codegen claim from v1 (that a hand-written batch loop would beat the inlined indexed-accessor leaf) does not hold even with the rewritten matchers. **But the gap shrinks as leaf count grows**: `and2` is 6.9× slower, `and4` is 3.8×. Larger leaf counts amortise the per-batch overhead (`Arrays.fill`-free output, per-word accumulator, the merge itself) over more comparison work, while the compiled path's cost grows linearly in leaves. The per-leaf cost of drain-side has dropped to roughly half what v1 measured.
+The drain-side path is slower single-threaded across every eligible shape — a hand-written batch loop does not beat the inlined indexed-accessor leaf. **But the gap shrinks as leaf count grows**: `and2` is 6.9× slower, `and4` is 3.8×. Larger leaf counts amortise the per-batch overhead (`Arrays.fill`-free output, per-word accumulator, the merge itself) over more comparison work, while the compiled path's cost grows linearly in leaves.
 
 Why drain-side stays slower single-threaded:
 
@@ -229,18 +231,9 @@ These gaps close at higher leaf counts and disappear once the drains run in para
 
 ## Follow-ups
 
-The fallback rows in the e2e table — `or`, `range`, `intIn5` — each fall back for a different reason. Listed roughly in increasing order of work-to-lift.
+### Fused same-column range matcher
 
-### Same-column leaf fusion (`range`)
-
-**Why it falls back today.** The compiler keys its output `BatchMatcher[]` by projected column index — one slot per column. Two leaves on the same column (`id >= a AND id < b`) both want the same slot, and `tryCompile` returns `null`:
-
-```java
-if (result[projected] != null) {
-    // Two leaves on the same column: not supported in v1.
-    return null;
-}
-```
+**Why.** `id >= a AND id < b` compiles to an `AndBatchMatcher` over two single-comparison matchers: two passes over `vals[]` and a word-wise AND of two bitmaps.
 
 **What to build.** A fused `LongRangeBatchMatcher` (and `DoubleRangeBatchMatcher`) that does both compares in one pass:
 
@@ -248,11 +241,11 @@ if (result[projected] != null) {
 word |= ((vals[i] >= lo & vals[i] < hi) ? 1L : 0L) << b;
 ```
 
-One read of `vals[]`, one bitmap, no intersect. Strictly cheaper than two single-leaf matchers AND-merged. Compiler change: group leaves by `(projected column, type)` before dispatching; size ≥ 2 routes to a fusion factory. Falls through to the existing one-matcher-per-column path otherwise.
+One read of `vals[]`, one bitmap, no intersect. Compiler change: when folding same-column siblings under an `And`, recognise a lower and an upper bound of the same type and route them to the fusion factory instead of `AndBatchMatcher`.
 
-**Payoff.** Unlocks the `Page+record`-shaped predicate (the most common compound after match-all in real workloads — `id BETWEEN a AND b AND value op c`). The benchmark's `range` row should move from the "fallback" pile into the "drain wins" pile.
+**Payoff.** One pass over the column instead of two, and no per-column merge, for `id BETWEEN a AND b`, the most common same-column compound.
 
-**Difficulty.** Low. Two new matcher classes plus a grouping pass in `BatchFilterCompiler.tryCompile`. No changes to drain plumbing or intersect logic.
+**Difficulty.** Low. Two new matcher classes plus a recognition step in `BatchFilterCompiler.compileCompound`. No changes to drain plumbing or merge logic.
 
 ### `BitSet nulls` → `long[] notNullWords`
 
@@ -319,7 +312,7 @@ Identity-checked by the consumer. Match-all batches: no allocation, no fill, no 
 
 **Subtle.** NaN handling for double / float: a running `Math.min` over NaN produces NaN, and the matcher's `Double.compare` semantics don't agree with `<`. The drain has to set `statsValid = false` if any NaN is seen and the matcher takes the per-row path for that batch.
 
-**Payoff.** Closes the single-fragment match-all gap. With the v1 leaf-count gate already removed, this would also make the drain-side path strictly preferable to compiled on single-leaf match-all instead of merely at parity.
+**Payoff.** Closes the single-fragment match-all gap. This would also make the drain-side path strictly preferable to compiled on single-leaf match-all instead of merely at parity.
 
 **Difficulty.** Low-medium. Two compare-and-update per row in the drain (cheap, branchless via `Math.min`/`Math.max`). New fields on `Batch`. Sentinel identity-comparison in the intersect helper.
 
@@ -343,30 +336,13 @@ while (combined != 0) { emit(base + Long.numberOfTrailingZeros(combined)); combi
 
 **Why it's hard.** rep/def-driven row assembly does not partition cleanly per leaf. A nested column produces N values per record (offsets + repetition levels); the per-row "matches" bit is at the **record** level, but the matcher would have to walk the offset structure to map values back to records. Not impossible, but a structurally different design from the flat case.
 
-**Difficulty.** High. Out of scope for v1; tracked separately if the use case shows up.
+**Difficulty.** High. Tracked under #485.
 
 ### Bloom-filter / dictionary-aware matchers
 
 **Why.** Dictionary-encoded pages let you evaluate the predicate **in dictionary space** — one compare per dictionary entry (typically 100s), then a gather over the per-row dictionary indices. For `IN`-list and equality predicates on high-cardinality columns this is asymptotically faster than per-row. Bloom filters give a cheap pre-check for `EQ`/`IN` shapes before any decode work. Tracked as #859; note that an equality shortcut testing bytes (a dictionary or bloom probe for the literal's own spelling) is sound only where `Comparison.byteExact()` holds, so a `BYTE_ARRAY` decimal needs the ordering comparison even there.
 
 **Difficulty.** Medium-high, but **independent of the drain-side architecture**. Lives at the page-decoder layer, not the matcher layer. Mentioned for completeness; tracked separately.
-
-### Public-API surface for `ColumnReader` filtering
-
-**Why.** `ColumnReader` accepts a filter for row-group / page pruning today, but yields raw decoded batches — record-level filtering is the caller's job. A drain-side `BatchMatcher` could be installed on the `FlatColumnWorker` behind a `ColumnReader` too, with the matches mask exposed alongside the values:
-
-```java
-boolean[] flag = col.getBooleans();
-long[] matches = col.getMatches();   // ← new accessor
-for (int w = 0; w < (count + 63) >>> 6; w++) {
-    long word = matches[w];
-    while (word != 0) { … }
-}
-```
-
-That hands the bitmap iteration off to the caller (who's in the best position to decide what to do with surviving rows) but moves the per-row evaluation onto the drain.
-
-**Difficulty.** Medium. Public API addition (`ColumnReader.getMatches()` or similar), internal wiring through `BatchExchange.detaching()` mode, and a contract decision: does cross-column AND make sense at the `ColumnReaders` (projection) level, or stay one filter per `ColumnReader`?
 
 ---
 

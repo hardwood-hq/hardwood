@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntUnaryOperator;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtEqBatchMatcher;
@@ -81,9 +82,9 @@ import dev.hardwood.schema.FileSchema;
 ///   same mechanism that handles `id >= x AND id <= y` today.
 ///
 /// Anything else (intermediate-struct paths, `Float16Predicate`,
-/// `GeospatialPredicate`, unsupported `(type, op)`, and a binary predicate on a
-/// column that is neither `BYTE_ARRAY` nor `FIXED_LEN_BYTE_ARRAY`) returns `null`
-/// and the caller falls back to the row reader's record-level matcher.
+/// `GeospatialPredicate`, unsupported `(type, op)`, and a binary predicate in an
+/// order no slice comparison implements) returns `null` and the caller falls back
+/// to the row reader's record-level matcher.
 public final class BatchFilterCompiler {
 
     private BatchFilterCompiler() {}
@@ -142,7 +143,7 @@ public final class BatchFilterCompiler {
 
     private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection) {
         int fileIdx = leafColumnIndex(leaf);
-        if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf, schema, fileIdx)) {
+        if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf)) {
             return null;
         }
         int projected = projection.applyAsInt(fileIdx);
@@ -267,7 +268,7 @@ public final class BatchFilterCompiler {
     /// The switch is exhaustive over the hierarchy rather than closed with a `default`, so a new
     /// [ResolvedPredicate] cannot reach the batch path — or silently fall off it — without an
     /// answer here.
-    private static boolean isSupported(ResolvedPredicate leaf, FileSchema schema, int columnIndex) {
+    private static boolean isSupported(ResolvedPredicate leaf) {
         return switch (leaf) {
             case ResolvedPredicate.LongPredicate ignored -> true;
             case ResolvedPredicate.DoublePredicate ignored -> true;
@@ -288,24 +289,21 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate ignored -> true;
             case ResolvedPredicate.Float16Predicate ignored -> false;
             case ResolvedPredicate.Float16InPredicate ignored -> false;
-            case ResolvedPredicate.BinaryPredicate ignored -> isByteArrayColumn(schema, columnIndex);
-            case ResolvedPredicate.BinaryInPredicate ignored -> isByteArrayColumn(schema, columnIndex);
+            case ResolvedPredicate.BinaryPredicate p -> hasSliceOrder(p.comparison());
+            case ResolvedPredicate.BinaryInPredicate p -> hasSliceOrder(p.comparison());
             case ResolvedPredicate.GeospatialPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
             case ResolvedPredicate.Or ignored -> false;
         };
     }
 
-    /// The two physical types a [BinaryBatchMatcher] can compare: both reach the batch as a
-    /// `BinaryBatchValues` holding the value bytes, one variable-length and one fixed-width.
-    /// `BatchExchange` hands an `INT96` column the same `BinaryBatchValues`, but its leaves compare
-    /// by instant, which no [BinaryBatchMatcher] implements, so they fall back here rather than
-    /// compile and compare the timestamp bytes.
-    private static boolean isByteArrayColumn(FileSchema schema, int columnIndex) {
-        return switch (schema.getColumn(columnIndex).type()) {
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> true;
-            default -> false;
-        };
+    /// Whether a [BinaryBatchMatcher] can compare in `comparison`'s order. A binary leaf only ever
+    /// names a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, each of which reaches the
+    /// batch as a `BinaryBatchValues` holding the stored bytes, so the order alone decides. The
+    /// instant orders of an `INT96` and a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` have no slice
+    /// comparison and fall back.
+    private static boolean hasSliceOrder(Comparison comparison) {
+        return BinaryComparator.sliceOrder(comparison) != BinaryComparator.SliceOrder.NONE;
     }
 
     private static ColumnBatchMatcher leafMatcher(ResolvedPredicate leaf) {

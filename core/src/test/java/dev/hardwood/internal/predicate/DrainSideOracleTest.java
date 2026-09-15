@@ -523,7 +523,7 @@ class DrainSideOracleTest {
         return switch (comparison) {
             case BYTE_STRING, STORED_BYTES -> Arrays.compareUnsigned(value, literal);
             case FIXED_DECIMAL, VARIABLE_DECIMAL -> asNumber(value).compareTo(asNumber(literal));
-            case INT96_INSTANT -> throw new IllegalArgumentException("No drain-side workload uses " + comparison);
+            case FIXED_TIMESTAMP, INT96_INSTANT -> throw new IllegalArgumentException("No drain-side workload uses " + comparison);
         };
     }
 

@@ -90,16 +90,40 @@ public final class BinaryComparator {
         return signed ? compareSigned(a, aFrom, aTo, b) : compareUnsigned(a, aFrom, aTo, b);
     }
 
+    /// The order [#compare(byte[], int, int, byte[], boolean)] compares slices in for a comparison.
+    public enum SliceOrder {
+        /// Unsigned lexicographic.
+        UNSIGNED,
+        /// Big-endian two's complement, sign-extending the shorter slice.
+        SIGNED,
+        /// No slice comparison implements the order, so a predicate in it cannot be decided over
+        /// slices.
+        NONE
+    }
+
+    /// The slice order `comparison` compares in, or [SliceOrder#NONE] where no slice comparison
+    /// implements it.
+    ///
+    /// Both the batch filter compiler's eligibility check and the byte-array matchers read the
+    /// order from here, so a new [ResolvedPredicate.BinaryPredicate.Comparison] is answered once:
+    /// the switch has no `default`, and [SliceOrder#NONE] keeps a predicate off the batch path.
+    public static SliceOrder sliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
+        return switch (comparison) {
+            case BYTE_STRING, STORED_BYTES -> SliceOrder.UNSIGNED;
+            case FIXED_DECIMAL, VARIABLE_DECIMAL -> SliceOrder.SIGNED;
+            case FIXED_TIMESTAMP, INT96_INSTANT -> SliceOrder.NONE;
+        };
+    }
+
     /// The `signed` argument [#compare(byte[], int, int, byte[], boolean)] takes to compare slices
     /// in `comparison`'s order, resolved once so a per-row loop does not switch over the order.
     ///
-    /// @throws IllegalArgumentException for [ResolvedPredicate.BinaryPredicate.Comparison#INT96_INSTANT],
-    ///         whose order no slice comparison implements
+    /// @throws IllegalArgumentException for a comparison whose [#sliceOrder] is [SliceOrder#NONE]
     public static boolean signedSliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
-        return switch (comparison) {
-            case BYTE_STRING, STORED_BYTES -> false;
-            case FIXED_DECIMAL, VARIABLE_DECIMAL -> true;
-            case INT96_INSTANT -> throw new IllegalArgumentException(
+        return switch (sliceOrder(comparison)) {
+            case UNSIGNED -> false;
+            case SIGNED -> true;
+            case NONE -> throw new IllegalArgumentException(
                     "No slice comparison compares in the " + comparison + " order");
         };
     }
