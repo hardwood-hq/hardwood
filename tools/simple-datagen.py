@@ -5959,8 +5959,11 @@ print("  - Childless root schema: no columns, no rows")
 
 # One column per row of the per-column table in `_designs/PREDICATE_LITERALS.md`, so that a
 # predicate can be put to every literal type, operator and read path over the same 400 rows.
-# Every value column is optional and shares one null mask, which lets a filter's answer be
-# compared against a rule that never matches a null.
+# Every value column but `i32_req` is optional and shares one null mask, which lets a filter's answer
+# be compared against a rule that never matches a null.
+#
+# `i32_req` holds `i32`'s values without its nulls, so a row group whose every value matches can be
+# proven to match in full, which a column holding a null never allows.
 #
 # `f32` and `f64` carry both NaN payloads, a negative zero and both infinities, since those are
 # the values whose comparison and whose statistics bounds diverge. `str` ends on a full-width
@@ -6029,6 +6032,7 @@ pred_schema = pa.schema([
     ('flba5', pa.binary(5)),
     ('uuid', pa.uuid()),
     ('enum', pa.binary()),          # post-annotated as ENUM
+    ('i32_req', pa.int32(), False),
 ])
 pred_table = pa.table({
     '__row__': _pred_range,
@@ -6061,6 +6065,7 @@ pred_table = pa.table({
     'flba5': _pred_opt([bytes([r // 2, 0, 0, 0, r & 0xFF]) for r in _pred_range]),
     'uuid': _pred_opt([bytes([r // 2]) + bytes(14) + bytes([r & 0xFF]) for r in _pred_range]),
     'enum': _pred_opt([f'E{r % 7}'.encode() for r in _pred_range]),
+    'i32_req': [(r - 200) * 2 for r in _pred_range],
 }, schema=pred_schema)
 
 def _pred_bloom(table):
@@ -6227,7 +6232,7 @@ _pv_write('predicate', {
                        ('ts_ms_utc', 'instant'), ('ts_us_utc', 'instant'), ('ts_ns_utc', 'instant'),
                        ('ts_us_local', 'datetime'), ('dec_i32', 'decimal'), ('dec_i64', 'decimal'),
                        ('dec_flba', 'decimal'), ('str', 'string'), ('json', 'string'), ('ba', 'bytes'),
-                       ('flba5', 'bytes'), ('uuid', 'uuid'), ('enum', 'string')]
+                       ('flba5', 'bytes'), ('uuid', 'uuid'), ('enum', 'string'), ('i32_req', 'int')]
 })
 
 # Columns the corpus above cannot carry live in one of their own, which the differential oracle

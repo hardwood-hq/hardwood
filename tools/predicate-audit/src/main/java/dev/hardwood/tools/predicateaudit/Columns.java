@@ -225,6 +225,8 @@ final class Columns {
         c.add(new Col("zz", Sem.ZZ, 0, 0, row -> utf8("z"), false));
         c.add(new Col("bool", Sem.BOOL, 0, 0, row -> row >= 350, true));
         c.add(new Col("i32", Sem.I32, 0, 0, row -> offset(row) * 2, true));
+        // No nulls, so a row group whose every value matches is decided in full from its statistics.
+        c.add(new Col("i32_req", Sem.I32, 0, 0, row -> offset(row) * 2, false));
         c.add(new Col("i64", Sem.I64, 0, 0, row -> offset(row) * 20_000_000_000L, true));
         c.add(new Col("i8", Sem.INT8S, 0, 0, row -> row == 598 ? 1000 : row == 1 ? -1000 : offset(row) / 3, true));
         c.add(new Col("u8", Sem.UINT8, 0, 0, row -> row * 255 / 599, true));

@@ -36,11 +36,20 @@ import java.util.zip.GZIPInputStream;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.BoundsReadability;
+import dev.hardwood.internal.predicate.FilterDecision;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.LogContext;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
@@ -52,6 +61,9 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
+import static dev.hardwood.internal.predicate.FilterDecision.ALWAYS_MATCHES;
+import static dev.hardwood.internal.predicate.FilterDecision.CANNOT_MATCH;
+import static dev.hardwood.internal.predicate.FilterDecision.MIGHT_MATCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
@@ -262,6 +274,8 @@ class PredicatePathAgreementTest {
 
         // --- INT32 / INT64, signed and unsigned ---
         intCases(cases, "i32", 0);
+        // No nulls, so a row group whose every value matches is decided in full from its statistics.
+        intCases(cases, "i32_req", 0);
         intCases(cases, "i8", -20);
         intCases(cases, "u8", 128);
         intCases(cases, "u32", Integer.MIN_VALUE + 100_000_000);
@@ -1054,6 +1068,30 @@ class PredicatePathAgreementTest {
     static Stream<Arguments> flatLayoutsAndPaths() {
         return Stream.of(SINGLE, MULTI, DICTIONARY, BLOOM)
                 .flatMap(layout -> Stream.of(ReadPath.values()).map(path -> Arguments.of(layout, path)));
+    }
+
+    /// `i32_req` is the only column whose row groups the harness sees decided as matching in full,
+    /// which skips per-row evaluation. This pins that the multi-row-group layout keeps giving it such
+    /// row groups, and that `i32`, holding the same values beside nulls, gets none.
+    @Test
+    void theMultiLayoutHoldsRowGroupsThatMatchInFull() throws IOException {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MULTI.path()), context)) {
+            assertThat(rowGroupDecisions(reader, FilterPredicate.lt("i32_req", 0)))
+                    .containsExactly(ALWAYS_MATCHES, ALWAYS_MATCHES, CANNOT_MATCH, CANNOT_MATCH);
+            assertThat(rowGroupDecisions(reader, FilterPredicate.lt("i32", 0)))
+                    .containsExactly(MIGHT_MATCH, MIGHT_MATCH, CANNOT_MATCH, CANNOT_MATCH);
+        }
+    }
+
+    private static List<FilterDecision> rowGroupDecisions(ParquetFileReader reader, FilterPredicate predicate)
+            throws IOException {
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(predicate, reader.getFileSchema());
+        List<FilterDecision> decisions = new ArrayList<>();
+        for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
+            decisions.add(RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, null,
+                    new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP), BoundsReadability.ALL));
+        }
+        return decisions;
     }
 
     /// Every value the oracle reads is the value the fixture generator wrote, through the logical
