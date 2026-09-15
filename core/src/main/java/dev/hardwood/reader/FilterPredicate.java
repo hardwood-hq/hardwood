@@ -21,11 +21,13 @@ import java.util.UUID;
 
 import dev.hardwood.row.PqInterval;
 
-/// A predicate for filtering row groups based on column statistics.
+/// A predicate filtering the rows a reader returns.
 ///
-/// Filter predicates enable predicate push-down: row groups whose statistics
-/// prove that no rows can match the predicate are skipped entirely, avoiding
-/// unnecessary I/O and decoding.
+/// A reader returns exactly the rows the predicate matches, except for [#intersects], which
+/// decides whole row groups. It also pushes the predicate down: row groups and pages whose
+/// statistics, dictionary or Bloom filter prove that no row can match are skipped without being
+/// decoded. A literal is a value the column's accessors return; the Query Controls reference lists
+/// the literals and operators each column type takes.
 ///
 /// Usage examples:
 /// ```java

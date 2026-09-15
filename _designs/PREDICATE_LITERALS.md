@@ -9,23 +9,49 @@ users.
 
 ## Rule
 
+The examples below use four columns:
+
+```
+d    DATE
+ts   TIMESTAMP(MICROS, isAdjustedToUTC = true)
+dec  DECIMAL(9, 2) over BYTE_ARRAY; row A stores 1.25 as 7D, row B as 00 7D
+u    INT(32, isSigned = false)
+```
+
 1. **A literal is a value an accessor returns for the column.** A column takes the value of its
    logical accessor (`LocalDate`, `Instant`, `LocalDateTime`, `LocalTime`, `BigDecimal`, `UUID`,
    `PqInterval`, a `float` on `FLOAT16`, a `String` where `getString` reads the column) and the
    value of its physical accessor (`boolean`, `int`, `long`, `float`, `double`, `byte[]`). Literal
-   types do not widen: an `int` is no literal for an `INT64` column. `eq("d", LocalDate.of(2026, 1,
-   1))` and `eq("d", 20454)` both filter a `DATE` column; `eq("d", 20454L)` does not.
+   types do not widen.
+   ```java
+   eq("d", LocalDate.of(2026, 1, 1))   // ✓ getDate
+   eq("d", 20454)                      // ✓ getInt, the epoch day
+   eq("d", 20454L)                     // ✗ no accessor returns a long
+   eq("dec", "1.25")                   // ✗ getString does not read a DECIMAL
+   ```
 2. **A literal matches a row when it denotes the value the row holds.** A typed literal denotes a
    value of the column's type, an `int` or `long` the stored integer (the bit pattern on an
    unsigned column), and a `byte[]` the stored bytes, whatever the annotation reads them as.
+   ```java
+   eq("dec", new BigDecimal("1.25"))   // rows A and B: both hold 1.25
+   eq("dec", new byte[] { 0x7D })      // row A only: B stores other bytes
+   ```
 3. **A literal takes the ordered operators where it compares in the column's order.** Typed
    literals compare by value, `int` and `long` signed (unsigned on an unsigned `INT` column), and
    `byte[]` unsigned lexicographically. That is the order of every binary type except `DECIMAL`,
    `FLOAT16`, `INT96` and `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, which order by the value
    their bytes encode; there a `byte[]` takes equality and the set form only. A type that defines no
    order takes no ordered operator.
+   ```java
+   lt("dec", new BigDecimal("2.00"))   // ✓ by value
+   lt("dec", new byte[] { 0x7D })      // ✗ a DECIMAL does not order as its bytes
+   lt("u", -1)                         // ✓ unsigned: every row but one storing 0xFFFFFFFF
+   ```
 4. **An equality literal must be a value the column can hold; an order literal may be any value.**
-   `eq(ts, Instant.now())` on a microsecond column throws, `lt(ts, Instant.now())` is answered.
+   ```java
+   lt("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✓ rows up to .000000
+   eq("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✗ finer than MICROS
+   ```
 
 Every literal type with `eq` also has a set form, `in(column, values...)`, whose values are
 equality literals, except `boolean`: `eq`, `notEq` and `isNotNull` already express every set of

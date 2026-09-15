@@ -30,7 +30,7 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getBoolean` | BOOLEAN | | `boolean` |
 | `getInt` | INT32 | any | `int` |
 | `getLong` | INT64 | any | `long` |
-| `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | FLOAT16 (optional) | `float` |
+| `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | none on FLOAT; FLOAT16 on FIXED_LEN_BYTE_ARRAY(2) | `float` |
 | `getDouble` | DOUBLE | | `double` |
 | `getBinary` | BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, or INT96 | any | `byte[]` |
 | `getString` | BYTE_ARRAY | STRING, ENUM, JSON, or none | `String` |

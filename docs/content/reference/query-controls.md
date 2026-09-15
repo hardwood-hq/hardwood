@@ -22,7 +22,7 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
 | Set operators | `in`, over every literal type but `boolean` |
 | Null operators | `isNull`, `isNotNull` (any type) |
-| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
+| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It skips row groups whose bounding box does not overlap the query box and returns every row of the others (see [Geospatial](../how-to/geospatial.md)). It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
 | Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
 
@@ -41,6 +41,26 @@ magnitude. Set membership follows the same mapping: `in` takes each literal type
 `boolean`, and each of its values is an equality literal. An empty set throws
 `IllegalArgumentException` when the predicate is built. A literal a column does not take throws
 `IllegalArgumentException` at reader creation.
+
+For columns `d DATE`, `ts TIMESTAMP(MICROS, isAdjustedToUTC = true)`, `dec DECIMAL(9, 2)` over
+`BYTE_ARRAY`, whose row A stores `1.25` as `7D` and row B as `00 7D`, and `u INT(32, isSigned = false)`:
+
+```java
+eq("d", LocalDate.of(2026, 1, 1))   // ✓ the value getDate returns
+eq("d", 20454)                      // ✓ the value getInt returns, the epoch day
+eq("d", 20454L)                     // ✗ throws: no accessor returns a long for this column
+eq("dec", "1.25")                   // ✗ throws: getString does not read a DECIMAL
+
+eq("dec", new BigDecimal("1.25"))   // rows A and B, which both hold 1.25
+eq("dec", new byte[] { 0x7D })      // row A only, the row storing exactly these bytes
+
+lt("dec", new BigDecimal("2.00"))   // ✓ compares the numbers
+lt("dec", new byte[] { 0x7D })      // ✗ throws: a DECIMAL does not order as its bytes
+lt("u", -1)                         // ✓ -1 is 0xFFFFFFFF, compared unsigned
+
+lt("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✓ rows up to 00:00:00.000000
+eq("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✗ throws: finer than the column's MICROS
+```
 
 ```java
 FilterPredicate filter = FilterPredicate.in("status", "ACTIVE", "PENDING");
