@@ -43,6 +43,7 @@ allocation profiling, `-rf json -rff out.json` for machine-readable results,
 | `MemoryMapBenchmark` | Raw I/O floor: mmap + copy of a whole file, no decode | taxi data, downloaded by `./mvnw verify -Pperformance-test` |
 | `FixedSizeListDecodeBenchmark` | Fixed-size-list fast path vs. general list decode across vector widths | `generate_fixed_size_list_data.py` |
 | `FixedSizeListFallbackBenchmark` | Detector cost on almost-fixed-width pages that fall back | `generate_fixed_size_list_data.py` |
+| `Flba12TimestampDecodeBenchmark` | `FIXED_LEN_BYTE_ARRAY(12)` vs. `INT64` `TIMESTAMP` decode, to the integer and to `Instant`, plus byte-order variants (#921) | none (in-memory) |
 | `nested/NestedListReadBenchmark` | `LIST<primitive>` reads across element types and null densities vs. a flat floor | self-generating (`NestedListFileGenerator`) |
 | `nested/NestedMultiListReadBenchmark` | Multi-list-column schema effects on the nested read path | self-generating (`NestedListFileGenerator`) |
 | `nested/NestedLogicalTypeReadBenchmark` | Typed (`dates()`, `timestamps()`, `decimals()`) vs. generic `values()` element reads over a `LIST<annotated>`, across element types and null densities | self-generating (`NestedLogicalTypeFileGenerator`) |
