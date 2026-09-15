@@ -170,9 +170,9 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
             }
         });
 
-        // The column readers' record count is not asserted: they drop the rows where the address
-        // is present (#1189).
-        readFullyMatching(file, FilterPredicate.isNull("address.city"));
+        assertThat(readFullyMatching(file, FilterPredicate.isNull("address.city")))
+                .as("column readers return every row")
+                .isEqualTo(NULL_ROWS);
     }
 
     @Test
