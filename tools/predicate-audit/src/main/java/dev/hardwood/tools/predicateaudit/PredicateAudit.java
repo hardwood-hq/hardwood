@@ -16,9 +16,10 @@ import java.util.List;
 /// Entry point of the predicate rule audit; see `tools/predicate-audit/README.md`.
 ///
 /// - `fixtures <dir>` writes the parquet-java fixtures.
-/// - `audit <fixtures> <report>` runs the matrix, the resolver matrix, the consultation checks, the
-///   accessor round-trip and the engine comparison over fixtures and their derived variants, and
-///   writes `summary.md` beside the full results.
+/// - `audit <fixtures> <report> <baseline>` runs the matrix, the resolver matrix, the consultation
+///   checks, the accessor round-trip and the engine comparison over fixtures and their derived
+///   variants, writes `summary.md` beside the full results, and exits with status 3 when the
+///   findings differ from the baseline.
 public final class PredicateAudit {
 
     private PredicateAudit() {
@@ -29,15 +30,18 @@ public final class PredicateAudit {
             FixtureWriter.writeAll(Path.of(args[1]));
             return;
         }
-        if (args.length == 3 && args[0].equals("audit")) {
-            audit(Path.of(args[1]), Path.of(args[2]));
+        if (args.length == 4 && args[0].equals("audit")) {
+            if (!audit(Path.of(args[1]), Path.of(args[2]), Path.of(args[3]))) {
+                System.exit(3);
+            }
             return;
         }
-        System.err.println("usage: PredicateAudit fixtures <dir> | audit <fixtures> <report>");
+        System.err.println("usage: PredicateAudit fixtures <dir> | audit <fixtures> <report> <baseline>");
         System.exit(2);
     }
 
-    private static void audit(Path fixtures, Path report) throws Exception {
+    /// Returns whether the run's findings match the baseline.
+    private static boolean audit(Path fixtures, Path report, Path baseline) throws Exception {
         Files.createDirectories(report);
         long start = System.nanoTime();
         List<Matrix.Tally> tallies = Matrix.run(fixtures, report);
@@ -50,8 +54,18 @@ public final class PredicateAudit {
         log("accessor round-trip", start);
         EngineComparison.Result engines = EngineComparison.run(fixtures, report);
         log("engines", start);
-        writeSummary(report, tallies, resolver, consultation, roundTrip, engines);
+        List<String> findings = Baseline.findings(tallies, resolver, consultation, roundTrip, engines);
+        Baseline.write(report, findings);
+        Baseline.Comparison comparison = Baseline.compare(baseline, findings);
+        writeSummary(report, tallies, resolver, consultation, roundTrip, engines, comparison);
         System.out.println("report: " + report.resolve("summary.md"));
+        if (!comparison.matches()) {
+            System.out.println("findings differ from " + baseline + ": " + comparison.unexpected().size() + " unexpected, "
+                    + comparison.missing().size() + " missing");
+            comparison.unexpected().forEach(finding -> System.out.println("+ " + finding));
+            comparison.missing().forEach(finding -> System.out.println("- " + finding));
+        }
+        return comparison.matches();
     }
 
     private static void log(String step, long start) {
@@ -59,7 +73,8 @@ public final class PredicateAudit {
     }
 
     private static void writeSummary(Path report, List<Matrix.Tally> tallies, ResolverMatrix.Result resolver,
-            ConsultationChecks.Result consultation, AccessorRoundTrip.Result roundTrip, EngineComparison.Result engines)
+            ConsultationChecks.Result consultation, AccessorRoundTrip.Result roundTrip, EngineComparison.Result engines,
+            Baseline.Comparison comparison)
             throws Exception {
         try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("summary.md")))) {
             out.println("# Predicate rule audit");
@@ -75,10 +90,22 @@ public final class PredicateAudit {
             out.println("- **Accessor round-trip:** " + roundTrip.checks() + " values passed back as literals, "
                     + roundTrip.disagreements().size() + " disagreeing with the rule, " + roundTrip.thrown().size()
                     + " logical reads that threw (`roundtrip.tsv`)");
-            out.println("- **Engines:** " + engines.predicates() + " predicates, " + engines.differing()
+            out.println("- **Baseline:** " + (comparison.matches() ? "matches" : comparison.unexpected().size()
+                    + " findings not in it, " + comparison.missing().size() + " of its findings missing")
+                    + " (`findings.tsv`)");
+            out.println("- **Engines:** " + engines.predicates() + " predicates, " + engines.differing().size()
                     + " where an engine or Hardwood departs from the rule, or on the PyArrow file the engines from each other"
                     + " (`engines.tsv`)");
             out.println();
+            if (!comparison.matches()) {
+                out.println("## Baseline drift");
+                out.println();
+                out.println("```");
+                comparison.unexpected().forEach(finding -> out.println("+ " + finding));
+                comparison.missing().forEach(finding -> out.println("- " + finding));
+                out.println("```");
+                out.println();
+            }
             out.println("## Matrix");
             out.println();
             out.println("| group | layout | cells | rows | empty | refused | row groups (`intersects`) | disagree |");

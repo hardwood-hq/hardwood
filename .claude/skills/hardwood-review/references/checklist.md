@@ -146,6 +146,11 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 - **Rule:** Performance-sensitive changes need a benchmark (`performance-testing/` end-to-end or JMH micro), not just a "should be faster" claim.
 - **How:** See A8. Cross-link the perf test to the production code path it exercises so a future regression bisects cleanly.
 
+### D7. Predicate audit baseline
+- **Rule:** A change to predicate resolution, pruning, annotations or accessors keeps the PR build's `predicate-audit` job green. A new annotation, literal type or file shape extends `tools/predicate-audit` (see its README) so the audit covers it. An entry added to `tools/predicate-audit/baseline.tsv` carries a comment naming the design's differences-table row or the engine defect behind it; a disagreement with the rule is fixed, never baselined.
+- **Why:** The audit is the only check comparing Hardwood with parquet-java and DuckDB on the same files. A baseline entry added to make the job pass silently accepts a regression.
+- **How:** Diff touches `tools/predicate-audit/baseline.tsv` → read each added line: `matrix`, `resolver`, `consultation` and `roundtrip` lines are defects; an `engine` line needs its design row, and a new design row needs the stopping rule (a query returns different rows or throws differently). Diff adds a `LogicalType`, a `FilterPredicate` factory or a pruning source without touching `tools/predicate-audit/` → flag.
+
 ---
 
 ## E. Documentation

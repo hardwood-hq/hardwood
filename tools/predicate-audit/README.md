@@ -1,10 +1,11 @@
 # Predicate rule audit
 
-An ad-hoc tool that measures Hardwood's filter predicates against the rule in
+A tool that measures Hardwood's filter predicates against the rule in
 [`_designs/PREDICATE_LITERALS.md`](../../_designs/PREDICATE_LITERALS.md), and compares them with
-parquet-java 1.17.1 and DuckDB 1.4.4. Run it when the rule changes: a new annotation, a new literal
-type, a change to pruning, or an engine upgrade that may change the design's differences table. It is
-not part of the build; CI compiles it but does not run it.
+parquet-java 1.17.1 and DuckDB 1.4.4. The PR build's `predicate-audit` job runs it for every change to
+`core/src/main`, the tool, `tools/parquet_annotators.py`, `requirements.txt`, the root, `core` or
+`test-bom` POM (the last pins the parquet-java and DuckDB versions) or `.github/workflows/pr-build.yml`,
+and uploads the report as the `predicate-audit-report` artifact.
 
 ## Running
 
@@ -47,6 +48,25 @@ The script:
 
 A step whose run fails names the log holding its stderr.
 
+## The baseline
+
+`baseline.tsv` lists the findings a run is expected to produce, and `run.sh` exits with status 3
+when the run's findings differ from it in either direction: a finding it does not list, or a listed
+one the run no longer produces. `summary.md` then opens with the drift, and `findings.tsv` holds
+every finding of the run in baseline form.
+
+A finding is a line starting with its step:
+
+| Step | Line | Expected in a clean tree |
+|---|---|---|
+| `matrix`, `resolver`, `consultation`, `roundtrip` | the step's disagreement line | never |
+| `roundtrip-throw` | file, row, column and accessor of a logical read that threw | a stored value its logical type cannot represent |
+| `engine` | predicate id and the answers of Hardwood, parquet-java and DuckDB | a row of the design's differences table |
+
+Change the baseline only with the change that moves a finding, and give each entry a `#` comment
+naming the design row or the defect behind it. A disagreement with the rule is fixed, not
+baselined.
+
 ## The oracle
 
 `Oracle.java` restates the rule independently of `FilterPredicateResolver`: which predicates a
@@ -66,3 +86,9 @@ not checked row by row.
 
 The `parquet-java-compat` shim is not compared: its own `org.apache.parquet` classes cannot share a
 classpath with real parquet-java. `ParquetReaderCompatTest` covers it.
+
+## Probing by hand
+
+- The compat module's own `org.apache.parquet` classes shadow `parquet-column`, so real parquet-java needs a classpath without the compat module.
+- `FilterApi.in` with `Set.of` throws a `NullPointerException`; use a `HashSet`.
+- DuckDB cannot open a file holding a `BSON` column.

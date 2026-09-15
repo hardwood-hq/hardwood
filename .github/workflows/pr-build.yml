@@ -253,10 +253,10 @@ jobs:
         run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
 
       - name: 'Compile predicate-audit'
-        # The tool is in the reactor only under `-Ppredicate-audit` and is run by hand, so
-        # nothing else compiles it, and it uses internal predicate APIs that change. This job
-        # has core and parquet-java at hand; compiling, with the Error Prone checks, is enough
-        # to catch a break.
+        # The tool is in the reactor only under `-Ppredicate-audit`, and the `predicate-audit`
+        # job runs it only for changes that can move its findings. It uses internal predicate
+        # APIs that change, so this job, which has core and parquet-java at hand, compiles it
+        # for every change.
         run: ./mvnw -ntp -B -Ppredicate-audit compile -pl :hardwood-predicate-audit
 
       - name: 'Upload built artifacts'
@@ -498,6 +498,71 @@ jobs:
         # -Dnative clears the `native` tag exclusion, so this covers the native
         # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
         run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
+
+  predicate-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
+        with:
+          fetch-depth: 0
+
+      - name: 'Check whether the change can move the audit'
+        # The audit takes a few minutes, so it runs only when the reader, the tool, its
+        # fixture dependencies, the POMs that pin its build and the compared engines' versions,
+        # or this workflow change. Keep the list in tools/predicate-audit/README.md in step.
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA"...HEAD \
+              | grep -qE '^(core/src/main/|tools/predicate-audit/|tools/parquet_annotators\.py$|requirements\.txt$|pom\.xml$|core/pom\.xml$|test-bom/pom\.xml$|\.github/workflows/pr-build\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 'Set up Java'
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: 'Cache Maven dependencies'
+        if: steps.changes.outputs.run == 'true'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ github.job }}-
+            maven-${{ runner.os }}-build-parquet-java-compat-
+            maven-${{ runner.os }}-build-core-
+            maven-${{ runner.os }}-
+
+      - name: 'Set up the Python venv'
+        if: steps.changes.outputs.run == 'true'
+        run: |
+          python3 -m venv .docker-venv
+          .docker-venv/bin/pip install -q -r requirements.txt
+
+      - name: 'Run the predicate audit'
+        # Fails when the findings differ from tools/predicate-audit/baseline.tsv.
+        if: steps.changes.outputs.run == 'true'
+        env:
+          PREDICATE_AUDIT_BUILD_TIMEOUT: '600'
+        run: tools/predicate-audit/run.sh
+
+      - name: 'Upload the audit report'
+        if: steps.changes.outputs.run == 'true' && always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
+        with:
+          name: predicate-audit-report
+          path: tools/predicate-audit/target/report/
+          retention-days: 7
 
   docs-prose-check:
     runs-on: ubuntu-latest

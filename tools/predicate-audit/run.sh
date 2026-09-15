@@ -12,7 +12,8 @@
 #   tools/predicate-audit/run.sh [report-dir]
 #
 # Builds Hardwood and the tool, writes the fixtures, derives their variants and runs every step.
-# The report defaults to tools/predicate-audit/target/report.
+# The report defaults to tools/predicate-audit/target/report. Exits with status 3 when the findings
+# differ from baseline.tsv. PREDICATE_AUDIT_BUILD_TIMEOUT overrides the build's 180 s timeout.
 set -euo pipefail
 
 tool_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +27,7 @@ echo "== Building Hardwood and the audit tool"
 # The classpath is resolved in the same reactor as the build, so Hardwood's modules resolve to
 # the jars just packaged rather than to whatever the local repository last had installed. The
 # relative output file resolves against each module's own directory.
-timeout 180 ./mvnw -q -Ppredicate-audit -pl tools/predicate-audit -am package dependency:build-classpath \
+timeout "${PREDICATE_AUDIT_BUILD_TIMEOUT:-180}" ./mvnw -q -Ppredicate-audit -pl tools/predicate-audit -am package dependency:build-classpath \
     -DskipTests -Dquick -Dmdep.outputFile=target/classpath.txt -Dmdep.includeScope=runtime
 classpath="$target/classes:$(cat "$target/classpath.txt")"
 java_opts=(--enable-native-access=ALL-UNNAMED -cp "$classpath")
@@ -56,4 +57,11 @@ source "$venv/bin/activate"
 python "$tool_dir/derive_fixtures.py" "$fixtures"
 
 echo "== Auditing"
-run_logged "$target/audit-stderr.log" java "${java_opts[@]}" dev.hardwood.tools.predicateaudit.PredicateAudit audit "$fixtures" "$report"
+status=0
+java "${java_opts[@]}" dev.hardwood.tools.predicateaudit.PredicateAudit audit "$fixtures" "$report" "$tool_dir/baseline.tsv" \
+    2> "$target/audit-stderr.log" || status=$?
+case "$status" in
+    0) ;;
+    3) echo "findings differ from baseline.tsv; see $report/summary.md" >&2; exit 3 ;;
+    *) echo "failed; stderr is in $target/audit-stderr.log" >&2; exit 1 ;;
+esac

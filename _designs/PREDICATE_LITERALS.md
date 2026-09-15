@@ -298,8 +298,10 @@ return `NaN` rows that DuckDB drops (3). The other rows need rare types, literal
   resolved predicate or rejected with the full message.
 - **`FilterPredicateTest`**: build-time checks, copies and content equality of `byte[]` literals.
 - **`ParquetReaderCompatTest`**: `Binary` literals on `DECIMAL` and `FLOAT16` answer as parquet-java.
-- **`tools/predicate-audit`**, run by hand when the rule, pruning or a compared engine changes; CI
-  compiles it but does not run it:
+- **`tools/predicate-audit`**, run by the PR build for the changes its README lists. It fails when
+  its findings differ from `tools/predicate-audit/baseline.tsv`, which holds the engine differences
+  in the table above, the logical reads that throw on a stored value the logical type cannot
+  represent, and DuckDB's failure to read a `DELTA_BYTE_ARRAY` decimal:
   - **Matrix:** about 72,000 predicate cells through the same five paths, checked against a second
     oracle of this rule that takes stored values from the fixture generator rather than from the
     reader. parquet-java writes the fixtures in the same four layouts: the per-column table, the

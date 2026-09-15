@@ -58,7 +58,9 @@ final class EngineComparison {
     record Entry(String id, String group, P predicate, Supplier<FilterCompat.Filter> parquetJava, String duckDb) {
     }
 
-    record Result(int predicates, int differing) {
+    /// `differing` holds, for each predicate where an engine or Hardwood departs from the rule, its
+    /// id and every engine's answer.
+    record Result(int predicates, List<String> differing) {
     }
 
     private EngineComparison() {
@@ -67,7 +69,7 @@ final class EngineComparison {
     static Result run(Path fixtures, Path report) throws Exception {
         Map<String, Rows> groups = Map.of("flat", Matrix.flatRows(Columns.flat()), "legacy", Matrix.flatRows(Columns.legacy()),
                 "nested", Matrix.nestedRows());
-        int differing = 0;
+        List<String> differing = new ArrayList<>();
         List<Entry> entries = entries();
         try (Connection duckDb = DriverManager.getConnection("jdbc:duckdb:");
              PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("engines.tsv")))) {
@@ -86,13 +88,14 @@ final class EngineComparison {
                         || !(parquetJava.equals("n/a") || parquetJava.equals(rule))
                         || !(duck.equals("n/a") || duck.equals(rule));
                 if (differs) {
-                    differing++;
+                    differing.add(entry.id() + "\t" + hardwood + "\t" + parquetJava + "\t" + duck);
                 }
                 out.println(entry.id() + "\t" + Oracle.show(entry.predicate()) + "\t" + rule + "\t" + hardwood + "\t" + parquetJava
                         + "\t" + duck + "\t" + (differs ? "yes" : ""));
             }
             Result probes = nanAndNanosecondProbe(fixtures.resolve("pyarrow_nan.parquet"), duckDb, out);
-            return new Result(entries.size() + probes.predicates(), differing + probes.differing());
+            differing.addAll(probes.differing());
+            return new Result(entries.size() + probes.predicates(), differing);
         }
     }
 
@@ -299,14 +302,14 @@ final class EngineComparison {
                 new Entry("pyarrow.gt-nanosecond", "pyarrow", new Leaf("tsn", Op.GT, Instant.EPOCH.plusNanos(base + 4)),
                         filter(() -> FilterApi.gt(FilterApi.longColumn("tsn"), base + 4)),
                         "tsn > '2023-11-14 22:13:20.000000004+00'::TIMESTAMPTZ"));
-        int differing = 0;
+        List<String> differing = new ArrayList<>();
         for (Entry entry : probes) {
             String hardwood = answer(probed -> hardwood(probed, entry), file);
             String parquetJava = answer(probed -> parquetJava(probed, entry), file);
             String duck = answer(probed -> duckDb(duckDb, probed, entry.duckDb()), file);
             boolean differs = !(hardwood.equals(parquetJava) && hardwood.equals(duck));
             if (differs) {
-                differing++;
+                differing.add(entry.id() + "\t" + hardwood + "\t" + parquetJava + "\t" + duck);
             }
             out.println(entry.id() + "\t" + Oracle.show(entry.predicate()) + "\t(see pyarrow_nan in derive_fixtures.py)\t" + hardwood
                     + "\t" + parquetJava + "\t" + duck + "\t" + (differs ? "yes" : ""));

@@ -409,6 +409,7 @@
               <!-- `#`-commented formats the plugin does not know by extension. -->
               <mapping>
                 <txt>SCRIPT_STYLE</txt>
+                <tsv>SCRIPT_STYLE</tsv>
                 <tape>SCRIPT_STYLE</tape>
                 <dockerignore>SCRIPT_STYLE</dockerignore>
               </mapping>
