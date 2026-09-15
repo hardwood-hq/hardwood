@@ -35,10 +35,11 @@ RUN microdnf install -y --nodocs \
       python3-pip \
     && microdnf clean all
 
-# Install SDKMAN and Java 25 (Temurin)
+# Install SDKMAN and Java 25 (Temurin). The GA build (25-tem) can leave a virtual thread parked
+# forever under timed blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
 ENV SDKMAN_DIR="/root/.sdkman"
 RUN curl -s "https://get.sdkman.io" | bash \
-    && bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && sdk install java 25-tem"
+    && bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && sdk install java 25.0.4-tem"
 ENV PATH="$SDKMAN_DIR/candidates/java/current/bin:$PATH"
 ENV JAVA_HOME="$SDKMAN_DIR/candidates/java/current"
 
