@@ -21,7 +21,7 @@ public final class BinaryGtEqBatchMatcher implements BinaryBatchMatcher {
 
     public BinaryGtEqBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
-        this.signed = comparison.signed();
+        this.signed = BinaryComparator.signedSliceOrder(comparison);
     }
 
     @Override

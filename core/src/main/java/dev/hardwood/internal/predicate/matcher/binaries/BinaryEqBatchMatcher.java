@@ -23,7 +23,7 @@ public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
     public BinaryEqBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
         this.byteExact = comparison.byteExact();
-        this.signed = comparison.signed();
+        this.signed = BinaryComparator.signedSliceOrder(comparison);
     }
 
     @Override

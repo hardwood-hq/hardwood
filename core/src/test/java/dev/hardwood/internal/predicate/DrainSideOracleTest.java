@@ -520,10 +520,11 @@ class DrainSideOracleTest {
     }
 
     private static int referenceCompare(byte[] value, byte[] literal, Comparison comparison) {
-        if (!comparison.signed()) {
-            return Arrays.compareUnsigned(value, literal);
-        }
-        return asNumber(value).compareTo(asNumber(literal));
+        return switch (comparison) {
+            case BYTE_STRING, STORED_BYTES -> Arrays.compareUnsigned(value, literal);
+            case FIXED_DECIMAL, VARIABLE_DECIMAL -> asNumber(value).compareTo(asNumber(literal));
+            case INT96_INSTANT -> throw new IllegalArgumentException("No drain-side workload uses " + comparison);
+        };
     }
 
     /// Big-endian two's complement, the empty array being zero.

@@ -211,13 +211,18 @@ class BatchFilterCompilerTest {
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
     }
 
-    /// Every order a binary column sorts in is eligible, decimals included — the matcher takes the
-    /// comparison and compares in it, rather than the compiler admitting only byte strings.
+    /// Every order a byte-array column sorts in is eligible, decimals included — the matcher takes
+    /// the comparison and compares in it, rather than the compiler admitting only byte strings.
+    /// `INT96_INSTANT` is left out: it is the order of an `INT96` column, which falls back by its
+    /// physical type (see [IneligibleShapes#binaryLeafOnInt96Column_returnsNull()]).
     @Test
     void binaryLeaf_everyComparisonAndOperator_isEligible() {
         FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
 
         for (Comparison comparison : Comparison.values()) {
+            if (comparison == Comparison.INT96_INSTANT) {
+                continue;
+            }
             for (Operator op : Operator.values()) {
                 ColumnBatchMatcher[] result = compileMatchers(
                         new ResolvedPredicate.BinaryPredicate(0, op, new byte[]{'m'}, comparison),
@@ -250,16 +255,17 @@ class BatchFilterCompilerTest {
         }
 
         @Test
-        void binaryLeafOnNonByteArrayColumn_returnsNull() {
-            // Nothing resolves a BinaryPredicate onto an INT96 column today — but the batch path
-            // must not take that on trust. BatchExchange allocates a BinaryBatchValues for INT96
-            // as well, so the matcher's cast would succeed and compare 12-byte timestamps as
-            // unsigned lexicographic bytes: wrong rows, silently, instead of a fallback.
+        void binaryLeafOnInt96Column_returnsNull() {
+            // An INT96 timestamp leaf compares by instant, which no batch matcher implements.
+            // BatchExchange allocates a BinaryBatchValues for INT96 as well, so the matcher's cast
+            // would succeed and compare the 12 bytes in a byte order: wrong rows, silently,
+            // instead of a fallback.
             FileSchema schema = schema(leaf("ts", PhysicalType.INT96));
+            byte[] instant = new byte[12];
             ResolvedPredicate binary = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
-                    new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
+                    instant, Comparison.INT96_INSTANT);
             ResolvedPredicate binaryIn = new ResolvedPredicate.BinaryInPredicate(0,
-                    new byte[][]{{'h', 'i'}}, Comparison.BYTE_STRING);
+                    new byte[][]{instant}, Comparison.INT96_INSTANT);
             assertNull(BatchFilterCompiler.tryCompile(binary, schema, IntUnaryOperator.identity()));
             assertNull(BatchFilterCompiler.tryCompile(binaryIn, schema, IntUnaryOperator.identity()));
         }

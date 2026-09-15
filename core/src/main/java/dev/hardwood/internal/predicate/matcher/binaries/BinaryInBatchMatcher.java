@@ -25,7 +25,7 @@ public final class BinaryInBatchMatcher implements BinaryBatchMatcher {
     public BinaryInBatchMatcher(byte[][] members, Comparison comparison) {
         this.members = members;
         this.byteExact = comparison.byteExact();
-        this.signed = comparison.signed();
+        this.signed = BinaryComparator.signedSliceOrder(comparison);
     }
 
     @Override

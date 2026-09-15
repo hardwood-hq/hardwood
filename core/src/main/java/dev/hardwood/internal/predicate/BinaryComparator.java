@@ -89,6 +89,20 @@ public final class BinaryComparator {
         return signed ? compareSigned(a, aFrom, aTo, b) : compareUnsigned(a, aFrom, aTo, b);
     }
 
+    /// The `signed` argument [#compare(byte[], int, int, byte[], boolean)] takes to compare slices
+    /// in `comparison`'s order, resolved once so a per-row loop does not switch over the order.
+    ///
+    /// @throws IllegalArgumentException for [ResolvedPredicate.BinaryPredicate.Comparison#INT96_INSTANT],
+    ///         whose order no slice comparison implements
+    public static boolean signedSliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
+        return switch (comparison) {
+            case BYTE_STRING, STORED_BYTES -> false;
+            case FIXED_DECIMAL, VARIABLE_DECIMAL -> true;
+            case INT96_INSTANT -> throw new IllegalArgumentException(
+                    "No slice comparison compares in the " + comparison + " order");
+        };
+    }
+
     /// Whether the slice `a[aFrom, aTo)` holds exactly the bytes of `b`.
     ///
     /// Sound as an equality test only where the column encodes a value as exactly one byte string —

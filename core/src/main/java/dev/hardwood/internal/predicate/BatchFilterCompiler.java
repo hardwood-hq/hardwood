@@ -297,10 +297,10 @@ public final class BatchFilterCompiler {
     }
 
     /// The two physical types a [BinaryBatchMatcher] can compare: both reach the batch as a
-    /// `BinaryBatchValues` holding the value bytes, one variable-length and one fixed-width. The
-    /// resolver only builds binary leaves on these today, but `BatchExchange` hands an `INT96`
-    /// column the same `BinaryBatchValues`, so a binary leaf there would compile and compare the
-    /// timestamp bytes rather than fall back.
+    /// `BinaryBatchValues` holding the value bytes, one variable-length and one fixed-width.
+    /// `BatchExchange` hands an `INT96` column the same `BinaryBatchValues`, but its leaves compare
+    /// by instant, which no [BinaryBatchMatcher] implements, so they fall back here rather than
+    /// compile and compare the timestamp bytes.
     private static boolean isByteArrayColumn(FileSchema schema, int columnIndex) {
         return switch (schema.getColumn(columnIndex).type()) {
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> true;

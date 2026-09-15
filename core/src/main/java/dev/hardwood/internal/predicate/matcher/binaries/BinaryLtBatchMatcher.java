@@ -21,7 +21,7 @@ public final class BinaryLtBatchMatcher implements BinaryBatchMatcher {
 
     public BinaryLtBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
-        this.signed = comparison.signed();
+        this.signed = BinaryComparator.signedSliceOrder(comparison);
     }
 
     @Override
