@@ -161,24 +161,24 @@ The columnar API takes physical values and converts nothing: a `STRING` column i
 
 The row-oriented layer takes physical values through the setter named for the type, and converts logical-type values to the column's physical representation, taking the same Java types the reader returns. The physical setters apply whatever the column's annotation is: an `INT32` column annotated `DATE` accepts `setDate` and `setInt` alike, the one taking a `LocalDate` and the other the epoch day it converts to.
 
-| Column | `StructBuilder` setter | Java type |
-|---|---|---|
-| `BOOLEAN` | `setBoolean` | `boolean` |
-| `INT32` | `setInt` | `int` |
-| `INT64` | `setLong` | `long` |
-| `FLOAT` | `setFloat` | `float` |
-| `DOUBLE` | `setDouble` | `double` |
-| `BYTE_ARRAY` annotated `STRING`, `ENUM`, `JSON`, or unannotated | `setString` | `String` (written as UTF-8) |
-| `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` | `setBinary` | `byte[]` |
-| `INT32` annotated `DATE` | `setDate` | `LocalDate` |
-| `INT32` / `INT64` annotated `TIME` | `setTime` | `LocalTime` |
-| `INT64` or `FIXED_LEN_BYTE_ARRAY(12)` annotated `TIMESTAMP(_, UTC)` | `setTimestamp` | `Instant` |
-| `INT64` or `FIXED_LEN_BYTE_ARRAY(12)` annotated `TIMESTAMP(_, local)` | `setLocalTimestamp` | `LocalDateTime` |
-| `INT32` / `INT64` / `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` annotated `DECIMAL` | `setDecimal` | `BigDecimal` |
-| `FIXED_LEN_BYTE_ARRAY(16)` annotated `UUID` | `setUuid` | `UUID` |
-| `FIXED_LEN_BYTE_ARRAY(12)` annotated `INTERVAL` | `setInterval` | `PqInterval` |
-| any primitive | `setNull` | — |
-| `struct` / `LIST` / `MAP` group | `setStruct` / `setList` / `setMap` | a filler over `StructBuilder` / `ListBuilder` / `MapBuilder` |
+| Logical type | Physical type | `StructBuilder` setter | Java type |
+|---|---|---|---|
+| none | `BOOLEAN` | `setBoolean` | `boolean` |
+| any | `INT32` | `setInt` | `int` |
+| any | `INT64` | `setLong` | `long` |
+| none | `FLOAT` | `setFloat` | `float` |
+| none | `DOUBLE` | `setDouble` | `double` |
+| `STRING`, `ENUM`, `JSON`, or none | `BYTE_ARRAY` | `setString` | `String` (written as UTF-8) |
+| any | `BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY` | `setBinary` | `byte[]` |
+| `DATE` | `INT32` | `setDate` | `LocalDate` |
+| `TIME` | `INT32`<br>`INT64` | `setTime` | `LocalTime` |
+| `TIMESTAMP(isAdjustedToUTC = true)` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)` | `setTimestamp` | `Instant` |
+| `TIMESTAMP(isAdjustedToUTC = false)` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)` | `setLocalTimestamp` | `LocalDateTime` |
+| `DECIMAL` | `INT32`<br>`INT64`<br>`BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY` | `setDecimal` | `BigDecimal` |
+| `UUID` | `FIXED_LEN_BYTE_ARRAY(16)` | `setUuid` | `UUID` |
+| `INTERVAL` | `FIXED_LEN_BYTE_ARRAY(12)` | `setInterval` | `PqInterval` |
+| any | any primitive | `setNull` | — |
+| none / `LIST` / `MAP` | group | `setStruct` / `setList` / `setMap` | a filler over `StructBuilder` / `ListBuilder` / `MapBuilder` |
 
 `ListBuilder` has the same set as `addInt`, `addString`, `addStruct`, `addNull`, … and `MapBuilder` has `addEntry`, whose entry struct declares the two fields `key` and `value`.
 

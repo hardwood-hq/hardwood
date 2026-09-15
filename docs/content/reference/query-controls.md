@@ -77,34 +77,31 @@ at reader creation. On a `DECIMAL`, `FLOAT16` or `INT96` column they take the ty
 `BOOLEAN` is the one type with no set form, since `eq`, `notEq` and `isNotNull` express every set
 of two values.
 
-| Physical type | Logical type | Literal | Compared as |
+| Logical type | Physical type | Literal | Compared as |
 |---|---|---|---|
-| `BOOLEAN` | | `boolean` | `false` before `true` |
-| `INT32` | | `int` | signed |
-| `INT64` | | `long` | signed |
-| `FLOAT` | | `float` | numeric |
-| `DOUBLE` | | `double` | numeric |
-| `BYTE_ARRAY` | | `byte[]`; `String` where the column carries no annotation | unsigned lexicographic |
-| `FIXED_LEN_BYTE_ARRAY(n)` | | `byte[]` of `n` bytes | unsigned lexicographic |
-| `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = true)` | `int` / `long` | signed |
-| `INT32` 8/16/32-bit, `INT64` 64-bit | `INT(8/16/32/64, isSigned = false)` | `int` / `long` | unsigned magnitude |
-| `INT32` | `DATE` | `LocalDate` | days since the Unix epoch |
-| `INT32` millis, `INT64` micros / nanos | `TIME` | `LocalTime` | the column's time unit |
-| `INT64` | `TIMESTAMP(isAdjustedToUTC = true)`, and the legacy `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` | `Instant` | the column's time unit |
-| `INT64` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime` | the wall clock, in the column's time unit |
-| `FIXED_LEN_BYTE_ARRAY(12)` | `TIMESTAMP(isAdjustedToUTC = true)` | `Instant`, `byte[]` of 12 bytes | the column's time unit; a `byte[]` as the stored bytes |
-| `FIXED_LEN_BYTE_ARRAY(12)` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime`, `byte[]` of 12 bytes | the wall clock, in the column's time unit; a `byte[]` as the stored bytes |
-| `INT96` | | `Instant`, `byte[]` of 12 bytes | the instant the value encodes; a `byte[]` as the stored bytes |
-| `INT32` up to 9 digits, `INT64` up to 18 | `DECIMAL` | `BigDecimal`; `int` / `long` unscaled | the represented value |
-| `FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold, `BYTE_ARRAY` any | `DECIMAL` | `BigDecimal`; `byte[]`, of `n` bytes on a `FIXED_LEN_BYTE_ARRAY(n)` | the represented value; a `byte[]` as the stored bytes |
-| `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON` | `String`, `byte[]` | unsigned lexicographic |
-| `BYTE_ARRAY` | `BSON` | `byte[]` | unsigned lexicographic |
-| `BYTE_ARRAY` | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; four `double` bounds for `intersects` | the WKB bytes, unsigned; `intersects` by bounding-box overlap |
-| `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
-| `FIXED_LEN_BYTE_ARRAY(2)` | `FLOAT16` | `float`, `byte[]` of 2 bytes | numeric, widened to `float`; a `byte[]` as the stored bytes |
-| `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
-| any | `NULL` | the literal for the physical type | the stored value; a column that keeps to its annotation holds only nulls, so no comparison matches |
-| group of two `BYTE_ARRAY` | `VARIANT` | `isNull`, `isNotNull` | whether the group is present |
+| none | `BOOLEAN` | `boolean` | `false` before `true` |
+| none | `INT32` | `int` | signed |
+| none | `INT64` | `long` | signed |
+| none | `FLOAT` | `float` | numeric |
+| none | `DOUBLE` | `double` | numeric |
+| none | `BYTE_ARRAY` | `byte[]`, `String` | unsigned lexicographic |
+| none | `FIXED_LEN_BYTE_ARRAY(n)` | `byte[]` of `n` bytes | unsigned lexicographic |
+| none | `INT96` | `Instant`, `byte[]` of 12 bytes | the instant the value encodes; a `byte[]` as the stored bytes |
+| `INT(8/16/32/64, isSigned = true)` | `INT32` 8/16/32-bit<br>`INT64` 64-bit | `int`<br>`long` | signed |
+| `INT(8/16/32/64, isSigned = false)` | `INT32` 8/16/32-bit<br>`INT64` 64-bit | `int`<br>`long` | unsigned magnitude |
+| `DATE` | `INT32` | `LocalDate` | days since the Unix epoch |
+| `TIME` | `INT32` millis<br>`INT64` micros / nanos | `LocalTime` | the column's time unit |
+| `TIMESTAMP(isAdjustedToUTC = true)`, and the legacy `TIMESTAMP_MILLIS` / `TIMESTAMP_MICROS` on `INT64` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)` | `Instant`; `byte[]` of 12 bytes on `FIXED_LEN_BYTE_ARRAY(12)` | the column's time unit; a `byte[]` as the stored bytes |
+| `TIMESTAMP(isAdjustedToUTC = false)` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)` | `LocalDateTime`; `byte[]` of 12 bytes on `FIXED_LEN_BYTE_ARRAY(12)` | the wall clock, in the column's time unit; a `byte[]` as the stored bytes |
+| `DECIMAL` | `INT32` up to 9 digits<br>`INT64` up to 18<br>`FIXED_LEN_BYTE_ARRAY(n)` up to what `n` bytes hold<br>`BYTE_ARRAY` any | `BigDecimal`; `int` / `long` unscaled on the integer carriers; `byte[]` on the binary carriers, of `n` bytes on `FIXED_LEN_BYTE_ARRAY(n)` | the represented value; a `byte[]` as the stored bytes |
+| `STRING`, `ENUM`, `JSON` | `BYTE_ARRAY` | `String`, `byte[]` | unsigned lexicographic |
+| `BSON` | `BYTE_ARRAY` | `byte[]` | unsigned lexicographic |
+| `GEOMETRY`, `GEOGRAPHY` | `BYTE_ARRAY` | `byte[]`; four `double` bounds for `intersects` | the WKB bytes, unsigned; `intersects` by bounding-box overlap |
+| `UUID` | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID`, `byte[]` of 16 bytes | the 16 bytes, unsigned |
+| `FLOAT16` | `FIXED_LEN_BYTE_ARRAY(2)` | `float`, `byte[]` of 2 bytes | numeric, widened to `float`; a `byte[]` as the stored bytes |
+| `INTERVAL` | `FIXED_LEN_BYTE_ARRAY(12)` | `PqInterval`, `byte[]` of 12 bytes | the 12 bytes |
+| `NULL` | any | the literal for the physical type | the stored value; a column that keeps to its annotation holds only nulls, so no comparison matches |
+| `VARIANT` | group of two `BYTE_ARRAY` | `isNull`, `isNotNull` | whether the group is present |
 
 A predicate on a `VARIANT` column reaches the group's presence, not the values inside it. The
 `metadata` and `value` leaves below the group, and a shredded variant's `typed_value` leaves, hold

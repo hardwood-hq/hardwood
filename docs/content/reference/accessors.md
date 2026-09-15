@@ -25,27 +25,27 @@ type-mismatch contracts every accessor obeys. For the task-oriented walkthrough,
 All accessors are available in two forms — name-based (`getInt("column_name")`) and index-based
 (`getInt(columnIndex)`); see [Index-based access](../how-to/row-reader.md#index-based-access).
 
-| Method | Physical Type | Logical Type | Java Type |
+| Method | Physical type | Logical type | Java type |
 |--------|--------------|-------------|-----------|
-| `getBoolean` | BOOLEAN | | `boolean` |
-| `getInt` | INT32 | any | `int` |
-| `getLong` | INT64 | any | `long` |
-| `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | none on FLOAT; FLOAT16 on FIXED_LEN_BYTE_ARRAY(2) | `float` |
-| `getDouble` | DOUBLE | | `double` |
-| `getBinary` | BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, or INT96 | any | `byte[]` |
-| `getString` | BYTE_ARRAY | STRING, ENUM, JSON, or none | `String` |
-| `getDate` | INT32 | DATE | `LocalDate` |
-| `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64, FIXED_LEN_BYTE_ARRAY(12), or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
-| `getLocalTimestamp` | INT64 or FIXED_LEN_BYTE_ARRAY(12) | TIMESTAMP (`isAdjustedToUTC = false`) | `LocalDateTime` |
-| `getDecimal` | INT32, INT64, BYTE_ARRAY, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
-| `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
-| `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
-| `getStruct` | | | `PqStruct` |
-| `getList` | | LIST | `PqList` |
-| `getMap` | | MAP | `PqMap` |
-| `getVariant` | BYTE_ARRAY pair | VARIANT | `PqVariant` |
-| `isNull` | Any | Any | `boolean` |
+| `getBoolean` | `BOOLEAN` | none | `boolean` |
+| `getInt` | `INT32` | any | `int` |
+| `getLong` | `INT64` | any | `long` |
+| `getFloat` | `FLOAT`<br>`FIXED_LEN_BYTE_ARRAY(2)` | none<br>`FLOAT16` | `float` |
+| `getDouble` | `DOUBLE` | none | `double` |
+| `getBinary` | `BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY`<br>`INT96` | any | `byte[]` |
+| `getString` | `BYTE_ARRAY` | `STRING`, `ENUM`, `JSON`, or none | `String` |
+| `getDate` | `INT32` | `DATE` | `LocalDate` |
+| `getTime` | `INT32`<br>`INT64` | `TIME` | `LocalTime` |
+| `getTimestamp` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)`<br>`INT96` | `TIMESTAMP(isAdjustedToUTC = true)`; none on `INT96` | `Instant` |
+| `getLocalTimestamp` | `INT64`<br>`FIXED_LEN_BYTE_ARRAY(12)` | `TIMESTAMP(isAdjustedToUTC = false)` | `LocalDateTime` |
+| `getDecimal` | `INT32`<br>`INT64`<br>`BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY` | `DECIMAL` | `BigDecimal` |
+| `getUuid` | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID` |
+| `getInterval` | `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval` |
+| `getStruct` | group | none | `PqStruct` |
+| `getList` | group | `LIST` | `PqList` |
+| `getMap` | group | `MAP` | `PqMap` |
+| `getVariant` | group of two `BYTE_ARRAY` | `VARIANT` | `PqVariant` |
+| `isNull` | any | any | `boolean` |
 
 All methods are available as both `method(name)` and `method(index)`.
 
