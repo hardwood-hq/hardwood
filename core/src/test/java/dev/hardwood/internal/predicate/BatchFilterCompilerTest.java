@@ -21,6 +21,7 @@ import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.schema.FileSchema;
 
@@ -223,6 +224,25 @@ class BatchFilterCompilerTest {
             FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
             ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
                     new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+        }
+
+        /// `PredicatePathAgreementTest` reads the record-level path by `or`-ing each predicate with
+        /// `lt("zz", new byte[0])` on a required `BYTE_ARRAY` column. That read depends on an `or`
+        /// holding such a comparison staying off the batch path, even when its other child compiles.
+        @Test
+        void orWithUnsignedBytesComparison_returnsNull() {
+            FileSchema schema = schema(
+                    leaf("id", PhysicalType.INT64),
+                    SchemaElement.primitive("zz", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED));
+            ResolvedPredicate predicate = FilterPredicateResolver.resolve(FilterPredicate.or(
+                    FilterPredicate.gt("id", 5L),
+                    FilterPredicate.lt("zz", new byte[0])), schema);
+
+            ResolvedPredicate.Or or = assertInstanceOf(ResolvedPredicate.Or.class, predicate);
+            ResolvedPredicate.BinaryPredicate bytes =
+                    assertInstanceOf(ResolvedPredicate.BinaryPredicate.class, or.children().get(1));
+            assertEquals(Comparison.BYTE_STRING, bytes.comparison());
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 

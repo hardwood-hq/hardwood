@@ -727,14 +727,16 @@ class FilterPredicateTest {
         assertThat(dp.values()).containsExactly(1.5, 2.5);
     }
 
+    /// A caller reusing its array to build a second predicate must not change the first.
     @Test
     void testDoubleInPredicateDefensivelyCopiesValues() {
         double[] values = {1.5, 2.5};
         FilterPredicate.DoubleInPredicate p = (FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", values);
+
         values[0] = 99.0;
+        values[1] = 42.0;
+
         assertThat(p.values()).containsExactly(1.5, 2.5);
-        p.values()[1] = 42.0;
-        assertThat(((FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", 1.5, 2.5)).values()).containsExactly(1.5, 2.5);
     }
 
     @Test
@@ -1116,25 +1118,31 @@ class FilterPredicateTest {
     // ==================== Compound NOT Tests ====================
 
     @Test
-    void testNotWrappingAndIsConservative() throws IOException {
-        RowGroup rg = createIntRowGroup(10, 20);
+    void testNotOverAndIsLoweredByDeMorgan() throws IOException {
         FileSchema schema = createIntSchema();
-        // NOT(AND(GT 25, LT 5)) — both children would drop, but NOT is conservative
+        // NOT(AND(GT 25, LT 30)) → OR(LT_EQ 25, GT_EQ 30)
         FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
                 FilterPredicate.gt("col", 25),
-                FilterPredicate.lt("col", 5)));
-        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+                FilterPredicate.lt("col", 30)));
+
+        // [10, 20]: LT_EQ 25 may match, so the OR may match → cannot drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(10, 20), schema)).isFalse();
+        // [26, 29]: LT_EQ 25 (min 26 > 25) and GT_EQ 30 (max 29 < 30) both drop → can drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(26, 29), schema)).isTrue();
     }
 
     @Test
-    void testNotWrappingOrIsConservative() throws IOException {
-        RowGroup rg = createIntRowGroup(10, 20);
+    void testNotOverOrIsLoweredByDeMorgan() throws IOException {
         FileSchema schema = createIntSchema();
-        // NOT(OR(EQ 5, EQ 25)) — both children would drop, OR drops, but NOT is conservative
+        // NOT(OR(EQ 5, EQ 25)) → AND(NOT_EQ 5, NOT_EQ 25)
         FilterPredicate filter = FilterPredicate.not(FilterPredicate.or(
                 FilterPredicate.eq("col", 5),
                 FilterPredicate.eq("col", 25)));
-        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+
+        // [10, 20]: neither NOT_EQ can drop a range of several values → cannot drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(10, 20), schema)).isFalse();
+        // [5, 5]: every value is 5, so NOT_EQ 5 drops and the AND with it → can drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(5, 5), schema)).isTrue();
     }
 
     // ==================== Type Mismatch Tests ====================
@@ -1373,16 +1381,18 @@ class FilterPredicateTest {
     }
 
     @Test
-    void testNotAndWithInChildFallsBackToConservative() throws IOException {
-        RowGroup rg = createIntRowGroup(10, 20);
+    void testNotOverAndWithInChildLowersTheSetToNotEqs() throws IOException {
         FileSchema schema = createIntSchema();
 
-        // NOT(AND(GT(25), IN(1,2,3))) → OR(LT_EQ(25), NOT(IN(1,2,3)))
-        // NOT(IN) returns null → entire OR returns null → conservative (false)
+        // NOT(AND(LT(5), IN(1,2,3))) → OR(GT_EQ(5), AND(NOT_EQ(1), NOT_EQ(2), NOT_EQ(3)))
         FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
-                FilterPredicate.gt("col", 25),
+                FilterPredicate.lt("col", 5),
                 FilterPredicate.in("col", 1, 2, 3)));
-        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+
+        // [10, 20]: GT_EQ(5) may match → cannot drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(10, 20), schema)).isFalse();
+        // [2, 2]: GT_EQ(5) drops (max 2 < 5) and NOT_EQ(2) drops the AND → can drop
+        assertThat(canDropRowGroup(filter, createIntRowGroup(2, 2), schema)).isTrue();
     }
 
     @Test
