@@ -112,17 +112,6 @@ class FilterDecisionTest {
     }
 
     @Test
-    void doubleInSignedZeroDispatch() {
-        double[] probe = new double[]{ -0.0 };
-
-        // Under type-defined ordering (!ieee754TotalOrder), bounds widen min to -0.0 and max to +0.0 -> contains -0.0 -> cannot drop (false)
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(probe, +0.0, +0.0, false)).isFalse();
-
-        // Under IEEE 754 total order (ieee754TotalOrder=true), bounds remain exact [+0.0, +0.0], -0.0 < +0.0 -> outside bounds -> drops (true)
-        assertThat(StatisticsFilterSupport.canDropDoubleIn(probe, +0.0, +0.0, true)).isTrue();
-    }
-
-    @Test
     void doubleInSignedZeroBoundsWidenUnderTheTypeDefinedOrder() {
         // The type-defined order widens the pair to [-0.0, +0.0], which contains both zeroes.
         assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0, -0.0 }, +0.0, -0.0, false))

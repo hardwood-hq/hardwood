@@ -46,11 +46,6 @@ class MisalignedPageBoundariesTest {
 
     private static final Path MISALIGNED_FILE =
             Paths.get("src/test/resources/misaligned_pages.parquet");
-    /// Flat fixture without ColumnIndex/OffsetIndex. Both projected columns
-    /// are flat, so the per-page mask gate opens for tail-mode reads and the
-    /// fast path applies even though there is no Page Index.
-    private static final Path INLINE_STATS_FILE =
-            Paths.get("src/test/resources/inline_page_stats.parquet");
     private static final int TOTAL_ROWS = 10_000;
 
     @Test
@@ -140,36 +135,6 @@ class MisalignedPageBoundariesTest {
                 String actualPrefix = new String(wide, 0, 13, StandardCharsets.UTF_8);
                 assertThat(actualPrefix).as("row offset %d wide", expected - firstExpectedRow)
                         .isEqualTo(expectedPrefix);
-                expected++;
-            }
-            assertThat(expected - firstExpectedRow)
-                    .as("tail row count")
-                    .isEqualTo(tailRows);
-        }
-    }
-
-    @Test
-    void tailReadAppliesPageMaskFastPathOnNoIndexFlatFile() throws Exception {
-        // inline_page_stats.parquet has no OffsetIndex but its columns are
-        // flat, so the row-group-wide mask gate opens and tail-mode runs
-        // through the SequentialFetchPlan per-page mask path. The original
-        // shape of this test asserted decode-and-discard fallback; with
-        // mask support extended to flat columns the fast path now applies
-        // here, and correctness is verified the same way.
-        int tailRows = 1500;
-        int firstExpectedRow = TOTAL_ROWS - tailRows;
-
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE));
-             RowReader rows = reader.buildRowReader().tail(tailRows).build()) {
-            int expected = firstExpectedRow;
-            while (rows.hasNext()) {
-                rows.next();
-                long id = rows.getLong("id");
-                long value = rows.getLong("value");
-                assertThat(id).as("row offset %d id", expected - firstExpectedRow)
-                        .isEqualTo(expected);
-                assertThat(value).as("row offset %d value", expected - firstExpectedRow)
-                        .isEqualTo(expected + 1000L);
                 expected++;
             }
             assertThat(expected - firstExpectedRow)

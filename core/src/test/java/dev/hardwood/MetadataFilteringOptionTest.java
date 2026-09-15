@@ -32,8 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// `filter_pushdown_int_lying_stats.parquet`: same data, but the third row
 /// group's `id` statistics are falsified to advertise `[101, 200]`. Trusting
-/// that footer prunes the group that really holds 201..300, so the default read
-/// silently drops matching rows; the opt-out must recover them.
+/// that footer prunes the group that really holds 201..300 for `gt(200)`, and
+/// skips per-row evaluation of it for `ltEq(200)`; the opt-out must return the
+/// exact rows for both.
 class MetadataFilteringOptionTest extends AbstractJfrRecorderTest {
 
     private static final Path FIXTURE =
@@ -72,23 +73,39 @@ class MetadataFilteringOptionTest extends AbstractJfrRecorderTest {
 
     @Test
     void fullyMatchingPredicateIsStillEvaluatedPerRow() throws Exception {
-        // gtEq(1) matches every row; the always-match fast path would normally
-        // drop the filter wholesale. Disabled, the read must still return all
-        // rows through per-row evaluation.
+        // The third row group's falsified statistics claim [101, 200], which ltEq(200)
+        // satisfies throughout, so trusting them skips per-row evaluation there and
+        // returns its rows 201..300 although none of them matches.
         try (HardwoodContext context = HardwoodContext.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE), context, STATS_OFF);
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LYING_STATS_FIXTURE), context);
              RowReader rows = reader.buildRowReader()
-                     .filter(FilterPredicate.gtEq("id", 1L))
+                     .filter(FilterPredicate.ltEq("id", 200L))
                      .build()) {
             long count = 0;
-            long sum = 0;
             while (rows.hasNext()) {
                 rows.next();
-                sum += rows.getLong("id");
                 count++;
             }
-            assertThat(count).isEqualTo(300);
-            assertThat(sum).isEqualTo(300L * 301 / 2);
+            assertThat(count)
+                    .as("trusting the falsified statistics takes the always-match shortcut")
+                    .isEqualTo(300);
+        }
+
+        // With statistics filtering off every row is evaluated, so only 1..200 are returned.
+        try (HardwoodContext context = HardwoodContext.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LYING_STATS_FIXTURE), context, STATS_OFF);
+             RowReader rows = reader.buildRowReader()
+                     .filter(FilterPredicate.ltEq("id", 200L))
+                     .build()) {
+            long expected = 1;
+            while (rows.hasNext()) {
+                rows.next();
+                assertThat(rows.getLong("id")).isEqualTo(expected);
+                expected++;
+            }
+            assertThat(expected)
+                    .as("ignoring the falsified statistics evaluates every row")
+                    .isEqualTo(201);
         }
     }
 

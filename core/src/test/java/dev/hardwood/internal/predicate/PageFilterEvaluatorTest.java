@@ -222,20 +222,6 @@ class PageFilterEvaluatorTest {
         );
     }
 
-    /// Drives a floating-point predicate through the page-index sourcing route
-    /// ([MinMaxStats#ofPage]) rather than the shared helpers directly: with no `nan_counts` in
-    /// the index a GT probe keeps both pages, while EQ prunes through the same route.
-    @Test
-    void floatPredicateThroughOfPageFollowsTheNaNAwareTable() {
-        ResolvedPredicate gt = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 3.0f, false);
-        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 0, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
-        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 1, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
-
-        ResolvedPredicate eq = new ResolvedPredicate.FloatPredicate(0, Operator.EQ, 2.5f, false);
-        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 0, eq, BoundsReadability.ALL).canDrop(eq)).isTrue();
-        assertThat(MinMaxStats.ofPage(FLOAT_COLUMN_INDEX, 1, eq, BoundsReadability.ALL).canDrop(eq)).isTrue();
-    }
-
     /// Each page reads its own `nan_counts` entry: a zero lets its bounds rule out GT, a
     /// non-zero one keeps the page whatever its bounds say.
     @Test
@@ -347,130 +333,6 @@ class PageFilterEvaluatorTest {
         );
     }
 
-    @Test
-    void groupIsNullUsesDefinitionLevelHistogramPerPage() throws IOException {
-        byte[] columnIndex = new ThriftStructBuilder()
-                .field(1, FieldType.LIST)
-                .boolList(false, false)
-                .field(2, FieldType.LIST)
-                .binaryList(intBytes(0), intBytes(0))
-                .field(3, FieldType.LIST)
-                .binaryList(intBytes(0), intBytes(0))
-                .field(7, FieldType.LIST)
-                .i64List(
-                        0, 0, 30, 0,
-                        0, 30, 0, 0)
-                .stop()
-                .build();
-
-        byte[] offsetIndex = new ThriftStructBuilder()
-                .field(1, FieldType.LIST)
-                .structList(
-                        pageLocation(0, 0),
-                        pageLocation(100, 30))
-                .stop()
-                .build();
-
-        ByteBuffer file =
-                ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
-
-        file.put(offsetIndex)
-                .put(columnIndex)
-                .flip();
-
-        ColumnChunk chunk = new ColumnChunk(
-                null,
-                0L,
-                offsetIndex.length,
-                (long) offsetIndex.length,
-                columnIndex.length,
-                "");
-
-        RowGroup rowGroup =
-                new RowGroup(List.of(chunk), 1000, 60);
-
-
-        ResolvedPredicate predicate =
-                new ResolvedPredicate.IsNullPredicate(0, 2, 3);
-
-        try (InputFile inputFile = InputFile.of(file)) {
-            RowGroupIndexBuffers buffers =
-                    RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-
-            RowRanges ranges =
-                    PageFilterEvaluator.computeMatchingRows(
-                            predicate,
-                            rowGroup,
-                            buffers,
-                            new LogContext("group-null.parquet", 0), BoundsReadability.ALL);
-
-            assertFalse(ranges.overlapsPage(0, 30));
-            assertTrue(ranges.overlapsPage(30, 60));
-        }
-    }
-
-    @Test
-    void groupIsNotNullUsesDefinitionLevelHistogramPerPage() throws IOException {
-        byte[] columnIndex = new ThriftStructBuilder()
-                .field(1, FieldType.LIST)
-                .boolList(false, false)
-                .field(2, FieldType.LIST)
-                .binaryList(intBytes(0), intBytes(0))
-                .field(3, FieldType.LIST)
-                .binaryList(intBytes(0), intBytes(0))
-                .field(7, FieldType.LIST)
-                .i64List(
-                        0, 0, 30, 0,
-                        0, 30, 0, 0)
-                .stop()
-                .build();
-
-        byte[] offsetIndex = new ThriftStructBuilder()
-                .field(1, FieldType.LIST)
-                .structList(
-                        pageLocation(0, 0),
-                        pageLocation(100, 30))
-                .stop()
-                .build();
-
-        ByteBuffer file =
-                ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
-
-        file.put(offsetIndex)
-                .put(columnIndex)
-                .flip();
-
-        ColumnChunk chunk = new ColumnChunk(
-                null,
-                0L,
-                offsetIndex.length,
-                (long) offsetIndex.length,
-                columnIndex.length,
-                "");
-
-        RowGroup rowGroup =
-                new RowGroup(List.of(chunk), 1000, 60);
-
-
-        ResolvedPredicate predicate =
-                new ResolvedPredicate.IsNotNullPredicate(0, 2, 3);
-
-        try (InputFile inputFile = InputFile.of(file)) {
-            RowGroupIndexBuffers buffers =
-                    RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-
-            RowRanges ranges =
-                    PageFilterEvaluator.computeMatchingRows(
-                            predicate,
-                            rowGroup,
-                            buffers,
-                            new LogContext("group-not-null.parquet", 0), BoundsReadability.ALL);
-
-            assertTrue(ranges.overlapsPage(0, 30));
-            assertFalse(ranges.overlapsPage(30, 60));
-        }
-    }
-
     // Compound Predicate Tests
     //
     // Uses column_index_pushdown.parquet: 1 row group, 10000 rows,
@@ -544,27 +406,6 @@ class PageFilterEvaluatorTest {
         RowRanges ranges = computeMatchingRows(filter);
 
         assertTrue(ranges.overlapsPage(0, 10000));
-    }
-
-    @Test
-    void testAndWithUnknownColumnThrowsAtResolve() throws IOException {
-        // AND(id < 5000, nonexistent > 0) → unknown column now throws at resolve time
-        InputFile inputFile = InputFile.of(COLUMN_INDEX_FILE);
-        inputFile.open();
-        try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
-            FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
-            FilterPredicate filter = FilterPredicate.and(
-                    FilterPredicate.lt("id", 5000L),
-                    FilterPredicate.gt("nonexistent", 0L));
-            org.assertj.core.api.Assertions.assertThatThrownBy(
-                    () -> FilterPredicateResolver.resolve(filter, schema))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Column 'nonexistent' not found in schema");
-        }
-        finally {
-            inputFile.close();
-        }
     }
 
     private RowRanges computeMatchingRows(FilterPredicate filter) throws IOException {

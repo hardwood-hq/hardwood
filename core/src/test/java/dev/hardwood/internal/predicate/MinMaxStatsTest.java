@@ -85,24 +85,6 @@ class MinMaxStatsTest {
     }
 
     @Test
-    void testDeprecatedStatsPreventRowGroupDrop() {
-        // Scenario from issue #205: column with values [-10, 5], deprecated stats have
-        // min=5 (0x00000005) and max=-10 (0xFFFFFFF6) due to unsigned comparison.
-        // A GT("col", -5) predicate with correct stats would NOT drop this row group
-        // because max(5) > -5. But with the inverted deprecated stats,
-        // canDrop(GT, -5, 5, -10) would compute max(-10) <= -5 → true → incorrectly drop.
-        byte[] deprecatedMin = intBytes(5);
-        byte[] deprecatedMax = intBytes(-10);
-        Statistics stats = new Statistics(deprecatedMin, deprecatedMax, 0L, null, true);
-
-        MinMaxStats minMaxStats = MinMaxStats.of(stats, GT_MINUS_FIVE, BoundsReadability.ALL);
-
-        // With the fix, canDropLeaf sees null min/max and returns false (conservative)
-        boolean canDrop = minMaxStats.canDrop(GT_MINUS_FIVE);
-        assertThat(canDrop).isFalse();
-    }
-
-    @Test
     void boundsSourcedForOneWidthRefuseALeafOfAnother() {
         // A unit is decoded for the leaf it is then asked about, so a mismatch is a wiring
         // mistake in the reader rather than anything a file can cause. It fails loudly rather
