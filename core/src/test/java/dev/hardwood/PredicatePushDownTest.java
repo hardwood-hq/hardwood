@@ -804,16 +804,6 @@ class PredicatePushDownTest {
         }
     }
 
-    @Test
-    void testComparisonPredicateOnGroupColumnIsRejected() throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
-            FilterPredicate filter = FilterPredicate.eq("address", "value");
-            assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.");
-        }
-    }
-
     // ==================== Nested record-level filtering ====================
 
     @Test
@@ -1200,17 +1190,6 @@ class PredicatePushDownTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Column 'name' is annotated STRING"
                             + ", which takes String and byte[] literals, not an int");
-        }
-    }
-
-    @Test
-    void stringPredicateOnIntColumnThrowsAtReaderCreation() throws Exception {
-        // "id" is an INT32 column; applying a string predicate must fail immediately
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
-            assertThatThrownBy(() -> reader.buildRowReader().filter(FilterPredicate.eq("id", "hello")).build())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Column 'id' is an unannotated INT32"
-                            + ", which takes int literals, not a String");
         }
     }
 

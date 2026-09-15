@@ -914,14 +914,6 @@ class FilterPredicateResolverTest {
     // ==================== Column resolution ====================
 
     @Test
-    void resolveColumnIndex() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.eq("col", 42), schema);
-        assertThat(((ResolvedPredicate.IntPredicate) resolved).columnIndex()).isEqualTo(0);
-    }
-
-    @Test
     void resolveUnknownColumnThrows() {
         FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
@@ -1115,26 +1107,6 @@ class FilterPredicateResolverTest {
     // ==================== IS NULL / IS NOT NULL ====================
 
     @Test
-    void resolveIsNullToColumnIndex() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.isNull("col"), schema);
-
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.IsNullPredicate.class);
-        assertThat(((ResolvedPredicate.IsNullPredicate) resolved).columnIndex()).isEqualTo(0);
-    }
-
-    @Test
-    void resolveIsNotNullToColumnIndex() {
-        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT64, null);
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.isNotNull("col"), schema);
-
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
-        assertThat(((ResolvedPredicate.IsNotNullPredicate) resolved).columnIndex()).isEqualTo(0);
-    }
-
-    @Test
     void resolveIsNullWorksOnAnyPhysicalType() {
         // IS NULL / IS NOT NULL should resolve without type validation errors on any column type
         for (PhysicalType type : new PhysicalType[] {
@@ -1146,8 +1118,10 @@ class FilterPredicateResolverTest {
             ResolvedPredicate isNotNull = FilterPredicateResolver.resolve(
                     FilterPredicate.isNotNull("col"), schema);
 
-            assertThat(isNull).isInstanceOf(ResolvedPredicate.IsNullPredicate.class);
-            assertThat(isNotNull).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+            assertThat(isNull).isInstanceOfSatisfying(ResolvedPredicate.IsNullPredicate.class,
+                    p -> assertThat(p.columnIndex()).isEqualTo(0));
+            assertThat(isNotNull).isInstanceOfSatisfying(ResolvedPredicate.IsNotNullPredicate.class,
+                    p -> assertThat(p.columnIndex()).isEqualTo(0));
         }
     }
 
@@ -1773,6 +1747,14 @@ class FilterPredicateResolverTest {
                 .isEqualTo(new ResolvedPredicate.And(List.of(
                         new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5, true),
                         new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, Double.NaN, true))));
+
+        // Without a declared column order the negated probes widen signed zeros like the set does.
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5f)), floatSchema))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5f, false))));
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.not(FilterPredicate.in("c", 0.5)), doubleSchema))
+                .isEqualTo(new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.NOT_EQ, 0.5, false))));
 
         FileSchema float16Schema = schemaWithLogicalType("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
                 new LogicalType.Float16Type());

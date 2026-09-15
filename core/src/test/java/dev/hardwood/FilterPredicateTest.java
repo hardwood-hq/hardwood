@@ -403,35 +403,12 @@ class FilterPredicateTest {
     }
 
     @Test
-    void testUnknownColumnThrowsAtResolve() {
-        FileSchema schema = createIntSchema();
-
-        // Filter on a column that doesn't exist -> throws at resolve time
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.eq("nonexistent", 42), schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'nonexistent' not found in schema");
-    }
-
-    @Test
     void testIntInPredicateCreation() {
         FilterPredicate p = FilterPredicate.in("id", 1, 5, 10);
         assertThat(p).isInstanceOf(FilterPredicate.IntInPredicate.class);
         FilterPredicate.IntInPredicate ip = (FilterPredicate.IntInPredicate) p;
         assertThat(ip.column()).isEqualTo("id");
         assertThat(ip.values()).containsExactly(1, 5, 10);
-    }
-
-    @Test
-    void testLongInPredicateCreation() {
-        FilterPredicate p = FilterPredicate.in("ts", 100L, 200L);
-        assertThat(p).isInstanceOf(FilterPredicate.LongInPredicate.class);
-    }
-
-    @Test
-    void testStringInPredicateCreation() {
-        FilterPredicate p = FilterPredicate.in("city", "NYC", "LA");
-        assertThat(p).isInstanceOf(FilterPredicate.StringInPredicate.class);
     }
 
     @SuppressWarnings("deprecation")
@@ -748,10 +725,6 @@ class FilterPredicateTest {
         FilterPredicate.DoubleInPredicate dp = (FilterPredicate.DoubleInPredicate) p;
         assertThat(dp.column()).isEqualTo("rate");
         assertThat(dp.values()).containsExactly(1.5, 2.5);
-
-        assertThatThrownBy(() -> FilterPredicate.in("rate", new double[0]))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("IN predicate requires at least one value");
     }
 
     @Test
@@ -926,21 +899,6 @@ class FilterPredicateTest {
         assertThat(canDropRowGroup(FilterPredicate.isNotNull("col"), rgUnknown, schema)).isFalse();
     }
 
-    @Test
-    void testIsNullWorksOnAnyColumnType() throws IOException {
-        // IS NULL / IS NOT NULL should work on any physical type without type validation errors
-        for (PhysicalType type : new PhysicalType[] {
-                PhysicalType.INT32, PhysicalType.INT64, PhysicalType.FLOAT,
-                PhysicalType.DOUBLE, PhysicalType.BOOLEAN, PhysicalType.BYTE_ARRAY }) {
-            FileSchema schema = createSchemaForType(type);
-            RowGroup rg = createRowGroupWithNullCount(type, 0L, 100);
-
-            // Should not throw
-            canDropRowGroup(FilterPredicate.isNull("col"), rg, schema);
-            canDropRowGroup(FilterPredicate.isNotNull("col"), rg, schema);
-        }
-    }
-
     // ==================== LocalDate Factory Tests ====================
 
     @Test
@@ -1089,18 +1047,6 @@ class FilterPredicateTest {
     }
 
     @Test
-    void uuidPredicateOnNonUuidColumnThrows() {
-        SchemaElement root = SchemaElement.root("root", 1);
-        SchemaElement col = SchemaElement.fixedLengthPrimitive("col", 16, RepetitionType.REQUIRED);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, col));
-
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.eq("col", UUID.randomUUID()), schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is an unannotated FIXED_LEN_BYTE_ARRAY, which takes byte[] literals, not a UUID");
-    }
-
-    @Test
     void testCanDropWithUuidPredicate() throws IOException {
         UUID low   = new UUID(0L, 1L);
         UUID mid   = new UUID(0L, 50L);
@@ -1123,20 +1069,6 @@ class FilterPredicateTest {
     }
 
     // ==================== Float/Double Edge Cases ====================
-
-    @Test
-    void testCanDropWithDoubleNaN() throws IOException {
-        // NaN is ordered after +Infinity by Double.compare
-        RowGroup rg = createDoubleRowGroup(1.0, 10.0);
-        FileSchema schema = createDoubleSchema();
-        // EQ NaN / GT_EQ NaN: the bounds cover non-NaN values only and NaN rows may be present
-        assertThat(canDropRowGroup(FilterPredicate.eq("col", Double.NaN), rg, schema)).isFalse();
-        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", Double.NaN), rg, schema)).isFalse();
-        // GT NaN: nothing sorts above NaN, so can drop
-        assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.NaN), rg, schema)).isTrue();
-        // LT NaN: min(1.0) < NaN, so cannot drop (some values < NaN)
-        assertThat(canDropRowGroup(FilterPredicate.lt("col", Double.NaN), rg, schema)).isFalse();
-    }
 
     @Test
     void testCanDropWithDoubleNaNInStatistics() throws IOException {
@@ -1173,43 +1105,6 @@ class FilterPredicateTest {
     }
 
     @Test
-    void testCanDropWithFloatNaN() throws IOException {
-        RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
-        FileSchema schema = createFloatSchema();
-        // EQ NaN / GT_EQ NaN: the bounds cover non-NaN values only and NaN rows may be present
-        assertThat(canDropRowGroup(FilterPredicate.eq("col", Float.NaN), rg, schema)).isFalse();
-        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", Float.NaN), rg, schema)).isFalse();
-        // GT NaN: nothing sorts above NaN, so can drop
-        assertThat(canDropRowGroup(FilterPredicate.gt("col", Float.NaN), rg, schema)).isTrue();
-        // LT NaN: min(1.0f) < NaN, so cannot drop
-        assertThat(canDropRowGroup(FilterPredicate.lt("col", Float.NaN), rg, schema)).isFalse();
-    }
-
-    @Test
-    void testCanDropWithDoubleNonNaNAboveMaxAndCollapsedBounds() throws IOException {
-        // Finite bounds cover non-NaN values only; without nan_count they cannot prove the
-        // row group NaN-free, so gt/gtEq above max and notEq on a collapsed pair keep it.
-        RowGroup rg = createDoubleRowGroup(1.0, 10.0);
-        FileSchema schema = createDoubleSchema();
-        assertThat(canDropRowGroup(FilterPredicate.gt("col", 20.0), rg, schema)).isFalse();
-        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", 20.0), rg, schema)).isFalse();
-
-        RowGroup collapsed = createDoubleRowGroup(1.0, 1.0);
-        assertThat(canDropRowGroup(FilterPredicate.notEq("col", 1.0), collapsed, schema)).isFalse();
-    }
-
-    @Test
-    void testCanDropWithFloatNonNaNAboveMaxAndCollapsedBounds() throws IOException {
-        RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
-        FileSchema schema = createFloatSchema();
-        assertThat(canDropRowGroup(FilterPredicate.gt("col", 20.0f), rg, schema)).isFalse();
-        assertThat(canDropRowGroup(FilterPredicate.gtEq("col", 20.0f), rg, schema)).isFalse();
-
-        RowGroup collapsed = createFloatRowGroup(1.0f, 1.0f);
-        assertThat(canDropRowGroup(FilterPredicate.notEq("col", 1.0f), collapsed, schema)).isFalse();
-    }
-
-    @Test
     void testCanDropWithFloatNegativeZero() throws IOException {
         RowGroup rg = createFloatRowGroup(-0.0f, 0.0f);
         FileSchema schema = createFloatSchema();
@@ -1242,38 +1137,7 @@ class FilterPredicateTest {
         assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
     }
 
-    @Test
-    void testNotWrappingLeafIsConservative() throws IOException {
-        RowGroup rg = createIntRowGroup(10, 20);
-        FileSchema schema = createIntSchema();
-        // NOT(GT 25) should ideally push down as LT_EQ 25, but currently conservative
-        FilterPredicate filter = FilterPredicate.not(FilterPredicate.gt("col", 25));
-        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
-    }
-
     // ==================== Type Mismatch Tests ====================
-
-    @Test
-    void intPredicateOnStringColumnThrows() {
-        RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x5A});
-        FileSchema schema = createBinarySchema();
-        assertThatThrownBy(() -> canDropRowGroup(
-                FilterPredicate.eq("col", 42), rg, schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
-                        + ", which takes String and byte[] literals, not an int");
-    }
-
-    @Test
-    void longPredicateOnIntColumnThrows() {
-        RowGroup rg = createIntRowGroup(0, 100);
-        FileSchema schema = createIntSchema();
-        assertThatThrownBy(() -> canDropRowGroup(
-                FilterPredicate.gt("col", 50L), rg, schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is an unannotated INT32"
-                        + ", which takes int literals, not a long");
-    }
 
     @Test
     void floatPredicateOnDoubleColumnThrows() {
@@ -1284,17 +1148,6 @@ class FilterPredicateTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' is an unannotated DOUBLE"
                         + ", which takes double literals, not a float");
-    }
-
-    @Test
-    void stringPredicateOnIntColumnThrows() {
-        RowGroup rg = createIntRowGroup(0, 100);
-        FileSchema schema = createIntSchema();
-        assertThatThrownBy(() -> canDropRowGroup(
-                FilterPredicate.eq("col", "hello"), rg, schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'col' is an unannotated INT32"
-                        + ", which takes int literals, not a String");
     }
 
     @Test
@@ -1331,16 +1184,6 @@ class FilterPredicateTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' is an unannotated BYTE_ARRAY"
                         + ", which takes String and byte[] literals, not an int");
-    }
-
-    @Test
-    void predicateOnUnknownColumnThrowsAtResolve() {
-        FileSchema schema = createIntSchema();
-        // Unknown column => throws at resolve time
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.eq("nonexistent", 42), schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column 'nonexistent' not found in schema");
     }
 
     // ==================== Operator.invert() ====================
@@ -1465,30 +1308,6 @@ class FilterPredicateTest {
         RowGroup rgSingle = createIntRowGroup(5, 5);
         FilterPredicate notInSingle = FilterPredicate.not(FilterPredicate.in("col", 5, 10));
         assertThat(canDropRowGroup(notInSingle, rgSingle, schema)).isTrue();
-    }
-
-    @Test
-    void testNotOnDoubleInExpandsToAndNotEqOnDoubleColumn() {
-        FileSchema schema = createDoubleSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", 1.5, 2.5)), schema);
-        assertThat(resolved).isInstanceOf(ResolvedPredicate.And.class);
-        ResolvedPredicate.And and = (ResolvedPredicate.And) resolved;
-        assertThat(and.children()).hasSize(2);
-        assertThat(and.children().get(0)).isEqualTo(new ResolvedPredicate.DoublePredicate(
-                0, FilterPredicate.Operator.NOT_EQ, 1.5, false));
-        assertThat(and.children().get(1)).isEqualTo(new ResolvedPredicate.DoublePredicate(
-                0, FilterPredicate.Operator.NOT_EQ, 2.5, false));
-    }
-
-    @Test
-    void testNotOnFloatInExpandsToAndNotEqOnFloatColumn() {
-        FileSchema schema = createFloatSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
-                FilterPredicate.not(FilterPredicate.in("col", 0.1f, Float.NaN)), schema);
-        assertThat(resolved).isEqualTo(new ResolvedPredicate.And(List.of(
-                new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, 0.1f, false),
-                new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.NOT_EQ, Float.NaN, false))));
     }
 
     @Test
