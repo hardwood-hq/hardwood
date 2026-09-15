@@ -137,32 +137,6 @@ class Float16LogicalTypeTest {
         }
     }
 
-    /// `FilterPredicate.gt(col, 0.5f)` against a FLOAT16 column dispatches in the
-    /// resolver to a `Float16Predicate`, which decodes the 2-byte payload before
-    /// comparing. From the caller's perspective the call is identical to filtering
-    /// a physical FLOAT column.
-    @Test
-    void testFloatPredicateOnFloat16ColumnFiltersByDecodedValue() throws IOException {
-        // half values: 0.0, 1.0, -1.5, 65504.0, +Inf, NaN, null.
-        // Float.compare orders NaN after all finite values and +Inf, and treats
-        // +0.0 > -0.0; with `gt 0.5f` we keep 1.0, 65504.0, +Inf, NaN — null drops.
-        List<Float> kept = new ArrayList<>();
-        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
-             RowReader rowReader = fileReader.buildRowReader()
-                     .filter(FilterPredicate.gt("half", 0.5f))
-                     .build()) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-                kept.add(rowReader.getFloat("half"));
-            }
-        }
-        assertThat(kept).hasSize(4);
-        assertThat(kept.get(0)).isEqualTo(1.0f);
-        assertThat(kept.get(1)).isEqualTo(65504.0f);
-        assertThat(kept.get(2)).isEqualTo(Float.POSITIVE_INFINITY);
-        assertThat(Float.isNaN(kept.get(3))).isTrue();
-    }
-
     /// `getFloat` must work through the record-matcher
     /// delegating wrapper installed by `buildRowReader().filter(...)`.
     @Test

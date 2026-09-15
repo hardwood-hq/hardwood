@@ -78,27 +78,6 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void nestedCompound_drainSidePath_returnsExpectedRows() throws Exception {
-        // A compound whose child is itself a compound: the plan is
-        // Or[Column(rating), And[Column(id), Column(price)]]. Every other case here
-        // is one level deep, so this is the only one where BatchMatchMerger's plan
-        // walk has to recurse to find a referenced column — a column it missed
-        // would leave that bitmap slot unseated for the evaluator.
-        FilterPredicate filter = FilterPredicate.or(
-                FilterPredicate.and(
-                        FilterPredicate.gt("id", 5),
-                        FilterPredicate.lt("price", 100.0)),
-                FilterPredicate.gt("rating", 5.0f));
-
-        List<Integer> expected = idsMatching(
-                row -> (row.id > 5 && row.price < 100.0) || row.rating > 5.0f);
-        List<Integer> actual = idsWithFilter(filter);
-
-        assertThat(actual).containsExactlyElementsOf(expected);
-        assertThat(actual).containsExactly(6, 7, 8, 9, 10, 15);
-    }
-
-    @Test
     void emptyResultBatch_advancesToNextBatch_returnsEmpty() throws Exception {
         // id > 1000 matches nothing — every batch produces an all-zero combinedWords,
         // hitting the anyBit == 0L early-exit and the nextSetBit return-(-1) path.

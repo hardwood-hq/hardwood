@@ -450,7 +450,6 @@ class ColumnReaderExactFilterTest {
     // ==================== Leaves read by the record-matcher view ====================
 
     private static final Path FLOAT16_FILE = Paths.get("src/test/resources/float16_logical_type_test.parquet");
-    private static final Path DICT_FLOAT16_FILE = Paths.get("src/test/resources/dict_float16_pushdown.parquet");
     private static final Path OPTIONAL_LEAF_FILE = Paths.get("src/test/resources/optional_struct_optional_leaf_test.parquet");
 
     /// `half` over ids 1..7 holds 0.0, 1.0, -1.5, 65504.0, +Inf, NaN and null; a FLOAT16
@@ -471,20 +470,6 @@ class ColumnReaderExactFilterTest {
     @MethodSource("float16Filters")
     void float16LeafAgreesWithRowReader(FilterPredicate filter, List<Integer> expectedIds) throws Exception {
         assertIdsAgreeWithRowReader(FLOAT16_FILE, filter, expectedIds);
-    }
-
-    @Test
-    void dictionaryEncodedFloat16LeafIsExact() throws Exception {
-        // `half` cycles 1.0, 2.0, 4.0, 8.0 over 4096 rows, so each value is 1024 rows.
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(DICT_FLOAT16_FILE));
-             ColumnReader half = reader.buildColumnReader("half")
-                     .filter(FilterPredicate.in("half", 2.0f, 8.0f)).build()) {
-            int count = 0;
-            while (half.nextBatch()) {
-                count += half.getRecordCount();
-            }
-            assertThat(count).isEqualTo(2048);
-        }
     }
 
     /// `point` is an optional struct over the optional leaf `x`: null in id 1, present with

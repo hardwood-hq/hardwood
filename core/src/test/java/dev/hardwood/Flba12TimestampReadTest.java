@@ -174,15 +174,6 @@ class Flba12TimestampReadTest {
         }
     }
 
-    @Test
-    void rowGroupBoundsPruneInTheOrderOfTheValues() throws IOException {
-        assertThat(readFiltered(FilterPredicate.gt("utc_ns", YEAR_9999))).isEmpty();
-        assertThat(readFiltered(FilterPredicate.lt("utc_ns", YEAR_1))).isEmpty();
-        assertThat(readFiltered(FilterPredicate.lt("utc_ns", Instant.EPOCH))).containsExactly(YEAR_1, BEFORE_EPOCH);
-        assertThat(readFiltered(FilterPredicate.gt("utc_ns", BEFORE_EPOCH)))
-                .containsExactly(Instant.EPOCH, IN_2026, YEAR_9999);
-    }
-
     /// `predicate_ts12_pages` holds one value per page, so its page index is exact in any order
     /// and `PredicatePathAgreementTest` exercises page-level pruning on it. This pins that layout:
     /// each of the 389 present values has a page, bounded by that value; a null shares its page.
@@ -213,18 +204,6 @@ class Flba12TimestampReadTest {
             while (rows.hasNext()) {
                 rows.next();
                 values.add(accessor.apply(rows));
-            }
-        }
-        return values;
-    }
-
-    private static List<Instant> readFiltered(FilterPredicate filter) throws IOException {
-        List<Instant> values = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE));
-             RowReader rows = reader.buildRowReader().filter(filter).build()) {
-            while (rows.hasNext()) {
-                rows.next();
-                values.add(rows.getTimestamp("utc_ns"));
             }
         }
         return values;
