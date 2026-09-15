@@ -89,7 +89,7 @@ public class Utils {
             "unknown-logical-type.parquet", // Unknown logical type
 
             // ALP is Encoding value 10 in parquet-format; the Encoding enum generated into
-            // parquet-format-structures 1.17.1 stops at BYTE_STREAM_SPLIT (9). Thrift's Java
+            // parquet-format-structures 1.18.1 stops at BYTE_STREAM_SPLIT (9). Thrift's Java
             // binding turns an unrecognized enum value into null, which for the required
             // PageEncodingStats.encoding field is indistinguishable from an absent field, so
             // parquet-java rejects the footer with "Required field 'encoding' was not present!".

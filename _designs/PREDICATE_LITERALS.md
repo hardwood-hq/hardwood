@@ -241,7 +241,7 @@ type:
 ## Relation to parquet-java and DuckDB
 
 On conforming files from mainstream writers, with the typed literal of each column, Hardwood,
-parquet-java 1.17.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
+parquet-java 1.18.1 and DuckDB 1.4.4 return the same rows. That covers integers, strings, dates,
 millisecond and microsecond timestamps, decimals via `BigDecimal`, UUIDs, and `NaN` on files whose
 writer omits the bounds of a chunk holding `NaN`. The differences below were measured with
 `tools/predicate-audit` (see Validation) on fixtures written by parquet-java and PyArrow, each read
@@ -258,14 +258,14 @@ The **Relevance** column estimates how often a real query meets the difference.
 | # | Data | Predicate | Hardwood | parquet-java | DuckDB | Cause | Relevance |
 |---|---|---|---|---|---|---|---|
 | 1 | `INT32 i`: `20, 22, null` | `notEq(i, 20)` | `22` | `22, null` | `22` | Rule: three-valued logic | **High** for code migrated from parquet-java: nulls under `notEq` / `notIn` |
-| 2 | `INT32 i`: `20, 22, 24, null` | `not(in(i, 20, 22))` | `24` | all 4 rows | `24` | parquet-java defect: `notIn` of more than one value | Medium, parquet-java users |
-| 3 | `DOUBLE d`, PyArrow: row group `1.0, 2.0, NaN, 3.0` with bounds `[1.0, 3.0]` | `gt(d, 5.0)`, `eq(d, NaN)` | includes `NaN` | row group dropped | row group dropped | Engine defects: pruning ignores `NaN` outside the bounds | Medium on float data with `NaN` (Arrow writers) |
+| 2 | `FLOAT f` with `IEEE_754_TOTAL_ORDER` (parquet-java's default): `NaN` as `7fc00000`, `ffc00000`, `7f800001` | `eq(f, Float.NaN)`; `gt(f, 10.0f)` | all three; all three | `7fc00000` only; `7fc00000` and `7f800001` | all three; all three | Rule: `Float.compare`; parquet-java compares a total-order column by IEEE 754 total order, which tells `NaN` payloads apart and sorts a negative `NaN` below `-Infinity` | Low; needs a non-canonical `NaN` |
+| 3 | `DOUBLE d`, PyArrow: row group `1.0, 2.0, NaN, 3.0` with bounds `[1.0, 3.0]` | `gt(d, 5.0)`, `eq(d, NaN)` | includes `NaN` | includes `NaN` | row group dropped | DuckDB defect: pruning ignores `NaN` outside the bounds | Medium on float data with `NaN` (Arrow writers) |
 | 4 | `DECIMAL(9, 2)` over `INT32`: `1.25` | `eq(dec, 125)` | `1.25` | `1.25` | none (`125.00`) | Rule: `int` is the unscaled value | Medium; `BigDecimal` is the natural literal |
 | 5 | same | `eq(dec, 1.255)` | throws | no spelling | none | Rule 4: equality literal the column cannot hold | Low; fails loudly |
 | 6 | `TIMESTAMP(NANOS)`, PyArrow: `t`, `t+1ns` … `t+7ns` | `gt(ts, t+4ns)` | `t+5ns` … `t+7ns` | same | none (`eq` returns all) | DuckDB defect: reads nanoseconds as microseconds | Low; nanosecond-exact filters only |
 | 7 | `DOUBLE d`: `-0.0, +0.0` | `eq(d, 0.0)` | `+0.0` | `+0.0` | both | Rule: `Double.compare`, as parquet-java | Low |
 | 8 | `UINT_32 u`: `0, 4000000000` | `lt(u, -1)` | both (`-1` is `0xFFFFFFFF`) | both | none | Rule: bit-pattern literal, as parquet-java | Low; unsigned columns are rare on the JVM |
-| 9 | `FLOAT16 f`: `NaN` stored as `00 7E` and `00 FE` | `eq(f, new byte[] {0x00, 0x7E})` | `00 7E` only | both | no spelling | Rule 2: `byte[]` is the stored bytes; the shim converts parquet-java's `Binary` to `float` and agrees with it | Low |
+| 9 | `FLOAT16 f`: `NaN` stored as `00 7E` and `00 FE` | `eq(f, new byte[] {0x00, 0x7E})` | `00 7E` only | `00 7E` only on an `IEEE_754_TOTAL_ORDER` column (row 2) | no spelling | Rule 2: `byte[]` is the stored bytes; the shim converts parquet-java's `Binary` to `float`, so on a total-order column it returns both | Low |
 | 10 | `INTERVAL iv`: 310 months, 0 days, 310 s | `eq(iv, new PqInterval(0, 9300, 310_000))` | none | no spelling | the row (normalised) | Rule: `INTERVAL` defines no conversion between components | Low |
 | 11 | `INT96 ts` | `gt(ts, …)` | by instant | by bytes as a signed big-endian integer | by instant | parquet-java's comparator; the shim refuses an ordered `Binary` | Low |
 | 12 | `DECIMAL(30, 3)` over `BYTE_ARRAY` storing `0.002` as `00 02`, Bloom filter | `Binary` / `byte[]` `02` | none | the row, except where the Bloom filter drops it | no spelling | parquet-java defect: Bloom and dictionary test bytes, rows test value | Low; needs a padded encoding |

@@ -40,8 +40,8 @@ File-level metadata helpers:
 - `clear_key_value_metadata_value` — drop the optional `value` field from one
   named entry in the file-level `key_value_metadata` list, leaving the key.
 
-Only the subset of parquet.thrift that PyArrow emits, plus the LogicalType
-union, is modelled in the embedded IDL.
+Only the subset of parquet.thrift that PyArrow and parquet-java emit, plus the
+LogicalType union, is modelled in the embedded IDL.
 """
 
 import io
@@ -135,6 +135,7 @@ struct Statistics {
   6: optional binary min_value;
   7: optional bool is_max_value_exact;
   8: optional bool is_min_value_exact;
+  9: optional i64 nan_count;
 }
 struct SizeStatistics {
   1: optional i64 unencoded_byte_array_data_bytes;
@@ -207,7 +208,8 @@ struct RowGroup {
   7: optional i16 ordinal;
 }
 struct TypeDefinedOrder {}
-union ColumnOrder { 1: TypeDefinedOrder TYPE_ORDER }
+struct IEEE754TotalOrder {}
+union ColumnOrder { 1: TypeDefinedOrder TYPE_ORDER; 2: IEEE754TotalOrder IEEE_754_TOTAL_ORDER }
 struct EncryptionAlgorithm {}
 struct FileMetaData {
   1: required i32 version;

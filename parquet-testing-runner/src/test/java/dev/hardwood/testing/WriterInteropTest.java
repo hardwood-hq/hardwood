@@ -390,7 +390,7 @@ class WriterInteropTest {
     ///
     /// parquet-java resolves the codec by name through Hadoop's `CompressionCodec` registry, and
     /// for `BROTLI` the name is `org.apache.hadoop.io.compress.BrotliCodec` — a class that ships
-    /// in neither parquet-java 1.17.1 nor Hadoop, but in `com.github.rdblue:brotli-codec`, an
+    /// in neither parquet-java 1.18.1 nor Hadoop, but in `com.github.rdblue:brotli-codec`, an
     /// unmaintained third-party artifact whose bundled native binaries cover a few platforms
     /// only. Putting it on this module's classpath would make the gate's result depend on the
     /// architecture it runs on, which is the opposite of what a gate is for.

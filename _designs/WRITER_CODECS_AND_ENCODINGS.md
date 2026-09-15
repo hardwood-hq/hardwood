@@ -359,7 +359,7 @@ header carries the chunk's value encoding, as it does today.
 
   `BROTLI` is the one such case on the codec axis. parquet-java resolves a codec to a Hadoop
   codec class name, and the name it carries for `BROTLI` is
-  `org.apache.hadoop.io.compress.BrotliCodec` — a class in neither parquet-java 1.17.1 nor
+  `org.apache.hadoop.io.compress.BrotliCodec` — a class in neither parquet-java 1.18.1 nor
   Hadoop itself, whose `io.compress` package holds BZip2, Default, Deflate, Gzip, Lz4,
   Passthrough, Snappy and ZStandard and no brotli. The only artifact providing it is
   `com.github.rdblue:brotli-codec`, unmaintained and carrying native binaries for a few
@@ -375,7 +375,7 @@ header carries the chunk's value encoding, as it does today.
 
   Its existing "dictionary disabled" case becomes a file-wide
   `PLAIN` policy, which is the same file by a different name. The pinned parquet-java
-  (1.17.1) carries byte-stream-split readers for `FLOAT`, `DOUBLE`, `INT32`, `INT64` and
+  (1.18.1) carries byte-stream-split readers for `FLOAT`, `DOUBLE`, `INT32`, `INT64` and
   `FIXED_LEN_BYTE_ARRAY`, so every pair in the table above is coverable there.
 - **The second writer-identification heuristic.** parquet-java gates `DELTA_BYTE_ARRAY` on
   who wrote the file: `CorruptDeltaByteArrays.requiresSequentialReads(ParsedVersion, Encoding)`
