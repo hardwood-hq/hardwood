@@ -36,9 +36,10 @@ concurrency:
 #
 # `-am` bounds each of these builds to the job's own dependency closure, so a job
 # neither compiles nor resolves the dependencies of modules it does not use. The
-# two BOMs join the closure explicitly because `-am` does not follow an imported
-# BOM. The closure includes the module the job goes on to build for real, and
-# building it twice costs a second or two.
+# closure includes the module the job goes on to build for real, and building it
+# twice costs a second or two. The BOMs the modules import need no place in it:
+# `-am` does not follow an imported BOM, but Maven resolves one out of the source
+# tree without it having been installed at all.
 
 jobs:
   build-core:
@@ -120,7 +121,7 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth -am
 
       - name: 'Build and install s3 and aws-auth'
         run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
@@ -166,7 +167,7 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli -am
 
       - name: 'Build and install cli'
         run: ./mvnw -B clean install -pl :hardwood-cli
@@ -208,7 +209,7 @@ jobs:
       - name: 'Build the dependencies'
         # `-amd` below adds the performance-testing children after `-am` has
         # computed the closure, so their own dependencies come from here.
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3 -am
 
       - name: 'Compile performance-testing'
         # These modules are in the reactor only under `-Pperformance-test`, so nothing
@@ -263,7 +264,7 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-java-compat,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-java-compat -am
 
       - name: 'Build and install parquet-java-compat'
         run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
@@ -309,7 +310,7 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-testing-runner,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-testing-runner -am
 
       - name: 'Build and install parquet-testing-runner'
         run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
@@ -451,7 +452,7 @@ jobs:
       - name: 'Build the dependencies'
         # `!:hardwood-integration-test` leaves the module itself out, so that the
         # tests are compiled by the JDK they run on rather than by this one.
-        run: ./mvnw -ntp -B -Dquick install -pl ':hardwood-integration-test,!:hardwood-integration-test,:hardwood-bom,:hardwood-test-bom' -am
+        run: ./mvnw -ntp -B -Dquick install -pl ':hardwood-integration-test,!:hardwood-integration-test' -am
 
       - name: 'Set up Java ${{ matrix.java }}'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
@@ -514,7 +515,7 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli -am
 
       - name: 'Build Native Image'
         # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli` job
