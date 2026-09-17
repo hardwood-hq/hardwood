@@ -30,6 +30,7 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Exact-semantics tests for the column-reader filter (#624).
 ///
@@ -216,6 +217,11 @@ class ColumnReaderExactFilterTest {
                 }
             }
             assertThat(ids).containsExactly(1, 2, 3, 4);
+            // 'address.zip' is decoded to evaluate the predicate; the readers exposed are
+            // the projection's.
+            assertThatThrownBy(() -> columns.getColumnReader("address.zip"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column 'address.zip' was not requested");
         }
     }
 

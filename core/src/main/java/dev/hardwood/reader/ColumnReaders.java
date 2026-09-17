@@ -98,17 +98,16 @@ public class ColumnReaders implements Closeable {
     }
 
     /// Builds a filtered [ColumnReaders] that returns only the records matching
-    /// `resolved` (#624). Every column of `augProjected` (payload columns plus
-    /// the predicate columns) is decoded through one shared iterator; the
-    /// exposed readers are those of `payloadProjection`, compacted to the
-    /// matching records each batch. Predicate columns not in `payloadProjection`
-    /// are decoded to evaluate the predicate but are not exposed.
+    /// `resolved` (#624). Every column of `augProjected` is decoded through one shared
+    /// iterator; the exposed readers are its first
+    /// [ProjectedSchema#exposedColumnCount] columns, compacted to the matching records
+    /// each batch. The columns past that carry the predicate and are decoded to evaluate
+    /// it, not exposed.
     static ColumnReaders filtered(HardwoodContextImpl context,
                                   boolean fixedListFastPathEnabled,
                                   RowGroupIterator rowGroupIterator,
                                   FileSchema schema,
                                   ProjectedSchema augProjected,
-                                  ProjectedSchema payloadProjected,
                                   ResolvedPredicate resolved,
                                   int batchSize) {
         int augCount = augProjected.getProjectedColumnCount();
@@ -123,11 +122,11 @@ public class ColumnReaders implements Closeable {
             byPath.put(columnSchema.fieldPath().toString(), reader);
         }
 
-        int payloadCount = payloadProjected.getProjectedColumnCount();
+        int payloadCount = augProjected.exposedColumnCount();
         Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
         ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
         for (int p = 0; p < payloadCount; p++) {
-            ColumnSchema columnSchema = schema.getColumn(payloadProjected.toOriginalIndex(p));
+            ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(p));
             ColumnReader reader = byPath.get(columnSchema.fieldPath().toString());
             payloadReaders[p] = reader;
             readersByName.put(columnSchema.fieldPath().toString(), reader);
@@ -150,13 +149,13 @@ public class ColumnReaders implements Closeable {
     /// caller handed a single reader out of this group has nothing else to reach
     /// it through. Used by [ParquetFileReader#buildColumnReaders] to skip the
     /// whole per-column decode setup when there is nothing to decode.
-    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected,
+    static ColumnReaders noRows(FileSchema schema, ProjectedSchema projected,
                                 RowGroupIterator rowGroupIterator) {
-        int payloadCount = payloadProjected.getProjectedColumnCount();
+        int payloadCount = projected.exposedColumnCount();
         Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
         ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
         for (int p = 0; p < payloadCount; p++) {
-            ColumnSchema columnSchema = schema.getColumn(payloadProjected.toOriginalIndex(p));
+            ColumnSchema columnSchema = schema.getColumn(projected.toOriginalIndex(p));
             ColumnReader reader = ColumnReader.exhausted(schema, columnSchema, rowGroupIterator);
             payloadReaders[p] = reader;
             readersByName.put(columnSchema.fieldPath().toString(), reader);

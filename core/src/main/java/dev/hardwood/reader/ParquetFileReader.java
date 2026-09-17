@@ -656,7 +656,6 @@ public class ParquetFileReader implements Closeable {
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema augProjected = iterator.initialize(augmented, resolved, metadataFilteringEnabled);
-        ProjectedSchema payloadProjected = ProjectedSchema.create(schema, projection);
         // Statistics/bloom pruning dropped every row group — no record can match.
         // Skip building the per-column readers (worker threads + ~batch-sized
         // buffers) and the selection engine entirely; expose exhausted no-op
@@ -666,12 +665,12 @@ public class ParquetFileReader implements Closeable {
         // parent's tracking entry.
         // Asked of the first work item, so a read that has one plans no further.
         if (iterator.workItemAt(0) == null) {
-            return ColumnReaders.noRows(schema, payloadProjected, iterator);
+            return ColumnReaders.noRows(schema, augProjected, iterator);
         }
         // Size against the augmented projection — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         return ColumnReaders.filtered(
-                context, fixedListFastPathEnabled, iterator, schema, augProjected, payloadProjected, resolved,
+                context, fixedListFastPathEnabled, iterator, schema, augProjected, resolved,
                 resolveBatchSize(batchSize, augProjected, rowGroups));
     }
 
