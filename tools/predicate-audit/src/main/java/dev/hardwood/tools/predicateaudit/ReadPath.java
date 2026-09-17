@@ -15,6 +15,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 /// The routes a filter takes through Hardwood. A literal resolved wrongly can show on one of them only.
 enum ReadPath {
@@ -31,6 +32,11 @@ enum ReadPath {
     /// A comparison no batch matcher takes, on the required column `zz` whose every value is `z`: it
     /// matches no row, and `or`-ing it in pushes a filter onto the record-level path.
     private static final FilterPredicate NEVER = FilterPredicate.lt("zz", new byte[0]);
+
+    /// The only column an answer is read from. The reader decodes the predicate's own columns
+    /// besides it, so a cell stands up one worker per predicate column rather than one per column
+    /// of the fixture.
+    private static final ColumnProjection ROW = ColumnProjection.columns("__row__");
 
     final String label;
     private final boolean columnReader;
@@ -61,7 +67,7 @@ enum ReadPath {
                 }
             }
             else {
-                try (RowReader rowReader = reader.buildRowReader().filter(effective).build()) {
+                try (RowReader rowReader = reader.buildRowReader().projection(ROW).filter(effective).build()) {
                     while (rowReader.hasNext()) {
                         rowReader.next();
                         rows.add(rowReader.getLong("__row__"));

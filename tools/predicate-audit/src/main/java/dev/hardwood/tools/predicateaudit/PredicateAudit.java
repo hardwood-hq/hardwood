@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /// Entry point of the predicate rule audit; see `tools/predicate-audit/README.md`.
 ///
@@ -21,6 +23,29 @@ import java.util.List;
 ///   variants, writes `summary.md` beside the full results, and exits with status 3 when the
 ///   findings differ from the baseline.
 public final class PredicateAudit {
+
+    /// The reader's logger for statistics it will not prune by. Named as a string because the
+    /// class it belongs to is package-private.
+    private static final String DISCARDED_STATS_LOGGER = "dev.hardwood.internal.predicate.MinMaxStats";
+
+    /// Held for the lifetime of the run: a logger keeps the level set on it only while something
+    /// keeps the logger.
+    private static final Logger DISCARDED_STATS = Logger.getLogger(DISCARDED_STATS_LOGGER);
+
+    static {
+        // Fixtures carry NaN bounds and sort orders the reader does not read, by design, and every
+        // read of a cell meets them again. Left on, one run writes over a hundred thousand records
+        // through one synchronized handler, which every audit thread then queues behind.
+        DISCARDED_STATS.setLevel(Level.SEVERE);
+        // The logger is named by string, and `System.Logger` only routes to `java.util.logging`
+        // while no `System.LoggerFinder` provider is on the classpath. Either a rename of the
+        // class or an added provider would turn the line above into a no-op, which shows up as
+        // an audit that is slow again rather than as a failure.
+        if (DISCARDED_STATS.isLoggable(Level.WARNING)) {
+            throw new IllegalStateException(
+                    "Failed to silence " + DISCARDED_STATS_LOGGER + ": it still logs at WARNING");
+        }
+    }
 
     private PredicateAudit() {
     }

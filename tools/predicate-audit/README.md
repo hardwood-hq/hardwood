@@ -13,8 +13,8 @@ and uploads the report as the `predicate-audit-report` artifact.
 tools/predicate-audit/run.sh [report-dir]
 ```
 
-It needs `.docker-venv` (PyArrow and thriftpy2, from `requirements.txt`) and takes about three
-minutes. The report goes to `tools/predicate-audit/target/report` unless a directory is given.
+It needs `.docker-venv` (PyArrow and thriftpy2, from `requirements.txt`) and takes under a
+minute, most of it the build. The report goes to `tools/predicate-audit/target/report` unless a directory is given.
 
 The script:
 1. builds Hardwood and the tool under the `predicate-audit` Maven profile;
@@ -25,7 +25,7 @@ The script:
 ## What it measures
 
 - **Matrix** (`matrix.tsv`): about 72,000 predicate cells, each read through five paths.
-  - **Paths:** the `RowReader` by default, forced onto its record-level path and without metadata filtering; the `ColumnReader` with and without metadata filtering.
+  - **Paths:** the `RowReader` by default, forced onto its record-level path and without metadata filtering; the `ColumnReader` with and without metadata filtering. The three `RowReader` paths project `__row__` alone and let the reader decode the predicate's own columns beside it, so a cell stands up a worker per predicate column rather than one per column of the fixture. The `ColumnReader` paths read `__row__` the same way, so every path is an augmented-projection read and none decodes a column the predicate does not name.
   - **Cases:** every literal kind a column takes and some it does not, around stored values, in gaps, past the carrier's range and at type edge cases (`NaN` payloads, signed zeros, sub-unit instants, padded decimals, non-canonical `INT96`), under every operator, `not` form and set form.
   - **Fixture groups**, each in single row group, multiple row groups, dictionary and Bloom filter layouts:
 
