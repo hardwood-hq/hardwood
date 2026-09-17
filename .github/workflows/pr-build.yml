@@ -517,11 +517,18 @@ jobs:
         run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build Native Image'
-        # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli`
-        # job runs. Failsafe still runs during integration-test, and
-        # -Dnative clears the `native` tag exclusion, so this covers the native
-        # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
-        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
+        # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli` job
+        # runs. -Dnative clears the `native` tag exclusion so the ITs that spawn the
+        # binary run at all; -Dgroups=native then holds failsafe to those eleven, since
+        # the other 87 are the JVM S3 command ITs `build-cli` has already run, and
+        # running them again here cost ten seconds for no additional coverage.
+        #
+        # Nothing here tunes native-image itself. Across eight runs of identical input
+        # the image build took between 68 s and 124 s, so an option has to be worth
+        # more than 1.8x to be visible at all, and neither -Ob nor a capped builder
+        # heap was: -Ob moved more work into the analysis phase than it took out of
+        # compilation, and the heap cap did not separate from the spread.
+        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true -Dgroups=native
 
   predicate-audit:
     runs-on: ubuntu-latest
