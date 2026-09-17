@@ -19,7 +19,7 @@ import dev.hardwood.schema.ColumnSchema;
 public final class BatchSizing {
 
     /// Hard upper bound on the batch size returned by
-    /// [#computeOptimalBatchSize(ProjectedSchema, double[])]. Other components that
+    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)]. Other components that
     /// pre-size structures around the worst-case batch size (e.g. the
     /// `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
     public static final int MAX_BATCH = 524288;
@@ -52,7 +52,7 @@ public final class BatchSizing {
     /// For example, 3 projected DOUBLE columns (8 bytes each, one value per row = 24
     /// bytes/row) yields `6 MB / 24 = 262 144` rows; a single `LIST<float32>` of 768-wide
     /// vectors (`768 * 4 = 3072` bytes/row) yields `6 MB / 3072 = 2048` rows.
-    public static int computeOptimalBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow) {
+    private static int budgetedBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow) {
         // Target 6 MB of value memory per batch (fits comfortably in L2 cache).
         long targetBytes = 6L * 1024 * 1024;
         int maxBatch = MAX_BATCH;
@@ -73,8 +73,8 @@ public final class BatchSizing {
         return (int) Math.min(maxBatch, Math.max(1, (long) (targetBytes / bytesPerRow)));
     }
 
-    /// Computes a batch size as [#computeOptimalBatchSize(ProjectedSchema, double[])] does and
-    /// caps it at `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
+    /// Computes a batch size that keeps all column arrays for one batch within the L2 cache,
+    /// capped at `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
     /// is not known.
     ///
     /// The byte budget sizes a batch from the projected columns' widths alone, so a read
@@ -93,7 +93,7 @@ public final class BatchSizing {
     /// @throws IllegalArgumentException if `availableRows` is negative and not [#ROWS_UNKNOWN]
     public static int computeOptimalBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow,
             long availableRows) {
-        int budgeted = computeOptimalBatchSize(projectedSchema, valuesPerRow);
+        int budgeted = budgetedBatchSize(projectedSchema, valuesPerRow);
         if (availableRows == ROWS_UNKNOWN) {
             return budgeted;
         }
@@ -114,7 +114,7 @@ public final class BatchSizing {
 
     /// Computes each projected column's average list fan-out — leaf values per
     /// top-level row — from row-group metadata, for
-    /// [#computeOptimalBatchSize(ProjectedSchema, double[])]. A column's fan-out is
+    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)]. A column's fan-out is
     /// its total leaf value count across `rowGroups` divided by the total row count.
     /// Returns `null` when there are no rows (the caller then assumes one value per
     /// row). A flat column's fan-out is `1`; a `LIST<float32>` of 768-wide vectors is

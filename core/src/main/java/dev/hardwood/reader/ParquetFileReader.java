@@ -553,8 +553,8 @@ public class ParquetFileReader implements Closeable {
     /// @param context hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited)
-    /// @param rowGroups first-file row groups, which bound the batch size at the rows the read
-    ///        can produce, and carry the list fan-out the nested path sizes by
+    /// @param rowGroups first-file row groups, from which [#resolveBatchSize] derives the list
+    ///        fan-out and the bound on the rows the read can produce
     private RowReader createRowReader (RowGroupIterator rowGroupIterator,
                             FileSchema schema,
                             ProjectedSchema projectedSchema,
@@ -562,13 +562,16 @@ public class ParquetFileReader implements Closeable {
                             ResolvedPredicate filter,
                             long maxRows,
                             List<RowGroup> rowGroups) throws IOException {
+        // Both paths size their batches through the one funnel the column readers use, so a
+        // projection sizes the same whichever reader reads it.
+        int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projectedSchema, rowGroups);
         if (schema.isFlatSchema()) {
             return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows,
-                    availableRows(rowGroups));
+                    batchSize);
         }
         else {
             return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled,
-                    filter, maxRows, rowGroups, availableRows(rowGroups));
+                    filter, maxRows, batchSize);
         }
     }
 

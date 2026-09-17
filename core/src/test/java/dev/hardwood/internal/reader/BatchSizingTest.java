@@ -77,14 +77,14 @@ class BatchSizingTest {
                     ProjectedSchema.create(schema, ColumnProjection.columns("float_col"));
 
             // Fan-out 1 (a flat float column): 4 bytes/row budgets far above the clamp.
-            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 1.0 }))
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 1.0 }, BatchSizing.ROWS_UNKNOWN))
                     .isEqualTo(BatchSizing.MAX_BATCH);
 
             // Fan-out 768 (a 768-wide LIST<float32>): each row is 768 * 4 = 3072 bytes,
             // so the batch follows the byte budget down to 2 048 rows — far below the
             // 16 384 rows a fan-out-blind sizing would have forced, which would have made
             // the value array ~768x the L2 target.
-            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 768.0 }))
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 768.0 }, BatchSizing.ROWS_UNKNOWN))
                     .isEqualTo((int) (TARGET_BYTES / (768 * 4)))
                     .isEqualTo(2048)
                     .isLessThan(16_384);
@@ -141,6 +141,6 @@ class BatchSizingTest {
     private static int sizeFor(ParquetFileReader reader, String... columns) {
         FileSchema schema = reader.getFileSchema();
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.columns(columns));
-        return BatchSizing.computeOptimalBatchSize(projected, null);
+        return BatchSizing.computeOptimalBatchSize(projected, null, BatchSizing.ROWS_UNKNOWN);
     }
 }

@@ -23,7 +23,6 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FieldPath;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -137,7 +136,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     ///                rows (SQL LIMIT): the drain holds it over the row groups statistics
     ///                prove match in full, and the reader counts matches from the first
     ///                row group they do not.
-    /// @param rowGroups first-file row groups, for fan-out-aware batch sizing
+    /// @param batchSize records per batch, already resolved by the caller
     /// @return a [NestedRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
@@ -146,10 +145,7 @@ public final class NestedRowReader implements FileAwareRowReader {
                             boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
                             long maxRows,
-                            List<RowGroup> rowGroups,
-                            long availableRows) throws IOException {
-        int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema,
-                BatchSizing.valuesPerRow(projectedSchema, rowGroups), availableRows);
+                            int batchSize) throws IOException {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // workers still take it — they hold it only while statistics prove every row
