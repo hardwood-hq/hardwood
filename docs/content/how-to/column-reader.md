@@ -87,7 +87,7 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-By default the batch size is chosen adaptively from the projected columns' physical widths, so the per-batch arrays stay within the CPU cache regardless of how wide or how many columns you project. The `RowReader` path uses the same byte-budgeted sizing. To pin a specific record count instead, use `.batchSize(int)` on the builder:
+By default the batch size is chosen adaptively from the projected columns' physical widths, so the per-batch arrays stay within the CPU cache regardless of how wide or how many columns you project. It is capped at the rows the read can produce, so a read shorter than one batch does not allocate arrays for rows that cannot arrive. The `RowReader` path uses the same byte-budgeted sizing. To pin a specific record count instead, use `.batchSize(int)` on the builder:
 
 ```java
 try (ColumnReaders columns = parquet.buildColumnReaders(

@@ -146,9 +146,10 @@ public final class NestedRowReader implements FileAwareRowReader {
                             boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
                             long maxRows,
-                            List<RowGroup> rowGroups) throws IOException {
+                            List<RowGroup> rowGroups,
+                            long availableRows) throws IOException {
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema,
-                BatchSizing.valuesPerRow(projectedSchema, rowGroups));
+                BatchSizing.valuesPerRow(projectedSchema, rowGroups), availableRows);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // workers still take it — they hold it only while statistics prove every row

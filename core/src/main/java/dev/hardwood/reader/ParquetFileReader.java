@@ -72,10 +72,11 @@ import dev.hardwood.schema.FileSchema;
 public class ParquetFileReader implements Closeable {
 
     /// Sentinel used by the column-reader builders to mean "no explicit batch
-    /// size set": the size is then resolved from the projected column widths via
-    /// [BatchSizing#computeOptimalBatchSize(dev.hardwood.internal.schema.ProjectedSchema)]
-    /// at build time. Never reaches the workers — [#resolveBatchSize] turns it
-    /// into a concrete positive count.
+    /// size set": the size is then resolved at build time from the projected column
+    /// widths and the rows the read can produce, via
+    /// [BatchSizing#computeOptimalBatchSize(dev.hardwood.internal.schema.ProjectedSchema,double[],long)].
+    /// Never reaches the workers — [#resolveBatchSize] turns it into a concrete
+    /// positive count.
     private static final int AUTO_BATCH_SIZE = 0;
 
     private final List<InputFile> inputFiles;
@@ -552,7 +553,8 @@ public class ParquetFileReader implements Closeable {
     /// @param context hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited)
-    /// @param rowGroups first-file row groups, for fan-out-aware batch sizing (nested path)
+    /// @param rowGroups first-file row groups, which bound the batch size at the rows the read
+    ///        can produce, and carry the list fan-out the nested path sizes by
     private RowReader createRowReader (RowGroupIterator rowGroupIterator,
                             FileSchema schema,
                             ProjectedSchema projectedSchema,
@@ -561,10 +563,12 @@ public class ParquetFileReader implements Closeable {
                             long maxRows,
                             List<RowGroup> rowGroups) throws IOException {
         if (schema.isFlatSchema()) {
-            return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
+            return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows,
+                    availableRows(rowGroups));
         }
         else {
-            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled, filter, maxRows, rowGroups);
+            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled,
+                    filter, maxRows, rowGroups, availableRows(rowGroups));
         }
     }
 
@@ -688,11 +692,21 @@ public class ParquetFileReader implements Closeable {
         return iterator;
     }
 
-    private static int resolveBatchSize(int requested, ProjectedSchema projected, List<RowGroup> rowGroups) {
+    private int resolveBatchSize(int requested, ProjectedSchema projected, List<RowGroup> rowGroups) {
         return requested > 0
                 ? requested
                 : BatchSizing.computeOptimalBatchSize(projected,
-                        BatchSizing.valuesPerRow(projected, rowGroups));
+                        BatchSizing.valuesPerRow(projected, rowGroups), availableRows(rowGroups));
+    }
+
+    /// An upper bound on the rows a read over `firstFileRowGroups` produces, or
+    /// [BatchSizing#ROWS_UNKNOWN] where later files can add rows this reader has not planned.
+    /// Row-group pruning, a row limit and a skip only ever remove rows, so a single file's own
+    /// row count bounds any read of it.
+    private long availableRows(List<RowGroup> firstFileRowGroups) {
+        return inputFiles.size() == 1
+                ? BatchSizing.totalRows(firstFileRowGroups)
+                : BatchSizing.ROWS_UNKNOWN;
     }
 
     private void ensureSingleFile(String op) {

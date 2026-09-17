@@ -13,11 +13,13 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies the byte-budgeted batch sizing the column- and row-reader paths
 /// share: the size depends on the projected columns' physical widths scaled by
@@ -89,9 +91,56 @@ class BatchSizingTest {
         }
     }
 
+    @Test
+    void theRowsAvailableCapTheBatch() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
+            ProjectedSchema projected = ProjectedSchema.create(
+                    reader.getFileSchema(), ColumnProjection.columns("long_col"));
+
+            // The byte budget alone clamps this projection to MAX_BATCH. A read that cannot
+            // produce that many rows sizes to what it holds, because the rest of the array
+            // could never be filled.
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, null, 600)).isEqualTo(600);
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, null, 1)).isEqualTo(1);
+
+            // Above the budget the cap does not bind, so a large read is sized as before.
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, null, 10_000_000))
+                    .isEqualTo(BatchSizing.MAX_BATCH);
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, null, BatchSizing.ROWS_UNKNOWN))
+                    .isEqualTo(BatchSizing.MAX_BATCH);
+
+            // A read with no rows still sizes a batch, as the byte budget's own floor does.
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, null, 0)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void aRowCountThatIsNeitherAvailableNorUnknownIsRejected() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
+            ProjectedSchema projected = ProjectedSchema.create(
+                    reader.getFileSchema(), ColumnProjection.columns("long_col"));
+
+            assertThatThrownBy(() -> BatchSizing.computeOptimalBatchSize(projected, null, -2))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("availableRows must not be negative: -2");
+        }
+    }
+
+    @Test
+    void aReaderSizesItsBatchToTheFileItReads() throws Exception {
+        // The file holds three rows. Sized by the byte budget alone, a single INT64 column
+        // would carry a MAX_BATCH-long array, 4 MB to hold three values.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES));
+             ColumnReader column = reader.buildColumnReader("long_col").build()) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getRecordCount()).isEqualTo(3);
+            assertThat(column.getLongs()).hasSize(3);
+        }
+    }
+
     private static int sizeFor(ParquetFileReader reader, String... columns) {
         FileSchema schema = reader.getFileSchema();
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.columns(columns));
-        return BatchSizing.computeOptimalBatchSize(projected);
+        return BatchSizing.computeOptimalBatchSize(projected, null);
     }
 }

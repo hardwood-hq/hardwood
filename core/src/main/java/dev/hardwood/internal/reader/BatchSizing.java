@@ -19,20 +19,17 @@ import dev.hardwood.schema.ColumnSchema;
 public final class BatchSizing {
 
     /// Hard upper bound on the batch size returned by
-    /// [#computeOptimalBatchSize(ProjectedSchema)]. Other components that
+    /// [#computeOptimalBatchSize(ProjectedSchema, double[])]. Other components that
     /// pre-size structures around the worst-case batch size (e.g. the
     /// `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
     public static final int MAX_BATCH = 524288;
 
-    private BatchSizing() {}
+    /// Passed as `availableRows` where the rows a read can produce are not known ahead of it,
+    /// as for a multi-file read whose later files have not been planned. The batch then follows
+    /// the byte budget alone.
+    public static final long ROWS_UNKNOWN = -1;
 
-    /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
-    ///
-    /// Equivalent to [#computeOptimalBatchSize(ProjectedSchema, double[])] with no
-    /// fan-out information — every column is assumed to hold one value per row.
-    public static int computeOptimalBatchSize(ProjectedSchema projectedSchema) {
-        return computeOptimalBatchSize(projectedSchema, null);
-    }
+    private BatchSizing() {}
 
     /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
     ///
@@ -74,6 +71,45 @@ public final class BatchSizing {
         }
 
         return (int) Math.min(maxBatch, Math.max(1, (long) (targetBytes / bytesPerRow)));
+    }
+
+    /// Computes a batch size as [#computeOptimalBatchSize(ProjectedSchema, double[])] does and
+    /// caps it at `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
+    /// is not known.
+    ///
+    /// The byte budget sizes a batch from the projected columns' widths alone, so a read
+    /// shorter than one batch would carry arrays for rows that cannot arrive: a single `INT64`
+    /// column over a 600-row file budgets [#MAX_BATCH], a 4 MB array per batch to hold 600
+    /// values. The cap binds only in that case. Where the read is longer than a batch the
+    /// budgeted size is returned unchanged, so batches stay as full as they were.
+    ///
+    /// `availableRows` must be an upper bound on the read. Row-group pruning, a row limit and a
+    /// skip only ever remove rows, so a file's own row count bounds any read of it.
+    ///
+    /// @param projectedSchema the columns the read decodes
+    /// @param valuesPerRow each projected column's list fan-out, or `null` for one value per row
+    /// @param availableRows an upper bound on the rows the read produces, or [#ROWS_UNKNOWN]
+    /// @return the batch size in rows, at least 1
+    /// @throws IllegalArgumentException if `availableRows` is negative and not [#ROWS_UNKNOWN]
+    public static int computeOptimalBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow,
+            long availableRows) {
+        int budgeted = computeOptimalBatchSize(projectedSchema, valuesPerRow);
+        if (availableRows == ROWS_UNKNOWN) {
+            return budgeted;
+        }
+        if (availableRows < 0) {
+            throw new IllegalArgumentException("availableRows must not be negative: " + availableRows);
+        }
+        return (int) Math.max(1, Math.min(budgeted, availableRows));
+    }
+
+    /// Returns the total row count of `rowGroups`, an upper bound on any read over them.
+    public static long totalRows(List<RowGroup> rowGroups) {
+        long rows = 0;
+        for (RowGroup rowGroup : rowGroups) {
+            rows = Math.addExact(rows, rowGroup.numRows());
+        }
+        return rows;
     }
 
     /// Computes each projected column's average list fan-out — leaf values per

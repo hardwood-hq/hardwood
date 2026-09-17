@@ -237,8 +237,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                                    ProjectedSchema projectedSchema,
                                    HardwoodContextImpl context,
                                    ResolvedPredicate filter,
-                                   long maxRows) throws IOException {
-        int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
+                                   long maxRows,
+                                   long availableRows) throws IOException {
+        int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema, null, availableRows);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
 
         // A row-level filter changes what `maxRows` counts: under SQL LIMIT semantics
