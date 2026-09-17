@@ -61,13 +61,18 @@ on its compiler args for the same reason.
 
 GitHub Actions workflows that run `./mvnw … -pl <module-list>` need
 `hardwood-error-prone-checks` to be either built in the same reactor or already
-present in the local Maven repository. Two strategies are used:
+present in the local Maven repository. Three strategies are used:
 
-- **Multi-job workflows** (`main-build.yml`, `pr-build.yml`): the first install
-  job (`build-core`) includes `:hardwood-error-prone-checks` in its `-pl` list and
-  uploads the resulting JAR as part of the `maven-repo-core` artifact. Downstream
-  jobs download the artifact into `~/.m2/repository/dev/hardwood/` and can omit the
-  module from their own `-pl` lists.
+- **Artifact hand-off** (`main-build.yml`): the first install job (`build-core`)
+  includes `:hardwood-error-prone-checks` in its `-pl` list and uploads the resulting
+  JAR as part of the `maven-repo-core` artifact. Downstream jobs download the
+  artifact into `~/.m2/repository/dev/hardwood/` and can omit the module from their
+  own `-pl` lists.
+- **Per-job closure** (`pr-build.yml`): each job opens by building its own dependency
+  closure with `-Dquick … -am`, and no job downloads an artifact. Every module
+  declares `hardwood-error-prone-checks` as an ordinary dependency, so `-am` pulls it
+  into the closure and installs it even though `-Dquick` deactivates `qa` for that
+  build.
 - **Single-job workflows** (`performance.yml`, `cli-early-access.yml`,
   `release-cli.yml`): the install step lists `:hardwood-error-prone-checks`
   explicitly, since there is no upstream job to seed the local Maven repository.

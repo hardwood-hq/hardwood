@@ -16,6 +16,23 @@ env:
   # Kept in sync with S3ProxyContainers.IMAGE; see cli/s3/parquet-java-compat tests.
   S3PROXY_IMAGE: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
 
+# Every job builds the modules it depends on itself, under `-Dquick`, rather than
+# waiting for the job that owns them to finish and publish them as an artifact.
+# `-Dquick` skips the tests and the `qa` profile (Error Prone, the license header
+# check, import sorting, the enforcer and build-plan checks), which takes the
+# dependencies of a job down to seconds, where `build-core` -> `build-s3` ->
+# `build-cli` -> `Verify native CLI build` made the last job in that chain wait
+# four minutes. The jars are the same either way: `-Dquick` changes what is
+# verified, not what is compiled, and every check it skips still runs in the job
+# that owns the module. No job therefore needs another, and the build's wall clock
+# is its slowest single job rather than the sum of a chain.
+#
+# `-am` bounds each of these builds to the job's own dependency closure, so a job
+# neither compiles nor resolves the dependencies of modules it does not use. The
+# two BOMs join the closure explicitly because `-am` does not follow an imported
+# BOM. The closure includes the module the job goes on to build for real, and
+# building it twice costs a second or two.
+
 jobs:
   build-core:
     runs-on: ubuntu-latest
@@ -43,24 +60,17 @@ jobs:
             maven-${{ runner.os }}-build-
             maven-${{ runner.os }}-
 
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
       - name: 'Build and install BOMs, test-support, core and avro'
         run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
 
-      - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: maven-repo-core
-          path: |
-            ~/.m2/repository/dev/hardwood/hardwood-error-prone-checks/
-            ~/.m2/repository/dev/hardwood/hardwood-bom/
-            ~/.m2/repository/dev/hardwood/hardwood-test-bom/
-            ~/.m2/repository/dev/hardwood/hardwood-test-support/
-            ~/.m2/repository/dev/hardwood/hardwood-core/
-            ~/.m2/repository/dev/hardwood/hardwood-avro/
-          retention-days: 1
-
   build-s3:
-    needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -72,7 +82,7 @@ jobs:
 
       - name: 'Pre-pull s3proxy image in background'
         # Start the image download immediately after checkout so it overlaps
-        # with setup-java, Maven cache restore, and artifact download.
+        # with setup-java, the Maven cache restore and the dependency build.
         # By the time Testcontainers reaches `s3.start()`, layers are cached.
         run: |
           nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
@@ -95,26 +105,20 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download core artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          name: maven-repo-core
-          path: ~/.m2/repository/dev/hardwood/
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build and install s3 and aws-auth'
         run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
 
-      - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: maven-repo-s3
-          path: |
-            ~/.m2/repository/dev/hardwood/hardwood-s3/
-            ~/.m2/repository/dev/hardwood/hardwood-aws-auth/
-          retention-days: 1
-
   build-cli:
-    needs: build-s3
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -147,25 +151,20 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download core and s3 artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-{core,s3}
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build and install cli'
         run: ./mvnw -B clean install -pl :hardwood-cli
 
-      - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: maven-repo-cli
-          path: ~/.m2/repository/dev/hardwood/hardwood-cli/
-          retention-days: 1
-
   compile-performance-tests:
-    needs: build-s3
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -192,12 +191,17 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download core and s3 artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-{core,s3}
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        # `-amd` below adds the performance-testing children after `-am` has
+        # computed the closure, so their own dependencies come from here.
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Compile performance-testing'
         # These modules are in the reactor only under `-Pperformance-test`, so nothing
@@ -205,11 +209,13 @@ jobs:
         # break `main`. Compiling is what catches that: every such break so far has
         # been a compile error. Running the benchmarks is a separate workflow — they
         # are slow and need ~100 MB per dataset — so this stops at `test-compile`, and
-        # `-Dquick` sets `testdata.download.skip` so no dataset is fetched.
-        run: ./mvnw -ntp -B -Pperformance-test -Dquick test-compile -pl :hardwood-performance-testing -amd
+        # `testdata.download.skip` keeps any dataset from being fetched. The one thing
+        # this step wanted `-Dquick` for was that property, and taking `-Dquick` off
+        # brings the `qa` profile with it, so Error Prone and the license header check
+        # now cover these modules in a PR build as they do every other module.
+        run: ./mvnw -ntp -B -Pperformance-test -Dtestdata.download.skip=true test-compile -pl :hardwood-performance-testing -amd
 
   build-parquet-java-compat:
-    needs: build-s3
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -242,12 +248,15 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download core and s3 artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-{core,s3}
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-java-compat,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build and install parquet-java-compat'
         run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
@@ -259,15 +268,7 @@ jobs:
         # for every change.
         run: ./mvnw -ntp -B -Ppredicate-audit compile -pl :hardwood-predicate-audit
 
-      - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: maven-repo-parquet-java-compat
-          path: ~/.m2/repository/dev/hardwood/hardwood-parquet-java-compat/
-          retention-days: 1
-
   build-parquet-testing-runner:
-    needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -293,24 +294,20 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download core artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          name: maven-repo-core
-          path: ~/.m2/repository/dev/hardwood/
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-testing-runner,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build and install parquet-testing-runner'
         run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
 
-      - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: maven-repo-parquet-testing-runner
-          path: ~/.m2/repository/dev/hardwood/hardwood-parquet-testing-runner/
-          retention-days: 1
-
   javadoc:
-    needs: [build-cli, build-parquet-java-compat, build-parquet-testing-runner]
     runs-on: ubuntu-latest
 
     steps:
@@ -335,18 +332,21 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download built artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-*
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        # The whole reactor, because `javadoc:javadoc` runs over all of it.
+        run: ./mvnw -ntp -B -Dquick install
 
       - name: 'Generate Javadoc'
         run: ./mvnw -B javadoc:javadoc
 
   integration-tests:
-    needs: build-core
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -374,10 +374,13 @@ jobs:
         with:
           submodules: 'true'
 
-      - name: 'Set up Java'
+      - name: 'Set up Java 25'
+        # To build the dependencies: core carries a `src/main/java22` source root
+        # compiled at `--release 22` into a multi-release jar, which javac 21 cannot
+        # do. The tests themselves run on Java ${{ matrix.java }}, set up below.
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
-          java-version: ${{ matrix.java }}
+          java-version: '25'
           distribution: 'temurin'
 
       - name: 'Cache Maven dependencies'
@@ -390,6 +393,13 @@ jobs:
             maven-${{ runner.os }}-${{ github.job }}-
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
+
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Install libdeflate'
         if: ${{ matrix.install_libdeflate }}
@@ -431,11 +441,16 @@ jobs:
           sudo -E apt-get update
           sudo -E apt-get install -y libdeflate-dev
 
-      - name: 'Download core artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
+      - name: 'Build the dependencies'
+        # `!:hardwood-integration-test` leaves the module itself out, so that the
+        # tests are compiled by the JDK they run on rather than by this one.
+        run: ./mvnw -ntp -B -Dquick install -pl ':hardwood-integration-test,!:hardwood-integration-test,:hardwood-bom,:hardwood-test-bom' -am
+
+      - name: 'Set up Java ${{ matrix.java }}'
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
-          name: maven-repo-core
-          path: ~/.m2/repository/dev/hardwood/
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
 
       - name: 'Run integration tests (Java 21)'
         if: ${{ !matrix.install_libdeflate && !matrix.enable_incubating }}
@@ -452,7 +467,6 @@ jobs:
   # Verify the native CLI build on PRs
   native-build-check:
     if: github.event_name == 'pull_request'
-    needs: build-cli
     name: 'Verify native CLI build'
     runs-on: ubuntu-latest
     steps:
@@ -485,16 +499,19 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download built artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-{core,s3,cli}
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
 
       - name: 'Build Native Image'
-        # -DskipSurefire=true skips the JVM unit test suite (already run in the
-        # `build-cli` job). Failsafe still runs during integration-test, and
+        # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli`
+        # job runs. Failsafe still runs during integration-test, and
         # -Dnative clears the `native` tag exclusion, so this covers the native
         # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
         run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
@@ -542,6 +559,14 @@ jobs:
             maven-${{ runner.os }}-build-parquet-java-compat-
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
+
+      - name: 'Drop any cached Hardwood artifacts'
+        if: steps.changes.outputs.run == 'true'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Set up the Python venv'
         if: steps.changes.outputs.run == 'true'
