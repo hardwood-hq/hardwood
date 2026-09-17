@@ -63,6 +63,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
     private final FlatColumnWorker[] columnWorkers;
     private final int columnCount;
+    /// How many of the decoded columns the reader exposes. Smaller than `columnCount` when a
+    /// predicate references a column the caller did not project: those trail the exposed ones.
+    private final int exposedColumnCount;
 
     // Schema info for name lookup and logical type conversion
     private final FileSchema fileSchema;
@@ -163,6 +166,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.matchMerger = matchMerger;
 
         // Build name-to-index map and cache column metadata
+        this.exposedColumnCount = projectedSchema.exposedColumnCount();
+        // Every decoded column is reachable by name, the predicate-only ones included: the record
+        // matcher resolves half its leaf kinds by name, through these same accessors.
         this.nameToIndex = new StringToIntMap(columnCount);
         this.physicalTypes = new PhysicalType[columnCount];
         this.columnSchemas = new ColumnSchema[columnCount];
@@ -841,11 +847,15 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     @Override
     public int getFieldCount() {
-        return columnCount;
+        return exposedColumnCount;
     }
 
     @Override
     public String getFieldName(int index) {
+        if (index < 0 || index >= exposedColumnCount) {
+            throw new IndexOutOfBoundsException(prefix() + "Field index " + index
+                    + " is out of bounds for a projection of " + exposedColumnCount + " columns");
+        }
         int originalIndex = projectedSchema.toOriginalIndex(index);
         return fileSchema.getColumn(originalIndex).name();
     }

@@ -225,7 +225,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public PqStruct getStruct(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
+        TopLevelFieldMap.FieldDesc child = childAt(fieldIndex);
         return readStruct(structAt(child, child.name()));
     }
 
@@ -236,7 +236,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public PqList getList(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
+        TopLevelFieldMap.FieldDesc child = childAt(fieldIndex);
         return PqListImpl.createGenericList(batch, listAt(child, child.name()), rowIndex, valueIndex);
     }
 
@@ -247,7 +247,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public PqMap getMap(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
+        TopLevelFieldMap.FieldDesc child = childAt(fieldIndex);
         return PqMapImpl.create(batch, mapAt(child, child.name()), rowIndex, valueIndex);
     }
 
@@ -258,7 +258,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public PqVariant getVariant(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
+        TopLevelFieldMap.FieldDesc child = childAt(fieldIndex);
         return readVariant(variantAt(child, child.name()), child.name());
     }
 
@@ -271,7 +271,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public Object getValue(int fieldIndex) {
-        return readValueImpl(desc.children()[fieldIndex], true);
+        return readValueImpl(childAt(fieldIndex), true);
     }
 
     @Override
@@ -281,7 +281,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public Object getRawValue(int fieldIndex) {
-        return readValueImpl(desc.children()[fieldIndex], false);
+        return readValueImpl(childAt(fieldIndex), false);
     }
 
     // ==================== Metadata ====================
@@ -293,17 +293,29 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public boolean isNull(int fieldIndex) {
-        return isFieldNull(desc.children()[fieldIndex]);
+        return isFieldNull(childAt(fieldIndex));
     }
 
     @Override
     public int getFieldCount() {
-        return desc.children().length;
+        return desc.exposedChildren().length;
     }
 
     @Override
     public String getFieldName(int index) {
-        return desc.children()[index].name();
+        return childAt(index).name();
+    }
+
+    /// Resolves a field index against the children the struct exposes. A struct decodes a
+    /// child the caller did not project when a predicate reaches a leaf below it; that child
+    /// is resolvable by name and is not addressable by index.
+    private TopLevelFieldMap.FieldDesc childAt(int fieldIndex) {
+        int[] exposed = desc.exposedChildren();
+        if (fieldIndex < 0 || fieldIndex >= exposed.length) {
+            throw new IndexOutOfBoundsException("Field index " + fieldIndex
+                    + " is out of bounds for a struct of " + exposed.length + " fields");
+        }
+        return desc.children()[exposed[fieldIndex]];
     }
 
     // ==================== Primitive Read Helpers ====================
@@ -486,7 +498,7 @@ final class PqStructImpl implements PqStruct {
     }
 
     private TopLevelFieldMap.FieldDesc.Primitive primitiveAt(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
+        TopLevelFieldMap.FieldDesc child = childAt(fieldIndex);
         return primitiveOf(child, child.name());
     }
 

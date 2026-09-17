@@ -25,6 +25,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -183,6 +184,108 @@ class PredicatePushDownTest {
                     assertThat(rows.getString("label")).startsWith("rg1_");
                 }
                 assertThat(totalRows).isEqualTo(100);
+            }
+        }
+    }
+
+    @Test
+    void testRowReaderFiltersOnAColumnOutsideTheProjection() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            // 'id' carries the predicate and is not projected. The file holds 300 rows in
+            // three row groups of 100; statistics prove the second and third match in full
+            // and leave the first straddling the literal, so the record matcher evaluates
+            // 'id' row by row over RG1 and keeps 51-100 of it.
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+            ColumnProjection projection = ColumnProjection.columns("label");
+
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getString("label")).isNotEmpty();
+                }
+                assertThat(totalRows).isEqualTo(250);
+            }
+        }
+    }
+
+    @Test
+    void testPredicateColumnOutsideTheProjectionIsNotAFieldOfTheRow() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+            ColumnProjection projection = ColumnProjection.columns("label");
+
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                // The projection bounds the row's fields; 'id' is decoded for the filter and is
+                // not one of them.
+                assertThat(rows.getFieldCount()).isEqualTo(1);
+                assertThat(rows.getFieldName(0)).isEqualTo("label");
+                assertThatThrownBy(() -> rows.getFieldName(1))
+                        .isInstanceOf(IndexOutOfBoundsException.class)
+                        .hasMessage("[filter_pushdown_int.parquet] Field index 1 is out of bounds"
+                                + " for a projection of 1 columns");
+                // Not a guarantee, pinned so a change to it is deliberate: 'id' is decoded for
+                // the filter, so a name-keyed read of it currently resolves. Only the projection
+                // is supported; see `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
+                assertThat(rows.getLong("id")).isEqualTo(51L);
+                assertThatThrownBy(() -> rows.getLong("value"))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("[filter_pushdown_int.parquet] Column not in projection: value");
+            }
+        }
+    }
+
+    @Test
+    void testNestedRowReaderFiltersOnAColumnOutsideTheProjection() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 4);
+            ColumnProjection projection = ColumnProjection.columns("address");
+
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
+                List<String> cities = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    cities.add(rows.getStruct("address").getString("city"));
+                }
+                // The file holds ids 1-9; the projected struct stays aligned with the rows the
+                // unprojected 'id' selects.
+                assertThat(cities).containsExactly("Eugene", "Fresno", "Gary", "Houston", "Irvine");
+                assertThat(rows.getFieldCount()).isEqualTo(1);
+                assertThat(rows.getFieldName(0)).isEqualTo("address");
+                assertThatThrownBy(() -> rows.getFieldName(1))
+                        .isInstanceOf(IndexOutOfBoundsException.class)
+                        .hasMessage("[filter_pushdown_nested.parquet] Field index 1 is out of"
+                                + " bounds for a projection of 1 fields");
+            }
+        }
+    }
+
+    @Test
+    void testPredicateLeafUnderAProjectedStructIsNotAFieldOfIt() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            // 'address.zip' carries the predicate and sits under the projected struct, whose
+            // other leaf 'address.city' is the projection.
+            FilterPredicate filter = FilterPredicate.gt("address.zip", 70000);
+            ColumnProjection projection = ColumnProjection.columns("address.city");
+
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                PqStruct address = rows.getStruct("address");
+                // The projection bounds the struct's fields too: 'zip' is decoded for the
+                // filter and is not one of them.
+                assertThat(address.getFieldCount()).isEqualTo(1);
+                assertThat(address.getFieldName(0)).isEqualTo("city");
+                assertThat(address.toString()).isEqualTo("PqStruct{city=Boston}");
+                assertThatThrownBy(() -> address.getFieldName(1))
+                        .isInstanceOf(IndexOutOfBoundsException.class)
+                        .hasMessage("Field index 1 is out of bounds for a struct of 1 fields");
+                assertThatThrownBy(() -> address.getInt(1))
+                        .isInstanceOf(IndexOutOfBoundsException.class)
+                        .hasMessage("Field index 1 is out of bounds for a struct of 1 fields");
             }
         }
     }

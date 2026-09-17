@@ -29,6 +29,7 @@ it. **Trying again may help for `IOException`, and will not for anything else.**
 |-----------|------|
 | `IllegalArgumentException` | Accessing a column not in the projection, an invalid column name, or asking a column for a type it does not hold, such as `getFloat` on a column that is neither `FLOAT` nor `FLOAT16` |
 | `NullPointerException` | Calling a primitive accessor (`getInt`, `getLong`, etc.) on a null field without checking `isNull()` first |
+| `IndexOutOfBoundsException` | A field index outside `[0, getFieldCount())` on `getFieldName(int)`, on a `RowReader` or on a `PqStruct` |
 | `NoSuchElementException` | Calling `next()` on a `RowReader` when `hasNext()` returns `false` |
 | `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, or calling nested-column methods on a flat column |
 

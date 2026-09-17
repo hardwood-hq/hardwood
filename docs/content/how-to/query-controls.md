@@ -244,7 +244,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-The filter column does not need to be in the projection; Hardwood reads the filter column's statistics for pushdown regardless.
+The filter column does not need to be in the projection. The projection is what the row exposes: a filter column outside it is not a field of the row at any depth, and is not addressable. Project a column you intend to read.
 
 ## Row Limit
 

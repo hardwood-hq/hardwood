@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -57,6 +58,12 @@ final class TopLevelFieldMap {
 
         /// @param nameToIndex       name → child ordinal (boundary lookup)
         /// @param children          ordinal → descriptor (internal lookup)
+        /// @param exposedChildren   ordinals of the children the struct reports as its
+        ///                          fields, in order. Shorter than `children` when a
+        ///                          predicate reaches a leaf under this struct that the
+        ///                          caller did not project: that child is decoded and
+        ///                          resolvable by name, and is not a field of the struct.
+        ///                          See `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
         /// @param firstPrimitiveCol projected column of first primitive child, or -1 if none
         /// @param firstLeafProjCol  projected column of first leaf at any depth under this
         ///                          struct (same as `firstPrimitiveCol` when the struct has
@@ -64,6 +71,7 @@ final class TopLevelFieldMap {
         record Struct(SchemaNode.GroupNode schema,
                       StringToIntMap nameToIndex,
                       FieldDesc[] children,
+                      int[] exposedChildren,
                       int firstPrimitiveCol,
                       int firstLeafProjCol) implements FieldDesc {
 
@@ -188,6 +196,8 @@ final class TopLevelFieldMap {
             }
         }
         FieldDesc[] children = new FieldDesc[projected];
+        int[] exposedChildren = new int[projected];
+        int exposedCount = 0;
         int firstPrimitiveCol = -1;
         int idx = 0;
         for (int i = 0; i < childCount; i++) {
@@ -198,6 +208,9 @@ final class TopLevelFieldMap {
             if (childDesc != null) {
                 nameToIndex.put(child.name(), idx);
                 children[idx] = childDesc;
+                if (isChildExposed(child, projectedSchema)) {
+                    exposedChildren[exposedCount++] = idx;
+                }
                 if (firstPrimitiveCol < 0 && childDesc instanceof FieldDesc.Primitive p) {
                     firstPrimitiveCol = p.projectedCol();
                 }
@@ -207,7 +220,8 @@ final class TopLevelFieldMap {
         int firstLeafProjCol = firstPrimitiveCol >= 0
                 ? firstPrimitiveCol
                 : findFirstLeafProjCol(group, projectedSchema);
-        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol, firstLeafProjCol);
+        return new FieldDesc.Struct(group, nameToIndex, children,
+                Arrays.copyOf(exposedChildren, exposedCount), firstPrimitiveCol, firstLeafProjCol);
     }
 
     static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
@@ -351,11 +365,25 @@ final class TopLevelFieldMap {
     }
 
     private static boolean isChildProjected(SchemaNode node, ProjectedSchema projectedSchema) {
+        return hasLeafBelow(node, projectedSchema, projectedSchema.getProjectedColumnCount());
+    }
+
+    /// Whether `node` carries a leaf the reader exposes, as opposed to one it decodes only
+    /// to evaluate a predicate. Equal to [#isChildProjected] for every projection but an
+    /// augmented one, whose predicate-only columns sit past `exposedColumnCount`.
+    private static boolean isChildExposed(SchemaNode node, ProjectedSchema projectedSchema) {
+        return hasLeafBelow(node, projectedSchema, projectedSchema.exposedColumnCount());
+    }
+
+    private static boolean hasLeafBelow(SchemaNode node, ProjectedSchema projectedSchema, int limit) {
         return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> projectedSchema.toProjectedIndex(prim.columnIndex()) >= 0;
+            case SchemaNode.PrimitiveNode prim -> {
+                int projected = projectedSchema.toProjectedIndex(prim.columnIndex());
+                yield projected >= 0 && projected < limit;
+            }
             case SchemaNode.GroupNode group -> {
                 for (SchemaNode child : group.children()) {
-                    if (isChildProjected(child, projectedSchema)) {
+                    if (hasLeafBelow(child, projectedSchema, limit)) {
                         yield true;
                     }
                 }

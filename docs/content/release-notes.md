@@ -23,6 +23,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Filters, including parquet-java filters through the compatibility layer, no longer return wrong rows for `NaN` values, unsigned integers, statistics in an unknown sort order and several other edge cases ([#1016](https://github.com/hardwood-hq/hardwood/issues/1016), [#1142](https://github.com/hardwood-hq/hardwood/issues/1142), [#1144](https://github.com/hardwood-hq/hardwood/issues/1144), [#1179](https://github.com/hardwood-hq/hardwood/issues/1179), [#1193](https://github.com/hardwood-hq/hardwood/issues/1193), [#1197](https://github.com/hardwood-hq/hardwood/issues/1197)).
 
+- A `RowReader` filters on a column outside its projection instead of throwing partway through iteration when statistics do not settle the predicate ([#1242](https://github.com/hardwood-hq/hardwood/issues/1242)).
+
 - A logical type annotation a column's physical type cannot carry, or one this release does not recognize, is ignored, and the column is read as its physical type ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
 - `INTERVAL` columns written by parquet-java, which carry `converted_type = INTERVAL` beside `logicalType = UNKNOWN`, are read and filtered as `INTERVAL` instead of as `NULL` columns ([#1217](https://github.com/hardwood-hq/hardwood/issues/1217)).

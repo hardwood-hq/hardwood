@@ -57,12 +57,16 @@ public final class NestedBatchDataView {
     /// Per projected field index → leaf validity bitmap (set bit = present).
     /// `null` means every leaf for that field in the current batch is present.
     private long[][] fieldElementValidity;
+    /// How many of the projected fields the reader exposes; the rest carry a predicate the
+    /// caller did not project.
+    private final int exposedFieldCount;
 
     public NestedBatchDataView(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.fieldMap = TopLevelFieldMap.build(schema, projectedSchema);
         this.projectedFieldToOriginal = projectedSchema.getProjectedFieldIndices().clone();
+        this.exposedFieldCount = projectedSchema.exposedFieldCount();
         this.cachedValueIndex = new int[projectedSchema.getProjectedColumnCount()];
 
         // Build direct-access mappings from projected field index
@@ -454,10 +458,14 @@ public final class NestedBatchDataView {
     // ==================== Metadata ====================
 
     public int getFieldCount() {
-        return projectedFieldToOriginal.length;
+        return exposedFieldCount;
     }
 
     public String getFieldName(int projectedIndex) {
+        if (projectedIndex < 0 || projectedIndex >= exposedFieldCount) {
+            throw new IndexOutOfBoundsException(prefix() + "Field index " + projectedIndex
+                    + " is out of bounds for a projection of " + exposedFieldCount + " fields");
+        }
         int originalFieldIndex = projectedFieldToOriginal[projectedIndex];
         return schema.getRootNode().children().get(originalFieldIndex).name();
     }

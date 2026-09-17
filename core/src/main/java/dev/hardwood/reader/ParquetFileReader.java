@@ -9,7 +9,6 @@ package dev.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -516,7 +515,13 @@ public class ParquetFileReader implements Closeable {
                                      long tailSkip, long physicalSkip) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
 
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
+        // The predicate's columns are decoded whether or not the caller projected them, so a
+        // filter reaches a column the read does not expose. See
+        // `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
+        ProjectedSchema projectedSchema = resolved == null
+                ? ProjectedSchema.create(schema, projection, true)
+                : ProjectedSchema.createAugmented(schema, projection,
+                        SelectionEngine.predicateColumnPaths(resolved, schema), true);
 
         RowGroupIterator iterator = trackedIterator(maxRows, tailSkip, physicalSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
@@ -638,7 +643,9 @@ public class ParquetFileReader implements Closeable {
         // columns through one shared iterator (single iterator ⇒ all columns
         // stay row-aligned regardless of per-column page-skip capability), then
         // compact each exposed column to the matching records per batch.
-        ColumnProjection augmented = augmentWithPredicateColumns(projection, resolved);
+        // `false`: the columnar paths read individual leaves, so the projection stays literal.
+        ProjectedSchema augmented = ProjectedSchema.createAugmented(schema, projection,
+                SelectionEngine.predicateColumnPaths(resolved, schema), false);
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema augProjected = iterator.initialize(augmented, resolved, metadataFilteringEnabled);
@@ -686,20 +693,6 @@ public class ParquetFileReader implements Closeable {
                 ? requested
                 : BatchSizing.computeOptimalBatchSize(projected,
                         BatchSizing.valuesPerRow(projected, rowGroups));
-    }
-
-    /// Builds the union of `projection` and the predicate's leaf columns so the
-    /// predicate columns are decoded even when the caller did not project them.
-    /// A `projectsAll()` projection already covers them.
-    private ColumnProjection augmentWithPredicateColumns(
-            ColumnProjection projection, ResolvedPredicate resolved) {
-        if (projection.projectsAll()) {
-            return projection;
-        }
-        LinkedHashSet<String> names = new LinkedHashSet<>(
-                projection.getProjectedColumnNames());
-        names.addAll(SelectionEngine.predicateColumnPaths(resolved, schema));
-        return ColumnProjection.columns(names.toArray(new String[0]));
     }
 
     private void ensureSingleFile(String op) {
