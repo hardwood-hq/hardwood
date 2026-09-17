@@ -16,6 +16,13 @@ env:
   # Kept in sync with S3ProxyContainers.IMAGE; see cli/s3/parquet-java-compat tests.
   S3PROXY_IMAGE: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
 
+concurrency:
+  # A push that supersedes a run leaves the older one competing with its own
+  # replacement for runners. Cancelling it hands those back. It does nothing for two
+  # different pull requests running at once, which is the larger source of contention.
+  group: pr-build-${{ github.ref }}
+  cancel-in-progress: true
+
 # Every job builds the modules it depends on itself, under `-Dquick`, rather than
 # waiting for the job that owns them to finish and publish them as an artifact.
 # `-Dquick` skips the tests and the `qa` profile (Error Prone, the license header
