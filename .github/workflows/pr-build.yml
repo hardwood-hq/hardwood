@@ -33,382 +33,15 @@ env:
 # BOM. The closure includes the module the job goes on to build for real, and
 # building it twice costs a second or two.
 
+# SCRATCH BRANCH, NOT FOR MERGE. Three variants of the native CLI job, run side
+# by side so they share a runner pool and a moment in time. Every other job is
+# removed so the run costs one runner per variant and nothing queues.
+
 jobs:
-  build-core:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-
-            maven-${{ runner.os }}-
-
-      - name: 'Build and install BOMs, test-support, core and avro'
-        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
-
-  build-s3:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Pre-pull s3proxy image in background'
-        # Start the image download immediately after checkout so it overlaps
-        # with setup-java, the Maven cache restore and the dependency build.
-        # By the time Testcontainers reaches `s3.start()`, layers are cached.
-        run: |
-          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
-          disown
-          echo "Background pull of $S3PROXY_IMAGE started"
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-bom,:hardwood-test-bom -am
-
-      - name: 'Build and install s3 and aws-auth'
-        run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
-
-  build-cli:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Pre-pull s3proxy image in background'
-        run: |
-          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
-          disown
-          echo "Background pull of $S3PROXY_IMAGE started"
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
-
-      - name: 'Build and install cli'
-        run: ./mvnw -B clean install -pl :hardwood-cli
-
-  compile-performance-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        # `-amd` below adds the performance-testing children after `-am` has
-        # computed the closure, so their own dependencies come from here.
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-bom,:hardwood-test-bom -am
-
-      - name: 'Compile performance-testing'
-        # These modules are in the reactor only under `-Pperformance-test`, so nothing
-        # else in this workflow compiles them and an API change can pass the gate and
-        # break `main`. Compiling is what catches that: every such break so far has
-        # been a compile error. Running the benchmarks is a separate workflow — they
-        # are slow and need ~100 MB per dataset — so this stops at `test-compile`, and
-        # `-Dquick` sets `testdata.download.skip` so no dataset is fetched.
-        run: ./mvnw -ntp -B -Pperformance-test -Dquick test-compile -pl :hardwood-performance-testing -amd
-
-  build-parquet-java-compat:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Pre-pull s3proxy image in background'
-        run: |
-          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
-          disown
-          echo "Background pull of $S3PROXY_IMAGE started"
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-java-compat,:hardwood-bom,:hardwood-test-bom -am
-
-      - name: 'Build and install parquet-java-compat'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
-
-      - name: 'Compile predicate-audit'
-        # The tool is in the reactor only under `-Ppredicate-audit`, and the `predicate-audit`
-        # job runs it only for changes that can move its findings. It uses internal predicate
-        # APIs that change, so this job, which has core and parquet-java at hand, compiles it
-        # for every change.
-        run: ./mvnw -ntp -B -Ppredicate-audit compile -pl :hardwood-predicate-audit
-
-  build-parquet-testing-runner:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-testing-runner,:hardwood-bom,:hardwood-test-bom -am
-
-      - name: 'Build and install parquet-testing-runner'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
-
-  javadoc:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Build the dependencies'
-        # The whole reactor, because `javadoc:javadoc` runs over all of it.
-        run: ./mvnw -ntp -B -Dquick install
-
-      - name: 'Generate Javadoc'
-        run: ./mvnw -B javadoc:javadoc
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    strategy:
-      matrix:
-        include:
-          - java: '21'
-            install_libdeflate: false
-            enable_incubating: false
-            name: 'Java 21'
-          - java: '25'
-            install_libdeflate: true
-            enable_incubating: false
-            name: 'Java 25'
-          - java: '25'
-            install_libdeflate: true
-            enable_incubating: true
-            name: 'Java 25 (incubating)'
-
-    name: Integration Tests - ${{ matrix.name }}
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java 25'
-        # To build the dependencies: core carries a `src/main/java22` source root
-        # compiled at `--release 22` into a multi-release jar, which javac 21 cannot
-        # do. The tests themselves run on Java ${{ matrix.java }}, set up below.
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-java${{ matrix.java }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-java${{ matrix.java }}-
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Install libdeflate'
-        if: ${{ matrix.install_libdeflate }}
-        timeout-minutes: 5
-        env:
-          DEBIAN_FRONTEND: noninteractive
-          NEEDRESTART_MODE: a
-        run: |
-          # Freshly booted ubuntu-24.04 runners may still be running
-          # unattended-upgrades, which holds /var/lib/dpkg/lock-frontend and
-          # makes apt-get block indefinitely. Stop the service and wait for
-          # the lock to clear before installing.
-          #
-          # Every wait here is bounded, because each one replaces an indefinite
-          # apt-get block with a different indefinite block: `systemctl stop`
-          # waits for the unit's in-flight transaction to finish, and a lock
-          # that never clears would spin until the job's own timeout. A runner
-          # that cannot be made ready must fail the step and say so, rather
-          # than burn the job's wall clock in silence.
-          #
-          # The two waits are reported separately. A stop that times out still
-          # leaves the lock held, so collapsing them would blame the loop for a
-          # stall that happened before it — which is the misattribution this
-          # step exists to avoid.
-          stop_status=0
-          sudo timeout 60 systemctl stop unattended-upgrades.service 2>/dev/null || stop_status=$?
-          if [ "$stop_status" -eq 124 ]; then
-            echo "::warning::systemctl stop unattended-upgrades did not complete within 60s; it may still hold the dpkg lock"
-          fi
-          for _ in $(seq 1 60); do
-            sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
-            echo "Waiting for dpkg lock..."
-            sleep 2
-          done
-          if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-            echo "::error::dpkg lock still held after 120s; runner is not installable"
-            exit 1
-          fi
-          sudo -E apt-get update
-          sudo -E apt-get install -y libdeflate-dev
-
-      - name: 'Build the dependencies'
-        # `!:hardwood-integration-test` leaves the module itself out, so that the
-        # tests are compiled by the JDK they run on rather than by this one.
-        run: ./mvnw -ntp -B -Dquick install -pl ':hardwood-integration-test,!:hardwood-integration-test,:hardwood-bom,:hardwood-test-bom' -am
-
-      - name: 'Set up Java ${{ matrix.java }}'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: ${{ matrix.java }}
-          distribution: 'temurin'
-
-      - name: 'Run integration tests (Java 21)'
-        if: ${{ !matrix.install_libdeflate && !matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test
-
-      - name: 'Run integration tests (with libdeflate)'
-        if: ${{ matrix.install_libdeflate && !matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED"
-
-      - name: 'Run integration tests (with incubating APIs)'
-        if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
-
-  # Verify the native CLI build on PRs
-  native-build-check:
+  # control: exactly what main-line #1245 runs
+  native-control:
     if: github.event_name == 'pull_request'
-    name: 'Verify native CLI build'
+    name: 'native-control'
     runs-on: ubuntu-latest
     steps:
       - name: 'Check out repository'
@@ -433,7 +66,7 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          key: maven-${{ runner.os }}-native-timing-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             maven-${{ runner.os }}-${{ github.job }}-
             maven-${{ runner.os }}-build-cli-
@@ -450,78 +83,96 @@ jobs:
         # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
         run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
 
-  predicate-audit:
+  # -Dgroups=native, and an explicit image-builder heap
+  native-groups-heap:
+    if: github.event_name == 'pull_request'
+    name: 'native-groups-heap'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
-          fetch-depth: 0
+          submodules: 'true'
 
-      - name: 'Check whether the change can move the audit'
-        # The audit takes a few minutes, so it runs only when the reader, the tool, its
-        # fixture dependencies, the POMs that pin its build and the compared engines' versions,
-        # or this workflow change. Keep the list in tools/predicate-audit/README.md in step.
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - name: 'Pre-pull s3proxy image in background'
         run: |
-          if git diff --name-only "$BASE_SHA"...HEAD \
-              | grep -qE '^(core/src/main/|tools/predicate-audit/|tools/parquet_annotators\.py$|requirements\.txt$|pom\.xml$|core/pom\.xml$|test-bom/pom\.xml$|\.github/workflows/pr-build\.yml$)'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
 
-      - name: 'Set up Java'
-        if: steps.changes.outputs.run == 'true'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
+      - name: 'Set up Graal'
+        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
         with:
           java-version: '25'
-          distribution: 'temurin'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 'Cache Maven dependencies'
-        if: steps.changes.outputs.run == 'true'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          key: maven-${{ runner.os }}-native-timing-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-parquet-java-compat-
+            maven-${{ runner.os }}-build-cli-
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Set up the Python venv'
-        if: steps.changes.outputs.run == 'true'
-        run: |
-          python3 -m venv .docker-venv
-          .docker-venv/bin/pip install -q -r requirements.txt
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
 
-      - name: 'Run the predicate audit'
-        # Fails when the findings differ from tools/predicate-audit/baseline.tsv.
-        if: steps.changes.outputs.run == 'true'
+      - name: 'Build Native Image'
+        # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli`
+        # job runs. Failsafe still runs during integration-test, and
+        # -Dnative clears the `native` tag exclusion, so this covers the native
+        # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
         env:
-          PREDICATE_AUDIT_BUILD_TIMEOUT: '600'
-        run: tools/predicate-audit/run.sh
+          NATIVE_IMAGE_OPTIONS: '-J-Xmx6g'
+        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true -Dgroups=native
 
-      - name: 'Upload the audit report'
-        if: steps.changes.outputs.run == 'true' && always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: predicate-audit-report
-          path: tools/predicate-audit/target/report/
-          retention-days: 7
-
-  docs-prose-check:
+  # -Ob, build-time optimization mode
+  native-ob:
+    if: github.event_name == 'pull_request'
+    name: 'native-ob'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
+        with:
+          submodules: 'true'
 
-      - name: 'Check docs prose'
-        run: python3 tools/docs-prose-check.py
+      - name: 'Pre-pull s3proxy image in background'
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
+
+      - name: 'Set up Graal'
+        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Cache Maven dependencies'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-native-timing-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ github.job }}-
+            maven-${{ runner.os }}-build-cli-
+            maven-${{ runner.os }}-build-core-
+            maven-${{ runner.os }}-
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli,:hardwood-bom,:hardwood-test-bom -am
+
+      - name: 'Build Native Image'
+        # -DskipSurefire=true skips the JVM unit test suite, which the `build-cli`
+        # job runs. Failsafe still runs during integration-test, and
+        # -Dnative clears the `native` tag exclusion, so this covers the native
+        # smoke ITs plus the JVM S3 command ITs the `build-cli` job also ran.
+        env:
+          NATIVE_IMAGE_OPTIONS: '-Ob'
+        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
