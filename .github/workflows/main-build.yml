@@ -58,12 +58,14 @@ jobs:
         # Removing them makes such a gap a build error.
         run: rm -rf ~/.m2/repository/dev/hardwood
 
-      - name: 'Build and install BOMs, test-support, core and avro'
-        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
+      - name: 'Build and install BOMs, test-support, core, avro and parquet-testing-runner'
+        # parquet-testing-runner depends on core alone, so it builds here, after core,
+        # rather than paying for a job of its own.
+        run: ./mvnw -B -fae clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro,:hardwood-parquet-testing-runner
 
-  build-s3:
+  build-modules:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: 'Check out repository'
@@ -73,7 +75,7 @@ jobs:
 
       - name: 'Pre-pull s3proxy image in background'
         # Start the image download immediately after checkout so it overlaps
-        # with setup-java, Maven cache restore, and artifact download.
+        # with setup-java, the Maven cache restore and the dependency build.
         # By the time Testcontainers reaches `s3.start()`, layers are cached.
         run: |
           nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
@@ -104,185 +106,17 @@ jobs:
         run: rm -rf ~/.m2/repository/dev/hardwood
 
       - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth -am
+        id: deps
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-cli,:hardwood-parquet-java-compat -am
 
-      - name: 'Build and install s3 and aws-auth'
-        run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
+      - name: 'Build and install s3, aws-auth, cli and parquet-java-compat'
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: ./mvnw -B -fae clean install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-cli,:hardwood-parquet-java-compat
 
-  build-cli:
+  javadoc-and-integration-tests:
+    name: 'Javadoc and integration tests'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Pre-pull s3proxy image in background'
-        run: |
-          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
-          disown
-          echo "Background pull of $S3PROXY_IMAGE started"
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Drop any cached Hardwood artifacts'
-        # Every job builds its own dependency closure, so a Hardwood jar restored from
-        # the cache can only stand in for one the closure failed to build, turning a
-        # missing dependency into a silent compile against an earlier run's code.
-        # Removing them makes such a gap a build error.
-        run: rm -rf ~/.m2/repository/dev/hardwood
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli -am
-
-      - name: 'Build and install cli'
-        run: ./mvnw -B clean install -pl :hardwood-cli
-
-  build-parquet-java-compat:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Pre-pull s3proxy image in background'
-        run: |
-          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
-          disown
-          echo "Background pull of $S3PROXY_IMAGE started"
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Drop any cached Hardwood artifacts'
-        # Every job builds its own dependency closure, so a Hardwood jar restored from
-        # the cache can only stand in for one the closure failed to build, turning a
-        # missing dependency into a silent compile against an earlier run's code.
-        # Removing them makes such a gap a build error.
-        run: rm -rf ~/.m2/repository/dev/hardwood
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-java-compat -am
-
-      - name: 'Build and install parquet-java-compat'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
-
-  build-parquet-testing-runner:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Drop any cached Hardwood artifacts'
-        # Every job builds its own dependency closure, so a Hardwood jar restored from
-        # the cache can only stand in for one the closure failed to build, turning a
-        # missing dependency into a silent compile against an earlier run's code.
-        # Removing them makes such a gap a build error.
-        run: rm -rf ~/.m2/repository/dev/hardwood
-
-      - name: 'Build the dependencies'
-        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-parquet-testing-runner -am
-
-      - name: 'Build and install parquet-testing-runner'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
-
-  javadoc:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Drop any cached Hardwood artifacts'
-        # Every job builds its own dependency closure, so a Hardwood jar restored from
-        # the cache can only stand in for one the closure failed to build, turning a
-        # missing dependency into a silent compile against an earlier run's code.
-        # Removing them makes such a gap a build error.
-        run: rm -rf ~/.m2/repository/dev/hardwood
-
-      - name: 'Build the dependencies'
-        # The whole reactor, because `javadoc:javadoc` runs over all of it.
-        run: ./mvnw -ntp -B -Dquick install
-
-      - name: 'Generate Javadoc'
-        run: ./mvnw -B javadoc:javadoc
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    name: 'Integration Tests'
+    timeout-minutes: 20
 
     steps:
       - name: 'Check out repository'
@@ -293,54 +127,7 @@ jobs:
       - name: 'Set up Java 25'
         # To build the dependencies: core carries a `src/main/java22` source root
         # compiled at `--release 22` into a multi-release jar, which javac 21 cannot
-        # do. The tests themselves run on Java 21, set up below.
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-java21-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-java21-
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Drop any cached Hardwood artifacts'
-        # Every job builds its own dependency closure, so a Hardwood jar restored from
-        # the cache can only stand in for one the closure failed to build, turning a
-        # missing dependency into a silent compile against an earlier run's code.
-        # Removing them makes such a gap a build error.
-        run: rm -rf ~/.m2/repository/dev/hardwood
-
-      - name: 'Build the dependencies'
-        # `!:hardwood-integration-test` leaves the module itself out, so that the
-        # tests are compiled by the JDK they run on rather than by this one.
-        run: ./mvnw -ntp -B -Dquick install -pl ':hardwood-integration-test,!:hardwood-integration-test' -am
-
-      - name: 'Set up Java 21'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: 'Run integration tests'
-        run: ./mvnw -B verify -pl :hardwood-integration-test
-
-  api-change-report:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
+        # do. The integration tests run on Java 21, set up further down.
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
@@ -353,6 +140,8 @@ jobs:
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             maven-${{ runner.os }}-${{ github.job }}-
+            maven-${{ runner.os }}-javadoc-
+            maven-${{ runner.os }}-integration-tests-java21-
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
@@ -363,14 +152,38 @@ jobs:
         # Removing them makes such a gap a build error.
         run: rm -rf ~/.m2/repository/dev/hardwood
 
+      - name: 'Build the dependencies'
+        # The whole reactor, because `javadoc:javadoc` runs over all of it, except the
+        # integration tests, which the run below compiles with the JDK it runs on.
+        id: deps
+        run: ./mvnw -ntp -B -Dquick install -pl '!:hardwood-integration-test'
+
+      - name: 'Generate Javadoc'
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: ./mvnw -B javadoc:javadoc
+
       - name: 'Generate API change report'
+        id: api
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
           echo "Comparing against ${JAPICMP_OLD_VERSION}"
           tools/api-report.sh "${JAPICMP_OLD_VERSION}"
 
       - name: 'Upload API change report'
+        if: ${{ !cancelled() && steps.api.outcome == 'success' }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: japicmp-report
           path: target/japicmp/
+
+      - name: 'Set up Java 21'
+        if: ${{ !cancelled() }}
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: 'Run integration tests'
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: ./mvnw -B clean verify -pl :hardwood-integration-test
