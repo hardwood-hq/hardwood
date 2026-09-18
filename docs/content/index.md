@@ -29,7 +29,7 @@ It is built to be:
 * **Fast**: Hardwood aims to be the fastest Parquet reader and writer for the JVM ([1.0 read benchmarks](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/#_performance))
 * **Complete**: Read and write support for flat and nested schemas, every logical type, every primitive type in current use, and the encodings and codecs in current use, with new format additions tracked as they land
 * **Scalable**: Hardwood is multi-threaded at the core, pages are decoded in parallel, with cross-file prefetching for multi-file reads
-* **Embeddable**: The Hardwood library can be used in GraalVM native binaries; WASM support coming soon ([preview](/experiments/dive-web/))
+* **Embeddable**: The Hardwood library can be used in GraalVM native binaries; a WASM build of `dive` runs in the browser as a [preview](/experiments/dive-web/)
 * **Agent-friendly**: Hardwood's CLI comes with a skill which lets your agents inspect and analyse Parquet files
 * **Compatible**: A [drop-in shim module](how-to/compat.md) facilitates migration from `parquet-java`, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`)
 
@@ -85,12 +85,11 @@ The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) reposi
 
 ## Status and Limitations
 
-Hardwood 1.0 with read support is released and ready for production use.
-Support for writing Parquet files is under active development as of Hardwood 1.1.
+The read path is stable and suitable for production use; `ColumnReader`, with its `Validity` and `LayerKind` types, is annotated `@Experimental`, so its shape may still change.
+The write path ships both APIs described under [Choosing a Writer](how-to/index.md#choosing-a-writer); the row-oriented `RowWriter` and its builders, and the `ColumnBatch` setters for nested and nullable columns, are annotated `@Experimental`, so their shape may still change.
 
-The Hardwood library supports reading arbitrarily large Parquet files, provided individual column chunks are not larger than 2 GB (see [Parquet file layout](concepts/parquet-layout.md)).
-The interactive `dive` TUI currently caps S3 files at 2 GB.
-Writing targets local files through `OutputFile.of(Path)`; output to object storage is coming soon.
+Writing targets local files through `OutputFile.of(Path)`.
+Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [2 GB column-chunk limit](concepts/parquet-layout.md#column-chunk).
 
 ## Roadmap
 

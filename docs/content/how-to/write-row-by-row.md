@@ -195,20 +195,7 @@ Every option, its default and what it rejects: [Writer Reference](../reference/w
 
 ## Stamping Metadata on the File
 
-Set the footer's key-value metadata and its `created_by` identifier on the writer, at any point until `close()`:
-
-```java
-try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-    writer.keyValueMetadata("ARROW:schema", encodedArrowSchema);
-    writer.createdBy("myapp version 2.1.0 (build deadbeef)");
-
-    // ...
-
-    writer.keyValueMetadata("row.count", String.valueOf(rowCount));
-}
-```
-
-Passing the map `FileMetaData.keyValueMetadata()` returns reproduces another file's entries exactly. See [File Metadata](../reference/writer.md#file-metadata) for what the entries hold and how they are written.
+The footer's key-value metadata and its `created_by` identifier are set on the `ParquetFileWriter`, at any point until `close()`. See [File Metadata](../reference/writer.md#file-metadata).
 
 ## One API per File
 

@@ -86,7 +86,7 @@ Bindings are available for all popular logger implementations, for instance for 
 
 ### Compression Libraries
 
-Hardwood reads Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4 in both of its framings, and Brotli. It writes all of those except the Hadoop-framed `LZ4`, which the Parquet format deprecated in favour of `LZ4_RAW`; files already written with it are still read. The compression libraries are optional dependencies; add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
+Hardwood reads Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4 in both of its framings, and Brotli. It writes all of those except the Hadoop-framed `LZ4`; the [Writer Reference](reference/writer.md#compression-codecs) lists what each codec needs. The compression libraries are optional dependencies; add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
 
 Writing compresses with ZSTD where `zstd-jni` is on the classpath, and writes uncompressed pages where it is not, so add that dependency to get compressed output under the default configuration.
 

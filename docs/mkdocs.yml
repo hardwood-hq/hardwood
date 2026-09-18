@@ -46,6 +46,7 @@ nav:
     - Compatibility Philosophy: concepts/compatibility-philosophy.md
   - Reference:
     - Configuration: reference/configuration.md
+    - Reader: reference/reader.md
     - Writer: reference/writer.md
     - Typed Accessors: reference/accessors.md
     - Query Controls: reference/query-controls.md
