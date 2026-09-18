@@ -42,7 +42,7 @@ survive a `WHERE`:
 So `skip(n).head(k)` is `OFFSET n LIMIT k`: it returns at most `k` matching rows, starting after
 the first `n` matches. None of these count physical rows, so a matching row sitting deep in the
 file is still the first row `head(1)` returns. (`tail` is not in this table because it cannot
-combine with a filter; see [Currently supported combinations](#currently-supported-combinations).)
+combine with a filter; see [Supported combinations](#supported-combinations).)
 
 ## The no-filter coincidence
 
@@ -80,7 +80,7 @@ wrong tool; that is what `byteRange` is for.
 | the last `n` rows of the file                      | `tail(n)` (no filter)            |
 | this reader to own a byte range of the file        | `filter(byteRange(a, b))`        |
 
-## Currently supported combinations
+## Supported combinations
 
 `head`, `skip`, and `byteRange` each compose with a `FilterPredicate`; `head`/`skip` count over
 the matched rows. `tail` + filter is **not** supported and is rejected at `build()`: unlike the
