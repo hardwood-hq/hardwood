@@ -8,10 +8,12 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
@@ -393,6 +395,90 @@ class ColumnWorkerTest {
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
                     .isEqualTo(decodesEntered.get());
+        }
+    }
+
+    /// A caller that is interrupted when it closes the worker, as a cancelled task is when
+    /// its try-with-resources block runs, must still get the guarantee of
+    /// [ColumnWorker#close()]: the retriever has stopped reading the `InputFile` by the time
+    /// `close()` returns. The retriever is held inside a page read, so `close()` can only
+    /// return early by abandoning the join.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void closeJoinsRetrieverWhenCallerIsInterrupted() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+            int batchCapacity = 64;
+
+            CountDownLatch readStalled = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            PageSource stallingSource = new PageSource(iterator, 0) {
+                private boolean first = true;
+
+                @Override
+                public PageInfo next() throws IOException {
+                    if (!first) {
+                        readStalled.countDown();
+                        try {
+                            release.await();
+                        }
+                        catch (InterruptedException e) {
+                            throw new InterruptedIOException();
+                        }
+                    }
+                    first = false;
+                    return super.next();
+                }
+            };
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    stallingSource, exchange, column, batchCapacity,
+                    context.decompressorFactory(), context.executor(), 0, null);
+            worker.start();
+
+            assertThat(readStalled.await(5, TimeUnit.SECONDS))
+                    .as("retriever should be held inside a page read")
+                    .isTrue();
+
+            AtomicBoolean retrieverAliveOnReturn = new AtomicBoolean();
+            AtomicBoolean interruptedOnReturn = new AtomicBoolean();
+            Thread closer = Thread.ofVirtual().start(() -> {
+                Thread.currentThread().interrupt();
+                worker.close();
+                retrieverAliveOnReturn.set(worker.retrieverThread.isAlive());
+                interruptedOnReturn.set(Thread.currentThread().isInterrupted());
+            });
+
+            closer.join(300);
+            assertThat(closer.isAlive())
+                    .as("close() must not return while the retriever is still reading")
+                    .isTrue();
+
+            release.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+
+            assertThat(closer.isAlive())
+                    .as("close() should return once the retriever exits")
+                    .isFalse();
+            assertThat(retrieverAliveOnReturn.get())
+                    .as("retriever thread must have exited when close() returns")
+                    .isFalse();
+            assertThat(worker.drainThread.isAlive())
+                    .as("drain thread must have exited")
+                    .isFalse();
+            assertThat(interruptedOnReturn.get())
+                    .as("close() must restore the caller's interrupt flag")
+                    .isTrue();
         }
     }
 
