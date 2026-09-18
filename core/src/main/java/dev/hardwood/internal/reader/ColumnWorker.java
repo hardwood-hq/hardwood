@@ -268,13 +268,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         // reorder buffer is empty — must drop this interrupt first.
         drainThread.interrupt();
 
-        try {
-            retrieverThread.join();
-            drainThread.join();
-        }
-        catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // The joins do not give up on an interrupt: a caller that is interrupted, or already
+        // carries the flag as a cancelled task does when its try-with-resources block runs,
+        // would otherwise return while the retriever is still reading the InputFile, and
+        // before it has registered every decode task it submitted in inFlightDecodes.
+        boolean interrupted = joinUninterruptibly(retrieverThread);
+        interrupted |= joinUninterruptibly(drainThread);
 
         // The retriever has exited, so no new decode tasks will be submitted.
         // Drain any that are still running. Tasks that hadn't yet started early-return
@@ -287,6 +286,26 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             }
             catch (Exception ignored) {
                 // decode tasks call signalError on failure; nothing to re-raise here
+            }
+        }
+
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /// Waits for `thread` to exit, carrying on through interrupts.
+    ///
+    /// @return whether the calling thread was interrupted while waiting
+    private static boolean joinUninterruptibly(Thread thread) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                thread.join();
+                return interrupted;
+            }
+            catch (InterruptedException e) {
+                interrupted = true;
             }
         }
     }
