@@ -1096,6 +1096,50 @@ class DiveRenderTest {
     }
 
     @Test
+    void jumpPromptShowsWhatWasTypedWithoutTakingTableRows() {
+        Rect body = new Rect(0, 0, 120, 20);
+        ScreenState.DataPreview state = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(state);
+        DataPreviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, ':'), model, stack);
+        DataPreviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '7'), model, stack);
+        DataPreviewScreen.fitToViewport(model, stack, body);
+
+        ScreenState.DataPreview prompting = (ScreenState.DataPreview) stack.top();
+        RenderHarness.RenderedFrame frame = RenderHarness.render(body, prompting, model);
+
+        assertThat(frame.contains(": 7")).as("the typed target is on screen").isTrue();
+        assertThat(frame.contains("Jump to")).as("the box says what it is").isTrue();
+        assertThat(frame.contains("rg followed by a row group"))
+                .as("the prompt says what it accepts").isTrue();
+        assertThat(frame.contains("Esc cancel")).as("the box says how to leave it").isTrue();
+        // The box floats over the table, so the page behind it is unchanged:
+        // block borders and the header take 3 rows, and nothing else does.
+        assertThat(prompting.rows())
+                .as("the prompt costs the table no rows")
+                .hasSize(body.height() - 3);
+    }
+
+    @Test
+    void jumpPromptShowsWhyARefusedTargetDidNotMove() {
+        Rect body = new Rect(0, 0, 120, 20);
+        ScreenState.DataPreview state = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(state);
+        DataPreviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, ':'), model, stack);
+        for (char c : "99999".toCharArray()) {
+            DataPreviewScreen.handle(new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, c), model, stack);
+        }
+        DataPreviewScreen.handle(new KeyEvent(KeyCode.ENTER, KeyModifiers.NONE, '\0'), model, stack);
+
+        RenderHarness.RenderedFrame frame = RenderHarness.render(body, stack.top(), model);
+
+        assertThat(frame.contains("Row 99,999 is outside 0–9,999"))
+                .as("the reason is on screen, beside the text that caused it").isTrue();
+        assertThat(frame.contains(": 99999")).as("the typed target is kept").isTrue();
+    }
+
+    @Test
     void overviewFactsPaneKeepsTheKeyValueCursorOnScreen() throws Exception {
         // The facts pane moved a cursor it never scrolled to, so on a short
         // terminal the selected entry could sit below the fold while the
