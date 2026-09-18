@@ -34,10 +34,9 @@ API keeps them distinct.
 
 Because the column's flag already records which kind it is, each accessor enforces the matching
 flag: `getTimestamp` is the `Instant` accessor and `getLocalTimestamp` the `LocalDateTime` one, and
-calling the wrong one for a column is a programming error that throws. The exact runtime contract (which flag each
-requires, the exception thrown) lives in [Typed Accessors](../reference/accessors.md). When a
-column's kind isn't known statically, branching on the flag — or the generic `getValue` accessor,
-which returns `Instant` or `LocalDateTime` per the flag — recovers the right type without a guess.
+calling the wrong one for a column is a programming error that throws. The exact runtime contract,
+including how to read a column whose kind isn't known statically, lives in
+[Typed Accessors](../reference/accessors.md).
 
 Filter predicates follow the same split. A `FilterPredicate` literal on a UTC-adjusted column is an
 `Instant` and on a local one a `LocalDateTime`, so a predicate compares the same kind of value the

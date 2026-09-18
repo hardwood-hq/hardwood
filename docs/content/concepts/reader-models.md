@@ -48,13 +48,6 @@ the decoded values as a primitive array you iterate with no per-element method c
 boxing. On that kind of workload it is markedly faster; the cost is that *you* handle the layout
 (nulls via the bitmap, nested structure via offsets; see below), which is more to get right.
 
-The rule of thumb that the [decision table](../how-to/index.md#choosing-a-reader) encodes:
-
-- Processing whole records, especially nested ones, with readability mattering more than peak
-  throughput → **`RowReader`**.
-- Aggregating or scanning a few columns over many rows, where throughput is the point →
-  **`ColumnReader`**.
-
 ## The layer model
 
 The two APIs also differ in how they expose nesting, and this is where the throughput trade-off

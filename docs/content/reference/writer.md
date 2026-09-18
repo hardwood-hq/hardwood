@@ -287,11 +287,12 @@ A failure while `close()` finishes the file discards the output as well. When th
 
 | Exception | When |
 |---|---|
-| `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`) or one whose library is missing; a [schema shape](#schema-shapes) the writer cannot produce |
+| `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned |
 | `IOException` | The destination cannot be created, written, or finalized |
+| `ParquetWriteException` | The file could not be produced for a reason that is neither the caller's input nor the destination: a compression codec that rejects a page body. Unchecked |
 
 ### Schema Shapes
 
