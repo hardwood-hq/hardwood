@@ -25,7 +25,7 @@ here rather than in the release PR.
 | Destination | `dev.hardwood.OutputFile` — `of(Path)`, `create`, `write`, `position`, `discard`, `close`; the file is valid only after `close()` returns |
 | Writer | `ParquetFileWriter.create(out, schema)` / `create(out, schema, config)`, `columnWriter()`, `rowWriter()`, `close()`; one file is written through one of the two APIs |
 | Columnar input | `ColumnWriter.writeBatch(Consumer<ColumnBatch>)`; `ColumnBatch` — `ints` / `longs` / `floats` / `doubles` / `booleans` / `bytes` / `fixed`, each by column index or name, each with a `Validity` and a `boolean[]` null overload; `struct(path, Validity)`, `list(path, offsets[, Validity])`, `map(path, offsets[, Validity])` |
-| Row input | `RowWriter.writeRow(Consumer<StructBuilder>)`; `StructBuilder` typed setters by name and by field index, including the logical-type setters (`setString`, `setDate`, `setTime`, `setTimestamp`, `setLocalTimestamp`, `setDecimal`, `setUuid`, `setInterval`, `setBinary`), `setNull`, and the nesting fillers `setStruct` / `setList` / `setMap`; `ListBuilder`, `MapBuilder`; `getFieldCount()` / `getFieldName(int)` |
+| Row input | `RowWriter.writeRow(Consumer<StructBuilder>)`; `RowWriter.tryWriteRow` returning `RowWriteResult` (`Staged` / `Rejected`); `StructBuilder` typed setters by name and by field index, including the logical-type setters (`setString`, `setDate`, `setTime`, `setTimestamp`, `setLocalTimestamp`, `setDecimal`, `setUuid`, `setInterval`, `setBinary`), `setNull`, and the nesting fillers `setStruct` / `setList` / `setMap`; `ListBuilder`, `MapBuilder`; `getFieldCount()` / `getFieldName(int)` |
 | Schema | `FileSchema.builder(name)` — `addColumn` overloads (type length, logical type), `struct`, `list`, `map`, and `ElementBuilder` for list elements and map values |
 | Configuration | `WriterConfig` — `pageTargetBytes` (1 MiB), `rowGroupBufferTargetBytes` (128 MiB), `codec` (`ZSTD`, `UNCOMPRESSED` when the ZSTD library is absent), `encoding` file-wide and per leaf path (`AUTO`), `statisticsTruncationLength` (64), `precisionLossPolicy` (`REJECT`) |
 | File metadata | `ParquetFileWriter.keyValueMetadata(String, String)`, `keyValueMetadata(Map<String, String>)`, `createdBy(String)`, and the `ParquetFileWriter.DEFAULT_CREATED_BY` constant; the footer's two file-scope fields, settable until `close()` |
@@ -87,8 +87,10 @@ The goal-oriented path for a caller holding records.
    the file's own schema.
 6. Configuration pointer: one `WriterConfig` snippet (codec plus row-group target) and a
    link to `reference/writer.md` for the rest.
-7. Experimental admonition, matching `how-to/column-reader.md`: `RowWriter` and its
-   builders are `@Experimental`.
+7. Experimental admonition, matching `how-to/column-reader.md`: `RowWriter`,
+   `RowWriteResult` and the builders are `@Experimental`.
+8. `tryWriteRow`: skip a rejected record without failing the writer, returning
+   `RowWriteResult.Staged` or `RowWriteResult.Rejected`.
 
 Excluded: rationale for the row/columnar split, memory behaviour, encoding internals.
 

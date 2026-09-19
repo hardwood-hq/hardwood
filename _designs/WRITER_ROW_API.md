@@ -59,11 +59,12 @@ introduced; it would carry no members of its own.
 
 ### Types
 
-Five public types in `dev.hardwood.writer`, all `@Experimental` while the writer is:
+Six public types in `dev.hardwood.writer`, all `@Experimental` while the writer is:
 
 | Type | Role |
 | --- | --- |
-| `RowWriter` | `void writeRow(Consumer<StructBuilder>)`. A final class, obtained from `ParquetFileWriter.rowWriter()`. |
+| `RowWriter` | `void writeRow(Consumer<StructBuilder>)` and `RowWriteResult tryWriteRow(Consumer<StructBuilder>)`. A final class, obtained from `ParquetFileWriter.rowWriter()`. |
+| `RowWriteResult` | Sealed `Staged` / `Rejected` returned by `tryWriteRow`. See [Skipping a rejected record](#skipping-a-rejected-record). |
 | `PrecisionLossPolicy` | `REJECT` / `TRUNCATE`, selected through `WriterConfig`. See [Logical-type value conversion](#logical-type-value-conversion). |
 | `StructBuilder` | Sets the fields of one struct instance — the row, or a nested struct. |
 | `ListBuilder` | Appends the entries of one `LIST` instance. |
@@ -155,13 +156,54 @@ runs and rolled back if it throws — whether the writer rejected a value or the
 failed — so a rejected record leaves the batch exactly as it was. Without this a validation
 error would leave a half-populated batch whose columns no longer agree on their record count.
 The exception still fails the writer, as every exception out of a write call does (see
-`WRITER_SUPPORT.md`); the rollback keeps the staged batch consistent for skipping a rejected
-record explicitly (#1253).
+`WRITER_SUPPORT.md`); the rollback keeps the staged batch consistent for
+[`tryWriteRow`](#skipping-a-rejected-record).
 
 A list or map entry is nullable only where the schema says so: `ListBuilder.addNull()` requires
 an `OPTIONAL` element, and a map's `key` is always `REQUIRED` by the Parquet `MAP` contract, so
 a null key throws. An absent list (`setNull("phones")`) and an empty list (`setList("phones",
 phones -> {})`) are distinct, and both are expressible.
+
+## Skipping a rejected record
+
+Any exception out of `writeRow` fails the writer: later writes are rejected, and `close()`
+discards the output. `close()` cannot tell whether an exception is propagating out of a
+try-with-resources block, so a writer that stayed usable after a rejection would publish the
+records written before it whenever the rejection is not caught.
+
+A caller cannot check a record up front instead. The data-dependent rejections — annotation
+ranges such as `INT(8)` or `DECIMAL` precision, precision loss under
+`PrecisionLossPolicy.REJECT`, values outside the `INT32` day range, `null` for a `REQUIRED`
+field, a `FIXED_LEN_BYTE_ARRAY` of the wrong length — are enforced by internal conversion and
+range code.
+
+`tryWriteRow(Consumer<StructBuilder>)` returns a `RowWriteResult`:
+
+```java
+switch (rows.tryWriteRow(row -> fill(row, person))) {
+    case RowWriteResult.Staged _ -> { }
+    case RowWriteResult.Rejected rejected -> deadLetter.accept(person, rejected);
+}
+```
+
+- **`RowWriteResult.Staged`** — the record is in the batch. A later flush can still fail the
+  writer.
+- **`RowWriteResult.Rejected`** — the record was not staged. It carries `fieldPath` (the
+  schema path already used in rejection messages, synthetic `list.element` / `key_value`
+  segments included) and `message` (the full text `writeRow` throws for the same rejection).
+  The writer stays writable; `close()` publishes the records that staged.
+
+`writeRow` stays strict: a rejected record throws and fails the writer. `ColumnWriter` has no
+per-row skip; a rejected batch drops every row in it.
+
+Only a rejection of the record itself is skippable: a value the column cannot hold, or a
+`REQUIRED` field left unset or set null (including a map key and a `REQUIRED` list element).
+An exception thrown by the filler, builder misuse (unknown name, field set twice, wrong
+setter, out-of-range index, expired or re-entered scope), and a failure while a staged batch
+is written still fail the writer.
+
+Every record rejected through `tryWriteRow` yields a published file of zero rows.
+`RowWriteResult` is `@Experimental`, as `RowWriter` is.
 
 ## Logical-type value conversion
 
@@ -391,6 +433,14 @@ knows it only at runtime and otherwise has to switch on `PhysicalType` to pick a
   out-of-range `INT(8)`, wrong-length `FIXED_LEN_BYTE_ARRAY`, `setTimestamp` on a local column.
 - Rule tests: unset `REQUIRED` field, double set, retained builder used after its lambda
   returned, interleaved `writeBatch` and `rowWriter()` in both orders, `writeRow` after close.
+- `tryWriteRow` tests: a data-dependent rejection (`INT(8)`, `REQUIRED`, wrong-length
+  `FIXED_LEN_BYTE_ARRAY`, `DATE` range, `DECIMAL` precision, precision-loss `REJECT`,
+  `INTERVAL` range, `INT64` `TIMESTAMP` overflow) returns `Rejected` and `close()` publishes
+  the rows that staged; the same rejection from `writeRow` still fails the writer; unknown
+  name, field set twice, a setter that does not fit, and a filler-thrown
+  `IllegalArgumentException` fail the writer from `tryWriteRow`; a flush failure of a staged
+  batch fails the writer; every record `Rejected` publishes a zero-row file. A rejected
+  record leaves the staged batch untouched, asserted through the public API.
 - **By-index equivalence tests**: the same records written by name and by index must produce
   byte-identical files — every typed setter, `setNull`, and the struct/list/map verbs including
   a `MAP` entry's `key`/`value` — plus a record addressed both ways at once, since the two forms

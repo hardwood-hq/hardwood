@@ -18,6 +18,7 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import dev.hardwood.internal.writer.RejectedRecordException;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.row.PqInterval;
@@ -28,7 +29,8 @@ import dev.hardwood.writer.PrecisionLossPolicy;
 ///
 /// A value the column cannot represent at all — a date beyond the `INT32` day range, an
 /// unscaled decimal wider than the declared precision — always throws
-/// [IllegalArgumentException]; there is no narrowing that would preserve its magnitude.
+/// [RejectedRecordException] (a subclass of [IllegalArgumentException]); there is no
+/// narrowing that would preserve its magnitude.
 ///
 /// A value the column can hold only approximately — an [Instant] with sub-millisecond
 /// precision into a `TIMESTAMP(MILLIS)` column, a [BigDecimal] whose rescale to the declared
@@ -58,7 +60,7 @@ public final class PhysicalValueConverter {
     public static int dateToInt(String field, LocalDate value) {
         long epochDay = value.toEpochDay();
         if (epochDay < Integer.MIN_VALUE || epochDay > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException("Field " + field + ": " + value
+            throw new RejectedRecordException(field, "Field " + field + ": " + value
                     + " is out of range for a DATE column");
         }
         return (int) epochDay;
@@ -125,7 +127,7 @@ public final class PhysicalValueConverter {
             offset = Math.addExact(Math.multiplyExact(epochSecond, 1_000_000_000L / nanosPerUnit), units);
         }
         catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Field " + field + ": " + value
+            throw new RejectedRecordException(field, "Field " + field + ": " + value
                     + " is outside the range an INT64 TIMESTAMP(" + unit + ") column can represent;"
                     + " a FIXED_LEN_BYTE_ARRAY(12) column holds it", e);
         }
@@ -149,8 +151,8 @@ public final class PhysicalValueConverter {
 
     /// The rejection for a value the column could hold only by dropping digits, naming every
     /// way the caller can say what they meant.
-    private static IllegalArgumentException finerThanUnit(String field, String annotation, TimeUnit unit) {
-        return new IllegalArgumentException("Field " + field + ": value has finer precision than the column's "
+    private static RejectedRecordException finerThanUnit(String field, String annotation, TimeUnit unit) {
+        return new RejectedRecordException(field, "Field " + field + ": value has finer precision than the column's "
                 + annotation + "(" + unit + ") unit. Truncate it at the call site (for example "
                 + "Instant.truncatedTo(ChronoUnit.MILLIS)), declare the column at a finer unit, or "
                 + "configure WriterConfig.precisionLossPolicy(TRUNCATE)");
@@ -172,7 +174,7 @@ public final class PhysicalValueConverter {
             return unscaled.intValueExact();
         }
         catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Field " + field + ": " + value
+            throw new RejectedRecordException(field, "Field " + field + ": " + value
                     + " does not fit the INT32 storage of " + type, e);
         }
     }
@@ -185,7 +187,7 @@ public final class PhysicalValueConverter {
             return unscaled.longValueExact();
         }
         catch (ArithmeticException e) {
-            throw new IllegalArgumentException("Field " + field + ": " + value
+            throw new RejectedRecordException(field, "Field " + field + ": " + value
                     + " does not fit the INT64 storage of " + type, e);
         }
     }
@@ -200,7 +202,7 @@ public final class PhysicalValueConverter {
             return minimal;
         }
         if (minimal.length > typeLength) {
-            throw new IllegalArgumentException("Field " + field + ": " + value + " needs " + minimal.length
+            throw new RejectedRecordException(field, "Field " + field + ": " + value + " needs " + minimal.length
                     + " bytes but the column is FIXED_LEN_BYTE_ARRAY(" + typeLength + ")");
         }
         byte[] padded = new byte[typeLength];
@@ -228,7 +230,7 @@ public final class PhysicalValueConverter {
                 rescaled = value.setScale(type.scale());
             }
             catch (ArithmeticException e) {
-                throw new IllegalArgumentException("Field " + field + ": " + value
+                throw new RejectedRecordException(field, "Field " + field + ": " + value
                         + " cannot be rescaled to the column's " + type + " without dropping digits. Rescale it "
                         + "at the call site (for example BigDecimal.setScale(" + type.scale()
                         + ", RoundingMode.HALF_UP)), declare a finer scale, or configure "
@@ -236,7 +238,7 @@ public final class PhysicalValueConverter {
             }
         }
         if (rescaled.precision() > type.precision()) {
-            throw new IllegalArgumentException("Field " + field + ": " + value + " has precision "
+            throw new RejectedRecordException(field, "Field " + field + ": " + value + " has precision "
                     + rescaled.precision() + ", exceeding the column's " + type);
         }
         return rescaled.unscaledValue();
@@ -269,7 +271,7 @@ public final class PhysicalValueConverter {
     private static void writeUnsignedIntLittleEndian(String field, byte[] target, int offset, long value,
                                                      String component) {
         if (value < 0 || value > 0xFFFFFFFFL) {
-            throw new IllegalArgumentException("Field " + field + ": INTERVAL " + component + " is " + value
+            throw new RejectedRecordException(field, "Field " + field + ": INTERVAL " + component + " is " + value
                     + ", outside the unsigned 32-bit range the format stores");
         }
         for (int i = 0; i < Integer.BYTES; i++) {

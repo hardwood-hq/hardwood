@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.function.Consumer;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.internal.writer.RejectedRecordException;
 import dev.hardwood.internal.writer.RowPlan;
 import dev.hardwood.schema.FileSchema;
 
@@ -78,7 +79,8 @@ public final class RowWriter {
     ///
     /// Any exception fails the writer, whether the record is rejected, its `filler` throws, or a
     /// batch of staged records cannot be written: the writer accepts no more records, and
-    /// [ParquetFileWriter#close()] discards the output.
+    /// [ParquetFileWriter#close()] discards the output. To skip a rejected record without
+    /// failing the writer, use [#tryWriteRow].
     ///
     /// @param filler populates the record
     /// @throws IOException if writing a completed batch fails
@@ -97,6 +99,45 @@ public final class RowWriter {
             writer.markFailed();
             throw t;
         }
+        commitStagedRecord();
+    }
+
+    /// Stages one record, or returns the rejection without failing the writer.
+    ///
+    /// A rejection of the record itself — a value the column cannot hold, or a `REQUIRED`
+    /// field left unset or set null — is returned as [RowWriteResult.Rejected] and the staged
+    /// batch is left as it was. [RowWriteResult.Staged] means the record is in the batch, not
+    /// that it has been flushed: a later batch write can still fail the writer.
+    ///
+    /// An exception from `filler`, a builder used incorrectly, or a failure while a staged
+    /// batch is written still fails the writer.
+    ///
+    /// @param filler populates the record
+    /// @return [RowWriteResult.Staged] if the record was staged; [RowWriteResult.Rejected]
+    ///         if it was not
+    /// @throws IOException if writing a completed batch fails
+    /// @throws IllegalArgumentException if the filler names a field the schema does not have,
+    ///         sets one twice, or uses a setter that does not fit a field's declared type
+    /// @throws IndexOutOfBoundsException if the filler addresses a field by an index the
+    ///         struct it is setting does not have
+    /// @throws IllegalStateException if the writer is closed, or a previous write has failed
+    public RowWriteResult tryWriteRow(Consumer<StructBuilder> filler) throws IOException {
+        writer.ensureWritable();
+        try {
+            plan.writeRecord(filler);
+        }
+        catch (RejectedRecordException e) {
+            return new RowWriteResult.Rejected(e.fieldPath(), e.getMessage());
+        }
+        catch (Throwable t) {
+            writer.markFailed();
+            throw t;
+        }
+        commitStagedRecord();
+        return RowWriteResult.Staged.INSTANCE;
+    }
+
+    private void commitStagedRecord() throws IOException {
         stagedRecords++;
         if (stagedRecords >= STAGED_RECORDS_PER_BATCH || plan.variableWidthBytes() >= payloadLimitBytes) {
             flush();
