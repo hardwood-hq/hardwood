@@ -212,7 +212,7 @@ final class RowLeafNode extends RowNode {
 
     void setNull() {
         if (!optional) {
-            throw new IllegalArgumentException(requiredMessage());
+            throw new RejectedRecordException(path, requiredMessage());
         }
         stage.appendNull();
     }
@@ -261,11 +261,11 @@ final class RowLeafNode extends RowNode {
     private void appendBinary(byte[] value) {
         requireValueAllowed("setBinary");
         if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY && value.length != typeLength) {
-            throw new IllegalArgumentException("Field " + path + ": value is " + value.length
+            throw new RejectedRecordException(path, "Field " + path + ": value is " + value.length
                     + " bytes but the column is FIXED_LEN_BYTE_ARRAY(" + typeLength + ")");
         }
         if (range.isBounded() && !range.containsUnscaled(value)) {
-            throw new IllegalArgumentException("Field " + path
+            throw new RejectedRecordException(path, "Field " + path
                     + ": the value is not an unscaled value the column's " + logicalType + " can hold");
         }
         ((LeafStage.BinaryStage) stage).append(value);
@@ -275,7 +275,7 @@ final class RowLeafNode extends RowNode {
     /// could carry matches the annotation, and the reader refuses to materialize one.
     private void requireValueAllowed(String setter) {
         if (range.holdsNoValue()) {
-            throw new IllegalArgumentException("Field " + path
+            throw new RejectedRecordException(path, "Field " + path
                     + " is annotated UNKNOWN, which holds only nulls; " + setter
                     + " cannot set a value on it");
         }
@@ -285,7 +285,7 @@ final class RowLeafNode extends RowNode {
     /// unannotated column, and one whose annotation narrows nothing, admits every value.
     private void checkRange(long value) {
         if (range.isBounded() && !range.contains(value)) {
-            throw new IllegalArgumentException("Field " + path + ": " + value
+            throw new RejectedRecordException(path, "Field " + path + ": " + value
                     + " is out of range for a " + logicalType + " column");
         }
     }

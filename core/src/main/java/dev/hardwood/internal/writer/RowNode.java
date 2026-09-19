@@ -56,8 +56,8 @@ abstract class RowNode {
                 + " while it is already being written; a filler must not re-enter the scope it is inside");
     }
 
-    final IllegalArgumentException requiredField() {
-        return new IllegalArgumentException("Field " + path
+    final RejectedRecordException requiredField() {
+        return new RejectedRecordException(path, "Field " + path
                 + " is REQUIRED; it must be set to a non-null value in every record");
     }
 }
