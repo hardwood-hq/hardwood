@@ -279,9 +279,20 @@ hardwood version <version> (build <commit>)
 | `abort()` | Discards the output and closes the writer |
 | `close()` or `abort()` on a closed or aborted writer | Nothing |
 
-The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
+The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` returns `RowWriteResult.Rejected` for a data-dependent rejection of the record itself and does not fail the writer; an exception from its filler, builder misuse, or a failure while a staged batch is written still does. A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
 A failure while `close()` finishes the file discards the output as well. When the output cannot be discarded, `close()` and `abort()` throw the `IOException`.
+
+## `RowWriteResult`
+
+`RowWriter.tryWriteRow` returns one of two members:
+
+| Member | Meaning |
+|---|---|
+| `Staged` | The record is in the batch. A later flush can still fail the writer. |
+| `Rejected(fieldPath, message)` | The record was not staged. `fieldPath` is the schema path already used in rejection messages; `message` is the full text `writeRow` throws for the same rejection. |
+
+Only a rejection of the record itself becomes `Rejected`: a value the column cannot hold, or a `REQUIRED` field left unset or set null. Builder misuse — an unknown name, a field set twice, a setter that does not fit the field — and an exception from the filler still throw and fail the writer.
 
 ## What the Writer Rejects
 

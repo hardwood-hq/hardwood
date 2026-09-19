@@ -196,7 +196,9 @@ from the filler, a destination `IOException`, a codec `ParquetWriteException`) f
 writer: later writes are rejected, and `close()` calls `OutputFile.discard()` instead of
 writing the footer. `close()` cannot tell whether an exception is propagating out of the
 try-with-resources block around it, so a writer that stayed usable after a rejection would
-publish the rows written before it whenever the rejection is not caught. A failure raised
+publish the rows written before it whenever the rejection is not caught. `tryWriteRow`
+returns a rejection of the record itself without failing the writer; an exception from its
+filler or from flushing a staged batch still fails the writer. A failure raised
 outside the writer, such as by the caller's data source, is invisible to it; `abort()`
 discards the output for that case, and a later `close()` does nothing. `close()` keeps
 publishing a writer that has not failed. A discard that fails is thrown, since it leaves

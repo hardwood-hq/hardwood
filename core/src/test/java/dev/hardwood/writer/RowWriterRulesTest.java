@@ -182,23 +182,31 @@ class RowWriterRulesTest {
     }
 
     /// A record that fails is staged in full or not at all: the staged batch holds exactly the
-    /// records that succeeded. `writeRow` fails the writer on the rejection, so this is asserted
-    /// on the plan the row writer stages into.
+    /// records that succeeded. `tryWriteRow` returns the rejection without failing the writer,
+    /// so the next record can still be written and `close()` publishes the two that staged.
     @Test
     void failedRecordLeavesTheStagedBatchUntouched() throws Exception {
-        RowPlan plan = RowPlan.build(schema(), PrecisionLossPolicy.REJECT);
-        plan.writeRecord(row -> row.setInt("id", 1).setString("name", "first")
-                .setList("tags", tags -> tags.addBinary(new byte[] { 1 })));
-        assertThatThrownBy(() -> plan.writeRecord(row -> row
-                .setInt("id", 2)
-                .setString("name", "doomed")
-                .setList("tags", tags -> tags.addBinary(new byte[] { 2 }))
-                .setStruct("address", address -> { })))
-                .isInstanceOf(IllegalArgumentException.class);
-        plan.writeRecord(row -> row.setInt("id", 3).setString("name", "third")
-                .setList("tags", tags -> tags.addBinary(new byte[] { 3 })));
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setInt("id", 1).setString("name", "first")
+                    .setList("tags", tags -> tags.addBinary(new byte[] { 1 })));
+            assertThat(rows.tryWriteRow(row -> row
+                    .setInt("id", 2)
+                    .setString("name", "doomed")
+                    .setList("tags", tags -> tags.addBinary(new byte[] { 2 }))
+                    .setStruct("address", address -> { })))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("address.city");
+                        assertThat(rejected.message()).isEqualTo(
+                                "Field address.city is REQUIRED; it must be set to a non-null value in every "
+                                        + "record");
+                    });
+            rows.writeRow(row -> row.setInt("id", 3).setString("name", "third")
+                    .setList("tags", tags -> tags.addBinary(new byte[] { 3 })));
+        }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStaged(plan))))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(2);
             try (RowReader rows = reader.rowReader()) {
                 rows.next();

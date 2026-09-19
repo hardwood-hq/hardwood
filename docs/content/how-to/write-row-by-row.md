@@ -14,7 +14,7 @@
 `RowWriter` writes one record at a time, addressing fields by the names they carry in the schema and taking logical-type values as the Java types the reader returns for them. It is the write-side mirror of `RowReader`.
 
 !!! warning "Experimental API"
-    `RowWriter`, `StructBuilder`, `ListBuilder` and `MapBuilder` are annotated `@Experimental`: their shape may change in a future release.
+    `RowWriter`, `RowWriteResult`, `StructBuilder`, `ListBuilder` and `MapBuilder` are annotated `@Experimental`: their shape may change in a future release.
 
 ## Writing a File
 
@@ -91,7 +91,26 @@ rows.writeRow(row -> row
         .setString("name", "Katherine"));
 ```
 
-A `REQUIRED` field left unset fails the record. A record that fails, because a value is rejected or the filler throws, fails the writer: `writeRow` accepts no more records, and `close()` discards the output rather than publishing the records written before it. See [Handle Write Failures](write-failures.md).
+A `REQUIRED` field left unset fails the record. `writeRow` then fails the writer: it accepts no more records, and `close()` discards the output rather than publishing the records written before it. See [Handle Write Failures](write-failures.md).
+
+## Skipping a Rejected Record
+
+`tryWriteRow` stages the record or returns a `RowWriteResult.Rejected` without failing the writer. Later records can still be written, and `close()` publishes the ones that staged.
+
+```java
+import dev.hardwood.writer.RowWriteResult;
+
+for (Person person : people) {
+    switch (rows.tryWriteRow(row -> row
+            .setLong("id", person.id())
+            .setString("name", person.name()))) {
+        case RowWriteResult.Staged _ -> { }
+        case RowWriteResult.Rejected rejected -> log(rejected.message());
+    }
+}
+```
+
+`Staged` means the record is in the batch, not that it has been flushed. A rejection of the record itself is skippable: a value the column cannot hold, or a `REQUIRED` field left unset or set null. An exception thrown by the filler, a field name the schema does not have, a field set twice, a setter that does not fit the field, or a failure while a staged batch is written still fails the writer.
 
 ## Structs, Lists, and Maps
 
