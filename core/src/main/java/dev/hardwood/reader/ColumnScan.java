@@ -11,6 +11,9 @@ import java.io.Closeable;
 import java.io.IOException;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
@@ -73,14 +76,24 @@ final class ColumnScan implements Closeable {
                 : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
         ProjectedSchema decoded = projection.decoded();
         int columnCount = decoded.getProjectedColumnCount();
+        CompiledBatchFilter compiled = filter == null
+                ? null
+                : BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
+        ColumnBatchMatcher[] matchers =
+                compiled == null ? null : compiled.columnMatchers();
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
+            boolean retainDictionaryIndices = matchers != null
+                    && matchers[i] != null
+                    && matchers[i].requiresDictionaryIndices();
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
+                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode,
+                    retainDictionaryIndices);
         }
         SelectionEngine engine = filter == null
                 ? null
-                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, rowGroupIterator);
+                : createSelectionEngine(schema, decoded, filter, compiled, cursors, batchSize,
+                        rowGroupIterator);
         return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
     }
 
@@ -89,10 +102,11 @@ final class ColumnScan implements Closeable {
     /// workers have started by then and no scan will own them, so a failure closes them
     /// before it propagates, naming the file whose schema it was found in.
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
-                                                         ResolvedPredicate filter, ColumnCursor[] cursors,
-                                                         int batchSize, RowGroupIterator rowGroupIterator) {
+                                                         ResolvedPredicate filter, CompiledBatchFilter compiled,
+                                                         ColumnCursor[] cursors, int batchSize,
+                                                         RowGroupIterator rowGroupIterator) {
         try {
-            return SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+            return SelectionEngine.create(schema, decoded, filter, compiled, cursors, batchSize);
         }
         catch (RuntimeException e) {
             for (ColumnCursor cursor : cursors) {

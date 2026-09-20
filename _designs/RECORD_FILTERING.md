@@ -110,6 +110,14 @@ A matcher writes bit `i` of a per-batch `long[]` when row `i` **definitely** sat
 
 Equality tests bytes only when `Comparison.byteExact()` holds. Otherwise it compares by order, which is what matches a padded spelling of a `BYTE_ARRAY` decimal and the several spellings an `INT96` instant has.
 
+Each compiled binary leaf is wrapped by dictionary-space evaluation (#859).
+For a dictionary batch, the wrapper decides only referenced entries and caches
+their outcomes; plain rows and batches without a dictionary use the matcher's
+ordinary slice and whole-batch operations. Entries are decided through the
+matcher's comparison rather than by probing for the literal's bytes, so the
+same path is sound for padded variable-width decimals. See
+[DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md).
+
 Tests: `DrainSideOracleTest`.
 
 ### Merge
@@ -131,9 +139,12 @@ A filtered `ColumnReaders` is a grouped drain over `decoded()` plus a per-batch 
 
 **Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
 
-`SelectionEngine` picks its backend once at construction:
+`ColumnScan` compiles the batch filter before allocating its cursors so a
+dictionary-aware matcher can request retained entry IDs. It passes that
+compiled result to `SelectionEngine`, which picks its backend once at
+construction:
 
-- `BatchFilterCompiler.tryCompile` accepts the predicate: a `BatchMatchMerger` in owning mode.
+- The compiled batch filter is present: a `BatchMatchMerger` in owning mode.
 - Otherwise: the `RowMatcher` compiled against a `PredicateView` over the cursors' batches, evaluated per record. Nested predicate columns arrive without element validity on this path, and the view derives it from the definition levels.
 
 Both backends produce the same selection representation, so compaction does not depend on the backend.
@@ -218,7 +229,7 @@ Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`.
 
 - **Nested and remaining leaf shapes on the drain side (#485).** Nested-path leaves, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to the drain side would let `RecordFilterCompiler` go.
 - **Late materialization (#500).** Payload columns are decoded in full for every undecided row group and then compacted; decoding them only for matching rows is a different pipeline shape.
-- **Dictionary-space evaluation (#859).** A predicate on a dictionary-encoded column is evaluated per row, not once per dictionary entry. A byte-equality shortcut there is sound only where `Comparison.byteExact()` holds.
+- **Fixed-width dictionary-space evaluation (#859).** Binary matchers decide referenced dictionary entries once; fixed-width primitive matchers still evaluate dictionary-encoded columns per row.
 - **Fused same-column range matchers (#454)** and **Vector API matchers (#456).** `id >= a AND id < b` runs two passes over the column and one word-wise AND.
 - **`tail` with a filter (#542).** Rejected at `build()`, as above.
 - **Page-level always-match.** A page whose index entry proves a full match is evaluated row by row like any page of an undecided row group; see [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md) for why the decision stops at the row group.

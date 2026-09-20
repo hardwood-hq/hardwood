@@ -25,4 +25,11 @@ public sealed interface ColumnBatchMatcher
         BooleanBatchMatcher, BinaryBatchMatcher, NullBatchMatcher, AndBatchMatcher, OrBatchMatcher {
 
     void test(BatchExchange.Batch batch, long[] outWords);
+
+    /// Whether this matcher needs the binary batch's per-value dictionary entry
+    /// IDs. Readers use this during allocation so ordinary reads do not retain
+    /// filter-only metadata.
+    default boolean requiresDictionaryIndices() {
+        return false;
+    }
 }
