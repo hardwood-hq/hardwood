@@ -101,14 +101,13 @@ final class SelectionEngine {
 
     /// Builds an engine for `resolved` over the augmented projection, reading
     /// predicate values from `readersByProjectedIndex` (indexed by the
-    /// augmented projected column index).
+    /// augmented projected column index). `compiled` is resolved before reader
+    /// allocation so dictionary-aware matchers can request retained entry IDs.
     static SelectionEngine create(FileSchema schema, ProjectedSchema augProjected,
-                                  ResolvedPredicate resolved,
+                                  ResolvedPredicate resolved, CompiledBatchFilter compiled,
                                   ColumnReader[] readersByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
-        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, augProjected::toProjectedIndex);
 
         if (compiled != null) {
             // Owning mode: no column workers ran the matchers, so the merger runs
