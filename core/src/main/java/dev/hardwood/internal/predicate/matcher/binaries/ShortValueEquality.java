@@ -107,25 +107,31 @@ final class ShortValueEquality {
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
                 int start = offsets[i];
-                int length = offsets[i + 1] - start;
-                long hit;
-                if (length > Long.BYTES) {
-                    hit = containsAny(longMembers, bytes, start, start + length) ? 1L : 0L;
-                }
-                else if (start <= lastLongStart) {
-                    long value = (long) LONG_BE.get(bytes, start) & PREFIX_MASKS[length];
-                    hit = 0L;
-                    for (int m = 0; m < shortLengths.length; m++) {
-                        hit |= (length == shortLengths[m]) & (value == shortValues[m]) ? 1L : 0L;
-                    }
-                }
-                else {
-                    hit = containsAny(shortMembers, bytes, start, start + length) ? 1L : 0L;
-                }
-                word |= hit << b;
+                word |= (testValue(bytes, start, offsets[i + 1], lastLongStart) ? 1L : 0L) << b;
             }
             outWords[w] = word;
         }
+    }
+
+    /// Whether one byte slice equals any member.
+    boolean testValue(byte[] bytes, int from, int to) {
+        return testValue(bytes, from, to, bytes.length - Long.BYTES);
+    }
+
+    private boolean testValue(byte[] bytes, int from, int to, int lastLongStart) {
+        int length = to - from;
+        if (length > Long.BYTES) {
+            return containsAny(longMembers, bytes, from, to);
+        }
+        if (from <= lastLongStart) {
+            long value = (long) LONG_BE.get(bytes, from) & PREFIX_MASKS[length];
+            boolean hit = false;
+            for (int m = 0; m < shortLengths.length; m++) {
+                hit |= (length == shortLengths[m]) & (value == shortValues[m]);
+            }
+            return hit;
+        }
+        return containsAny(shortMembers, bytes, from, to);
     }
 
     /// Clears every bit whose row is null. Bits past `recordCount` are left as they are: the consumer

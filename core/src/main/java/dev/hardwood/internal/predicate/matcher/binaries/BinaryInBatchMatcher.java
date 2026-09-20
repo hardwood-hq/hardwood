@@ -44,7 +44,7 @@ public final class BinaryInBatchMatcher implements BinaryBatchMatcher {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                if ((present & (1L << b)) != 0L && contains(bytes, offsets[i], offsets[i + 1])) {
+                if ((present & (1L << b)) != 0L && testValue(bytes, offsets[i], offsets[i + 1])) {
                     word |= 1L << b;
                 }
             }
@@ -52,7 +52,8 @@ public final class BinaryInBatchMatcher implements BinaryBatchMatcher {
         }
     }
 
-    private boolean contains(byte[] bytes, int from, int to) {
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
         for (byte[] member : members) {
             boolean equal = byteExact
                     ? BinaryComparator.sliceEquals(bytes, from, to, member)

@@ -67,12 +67,18 @@ final class ColumnCursor {
                                boolean fixedListFastPathEnabled,
                                int projectedColumnIndex,
                                int batchSize,
-                               NestedColumnWorker.IndexMode indexMode) {
+                               NestedColumnWorker.IndexMode indexMode,
+                               boolean retainDictionaryIndices) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), column.columnIndex());
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
 
         if (isNested(layers, column)) {
+            if (retainDictionaryIndices) {
+                throw new IllegalStateException(
+                        "Dictionary-index retention was requested for nested column '"
+                        + column.name() + "', which the nested read path cannot honour");
+            }
             BatchExchange<NestedBatch> exchange = BatchExchange.detaching(
                     column.name(), () -> {
                         NestedBatch b = new NestedBatch();
@@ -89,7 +95,8 @@ final class ColumnCursor {
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
                 column.name(), () -> {
                     BatchExchange.Batch b = new BatchExchange.Batch();
-                    b.values = BatchExchange.allocateArray(column, batchSize);
+                    b.values = BatchExchange.allocateArray(
+                            column, batchSize, retainDictionaryIndices);
                     return b;
                 });
         FlatColumnWorker worker = new FlatColumnWorker(

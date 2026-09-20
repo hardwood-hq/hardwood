@@ -35,6 +35,11 @@ public final class OrBatchMatcher implements ColumnBatchMatcher {
     }
 
     @Override
+    public boolean requiresDictionaryIndices() {
+        return first.requiresDictionaryIndices() || second.requiresDictionaryIndices();
+    }
+
+    @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         if (scratch == null || scratch.length < outWords.length) {
             scratch = new long[outWords.length];

@@ -56,4 +56,9 @@ public final class BinaryShortInBatchMatcher implements BinaryBatchMatcher {
         }
         ShortValueEquality.keepPresent(outWords, batch.validity, n);
     }
+
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
+        return equality.testValue(bytes, from, to) != negated;
+    }
 }

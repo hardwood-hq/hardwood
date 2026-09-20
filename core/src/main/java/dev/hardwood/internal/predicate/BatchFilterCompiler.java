@@ -365,7 +365,7 @@ public final class BatchFilterCompiler {
                 case EQ -> new LongEqBatchMatcher(p.value());
                 case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
             };
-            case ResolvedPredicate.BinaryPredicate p -> switch (p.op()) {
+            case ResolvedPredicate.BinaryPredicate p -> dictionaryAware(switch (p.op()) {
                 case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
                 case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
                 case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
@@ -376,10 +376,11 @@ public final class BatchFilterCompiler {
                 case NOT_EQ -> BinaryShortInBatchMatcher.supports(p.comparison(), p.value())
                         ? new BinaryShortInBatchMatcher(new byte[][]{p.value()}, p.comparison(), true)
                         : new BinaryNotEqBatchMatcher(p.value(), p.comparison());
-            };
-            case ResolvedPredicate.BinaryInPredicate p -> BinaryShortInBatchMatcher.supports(p.comparison(), p.values())
+            });
+            case ResolvedPredicate.BinaryInPredicate p -> dictionaryAware(
+                    BinaryShortInBatchMatcher.supports(p.comparison(), p.values())
                     ? new BinaryShortInBatchMatcher(p.values(), p.comparison(), false)
-                    : new BinaryInBatchMatcher(p.values(), p.comparison());
+                    : new BinaryInBatchMatcher(p.values(), p.comparison()));
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
             case ResolvedPredicate.UnsignedIntInPredicate p -> new IntInBatchMatcher(p.values());
@@ -394,5 +395,9 @@ public final class BatchFilterCompiler {
                     "Unsupported predicate type reached leafMatcher: " + leaf.getClass().getSimpleName()
                             + " — isSupported should have rejected this");
         };
+    }
+
+    private static BinaryBatchMatcher dictionaryAware(BinaryBatchMatcher matcher) {
+        return new DictionaryBinaryBatchMatcher(matcher);
     }
 }
