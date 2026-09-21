@@ -69,17 +69,6 @@ public class RowGroupIterator implements Closeable {
 
     private static final System.Logger LOG = System.getLogger(RowGroupIterator.class.getName());
 
-    /// Maximum gap (in bytes) between pages that will be bridged when coalescing
-    /// within a column. Pages separated by more than this gap get separate
-    /// `readRange()` calls.
-    static final int PAGE_COALESCE_GAP_BYTES = 1024 * 1024;
-
-    /// Maximum size (in bytes) of a single coalesced page group. Groups that
-    /// would exceed this are split so that each `readRange()` stays bounded,
-    /// enabling lazy pre-fetch overlap and early cancellation.
-    private static final int MAX_COALESCED_BYTES =
-            Integer.getInteger("hardwood.internal.maxCoalescedBytes", 128 * 1024 * 1024);
-
     private static final Consumer<RowGroupIterator> NO_CLOSE_LISTENER = iterator -> {
     };
 
@@ -804,14 +793,14 @@ public class RowGroupIterator implements Closeable {
 
                 // Coalesce needed pages within this column into page groups,
                 // bridging small gaps but splitting on large ones.
-                // The dictionary page is fetched with the first page group when the gap
-                // between them is one coalescing would bridge, and on its own otherwise.
-                // A dictionary pruning has read is not fetched at all.
+                // The dictionary page is fetched with the first page group when coalescing
+                // would merge the two, and on its own otherwise. A dictionary pruning has
+                // read is not fetched at all.
                 long firstDataPageOffset = allPages.get(0).offset();
                 long dictStart = preloadedDictionary == null
                         ? DictionaryParser.dictionaryPageStart(columnChunk, firstDataPageOffset) : 0;
-                boolean foldDictionary = dictStart > 0 && neededPages.get(0).location().offset()
-                        - firstDataPageOffset <= PAGE_COALESCE_GAP_BYTES;
+                boolean foldDictionary = dictStart > 0
+                        && foldsDictionary(dictStart, firstDataPageOffset, neededPages.get(0).location());
                 List<PageGroup> groups = coalescePages(neededPages, foldDictionary ? dictStart : 0);
 
                 // Create ChunkHandles for each page group, linked for pre-fetch
@@ -853,12 +842,6 @@ public class RowGroupIterator implements Closeable {
         return plans;
     }
 
-    /// Maximum byte gap that cross-column coalescing will bridge between
-    /// adjacent column chunks. Adjacent chunks are typically 0 bytes apart,
-    /// but writers may emit padding / checksum bytes; 64 KB tolerates that
-    /// without paying for sizeable dead bytes between non-adjacent chunks.
-    private static final int MAX_CROSS_COL_GAP_BYTES = 64 * 1024;
-
     /// Coalesces the *first* read of multiple columns within this row group
     /// into a smaller number of larger ranged GETs. See #374.
     ///
@@ -875,11 +858,21 @@ public class RowGroupIterator implements Closeable {
     private void coalesceAcrossColumns(FetchPlan[] plans, InputFile inputFile, WorkItem workItem) {
         // Collect (offset, length, plan-index) for each plan's first read.
         record Entry(int planIndex, long offset, int length) {}
+        // What each plan left out fetches on its own. A region must not bridge a gap holding
+        // any of it, or those bytes would be fetched twice: once in the region, once by the
+        // plan's own handles.
+        record Extent(long start, long end) {}
         List<Entry> entries = new ArrayList<>(plans.length);
+        List<Extent> fetchedAlone = new ArrayList<>();
         for (int i = 0; i < plans.length; i++) {
             FetchPlan plan = plans[i];
-            if (plan instanceof CoalescableFirstChunk c && c.isCoalesceSafe()) {
-                entries.add(new Entry(i, c.firstChunkOffset(), c.firstChunkLength()));
+            if (plan instanceof CoalescableFirstChunk c) {
+                if (c.isCoalesceSafe()) {
+                    entries.add(new Entry(i, c.firstChunkOffset(), c.firstChunkLength()));
+                }
+                else if (c.readEnd() > c.readStart()) {
+                    fetchedAlone.add(new Extent(c.readStart(), c.readEnd()));
+                }
             }
         }
         if (entries.size() < 2) {
@@ -887,17 +880,18 @@ public class RowGroupIterator implements Closeable {
         }
         entries.sort(Comparator.comparingLong(Entry::offset));
 
-        // Greedy walk: accumulate entries into a region while the gap and
-        // total span stay within bounds.
+        // Greedy walk: accumulate entries into a region while the coalescing
+        // policy merges each into it and the gap holds nothing fetched alone.
         List<List<Entry>> regionEntries = new ArrayList<>();
         List<Entry> current = new ArrayList<>();
         long currentEnd = -1;
         long currentStart = -1;
         for (Entry e : entries) {
-            long gap = (currentEnd < 0) ? 0 : e.offset() - currentEnd;
-            long combinedSpan = (currentStart < 0) ? e.length() : e.offset() + e.length() - currentStart;
+            long gapEnd = e.offset();
+            long gapStart = currentEnd;
             if (current.isEmpty()
-                    || (gap <= MAX_CROSS_COL_GAP_BYTES && combinedSpan <= MAX_COALESCED_BYTES)) {
+                    || (CoalescingPolicy.merges(currentStart, currentEnd, e.offset(), e.offset() + e.length())
+                            && fetchedAlone.stream().noneMatch(x -> x.start() < gapEnd && gapStart < x.end()))) {
                 if (current.isEmpty()) {
                     currentStart = e.offset();
                 }
@@ -971,6 +965,13 @@ public class RowGroupIterator implements Closeable {
         /// re-fetch those same later chunks.
         boolean isCoalesceSafe();
 
+        /// First byte of everything the plan may fetch.
+        long readStart();
+
+        /// End, exclusive, of everything the plan may fetch; [#readStart] when it fetches
+        /// nothing.
+        long readEnd();
+
         void attachSharedRegion(SharedRegion region, int rowGroupIndex);
     }
 
@@ -987,10 +988,17 @@ public class RowGroupIterator implements Closeable {
     /// a reader to a page the offset index numbers differently.
     record NeededPage(PageLocation location, PageRowMask mask, int pageIndex) {}
 
-    /// Coalesces needed pages within a column into page groups with gap tolerance.
+    /// Whether the dictionary page, `[dictStart, firstDataPageOffset)`, is fetched with the first
+    /// needed page rather than on its own.
+    static boolean foldsDictionary(long dictStart, long firstDataPageOffset, PageLocation firstNeeded) {
+        return CoalescingPolicy.merges(dictStart, firstDataPageOffset,
+                firstNeeded.offset(), firstNeeded.offset() + firstNeeded.compressedPageSize());
+    }
+
+    /// Coalesces needed pages within a column into page groups under [CoalescingPolicy].
     /// The first group is extended back to `dictStart` to take in the dictionary
     /// page, unless `dictStart` is `0`.
-    private static List<PageGroup> coalescePages(List<NeededPage> neededPages, long dictStart) {
+    static List<PageGroup> coalescePages(List<NeededPage> neededPages, long dictStart) {
         List<PageGroup> groups = new ArrayList<>();
         PageLocation firstPage = neededPages.get(0).location();
         long groupStart = firstPage.offset();
@@ -1005,10 +1013,9 @@ public class RowGroupIterator implements Closeable {
 
         for (int i = 1; i < neededPages.size(); i++) {
             PageLocation page = neededPages.get(i).location();
-            long gap = page.offset() - groupEnd;
-            long newGroupSize = page.offset() + page.compressedPageSize() - groupStart;
 
-            if (gap <= PAGE_COALESCE_GAP_BYTES && newGroupSize <= MAX_COALESCED_BYTES) {
+            if (CoalescingPolicy.merges(groupStart, groupEnd, page.offset(),
+                    page.offset() + page.compressedPageSize())) {
                 groupEnd = page.offset() + page.compressedPageSize();
                 groupPageCount++;
             }

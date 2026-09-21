@@ -131,6 +131,23 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         return chunkHandles.size() == 1 && dictionaryHandle == null;
     }
 
+    @Override
+    public long readStart() {
+        if (dictionaryHandle != null) {
+            return dictionaryHandle.fileOffset();
+        }
+        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).fileOffset();
+    }
+
+    @Override
+    public long readEnd() {
+        if (chunkHandles.isEmpty()) {
+            return readStart();
+        }
+        ChunkHandle last = chunkHandles.get(chunkHandles.size() - 1);
+        return last.fileOffset() + last.length();
+    }
+
     /// Replaces the *first* chunk handle with a region-backed view.
     /// Subsequent page-group handles (when filter / maxRows / large
     /// chunks produced multiple groups) keep their per-column reads —

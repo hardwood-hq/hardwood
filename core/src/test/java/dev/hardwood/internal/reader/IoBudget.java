@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// A read is within budget when every data byte it fetches
 ///
 /// - lies inside a needed range, or in a gap of at most
-///   [RowGroupIterator#PAGE_COALESCE_GAP_BYTES] between two needed ranges: coalescing bridges such
+///   [CoalescingPolicy#GAP_BYTES] between two needed ranges: coalescing bridges such
 ///   gaps, but never extends a fetch before the first needed byte or past the last one; and
 /// - is fetched once.
 ///
@@ -104,7 +104,7 @@ final class IoBudget {
         assertThat(dataReads)
                 .filteredOn(read -> allowed.stream().noneMatch(range -> range.contains(read.offset(), read.end())))
                 .as("data reads outside the needed ranges %s bridged by gaps of at most %d bytes",
-                        allowed, RowGroupIterator.PAGE_COALESCE_GAP_BYTES)
+                        allowed, CoalescingPolicy.GAP_BYTES)
                 .isEmpty();
 
         for (int i = 1; i < dataReads.size(); i++) {
@@ -144,7 +144,7 @@ final class IoBudget {
         List<Range> merged = new ArrayList<>();
         for (Range range : sorted) {
             Range last = merged.isEmpty() ? null : merged.get(merged.size() - 1);
-            if (last != null && range.offset() - last.end() <= RowGroupIterator.PAGE_COALESCE_GAP_BYTES) {
+            if (last != null && range.offset() - last.end() <= CoalescingPolicy.GAP_BYTES) {
                 merged.set(merged.size() - 1, new Range(last.offset(), Math.max(last.end(), range.end())));
             }
             else {

@@ -7,16 +7,28 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.RowWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -81,6 +93,92 @@ class CrossColumnCoalesceTest {
                     .as("Data fetches should coalesce to ≤ 2 ranged GETs (was %d)", readsForData)
                     .isLessThanOrEqualTo(2);
         }
+    }
+
+    @Test
+    void anUnprojectedColumnWithinTheGapLimitIsFetchedAcross() throws Exception {
+        // `b` sits between the two projected columns: 100 000 plain longs, about 800 KB.
+        assertThat(dataRequestsForOuterColumns(100_000))
+                .as("`a` and `c` in one request, across `b`")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void anUnprojectedColumnBeyondTheGapLimitSplitsTheRequest() throws Exception {
+        // 160 000 plain longs, about 1.3 MB: more than the gap coalescing bridges.
+        assertThat(dataRequestsForOuterColumns(160_000))
+                .as("`a` and `c` in a request each")
+                .isEqualTo(2);
+    }
+
+    @Test
+    void aColumnFetchingOnItsOwnIsNotBridgedByItsNeighbours(@TempDir Path dir) throws Exception {
+        // `b` is fetched in pieces of 64 KB, so its first fetch does not cover its ~800 KB chunk
+        // and it is left out of cross-column coalescing, while `a` and `c` each fit in one fetch.
+        // A region from `a` to `c` would take in all of `b`, which `b` then fetches again.
+        Path file = dir.resolve("abc.parquet");
+        Files.write(file, writeOuterAndInnerColumns(100_000));
+        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(64 * 1024));
+        try {
+            CountingInputFile counter = new CountingInputFile(InputFile.of(file));
+            counter.open();
+            try (ParquetFileReader reader = ParquetFileReader.open(counter);
+                    RowReader rowReader = reader.buildRowReader()
+                            .projection(ColumnProjection.columns("a", "b", "c"))
+                            .build()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                }
+            }
+            IoBudget.of(file, List.of("a", "b", "c"), 0, 100_000).assertWithin(counter);
+        }
+        finally {
+            System.clearProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY);
+        }
+    }
+
+    /// Writes `rows` rows of a `BOOLEAN` column `a`, a plain `INT64` column `b` and a `BOOLEAN`
+    /// column `c`, one row group without a page index, and reads `a` and `c`: the number of
+    /// requests their data takes.
+    private static int dataRequestsForOuterColumns(int rows) throws Exception {
+        CountingInputFile file = new CountingInputFile(ByteBuffer.wrap(writeOuterAndInnerColumns(rows)));
+        file.open();
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
+            int before = file.readCount();
+            try (RowReader rowReader = reader.buildRowReader()
+                    .projection(ColumnProjection.columns("a", "c"))
+                    .build()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                }
+            }
+            return file.readCount() - before;
+        }
+    }
+
+    /// `rows` rows of a `BOOLEAN` column `a`, a plain `INT64` column `b` and a `BOOLEAN` column
+    /// `c`, in one row group without a page index.
+    private static byte[] writeOuterAndInnerColumns(int rows) throws Exception {
+        FileSchema schema = FileSchema.builder("gap")
+                .addColumn("a", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("c", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .encoding("b", ColumnEncoding.PLAIN)
+                .rowGroupTargetRows(rows)
+                .build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            RowWriter rowWriter = writer.rowWriter();
+            for (int i = 0; i < rows; i++) {
+                long value = i;
+                rowWriter.writeRow(row -> row.setBoolean("a", value % 3 == 0).setLong("b", value).setBoolean("c", value % 5 == 0));
+            }
+        }
+        return out.toByteArray();
     }
 
     @Test

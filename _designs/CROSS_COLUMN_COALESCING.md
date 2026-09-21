@@ -29,9 +29,10 @@ after the per-column plans are built:
 1. Collect every `ChunkHandle`'s `(offset, length)` across all column plans.
 2. Sort by offset.
 3. Greedily group entries into `SharedRegion`s — extend the current region
-   when the gap to the next handle is below `MAX_CROSS_COL_GAP` and the
-   resulting span is below `MAX_COALESCED_BYTES`; otherwise start a new
-   region.
+   when `CoalescingPolicy` merges the next handle into it and the gap holds
+   none of the bytes a plan left out of coalescing fetches through its own
+   handles; otherwise start a new region. Bridging those bytes would fetch
+   them twice.
 4. Chain regions for one-ahead pre-fetch, replacing the per-column
    `nextChunk` chain (the per-column chain is unnecessary when many
    columns sit in one region).
@@ -41,13 +42,12 @@ after the per-column plans are built:
 
 ## Constants
 
-- **`MAX_CROSS_COL_GAP`** — bridge tiny gaps between adjacent column
-  chunks. Set to 64 KB initially. Adjacent chunks are typically
-  back-to-back (zero gap); the budget covers writers that emit padding,
-  checksums, or interleaved metadata. Larger and we'd be paying for
-  dead bytes; smaller and we miss legitimately bridgeable cases.
-- **`MAX_COALESCED_BYTES`** — already exists at 128 MB in
-  `RowGroupIterator`. Reused. Caps any single coalesced region.
+The gap and span limits are those of `CoalescingPolicy`, which every merge
+on the read path applies (see `REMOTE_READ_PATH.md`): a gap of at most
+1 MiB is bridged, and a region spans at most 128 MiB. Adjacent chunks are
+typically back-to-back; a gap up to 1 MiB — padding, checksums, or an
+unprojected column between two projected ones — costs less to fetch than
+a second request.
 
 ## SharedRegion
 
@@ -180,8 +180,7 @@ Bytes-on-the-wire don't change; request count and per-RG latency do.
 
 - **Cross-RG coalescing.** Index regions already coalesce per-RG; data
   pages are typically far apart between RGs and not worth bridging.
-- **Adaptive `MAX_CROSS_COL_GAP`** based on file size or per-RG
-  characteristics. Static constant is sufficient for now; tune once
-  real workloads surface a need.
+- **A storage-dependent gap limit.** The limit is one constant for all
+  backends; #763 measures what it should be per storage.
 - **Reordering reads.** The greedy offset-sorted walk is fine; no need
   for a smarter scheduler.

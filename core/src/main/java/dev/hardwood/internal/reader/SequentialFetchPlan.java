@@ -210,6 +210,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         return chunkSize == columnChunkLength;
     }
 
+    @Override
+    public long readStart() {
+        return columnChunkOffset;
+    }
+
+    @Override
+    public long readEnd() {
+        return columnChunkOffset + columnChunkLength;
+    }
+
     /// Replaces the iterator's first ChunkHandle with a region-backed
     /// view, so the first read slices the shared buffer rather than
     /// issuing a per-column `readRange`.
