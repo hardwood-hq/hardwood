@@ -62,7 +62,7 @@ General structure: `[context] <problem>`.
 ```
 [data.parquet: row group 0, column 'category', page 123] CRC mismatch: expected … but computed …
 [data.parquet: row group 0, column 'category', dictionary page] CRC mismatch: …
-[data.parquet] Not a Parquet file (invalid magic number at start)
+[data.parquet] Not a Parquet file (invalid magic number at end)
 ```
 
 The context is the file, the row group, the column and the page, each left out where the

@@ -68,22 +68,11 @@ public final class ParquetMetadataReader {
                     + "File too small to be a valid Parquet file");
         }
 
-        // Validate magic number at start
-        ByteBuffer startMagicBuf;
-        try (FetchReason.Scope ignored = FetchReason.set("footer-magic-start")) {
-            startMagicBuf = inputFile.readRange(0, MAGIC_SIZE);
-        }
-        byte[] startMagic = new byte[MAGIC_SIZE];
-        startMagicBuf.get(startMagic);
-        if (Arrays.equals(startMagic, ENCRYPTED_MAGIC)) {
-            throw encrypted(inputFile);
-        }
-        if (!Arrays.equals(startMagic, MAGIC)) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Not a Parquet file (invalid magic number at start)");
-        }
-
-        // Read footer size and magic number at end
+        // Read footer size and magic number at end. The magic number at the start is not
+        // read: on a remote file it would cost a request of its own at the far end of the
+        // file, and the four bytes carry nothing the read uses, since every page is located
+        // through the footer. The trailing magic tells a Parquet file, and an encrypted one,
+        // apart from anything else.
         long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
         ByteBuffer footerInfoBuf;
         try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {

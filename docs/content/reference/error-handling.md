@@ -46,7 +46,7 @@ unwrapping it where the stream is consumed.
 ```
 [data.parquet: row group 0, column 'category', page 123] CRC mismatch: expected 609e7e3 but computed 2b0b086e
 [data.parquet: row group 0, column 'category', dictionary page] CRC mismatch: expected 609e7e3 but computed 2b0b086e
-[data.parquet] Not a Parquet file (invalid magic number at start)
+[data.parquet] Not a Parquet file (invalid magic number at end)
 ```
 
 Every message the reader composes names the file. A message for an invalid file also names

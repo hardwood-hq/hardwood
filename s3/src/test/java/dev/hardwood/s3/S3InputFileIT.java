@@ -230,6 +230,17 @@ class S3InputFileIT {
     }
 
     @Test
+    void openingAFileLargerThanTheTailCacheTakesOneRequest() throws Exception {
+        // column_index_pushdown.parquet is larger than the 64 KB tail cache, so a read of its
+        // first bytes would be a request of its own; the footer comes from the tail read.
+        S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(10_000);
+            assertThat(file.networkRequestCount()).isEqualTo(1);
+        }
+    }
+
+    @Test
     void networkStatsCountOpenAndReadRangeButNotTailCacheHits() throws Exception {
         // column_index_pushdown.parquet is large enough that the column data
         // sits outside the 64 KB tail cache, so readRange must hit the

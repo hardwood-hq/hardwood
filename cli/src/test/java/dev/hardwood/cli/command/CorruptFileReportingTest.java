@@ -37,15 +37,14 @@ class CorruptFileReportingTest {
 
     @BeforeAll
     static void writeCorruptFile() throws IOException {
-        // A valid file with its leading magic overwritten: the smallest corruption every
+        // A valid file with its trailing magic overwritten: the smallest corruption every
         // command meets at the same place, when it opens the file.
         Path source = Paths.get(
                 CorruptFileReportingTest.class.getResource("/plain_uncompressed.parquet").getPath());
         byte[] bytes = Files.readAllBytes(source);
-        bytes[0] = 'X';
-        bytes[1] = 'X';
-        bytes[2] = 'X';
-        bytes[3] = 'X';
+        for (int i = bytes.length - 4; i < bytes.length; i++) {
+            bytes[i] = 'X';
+        }
         Path target = tempDir.resolve("corrupt.parquet");
         Files.write(target, bytes);
         corruptFile = target.toString();
@@ -75,6 +74,6 @@ class CorruptFileReportingTest {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput())
                 .contains("Error reading file:")
-                .contains("Not a Parquet file (invalid magic number at start)");
+                .contains("Not a Parquet file (invalid magic number at end)");
     }
 }
