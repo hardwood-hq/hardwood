@@ -14,6 +14,7 @@ import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PageType;
@@ -45,6 +46,38 @@ public final class DictionaryParser {
             return -1;
         }
         return reader.getBytesRead() + header.compressedPageSize();
+    }
+
+    /// Where a column chunk's first page starts, which is where its dictionary page is when it
+    /// has one: the declared `dictionary_page_offset`, or `data_page_offset` when the file
+    /// declares none.
+    ///
+    /// The fallback is not a guess. `dictionary_page_offset` is optional in parquet.thrift, so
+    /// its absence is ordinary rather than corrupt: parquet-mr 1.12 omits it on every
+    /// PLAIN_DICTIONARY column of alltypes_tiny_pages.parquet in apache/parquet-testing, and
+    /// Trino did too before 427.
+    ///
+    /// @param firstDataPageOffset where the chunk's first data page starts
+    /// @throws ParquetReadException if the declared dictionary page lies after the first data
+    ///         page, where it cannot be read ahead of the pages that need it
+    public static long firstPageOffset(ColumnChunk columnChunk, long firstDataPageOffset) {
+        Long declared = columnChunk.metaData().dictionaryPageOffset();
+        if (declared != null && declared > firstDataPageOffset) {
+            throw new ParquetReadException("Malformed Parquet metadata: the dictionary page at offset "
+                    + declared + " lies after the first data page at offset " + firstDataPageOffset);
+        }
+        return columnChunk.chunkStartOffset();
+    }
+
+    /// Where a column chunk's dictionary page starts, or `0` when the chunk has none: the page
+    /// spans `[start, firstDataPageOffset)`.
+    ///
+    /// @param firstDataPageOffset where the chunk's first data page starts, as its OffsetIndex
+    ///        lists it
+    /// @throws ParquetReadException as [#firstPageOffset]
+    public static long dictionaryPageStart(ColumnChunk columnChunk, long firstDataPageOffset) {
+        long firstPage = firstPageOffset(columnChunk, firstDataPageOffset);
+        return firstPage < firstDataPageOffset ? firstPage : 0;
     }
 
     /// Parses a dictionary page from a byte region covering the dictionary area

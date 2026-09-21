@@ -126,26 +126,20 @@ public final class RowGroupDictionaryFilterSource {
         // "no dictionary": the scan cannot read the chunk either.
         requireSameFile(columnChunk);
 
-        Long dictionaryOffset = metaData.dictionaryPageOffset();
         long dataPageOffset = metaData.dataPageOffset();
 
-        // A first data page *preceding* the dictionary page cannot be read at all, so fail rather
-        // than degrade to "no dictionary".
-        if (dictionaryOffset != null && dataPageOffset < dictionaryOffset) {
-            throw new ParquetReadException(columnPrefix(metaData)
-                    + "Malformed Parquet metadata: the dictionary page at offset " + dictionaryOffset
-                    + " lies after the first data page at offset " + dataPageOffset);
+        // A dictionary page is always the chunk's first page. Without the page index,
+        // `data_page_offset` stands for the first data page; a file that omits
+        // `dictionary_page_offset` points it at the dictionary page instead, which the probe below
+        // tells apart. A first data page preceding the dictionary page cannot be read at all, so
+        // that fails rather than degrading to "no dictionary".
+        long chunkStart;
+        try {
+            chunkStart = DictionaryParser.firstPageOffset(columnChunk, dataPageOffset);
         }
-
-        // A dictionary page is always the chunk's first page, so one offset is both the page's
-        // start and the chunk's, and `chunkStartOffset()` yields it: the declared
-        // `dictionary_page_offset` verbatim when the file gives one, `data_page_offset` otherwise.
-        //
-        // The fallback is not a guess. `dictionary_page_offset` is optional in parquet.thrift, so
-        // its absence is ordinary rather than corrupt: parquet-mr 1.12 omits it on every
-        // PLAIN_DICTIONARY column of alltypes_tiny_pages.parquet in apache/parquet-testing, and
-        // Trino did too before 427.
-        long chunkStart = columnChunk.chunkStartOffset();
+        catch (ParquetReadException e) {
+            throw new ParquetReadException(columnPrefix(metaData) + e.getMessage(), e);
+        }
         long chunkEnd = chunkStart + metaData.totalCompressedSize();
         if (chunkEnd <= chunkStart) {
             throw new ParquetReadException(columnPrefix(metaData)

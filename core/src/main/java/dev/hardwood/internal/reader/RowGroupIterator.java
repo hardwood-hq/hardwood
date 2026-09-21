@@ -804,8 +804,15 @@ public class RowGroupIterator implements Closeable {
 
                 // Coalesce needed pages within this column into page groups,
                 // bridging small gaps but splitting on large ones.
-                List<PageGroup> groups = coalescePages(neededPages, columnChunk,
-                        allPages.get(0).offset(), preloadedDictionary == null);
+                // The dictionary page is fetched with the first page group when the gap
+                // between them is one coalescing would bridge, and on its own otherwise.
+                // A dictionary pruning has read is not fetched at all.
+                long firstDataPageOffset = allPages.get(0).offset();
+                long dictStart = preloadedDictionary == null
+                        ? DictionaryParser.dictionaryPageStart(columnChunk, firstDataPageOffset) : 0;
+                boolean foldDictionary = dictStart > 0 && neededPages.get(0).location().offset()
+                        - firstDataPageOffset <= PAGE_COALESCE_GAP_BYTES;
+                List<PageGroup> groups = coalescePages(neededPages, foldDictionary ? dictStart : 0);
 
                 // Create ChunkHandles for each page group, linked for pre-fetch
                 List<ChunkHandle> handles = new ArrayList<>(groups.size());
@@ -820,10 +827,17 @@ public class RowGroupIterator implements Closeable {
                 for (int i = 0; i < handles.size() - 1; i++) {
                     handles.get(i).setNextChunk(handles.get(i + 1));
                 }
+                ChunkHandle dictionaryHandle = null;
+                if (dictStart > 0 && !foldDictionary) {
+                    dictionaryHandle = new ChunkHandle(inputFile, dictStart,
+                            Math.toIntExact(firstDataPageOffset - dictStart),
+                            "rg=" + workItem.rowGroupIndex() + " col=" + originalIndex + " dictionary");
+                    dictionaryHandle.setNextChunk(handles.get(0));
+                }
 
                 plans[projCol] = IndexedFetchPlan.build(
-                        neededPages, groups, handles,
-                        allPages.get(0).offset(),
+                        neededPages, groups, handles, dictionaryHandle, dictStart,
+                        firstDataPageOffset,
                         columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
             }
@@ -974,29 +988,9 @@ public class RowGroupIterator implements Closeable {
     record NeededPage(PageLocation location, PageRowMask mask, int pageIndex) {}
 
     /// Coalesces needed pages within a column into page groups with gap tolerance.
-    /// Includes the dictionary prefix in the first group if present and
-    /// `includeDictionary` is set; a column whose dictionary pruning has already
-    /// read leaves it out.
-    private static List<PageGroup> coalescePages(List<NeededPage> neededPages,
-                                                  ColumnChunk columnChunk,
-                                                  long firstDataPageOffset,
-                                                  boolean includeDictionary) {
-        // Determine the dictionary prefix. `dictionary_page_offset` is optional in parquet.thrift
-        // and its absence is ordinary — parquet-mr 1.12 omits it (alltypes_tiny_pages.parquet in
-        // apache/parquet-testing), as did Trino before 427. The dictionary page is then the chunk's
-        // first page.
-        Long dictOffset = columnChunk.metaData().dictionaryPageOffset();
-        long dictStart;
-        if (dictOffset != null && dictOffset > 0 && dictOffset < firstDataPageOffset) {
-            dictStart = dictOffset;
-        }
-        else if (firstDataPageOffset > columnChunk.metaData().dataPageOffset()) {
-            dictStart = columnChunk.metaData().dataPageOffset();
-        }
-        else {
-            dictStart = 0;
-        }
-
+    /// The first group is extended back to `dictStart` to take in the dictionary
+    /// page, unless `dictStart` is `0`.
+    private static List<PageGroup> coalescePages(List<NeededPage> neededPages, long dictStart) {
         List<PageGroup> groups = new ArrayList<>();
         PageLocation firstPage = neededPages.get(0).location();
         long groupStart = firstPage.offset();
@@ -1005,7 +999,7 @@ public class RowGroupIterator implements Closeable {
         int groupPageCount = 1;
 
         // Extend first group backwards to include dictionary prefix
-        if (includeDictionary && dictStart > 0 && dictStart < groupStart) {
+        if (dictStart > 0 && dictStart < groupStart) {
             groupStart = dictStart;
         }
 

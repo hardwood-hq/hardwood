@@ -17,7 +17,6 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -34,6 +33,13 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final List<RowGroupIterator.NeededPage> neededPages;
     private final List<RowGroupIterator.PageGroup> pageGroups;
     private List<ChunkHandle> chunkHandles;
+    /// The dictionary page's own handle when it is too far ahead of the first needed page to be
+    /// fetched with it, or `null` when the first page group holds it or the plan needs no fetch
+    /// of it.
+    private final ChunkHandle dictionaryHandle;
+    /// Where the dictionary page starts, or `0` when the plan reads none: the chunk has no
+    /// dictionary page, or pruning has read it.
+    private final long dictionaryStart;
     private final long firstDataPageOffset; // from OffsetIndex (not necessarily first needed page)
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
@@ -46,6 +52,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
                               List<ChunkHandle> chunkHandles,
+                              ChunkHandle dictionaryHandle,
+                              long dictionaryStart,
                               long firstDataPageOffset,
                               ColumnSchema columnSchema, ColumnChunk columnChunk,
                               HardwoodContextImpl context,
@@ -54,6 +62,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         this.neededPages = neededPages;
         this.pageGroups = pageGroups;
         this.chunkHandles = chunkHandles;
+        this.dictionaryHandle = dictionaryHandle;
+        this.dictionaryStart = dictionaryStart;
         this.firstDataPageOffset = firstDataPageOffset;
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
@@ -74,7 +84,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             // FetchReason.bind carries the caller's reason (e.g.
             // "prefetch rg=2") to the worker thread; otherwise the
             // underlying readRange would log as `unattributed`.
-            ChunkHandle first = chunkHandles.get(0);
+            // The dictionary is read first, and its handle prefetches the first page group.
+            ChunkHandle first = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
             CompletableFuture.runAsync(FetchReason.bind(() -> {
                 try {
                     first.ensureFetched();
@@ -110,13 +121,14 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).length();
     }
 
-    /// Coalesce-safe iff the column has a single page group. Multiple
-    /// groups mean a filter dropped pages, leaving intra-column gaps —
+    /// Coalesce-safe iff the column has a single page group holding
+    /// everything it reads. Multiple groups, or a dictionary page fetched on
+    /// its own, mean a filter dropped pages, leaving intra-column gaps —
     /// bridging to neighbour columns would pull dropped bytes into the
     /// shared region and double-fetch the later page groups.
     @Override
     public boolean isCoalesceSafe() {
-        return chunkHandles.size() == 1;
+        return chunkHandles.size() == 1 && dictionaryHandle == null;
     }
 
     /// Replaces the *first* chunk handle with a region-backed view.
@@ -151,6 +163,10 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     ///        (filter + maxRows applied)
     /// @param pageGroups coalesced page groups within this column
     /// @param chunkHandles one ChunkHandle per page group, linked for pre-fetch
+    /// @param dictionaryHandle the dictionary page's own handle, linked to the first page
+    ///        group's, or `null` when the first page group holds the dictionary page
+    /// @param dictionaryStart where the dictionary page starts, or `0` when the plan reads none;
+    ///        see [DictionaryParser#dictionaryPageStart]
     /// @param firstDataPageOffset absolute offset of the first data page in the
     ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
@@ -158,12 +174,14 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
                                    List<RowGroupIterator.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
+                                   ChunkHandle dictionaryHandle,
+                                   long dictionaryStart,
                                    long firstDataPageOffset,
                                    ColumnSchema columnSchema, ColumnChunk columnChunk,
                                    HardwoodContextImpl context,
                                    int rowGroupIndex, String fileName,
                                    Dictionary preloadedDictionary) {
-        return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles,
+        return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles, dictionaryHandle, dictionaryStart,
                 firstDataPageOffset, columnSchema, columnChunk, context,
                 rowGroupIndex, fileName, preloadedDictionary);
     }
@@ -238,31 +256,17 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             if (preloadedDictionary != null) {
                 return preloadedDictionary;
             }
-            ColumnMetaData metaData = columnChunk.metaData();
-
-            Long dictOffset = metaData.dictionaryPageOffset();
-            long dictAreaStart;
-            if (dictOffset != null && dictOffset > 0) {
-                dictAreaStart = dictOffset;
-            }
-            else if (firstDataPageOffset > metaData.dataPageOffset()) {
-                dictAreaStart = metaData.dataPageOffset();
-            }
-            else {
+            if (dictionaryStart == 0) {
                 return null;
             }
-
-            if (dictAreaStart >= firstDataPageOffset) {
-                return null;
-            }
-
-            int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictAreaStart);
-            ByteBuffer dictRegion = chunkHandles.get(0).slice(dictAreaStart, dictRegionSize);
+            int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictionaryStart);
+            ChunkHandle holder = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
+            ByteBuffer dictRegion = holder.slice(dictionaryStart, dictRegionSize);
 
             // Not retitled on the way out. The parser says what is wrong with the
             // dictionary — a checksum that disagrees, a header that will not parse —
             // and naming the step that noticed would replace that with less.
-            return DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
+            return DictionaryParser.parse(dictRegion, columnSchema, columnChunk.metaData(), context);
         }
 
         private void emitEvent() {

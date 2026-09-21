@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -20,11 +22,16 @@ import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -35,6 +42,61 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class DictionaryParserTest {
 
     private static final Path FIXTURE = Paths.get("src/test/resources/column_index_pushdown_dict.parquet");
+
+    /// A footer declaring the dictionary page one byte past the first data page (61 and 60), with
+    /// `data_page_offset` at the chunk start (4).
+    private static final Path MISPLACED_DICTIONARY =
+            Paths.get("src/test/resources/dict_misplaced_page_offset.parquet");
+
+    @Test
+    void theDictionaryPageIsTheDeclaredOneAheadOfTheFirstDataPage() {
+        assertThat(DictionaryParser.dictionaryPageStart(chunk(4, 4L), 60)).isEqualTo(4);
+    }
+
+    @Test
+    void anUndeclaredDictionaryPageIsTheChunksFirstPage() {
+        // parquet-mr 1.12 omits dictionary_page_offset and points data_page_offset at the
+        // dictionary page.
+        assertThat(DictionaryParser.dictionaryPageStart(chunk(4, null), 60)).isEqualTo(4);
+    }
+
+    @Test
+    void aChunkStartingWithItsFirstDataPageHasNoDictionaryPage() {
+        assertThat(DictionaryParser.dictionaryPageStart(chunk(60, null), 60)).isZero();
+    }
+
+    @Test
+    void aDictionaryPageDeclaredAfterTheFirstDataPageIsRejected() {
+        assertThatThrownBy(() -> DictionaryParser.dictionaryPageStart(chunk(4, 61L), 60))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: the dictionary page at offset 61"
+                        + " lies after the first data page at offset 60");
+    }
+
+    @Test
+    void aReadOfAChunkWithItsDictionaryPageDeclaredAfterTheFirstDataPageFails() {
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISPLACED_DICTIONARY));
+                    RowReader rows = reader.rowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
+            }
+        })
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[dict_misplaced_page_offset.parquet] Failed to compute fetch plan"
+                        + " for column 0 in row group 0: Malformed Parquet metadata: the"
+                        + " dictionary page at offset 61 lies after the first data page at"
+                        + " offset 60");
+    }
+
+    /// A column chunk starting at `dataPageOffset` unless it declares a dictionary page.
+    private static ColumnChunk chunk(long dataPageOffset, Long dictionaryPageOffset) {
+        ColumnMetaData metaData = new ColumnMetaData(PhysicalType.BYTE_ARRAY, List.of(Encoding.PLAIN),
+                FieldPath.of("col"), CompressionCodec.UNCOMPRESSED, 10, 100, 100, Map.of(),
+                dataPageOffset, dictionaryPageOffset, null, null, null, null, List.of(), null);
+        return new ColumnChunk(metaData, null, null, null, null, null);
+    }
 
     /// A caller that scans page headers hands its parsed header and the page body to
     /// [DictionaryParser#parsePage]. The body it passes is the body alone — so a parser that

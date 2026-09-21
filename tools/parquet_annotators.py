@@ -428,6 +428,35 @@ def drop_dictionary_page_offset(path: str, column_name: str) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def misplace_dictionary_page_offset(path: str, column_name: str) -> None:
+    """Rewrite `path` so the named column chunk declares its dictionary page one byte past its
+    first data page, with `data_page_offset` naming the chunk start.
+
+    A dictionary page lies ahead of the data pages that need it, so this footer is malformed,
+    and a reader has to reject it rather than guess where the dictionary is. The pages stay
+    byte-for-byte where PyArrow put them, and the page index still lists the real data pages.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    patched = 0
+    for row_group in file_metadata.row_groups:
+        for column in row_group.columns:
+            meta_data = column.meta_data
+            if meta_data is None or meta_data.path_in_schema != [column_name]:
+                continue
+            if meta_data.dictionary_page_offset is None:
+                raise ValueError(f"{path} column '{column_name}' has no dictionary page to misplace")
+            first_data_page = meta_data.data_page_offset
+            meta_data.data_page_offset = meta_data.dictionary_page_offset
+            meta_data.dictionary_page_offset = first_data_page + 1
+            patched += 1
+
+    if patched == 0:
+        raise ValueError(f"{path} has no column chunk named '{column_name}'")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def drop_encoding_stats(path: str, column_name: str) -> None:
     """Rewrite `path` so the named column chunk omits `encoding_stats`.
 

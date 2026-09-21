@@ -46,6 +46,7 @@ from parquet_annotators import (
     set_row_group_min_max,
     remove_map_value_field,
     drop_dictionary_page_offset,
+    misplace_dictionary_page_offset,
 )
 
 
@@ -5660,6 +5661,20 @@ pq.write_table(
     write_page_index=True,
 )
 drop_dictionary_page_offset('core/src/test/resources/dict_missing_page_offset.parquet', 'label')
+
+# A page-indexed, dictionary-encoded column whose footer declares the dictionary page one byte past
+# the first data page, with data_page_offset at the chunk start: a reader has to reject it rather
+# than guess where the dictionary is.
+dict_misplaced_path = 'core/src/test/resources/dict_misplaced_page_offset.parquet'
+pq.write_table(
+    pa.table({'label': pa.array([f'v{i % 7}' for i in range(1000)], type=pa.string())}),
+    dict_misplaced_path,
+    use_dictionary=['label'],
+    compression=None,
+    write_page_index=True,
+)
+misplace_dictionary_page_offset(dict_misplaced_path, 'label')
+print(f"\nGenerated {dict_misplaced_path}: dictionary_page_offset past the first data page")
 print("\nGenerated dict_missing_page_offset.parquet:")
 print("  - 1 row group, 2000 rows, fully dictionary-encoded 'id' and 'label'")
 print("  - 'label' omits the optional dictionary_page_offset; 'id' is conventional")
@@ -6620,6 +6635,29 @@ annotate_element_at_path_as_int(int_past_path, ['i8'], bit_width=8, is_signed=Tr
 annotate_element_at_path_as_int(int_past_path, ['i16'], bit_width=16, is_signed=True)
 annotate_element_at_path_as_int(int_past_path, ['u8'], bit_width=8, is_signed=False)
 print(f"\nGenerated {int_past_path}: INT(8) / INT(16) columns storing values past their annotation")
+
+# A dictionary-encoded column whose values matching `== 'zzzz'` sit in the last pages of a chunk
+# with more than 1 MiB of data pages between them and the dictionary page. A page-pruned read of
+# it must fetch the dictionary page and the tail pages, not the span in between (#1037).
+dict_tail_path = 'core/src/test/resources/dictionary_tail_match.parquet'
+dict_tail_rows = 1_300_000
+dict_tail_matches = 1_000
+pq.write_table(
+    pa.table({
+        'category': pa.array(
+            [f'v{(i * 2654435761) % 251:03d}' for i in range(dict_tail_rows - dict_tail_matches)]
+            + ['zzzz'] * dict_tail_matches,
+            type=pa.string()),
+    }),
+    dict_tail_path,
+    row_group_size=dict_tail_rows,
+    use_dictionary=['category'],
+    compression=None,
+    data_page_version='1.0',
+    data_page_size=64 * 1024,
+    write_page_index=True,
+)
+print(f"\nGenerated {dict_tail_path}: {dict_tail_rows} rows, dictionary-encoded, {dict_tail_matches} tail rows 'zzzz'")
 
 print("\nGenerated predicate/*.parquet:")
 print(f"  - predicate_{{single,multi,dict,bloom}}.parquet: {PRED_ROWS} rows, one column per predicate literal type")
