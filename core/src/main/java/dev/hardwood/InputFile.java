@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import dev.hardwood.internal.reader.ByteBufferInputFile;
 import dev.hardwood.internal.reader.MappedInputFile;
@@ -64,6 +65,19 @@ public interface InputFile extends Closeable {
     ///
     /// @return a human-readable name or path
     String name();
+
+    /// Returns a stable content identity for this file, if the implementation
+    /// can provide one.
+    ///
+    /// hardwood uses this to detect staleness when a [dev.hardwood.reader.MetadataSource]
+    /// returns cached metadata: if the identity returned here differs from the one
+    /// recorded in the [dev.hardwood.reader.ParsedFooter], a
+    /// [dev.hardwood.reader.StaleMetadataException] is thrown before any data is read.
+    ///
+    /// The default implementation returns empty.
+    default Optional<String> identity() throws IOException {
+        return Optional.empty();
+    }
 
     /// Creates an [InputFile] backed by an in-memory [ByteBuffer].
     ///

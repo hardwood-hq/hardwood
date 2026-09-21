@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -228,15 +229,41 @@ public class ParquetFileReader implements Closeable {
         InputFile first = files.get(0);
         first.open();
         try {
+            // Obtain the parsed footer. If the context carries a MetadataSource,
+            // ask it; otherwise read from the file. When a source supplies a footer
+            // that carries a sourceIdentity, verify it against the file's current
+            // identity so that a stale cache entry is caught before any data is read.
             ReadFooter firstFileFooter;
-            try {
-                firstFileFooter = ParquetMetadataReader.readFooter(first);
+            if (context.metadataSource() != null) {
+                ParsedFooter parsedFooter = context.metadataSource().footerOf(first);
+                if (parsedFooter == null) {
+                    throw new IllegalStateException(
+                            "MetadataSource returned null for " + first.name());
+                }
+                Optional<String> cachedId = parsedFooter.sourceIdentity();
+                if (cachedId.isPresent()) {
+                    Optional<String> currentId = first.identity();
+                    if (currentId.isPresent() && !cachedId.equals(currentId)) {
+                        throw new StaleMetadataException(cachedId.get(),
+                                "Cached footer identity '" + cachedId.get()
+                                        + "' does not match current file identity '"
+                                        + currentId.get() + "' for " + first.name());
+                    }
+                }
+                // Structural validation: verify the trailer matches the cached footer before
+                // trusting its chunk offsets. This catches file replacement, truncation, and
+                // encrypted-footer files even when no identity is available. It is a cheap
+                // 8-byte read on a file whose data pages will be read anyway.
+                ParquetMetadataReader.validateTrailer(first, parsedFooter);
+                firstFileFooter = parsedFooter.readFooter();
             }
-            catch (RuntimeException e) {
-                // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
-                // corrupt enum values) that escape the IOException-only contract of
-                // readFooter — enrich them with file context so they're attributable.
-                throw ExceptionContext.addFileContext(first.name(), e);
+            else {
+                try {
+                    firstFileFooter = ParquetMetadataReader.readFooter(first);
+                }
+                catch (RuntimeException e) {
+                    throw ExceptionContext.addFileContext(first.name(), e);
+                }
             }
             FileMetaData firstFileMetaData = firstFileFooter.metaData();
             FileSchema schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());

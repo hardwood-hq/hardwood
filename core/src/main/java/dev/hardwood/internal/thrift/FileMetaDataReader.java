@@ -50,6 +50,15 @@ public class FileMetaDataReader {
         return readFooter(reader).metaData();
     }
 
+    /// Wrap a [FileMetaData] that was obtained outside of a Thrift parse (e.g. from
+    /// a caller-supplied cache) in a [ReadFooter] with an empty
+    /// `logicalTypeUnread` set. Use this only when the original parse result is no
+    /// longer available; prefer [#readFooter(ThriftCompactReader)] for freshly
+    /// parsed footers.
+    public static ReadFooter wrap(FileMetaData metaData) {
+        return new ReadFooter(metaData, new BitSet());
+    }
+
     public static ReadFooter readFooter(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.FILE_META_DATA);
         try {

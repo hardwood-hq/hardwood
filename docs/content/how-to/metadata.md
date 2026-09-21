@@ -91,6 +91,69 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
 The map `keyValueMetadata()` returns can be handed to `ParquetFileWriter.keyValueMetadata(Map)` to stamp the same entries on a file being written; see [File Metadata](../reference/writer.md#file-metadata).
 
+## Reuse a parsed footer across readers
+
+Opening a reader reads and parses the file's footer. For a file that does not change, install a
+[`MetadataSource`][dev.hardwood.reader.MetadataSource] on a `HardwoodContext` so that every reader opened
+against it receives the cached footer rather than re-reading and re-parsing it from disk:
+
+```java
+// A minimal cache backed by a ConcurrentHashMap. Real caches should also handle
+// concurrent first-population (computeIfAbsent does that here) and expiry.
+Map<String, ParsedFooter> cache = new ConcurrentHashMap<>();
+
+// Wrap checked IOException in an unchecked exception for the lambda body.
+MetadataSource source = file -> {
+    try {
+        return cache.computeIfAbsent(
+                file.name(), k -> {
+                    try {
+                        return ParsedFooter.readFrom(file);
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+    } catch (UncheckedIOException e) {
+        throw e.getCause();
+    }
+};
+
+try (HardwoodContext ctx = HardwoodContext.builder()
+        .metadataSource(source)
+        .build()) {
+    // Footer is read once; every subsequent open against ctx uses the cache.
+    try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), ctx)) {
+        // reads as usual
+    }
+}
+```
+
+`ParsedFooter.readFrom(InputFile)` reads and parses the footer once; the resulting `ParsedFooter` is a
+value object that can be shared safely across any number of concurrent readers. The source is called on
+every `open` and `openAll` against the context — hardwood does not cache the result itself.
+
+!!! warning "The metadata must describe exactly the bytes being read"
+
+    Chunk offsets and page locations come from the footer, so a cached footer from a different version
+    of the file reads unrelated bytes rather than failing. If the cache key is a path alone, a replaced
+    object-store file will silently corrupt reads. Supply a `sourceIdentity` in the `ParsedFooter` (e.g.
+    an ETag, generation number, or `length:mtime` pair) so hardwood can detect the mismatch:
+
+    ```java
+    return cache.computeIfAbsent(file.name(), k -> {
+        try { return ParsedFooter.readFrom(file); }
+        catch (IOException e) { throw new UncheckedIOException(e); }
+    });
+    ```
+
+    `ParsedFooter.readFrom` populates `sourceIdentity` from `InputFile.identity()` automatically.
+    `MappedInputFile` returns `path:size:mtime` by default. When a staleness is detected, hardwood
+    throws `StaleMetadataException` before reading any data; call `sourceIdentity()` on the exception
+    to find the cache entry to invalidate, then retry.
+
+    On a multi-file reader, `getFileMetaData()` returns only the *first* file's footer. Reusing it for any
+    other file of that reader is a misread, not an error.
+
 ## Metadata for multiple files
 
 For a multi-file reader, use `getFileCount()` and `getFileMetaData(int)` to inspect each

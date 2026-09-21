@@ -17,6 +17,7 @@ import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
+import dev.hardwood.reader.MetadataSource;
 
 /// Internal implementation of [HardwoodContext].
 ///
@@ -31,11 +32,14 @@ public class HardwoodContextImpl implements HardwoodContext {
     private final ExecutorService executor;
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
+    private final MetadataSource metadataSource;
 
-    private HardwoodContextImpl(ExecutorService executor, LibdeflatePool libdeflatePool) {
+    private HardwoodContextImpl(ExecutorService executor, LibdeflatePool libdeflatePool,
+                                 MetadataSource metadataSource) {
         this.executor = executor;
         this.libdeflatePool = libdeflatePool;
         this.decompressorFactory = new DecompressorFactory(libdeflatePool);
+        this.metadataSource = metadataSource;
     }
 
     /// Create a new context with a thread pool sized to available processors.
@@ -53,7 +57,19 @@ public class HardwoodContextImpl implements HardwoodContext {
         };
         ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, libdeflatePool);
+        return new HardwoodContextImpl(executor, libdeflatePool, null);
+    }
+
+    /// Start building a context.
+    public static HardwoodContext.Builder builder() {
+        return new BuilderImpl();
+    }
+
+    /// Returns the [MetadataSource] installed on this context, or {@code null} if
+    /// none was installed. Used by [dev.hardwood.reader.ParquetFileReader] to obtain
+    /// pre-parsed footers instead of reading them from disk.
+    public MetadataSource metadataSource() {
+        return metadataSource;
     }
 
     private static LibdeflatePool createLibdeflatePoolIfAvailable() {
@@ -95,6 +111,39 @@ public class HardwoodContextImpl implements HardwoodContext {
         }
         if (libdeflatePool != null) {
             libdeflatePool.clear();
+        }
+    }
+
+    /// Builder implementation.
+    private static final class BuilderImpl implements HardwoodContext.Builder {
+
+        private int threads = Runtime.getRuntime().availableProcessors();
+        private MetadataSource metadataSource;
+
+        @Override
+        public HardwoodContext.Builder threads(int threads) {
+            if (threads < 1) throw new IllegalArgumentException("threads must be >= 1");
+            this.threads = threads;
+            return this;
+        }
+
+        @Override
+        public HardwoodContext.Builder metadataSource(MetadataSource source) {
+            this.metadataSource = source;
+            return this;
+        }
+
+        @Override
+        public HardwoodContext build() {
+            AtomicInteger threadCounter = new AtomicInteger(0);
+            ThreadFactory threadFactory = r -> {
+                Thread t = new Thread(r, "hardwood-" + threadCounter.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            };
+            ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
+            LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
+            return new HardwoodContextImpl(executor, libdeflatePool, metadataSource);
         }
     }
 }

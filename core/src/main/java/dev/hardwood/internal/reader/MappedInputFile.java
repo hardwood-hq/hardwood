@@ -11,8 +11,11 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Optional;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -127,6 +130,14 @@ public class MappedInputFile implements InputFile {
     @Override
     public String name() {
         return name;
+    }
+
+    @Override
+    public Optional<String> identity() throws IOException {
+        BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+        return Optional.of(path.toAbsolutePath()
+                + ":" + attrs.size()
+                + ":" + attrs.lastModifiedTime().toMillis());
     }
 
     @Override
