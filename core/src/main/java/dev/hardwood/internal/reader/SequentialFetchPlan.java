@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -123,6 +124,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// [#matchingRows] to compute the final page's `pageLastRow` when masks
     /// are active. Unused when [#matchingRows] is [RowRanges#ALL].
     private final long rowGroupRowCount;
+    /// The dictionary pruning has already read, or `null` when the plan parses it.
+    private final Dictionary preloadedDictionary;
     /// Optional pre-created first [ChunkHandle], typically a region-backed
     /// view from cross-column coalescing (#374). When set, the iterator's
     /// first `advanceChunk(0)` call uses this handle instead of creating
@@ -141,7 +144,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves,
-                                 RowRanges matchingRows, long rowGroupRowCount) {
+                                 RowRanges matchingRows, long rowGroupRowCount,
+                                 Dictionary preloadedDictionary) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -163,6 +167,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.dropLeaves = dropLeaves;
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
+        this.preloadedDictionary = preloadedDictionary;
     }
 
     @Override
@@ -256,15 +261,37 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount) {
+        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
+                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0);
+    }
+
+    /// @param preloadedDictionary the column's dictionary if pruning has read it, which the plan
+    ///        decodes with instead of fetching and parsing the dictionary page again; `null`
+    ///        otherwise
+    /// @param preloadedDictionaryEnd where the preloaded dictionary's page ends, which is where
+    ///        the plan starts reading; ignored without a preloaded dictionary
+    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
+                                      ColumnChunk columnChunk, HardwoodContextImpl context,
+                                      int rowGroupIndex, String fileName, long maxRows,
+                                      List<ResolvedPredicate> dropLeaves,
+                                      RowRanges matchingRows, long rowGroupRowCount,
+                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
+        if (preloadedDictionary != null) {
+            // The data pages start where the dictionary page ends.
+            Objects.checkFromToIndex(columnChunkOffset, preloadedDictionaryEnd, columnChunkOffset + columnChunkLength);
+            columnChunkLength -= Math.toIntExact(preloadedDictionaryEnd - columnChunkOffset);
+            columnChunkOffset = preloadedDictionaryEnd;
+        }
         int chunkSize = Math.min(columnChunkLength,
                 computeChunkSize(columnChunkLength, columnChunk.metaData(), maxRows));
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves,
-                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount);
+                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
+                preloadedDictionary);
     }
 
     /// Computes the per-fetch chunk size.
@@ -474,6 +501,11 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// Scans past the dictionary page (if present) on first access.
         private void initialize() throws IOException {
             initialized = true;
+            if (preloadedDictionary != null) {
+                // The plan starts at the first data page: pruning has read the dictionary page.
+                dictionary = preloadedDictionary;
+                return;
+            }
             if (position >= columnChunkLength) {
                 return;
             }

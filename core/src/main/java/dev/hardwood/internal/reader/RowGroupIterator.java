@@ -40,6 +40,7 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageFilterEvent;
+import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
@@ -91,8 +92,9 @@ public class RowGroupIterator implements Closeable {
     /// the `FilterCoordinator` that tears that group down on the filtered path, and
     /// every reader of a no-rows group, which has neither. A read handed a single
     /// reader out of a group it never sees reaches the iterator only through the
-    /// last two. Closing twice releases nothing twice.
-    private boolean closed;
+    /// last two. Closing twice releases nothing twice. Volatile because the
+    /// prefetch tasks, which may still run after [#close()], read it.
+    private volatile boolean closed;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -155,6 +157,10 @@ public class RowGroupIterator implements Closeable {
     /// `maxRows` budget into a per-row-group remainder when computing fetch
     /// plans. (Filter predicates invalidate this correlation, so callers must
     /// ignore it when a filter is active.)
+    ///
+    /// `leafDecisions` holds what statistics and bloom filters decided for each
+    /// leaf of the filter, for the row group's dictionaries to sharpen once the
+    /// read reaches it; `null` when no metadata filtering applies.
     public record WorkItem(
             InputFile inputFile,
             RowGroup rowGroup,
@@ -164,7 +170,8 @@ public class RowGroupIterator implements Closeable {
             int rowGroupIndex,
             int workItemIndex,
             long rowsConsumedBefore,
-            boolean filterAlwaysMatches
+            boolean filterAlwaysMatches,
+            RowGroupFilterEvaluator.LeafDecisions leafDecisions
     ) {}
 
     /// Cached shared metadata for one row group, reused across columns.
@@ -175,10 +182,17 @@ public class RowGroupIterator implements Closeable {
     /// `tailSkip` is known (the tail-read fast path needs to consult
     /// `maskCapability` to decide whether `tailSkip` is viable in the
     /// first place).
+    ///
+    /// `dictionaries` holds the dictionaries pruning read for this row group, for
+    /// the fetch plans to decode with rather than read them again; `null` when
+    /// pruning read none. A row group they prove holds no match is
+    /// `droppedByDictionary`, and nothing else is read for it.
     public record SharedRowGroupMetadata(
             RowGroupIndexBuffers indexBuffers,
             RowRanges matchingRows,
-            MaskCapability maskCapability
+            MaskCapability maskCapability,
+            RowGroupDictionaryFilterSource dictionaries,
+            boolean droppedByDictionary
     ) {}
 
     private List<RowGroup> firstFileRowGroups;
@@ -417,6 +431,23 @@ public class RowGroupIterator implements Closeable {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 requireSameFile(workItem);
+                RowGroupDictionaryFilterSource dictionaries = null;
+                if (workItem.leafDecisions() != null) {
+                    dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
+                            workItem.rowGroup(), workItem.fileSchema(), context);
+                    FilterDecision decision;
+                    try (FetchReason.Scope pruning = FetchReason.set(
+                            "rg=" + workItem.rowGroupIndex() + " pruning")) {
+                        decision = RowGroupFilterEvaluator.refineWithDictionaries(
+                                workItem.columnOrdinals().filter(), workItem.rowGroup(),
+                                workItem.leafDecisions(), dictionaries);
+                    }
+                    if (decision == FilterDecision.CANNOT_MATCH) {
+                        emitDictionaryDropEvent(workItem);
+                        return new SharedRowGroupMetadata(null, RowRanges.ALL, MaskCapability.YES,
+                                null, true);
+                    }
+                }
                 boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
                         workItem.inputFile(), workItem.rowGroup(),
@@ -435,7 +466,8 @@ public class RowGroupIterator implements Closeable {
                         workItem.columnOrdinals(), workItem.inputFile())
                         ? MaskCapability.YES : MaskCapability.NO;
 
-                return new SharedRowGroupMetadata(indexBuffers, matchingRows, maskCapability);
+                return new SharedRowGroupMetadata(indexBuffers, matchingRows, maskCapability,
+                        dictionaries, false);
             }
             catch (IOException e) {
                 throw new UncheckedIOException(
@@ -443,6 +475,14 @@ public class RowGroupIterator implements Closeable {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// Reports a row group its dictionaries dropped once the read reached it.
+    private static void emitDictionaryDropEvent(WorkItem workItem) {
+        RowGroupDictionaryFilterEvent event = new RowGroupDictionaryFilterEvent();
+        event.file = workItem.inputFile().name();
+        event.rowGroupIndex = workItem.rowGroupIndex();
+        event.commit();
     }
 
     /// Fails unless every chunk of the work item's row group stores its data in the file being
@@ -541,7 +581,7 @@ public class RowGroupIterator implements Closeable {
         }
         // The mapping function stays pure metadata work. Prefetching the next row group
         // plans the next file when this one is exhausted, which reads a footer and, under
-        // a filter, probes bloom filters and dictionaries; a ConcurrentHashMap holds a bin
+        // a filter, probes bloom filters; a ConcurrentHashMap holds a bin
         // lock for the whole of a mapping function, so that I/O must not run inside one.
         boolean[] planned = new boolean[1];
         try {
@@ -589,6 +629,13 @@ public class RowGroupIterator implements Closeable {
         }
     }
 
+    /// Whether every projected column has released `workItem`. [#releaseWorkItem] counts down
+    /// before it evicts the work item's caches, as [#close] sets `closed` before it clears them.
+    private boolean isReleased(WorkItem workItem) {
+        AtomicInteger counter = workItemRefCounts.get(workItem.workItemIndex());
+        return counter != null && counter.get() == 0;
+    }
+
     /// Triggers async pre-computation and pre-fetch for the next row group.
     /// The plan computation is pure metadata work (no I/O). The pre-fetch
     /// kicks off the first chunk's `readRange()` asynchronously.
@@ -602,8 +649,8 @@ public class RowGroupIterator implements Closeable {
     /// below, the throw would be lost and the file skipped, with its rows silently
     /// missing from the read. The caller is the retriever, and what it blocks on is the
     /// next file's footer, whose read [#triggerPrefetch] has already started — except
-    /// under a filter, where planning also probes that file's bloom filters and
-    /// dictionaries, which nothing has started.
+    /// under a filter, where planning also probes that file's bloom filters, which
+    /// nothing has started.
     ///
     /// Called by [#getColumnPlan] after its `computeIfAbsent` returns, never from inside
     /// it: this blocks, and a mapping function holds a bin lock for its whole duration.
@@ -618,6 +665,13 @@ public class RowGroupIterator implements Closeable {
                 FetchPlan[] nextPlans = fetchPlanCache.computeIfAbsent(
                         nextWorkItem.workItemIndex(),
                         idx -> {
+                            // Every column may already have read past the row group and
+                            // released it, or the iterator have been closed, evicting its plans.
+                            // Planning it again would repeat its dictionary and index reads, and
+                            // report a row group its dictionaries drop a second time.
+                            if (closed || isReleased(nextWorkItem)) {
+                                return null;
+                            }
                             try {
                                 return computeFetchPlans(nextWorkItem);
                             }
@@ -648,10 +702,15 @@ public class RowGroupIterator implements Closeable {
 
     private FetchPlan[] computeFetchPlans(WorkItem workItem) throws IOException {
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
+        int projectedCount = projectedSchema.getProjectedColumnCount();
+        if (shared.droppedByDictionary()) {
+            FetchPlan[] empty = new FetchPlan[projectedCount];
+            Arrays.fill(empty, FetchPlan.EMPTY);
+            return empty;
+        }
         RowGroup rowGroup = workItem.rowGroup();
         RowRanges matchingRows = shared.matchingRows();
         InputFile inputFile = workItem.inputFile();
-        int projectedCount = projectedSchema.getProjectedColumnCount();
 
         // Apply the tail-read fast path's synthesized matching range here
         // (rather than in `getSharedMetadata`) so the cached metadata stays
@@ -698,6 +757,8 @@ public class RowGroupIterator implements Closeable {
             ColumnChunk columnChunk = rowGroup.columns().get(fileOrdinal);
             ColumnSchema columnSchema = workItem.fileSchema().getColumn(fileOrdinal);
             ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(fileOrdinal);
+            Dictionary preloadedDictionary = shared.dictionaries() == null
+                    ? null : shared.dictionaries().loaded(fileOrdinal);
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
@@ -711,7 +772,8 @@ public class RowGroupIterator implements Closeable {
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows());
+                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows(), preloadedDictionary,
+                        shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal));
                 continue;
             }
 
@@ -743,7 +805,7 @@ public class RowGroupIterator implements Closeable {
                 // Coalesce needed pages within this column into page groups,
                 // bridging small gaps but splitting on large ones.
                 List<PageGroup> groups = coalescePages(neededPages, columnChunk,
-                        allPages.get(0).offset());
+                        allPages.get(0).offset(), preloadedDictionary == null);
 
                 // Create ChunkHandles for each page group, linked for pre-fetch
                 List<ChunkHandle> handles = new ArrayList<>(groups.size());
@@ -763,7 +825,7 @@ public class RowGroupIterator implements Closeable {
                         neededPages, groups, handles,
                         allPages.get(0).offset(),
                         columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name());
+                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
             }
             catch (ParquetReadException e) {
                 throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
@@ -912,10 +974,13 @@ public class RowGroupIterator implements Closeable {
     record NeededPage(PageLocation location, PageRowMask mask, int pageIndex) {}
 
     /// Coalesces needed pages within a column into page groups with gap tolerance.
-    /// Includes the dictionary prefix in the first group if present.
+    /// Includes the dictionary prefix in the first group if present and
+    /// `includeDictionary` is set; a column whose dictionary pruning has already
+    /// read leaves it out.
     private static List<PageGroup> coalescePages(List<NeededPage> neededPages,
                                                   ColumnChunk columnChunk,
-                                                  long firstDataPageOffset) {
+                                                  long firstDataPageOffset,
+                                                  boolean includeDictionary) {
         // Determine the dictionary prefix. `dictionary_page_offset` is optional in parquet.thrift
         // and its absence is ordinary — parquet-mr 1.12 omits it (alltypes_tiny_pages.parquet in
         // apache/parquet-testing), as did Trino before 427. The dictionary page is then the chunk's
@@ -940,7 +1005,7 @@ public class RowGroupIterator implements Closeable {
         int groupPageCount = 1;
 
         // Extend first group backwards to include dictionary prefix
-        if (dictStart > 0 && dictStart < groupStart) {
+        if (includeDictionary && dictStart > 0 && dictStart < groupStart) {
             groupStart = dictStart;
         }
 
@@ -1164,9 +1229,9 @@ public class RowGroupIterator implements Closeable {
     ///
     /// Returns `false` when there is nothing left to plan — every file done, or
     /// the row budget spent. Planning a file opens its footer, checks its schema
-    /// against the reference, and with a filter probes its bloom filters and
-    /// dictionaries, so a file is planned when the read reaches it rather than
-    /// when the reader was built. See #1107.
+    /// against the reference, and with a filter probes its bloom filters, so a file
+    /// is planned when the read reaches it rather than when the reader was built.
+    /// See #1107. Dictionaries are read later, when the read reaches each row group.
     private synchronized boolean planNextFile() throws IOException {
         if (nextFileToPlan >= inputFiles.size() || planRowBudget <= 0) {
             return false;
@@ -1197,7 +1262,7 @@ public class RowGroupIterator implements Closeable {
             }
         }
         List<FilteredRowGroup> rowGroups = filterRowGroups(
-                sourceRowGroups, prepared.inputFile(), prepared.schema(), columnOrdinals);
+                sourceRowGroups, prepared.inputFile(), columnOrdinals);
 
         for (int kept = 0; kept < rowGroups.size() && planRowBudget > 0; kept++) {
             FilteredRowGroup decided = rowGroups.get(kept);
@@ -1232,7 +1297,8 @@ public class RowGroupIterator implements Closeable {
                     rgIndex,
                     workItems.size(),
                     plannedRows,
-                    decided.alwaysMatches()));
+                    decided.alwaysMatches(),
+                    decided.leafDecisions()));
 
             // maxRows limiting: deduct row count from budget.
             // With a filter active, actual match count is unpredictable,
@@ -1372,17 +1438,17 @@ public class RowGroupIterator implements Closeable {
     /// position in this list, which pruning makes a different number. Every consumer means
     /// the file's: the fetch log, the JFR events, the row group a failure names.
     private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
-            int fileRowGroupIndex) {}
+            int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions) {}
 
     private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
-                                                   FileSchema fileSchema, FileColumnOrdinals columnOrdinals) throws IOException {
+                                                   FileColumnOrdinals columnOrdinals) throws IOException {
         // The metadata-filtering opt-out (#797) disables every metadata-driven prune,
         // dictionary membership included — with it off, no row group is dropped without
         // reading rows.
         if (filterPredicate == null || !metadataFilteringEnabled) {
             List<FilteredRowGroup> unpruned = new ArrayList<>(rowGroups.size());
             for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
-                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex));
+                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, null));
             }
             return unpruned;
         }
@@ -1391,13 +1457,15 @@ public class RowGroupIterator implements Closeable {
         for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
             RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision;
-            // The bloom-filter and dictionary reads pruning issues are named as such, so a fetch
-            // log tells them apart from the reads that decode the row group.
+            RowGroupFilterEvaluator.LeafDecisions leafDecisions = new RowGroupFilterEvaluator.LeafDecisions();
+            // The bloom-filter reads pruning issues are named as such, so a fetch log tells them
+            // apart from the reads that decode the row group. Dictionaries are read once the read
+            // reaches the row group, in `computeSharedMetadata`, and kept for decoding it.
             try (FetchReason.Scope ignored = FetchReason.set("rg=" + rgIndex + " pruning")) {
-                decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
+                decision = RowGroupFilterEvaluator.planRowGroup(columnOrdinals.filter(), rg,
                         new RowGroupBloomFilterSource(inputFile, rg),
-                        new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
-                        new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability());
+                        new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability(),
+                        leafDecisions);
             }
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
@@ -1406,7 +1474,7 @@ public class RowGroupIterator implements Closeable {
             if (alwaysMatches) {
                 fullyMatching++;
             }
-            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex));
+            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex, leafDecisions));
         }
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();

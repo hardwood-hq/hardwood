@@ -16,12 +16,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordingStream;
 
 /// Shows that the matrix's agreement is not an accident of layouts the reader never consults.
@@ -29,8 +29,8 @@ import jdk.jfr.consumer.RecordingStream;
 /// - **Bloom filters:** the same equality against `flat_bloom` and against a copy whose bitsets are
 ///   zeroed. A row that disappears in the copy was kept by the Bloom filter, so the filter was read.
 ///   A comparison that is not byte-exact must leave the filter unread.
-/// - **Dictionaries:** row-group decisions recorded through the `dev.hardwood.RowGroupFilter` JFR
-///   event on `lowcard_dict`. An absent literal inside the bounds can only be dropped by the dictionary.
+/// - **Dictionaries:** row-group decisions recorded through the `dev.hardwood.RowGroupFilter` and
+///   `dev.hardwood.RowGroupDictionaryFilter` JFR events on `lowcard_dict`. An absent literal inside the bounds can only be dropped by the dictionary.
 ///
 /// Every check states the outcome the rule expects, and a check whose outcome differs is counted.
 final class ConsultationChecks {
@@ -66,9 +66,9 @@ final class ConsultationChecks {
                     "rows " + intact + " with the filter intact, " + zeroed + " with it zeroed: " + outcome);
         }
         for (Check check : dictionaryChecks) {
-            List<String> decisions = new CopyOnWriteArrayList<>();
-            long rows = rowGroupDecisions(fixtures.resolve("lowcard_dict.parquet"), check.filter(), decisions);
-            String outcome = String.join(", ", decisions);
+            RowGroupTally tally = new RowGroupTally();
+            long rows = rowGroupDecisions(fixtures.resolve("lowcard_dict.parquet"), check.filter(), tally);
+            String outcome = tally.toString();
             record(lines, unexpected, "dictionary", check, outcome, "rows " + rows + ", row groups " + outcome);
         }
         try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("consultation.tsv")))) {
@@ -134,13 +134,38 @@ final class ConsultationChecks {
         return rows;
     }
 
-    /// Reads `file` under `filter`, adding each row-group decision to `decisions`, and returns the row count.
-    private static long rowGroupDecisions(Path file, FilterPredicate filter, List<String> decisions) throws Exception {
+    /// The row groups a read kept: those `dev.hardwood.RowGroupFilter` reports kept by statistics
+    /// and bloom filters, less each one a `dev.hardwood.RowGroupDictionaryFilter` event reports
+    /// dropped by its dictionaries.
+    private static final class RowGroupTally {
+
+        private int total;
+        private int kept;
+
+        synchronized void add(RecordedEvent event) {
+            if (event.getEventType().getName().equals("dev.hardwood.RowGroupFilter")) {
+                total += event.getInt("totalRowGroups");
+                kept += event.getInt("rowGroupsKept");
+            }
+            else {
+                kept--;
+            }
+        }
+
+        @Override
+        public synchronized String toString() {
+            return "kept " + kept + " of " + total;
+        }
+    }
+
+    /// Reads `file` under `filter`, adding each row-group decision to `tally`, and returns the row count.
+    private static long rowGroupDecisions(Path file, FilterPredicate filter, RowGroupTally tally) throws Exception {
         long rows;
         try (RecordingStream stream = new RecordingStream()) {
             stream.enable("dev.hardwood.RowGroupFilter");
-            stream.onEvent("dev.hardwood.RowGroupFilter",
-                    event -> decisions.add("kept " + event.getInt("rowGroupsKept") + " of " + event.getInt("totalRowGroups")));
+            stream.enable("dev.hardwood.RowGroupDictionaryFilter");
+            stream.onEvent("dev.hardwood.RowGroupFilter", tally::add);
+            stream.onEvent("dev.hardwood.RowGroupDictionaryFilter", tally::add);
             stream.startAsync();
             rows = count(file, filter);
             stream.stop();

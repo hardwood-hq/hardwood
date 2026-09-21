@@ -8,6 +8,8 @@
 package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
@@ -40,6 +42,8 @@ public class RowGroupFilterEvaluator {
     /// [FilterDecision#ALWAYS_MATCHES] row groups can be read with per-row predicate
     /// evaluation skipped, since statistics prove every row satisfies the predicate.
     ///
+    /// The same decision as [#planRowGroup] followed by [#refineWithDictionaries].
+    ///
     /// @param predicate the resolved predicate to evaluate
     /// @param rowGroup the row group to check
     /// @param bloomFilters source of the row group's bloom filters, or `null` to skip the bloom
@@ -52,14 +56,82 @@ public class RowGroupFilterEvaluator {
     public static FilterDecision decideRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
             BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
             LogContext logContext, BoundsReadability readability) throws IOException {
-        return decide(predicate, rowGroup, bloomFilters, dictionaries, logContext, readability);
+        LeafDecisions leafDecisions = new LeafDecisions();
+        FilterDecision planned = planRowGroup(predicate, rowGroup, bloomFilters, logContext, readability,
+                leafDecisions);
+        if (planned == FilterDecision.CANNOT_MATCH || dictionaries == null) {
+            return planned;
+        }
+        return refineWithDictionaries(predicate, rowGroup, leafDecisions, dictionaries);
     }
 
-    /// The recursive body of [#decideRowGroup], carrying where the row group is so that a
-    /// column whose bounds turn out to be unusable can be named.
-    private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup,
-            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext, BoundsReadability readability) throws IOException {
+    /// The decision a row group's statistics and bloom filters reach, which is what the read
+    /// plans with: dictionaries are read only once the read reaches a row group it kept, through
+    /// [#refineWithDictionaries].
+    ///
+    /// @param leafDecisions receives the decision of every leaf evaluated, for
+    ///        [#refineWithDictionaries] to start from
+    public static FilterDecision planRowGroup(ResolvedPredicate predicate, RowGroup rowGroup,
+            BloomFilterSource bloomFilters, LogContext logContext, BoundsReadability readability,
+            LeafDecisions leafDecisions) throws IOException {
+        return fold(predicate, rowGroup, leaf -> {
+            FilterDecision decision = UnitStats.ChunkStats
+                    .of(rowGroup, ResolvedPredicate.leafColumnIndex(leaf), readability)
+                    .decide(leaf, logContext);
+            // A leaf the statistics already drop reaches no probe, which is what keeps a bloom
+            // filter from being read for a row group that is going anyway.
+            if (decision != FilterDecision.CANNOT_MATCH && absent(leaf, bloomFilters, null)) {
+                decision = FilterDecision.CANNOT_MATCH;
+            }
+            leafDecisions.put(leaf, decision);
+            return decision;
+        });
+    }
+
+    /// Sharpens the decision [#planRowGroup] reached with the row group's dictionaries, which can
+    /// prove a leaf's literal absent where its statistics and bloom filter could not.
+    ///
+    /// Each leaf starts from the decision recorded for it rather than being evaluated again, so
+    /// the bloom filters are not read a second time and a statistics warning is not repeated. A
+    /// dictionary is read only for a leaf that decision leaves open.
+    public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
+            LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries) throws IOException {
+        return fold(predicate, rowGroup, leaf -> {
+            FilterDecision planned = leafDecisions.get(leaf);
+            return planned != FilterDecision.CANNOT_MATCH && absent(leaf, null, dictionaries)
+                    ? FilterDecision.CANNOT_MATCH
+                    : planned;
+        });
+    }
+
+    /// The decision of every leaf [#planRowGroup] evaluated for one row group, keyed by the leaf
+    /// itself.
+    public static final class LeafDecisions {
+
+        private final Map<ResolvedPredicate, FilterDecision> decisions = new IdentityHashMap<>();
+
+        void put(ResolvedPredicate leaf, FilterDecision decision) {
+            decisions.put(leaf, decision);
+        }
+
+        /// The decision recorded for `leaf`, or [FilterDecision#MIGHT_MATCH] for a leaf planning
+        /// never reached. An `OR` stops at its first branch that always matches, and a branch
+        /// past it is only reached here when a dictionary contradicts that branch's statistics;
+        /// such a leaf is left undecided rather than guessed at.
+        FilterDecision get(ResolvedPredicate leaf) {
+            return decisions.getOrDefault(leaf, FilterDecision.MIGHT_MATCH);
+        }
+    }
+
+    /// Decides one leaf.
+    @FunctionalInterface
+    private interface LeafRule {
+        FilterDecision decide(ResolvedPredicate leaf) throws IOException;
+    }
+
+    /// Folds the leaf decisions `leafRule` reaches through the predicate's `AND`s and `OR`s.
+    private static FilterDecision fold(ResolvedPredicate predicate, RowGroup rowGroup, LeafRule leafRule)
+            throws IOException {
         return switch (predicate) {
             case ResolvedPredicate.And a -> {
                 if (a.children().isEmpty()) {
@@ -67,8 +139,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.ALWAYS_MATCHES;
                 for (ResolvedPredicate child : a.children()) {
-                    result = FilterDecision.and(result,
-                            decide(child, rowGroup, bloomFilters, dictionaries, logContext, readability));
+                    result = FilterDecision.and(result, fold(child, rowGroup, leafRule));
                     if (result == FilterDecision.CANNOT_MATCH) {
                         break;
                     }
@@ -81,8 +152,7 @@ public class RowGroupFilterEvaluator {
                 }
                 FilterDecision result = FilterDecision.CANNOT_MATCH;
                 for (ResolvedPredicate child : o.children()) {
-                    result = FilterDecision.or(result,
-                            decide(child, rowGroup, bloomFilters, dictionaries, logContext, readability));
+                    result = FilterDecision.or(result, fold(child, rowGroup, leafRule));
                     if (result == FilterDecision.ALWAYS_MATCHES) {
                         break;
                     }
@@ -92,25 +162,8 @@ public class RowGroupFilterEvaluator {
             // Geospatial statistics are no statistic of a unit — Parquet carries them per column
             // chunk alone — so [UnitStats] reports them unknown and the bounding box is read here.
             case ResolvedPredicate.GeospatialPredicate p -> geospatialDecision(p, rowGroup);
-            default -> leafDecision(predicate, rowGroup, bloomFilters, dictionaries, logContext, readability);
+            default -> leafRule.decide(predicate);
         };
-    }
-
-    /// What one leaf's column chunk proves: its statistics, and then the absence probes, which
-    /// can only sharpen the answer to [FilterDecision#CANNOT_MATCH].
-    ///
-    /// A leaf the statistics already drop reaches no probe, which is what keeps a bloom filter or
-    /// a dictionary from being read for a row group that is going anyway.
-    private static FilterDecision leafDecision(ResolvedPredicate leaf, RowGroup rowGroup,
-            BloomFilterSource bloomFilters, RowGroupDictionaryFilterSource dictionaries,
-            LogContext logContext, BoundsReadability readability) throws IOException {
-        FilterDecision decision = UnitStats.ChunkStats
-                .of(rowGroup, ResolvedPredicate.leafColumnIndex(leaf), readability)
-                .decide(leaf, logContext);
-        if (decision == FilterDecision.CANNOT_MATCH) {
-            return decision;
-        }
-        return absent(leaf, bloomFilters, dictionaries) ? FilterDecision.CANNOT_MATCH : decision;
     }
 
     /// Whether a bloom filter or the chunk's dictionary proves the leaf's literal absent from

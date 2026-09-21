@@ -14,11 +14,15 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/// JFR event emitted when row groups are filtered by a predicate push-down filter.
+/// JFR event emitted once per file when its row groups are filtered by statistics and bloom
+/// filters, before any of them is read.
+///
+/// A row group its dictionaries drop once the read reaches it is counted as kept here and
+/// reported by [RowGroupDictionaryFilterEvent].
 @Name("dev.hardwood.RowGroupFilter")
 @Label("Row Group Filter")
 @Category({"Hardwood", "Filter"})
-@Description("Row groups filtered by predicate push-down")
+@Description("Row groups filtered by statistics and bloom filters")
 @StackTrace(false)
 public class RowGroupFilterEvent extends Event {
 
@@ -31,11 +35,11 @@ public class RowGroupFilterEvent extends Event {
     public int totalRowGroups;
 
     @Label("Row Groups Kept")
-    @Description("Number of row groups kept after filtering")
+    @Description("Number of row groups statistics and bloom filters kept, including any their dictionaries drop later")
     public int rowGroupsKept;
 
     @Label("Row Groups Skipped")
-    @Description("Number of row groups skipped by the filter")
+    @Description("Number of row groups skipped by statistics and bloom filters")
     public int rowGroupsSkipped;
 
     @Label("Fully Matching Row Groups")

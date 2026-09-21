@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +19,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,12 +44,19 @@ class DictionaryPushDownIoTest {
 
     private static final FilterPredicate PRESENT = FilterPredicate.eq("category", "cat_5");
 
+    /// Four row groups of 100 rows with disjoint `i64` ranges, every column dictionary-encoded.
+    private static final Path FOUR_ROW_GROUPS = Paths.get("src/test/resources/predicate/predicate_dict.parquet");
+
     /// One row group, 20 000 rows; `label` is Snappy-compressed and dictionary-encoded, so its
     /// page's compressed and uncompressed sizes differ by roughly 10x.
     private static final Path COMPRESSED_FIXTURE = Paths.get("src/test/resources/dict_compressed_page.parquet");
 
     /// Absent from the dictionary — only even suffixes are written — but between the column's
     /// `"pad_0_…"` minimum and `"pad_98_…"` maximum.
+    /// In the dictionary, on 79 of the rows.
+    private static final FilterPredicate COMPRESSED_PRESENT =
+            FilterPredicate.eq("label", "pad_0_" + "z".repeat(40));
+
     private static final FilterPredicate COMPRESSED_ABSENT =
             FilterPredicate.eq("label", "pad_1_" + "z".repeat(40));
 
@@ -75,6 +85,94 @@ class DictionaryPushDownIoTest {
                 .as("the dictionary page is one request on top of the unfiltered read, and it "
                         + "pruned nothing")
                 .isEqualTo(unfiltered.requests() + 1);
+    }
+
+    @Test
+    void theDictionaryPageIsFetchedOnceWhenItCannotPrune() throws Exception {
+        // Pruning reads the dictionary page to test the value; the read then decodes with that
+        // dictionary rather than fetching the page again with the data pages.
+        long dictionaryStart;
+        long dictionaryEnd;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
+            ColumnMetaData metaData = reader.getFileMetaData().rowGroups().getFirst().columns()
+                    .get(reader.getFileSchema().getColumn("category").columnIndex()).metaData();
+            dictionaryStart = metaData.dictionaryPageOffset();
+            dictionaryEnd = metaData.dataPageOffset();
+        }
+
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        int rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                ColumnReader values = reader.buildColumnReader("category").filter(PRESENT).build()) {
+            while (values.nextBatch()) {
+                rows += values.getRecordCount();
+            }
+        }
+
+        assertThat(rows).isEqualTo(1000);
+        assertThat(file.reads())
+                .filteredOn(read -> read.offset() < dictionaryEnd && dictionaryStart < read.end())
+                .as("reads of the dictionary page [%d, %d)", dictionaryStart, dictionaryEnd)
+                .hasSize(1);
+    }
+
+    @Test
+    void theDictionaryPageIsFetchedOnceWhenItCannotPruneAChunkWithoutAPageIndex() throws Exception {
+        // Without a page index the read walks the chunk from its start; with the dictionary
+        // pruning has read, it starts at the first data page instead.
+        long dictionaryStart;
+        long dictionaryEnd;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(COMPRESSED_FIXTURE))) {
+            ColumnMetaData metaData = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
+            dictionaryStart = metaData.dictionaryPageOffset();
+            dictionaryEnd = metaData.dataPageOffset();
+        }
+
+        CountingInputFile file = new CountingInputFile(InputFile.of(COMPRESSED_FIXTURE));
+        file.open();
+        int rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                ColumnReader values = reader.buildColumnReader("label").filter(COMPRESSED_PRESENT).build()) {
+            while (values.nextBatch()) {
+                rows += values.getRecordCount();
+            }
+        }
+
+        assertThat(rows).isEqualTo(79);
+        assertThat(file.reads())
+                .filteredOn(read -> read.offset() < dictionaryEnd && dictionaryStart < read.end())
+                .as("reads of the dictionary page [%d, %d)", dictionaryStart, dictionaryEnd)
+                .hasSize(1);
+    }
+
+    @Test
+    void eachRowGroupsDictionaryIsReadOnceWhenTheReadOutpacesItsPrefetch() throws Exception {
+        // Every row group of the fixture is dropped by its dictionary, so the read passes each one
+        // as soon as it is planned and releases it, and closes before the prefetch tasks planning
+        // the row group after it have all run. None of those tasks may plan a released row group,
+        // or one of a closed read, a second time.
+        FilterPredicate absentFromEveryRowGroup = FilterPredicate.in("i64",
+                -3_990_000_000_000L, -1_990_000_000_000L, 10_000_000_000L, 2_010_000_000_000L);
+        for (int read = 0; read < 100; read++) {
+            CountingInputFile file = new CountingInputFile(InputFile.of(FOUR_ROW_GROUPS));
+            file.open();
+            int rows = 0;
+            try (ParquetFileReader reader = ParquetFileReader.open(file);
+                    RowReader rowReader = reader.buildRowReader().filter(absentFromEveryRowGroup).build()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                    rows++;
+                }
+            }
+            assertThat(ForkJoinPool.commonPool().awaitQuiescence(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(rows).isZero();
+            assertThat(file.reads())
+                    .filteredOn(fetch -> fetch.reason().endsWith(" pruning"))
+                    .as("one dictionary read per row group, read %d", read)
+                    .hasSize(4);
+        }
     }
 
     @Test

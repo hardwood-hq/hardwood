@@ -8,8 +8,11 @@
 package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,6 +22,8 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.bloomfilter.BloomFilter;
+import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.Dictionary;
@@ -45,6 +50,16 @@ class DictionaryPushDownTest {
     /// A position with nothing to point at: these cases assert decisions, not diagnostics.
     private static final LogContext UNNAMED =
             new LogContext(null, ExceptionContext.UNKNOWN_ROW_GROUP);
+
+    /// A bloom filter whose bitset is all zeroes, so every probe misses.
+    private static BloomFilter emptyBloomFilter() {
+        return new BloomFilter(
+                new BloomFilterHeader(BLOOM_FILTER_BYTES, BloomFilterHeader.Algorithm.BLOCK,
+                        BloomFilterHeader.Hash.XXHASH, BloomFilterHeader.Compression.UNCOMPRESSED),
+                ByteBuffer.allocate(BLOOM_FILTER_BYTES).order(ByteOrder.LITTLE_ENDIAN).asReadOnlyBuffer());
+    }
+
+    private static final int BLOOM_FILTER_BYTES = 32;
 
     /// Opens the first row group of one fixture under `src/test/resources` for the lifetime of a
     /// nested class, and decides predicates against it.
@@ -86,6 +101,10 @@ class DictionaryPushDownTest {
             return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
         }
 
+        RowGroup rowGroup() {
+            return rowGroup;
+        }
+
         boolean dictionaryDrop(FilterPredicate filter) throws IOException {
             ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
             return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup, null, dictionaries(), UNNAMED, BoundsReadability.ALL)
@@ -103,6 +122,7 @@ class DictionaryPushDownTest {
     @Nested
     class StringColumn extends OnFixture {
 
+        private static final int ID_COLUMN = 0;
         private static final int CATEGORY_COLUMN = 1;
 
         StringColumn() {
@@ -128,6 +148,30 @@ class DictionaryPushDownTest {
         @Test
         void presentValueIsKept() throws IOException {
             assertThat(dictionaryDrop(FilterPredicate.eq("category", "cat_5"))).isFalse();
+        }
+
+        @Test
+        void orOfABloomProvenAndADictionaryProvenBranchIsDroppedWithoutReadingTheBloomFilterAgain()
+                throws IOException {
+            // `id` 42 is present, so neither statistics nor a dictionary drop its branch; the empty
+            // bloom filter does. "cat_5x" only the dictionary drops. Planning sees one branch
+            // dropped; refining has to replay that answer to drop both.
+            ResolvedPredicate or = FilterPredicateResolver.resolve(FilterPredicate.or(
+                    FilterPredicate.eq("id", 42L), FilterPredicate.eq("category", "cat_5x")), schema);
+            AtomicInteger bloomReads = new AtomicInteger();
+            BloomFilterSource bloomFilters = columnIndex -> {
+                bloomReads.incrementAndGet();
+                return columnIndex == ID_COLUMN ? emptyBloomFilter() : null;
+            };
+            RowGroupFilterEvaluator.LeafDecisions leafDecisions = new RowGroupFilterEvaluator.LeafDecisions();
+
+            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), bloomFilters, UNNAMED,
+                    BoundsReadability.ALL, leafDecisions)).isEqualTo(FilterDecision.MIGHT_MATCH);
+            int bloomReadsWhilePlanning = bloomReads.get();
+
+            assertThat(RowGroupFilterEvaluator.refineWithDictionaries(or, rowGroup(), leafDecisions, dictionaries()))
+                    .isEqualTo(FilterDecision.CANNOT_MATCH);
+            assertThat(bloomReads.get()).isEqualTo(bloomReadsWhilePlanning);
         }
 
         @Test

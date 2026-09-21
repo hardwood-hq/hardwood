@@ -42,6 +42,8 @@ public final class RowGroupDictionaryFilterSource {
     private final HardwoodContextImpl context;
     private final Dictionary[] dictionaries;
     private final boolean[] read;
+    /// Where each read dictionary page ends, `0` for a column whose dictionary is not read.
+    private final long[] pageEnds;
 
     public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup,
                                           FileSchema fileSchema, HardwoodContextImpl context) {
@@ -52,6 +54,7 @@ public final class RowGroupDictionaryFilterSource {
         int columnCount = rowGroup.columns().size();
         this.dictionaries = new Dictionary[columnCount];
         this.read = new boolean[columnCount];
+        this.pageEnds = new long[columnCount];
     }
 
     public Dictionary forColumn(int columnIndex) throws IOException {
@@ -64,6 +67,18 @@ public final class RowGroupDictionaryFilterSource {
             read[columnIndex] = true;
         }
         return dictionaries[columnIndex];
+    }
+
+    /// The column's dictionary if [#forColumn] has read it, or `null` without reading anything.
+    /// A fetch plan takes it from here so a dictionary pruning has read is not read again.
+    public Dictionary loaded(int columnIndex) {
+        return columnIndex >= 0 && columnIndex < dictionaries.length ? dictionaries[columnIndex] : null;
+    }
+
+    /// Where the column's dictionary page ends if [#forColumn] has read it — the file offset the
+    /// chunk's first data page starts at — or `0`.
+    public long loadedPageEnd(int columnIndex) {
+        return columnIndex >= 0 && columnIndex < pageEnds.length ? pageEnds[columnIndex] : 0;
     }
 
     /// Whether every value in the column chunk is dictionary-encoded, so its dictionary page
@@ -145,7 +160,13 @@ public final class RowGroupDictionaryFilterSource {
                         ? Math.toIntExact(dataPageOffset - chunkStart)
                         : DICTIONARY_PROBE_BYTES,
                 availableBytes);
-        return region == null ? null : DictionaryParser.parse(region, columnSchema, metaData, context);
+        if (region == null) {
+            return null;
+        }
+        long pageEnd = chunkStart + region.remaining();
+        Dictionary dictionary = DictionaryParser.parse(region, columnSchema, metaData, context);
+        pageEnds[columnIndex] = pageEnd;
+        return dictionary;
     }
 
     /// Reads the bytes of the dictionary page beginning at `dictionaryStart`, or `null` when no
@@ -176,7 +197,7 @@ public final class RowGroupDictionaryFilterSource {
 
         return pageLength > region.remaining()
                 ? inputFile.readRange(dictionaryStart, pageLength)
-                : region;
+                : region.slice(0, pageLength);
     }
 
 
