@@ -71,7 +71,7 @@ public class RowGroupIterator implements Closeable {
     /// Maximum gap (in bytes) between pages that will be bridged when coalescing
     /// within a column. Pages separated by more than this gap get separate
     /// `readRange()` calls.
-    private static final int PAGE_COALESCE_GAP_BYTES = 1024 * 1024;
+    static final int PAGE_COALESCE_GAP_BYTES = 1024 * 1024;
 
     /// Maximum size (in bytes) of a single coalesced page group. Groups that
     /// would exceed this are split so that each `readRange()` stays bounded,
@@ -1390,10 +1390,15 @@ public class RowGroupIterator implements Closeable {
         int fullyMatching = 0;
         for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
             RowGroup rg = rowGroups.get(rgIndex);
-            FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
-                    new RowGroupBloomFilterSource(inputFile, rg),
-                    new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
-                    new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability());
+            FilterDecision decision;
+            // The bloom-filter and dictionary reads pruning issues are named as such, so a fetch
+            // log tells them apart from the reads that decode the row group.
+            try (FetchReason.Scope ignored = FetchReason.set("rg=" + rgIndex + " pruning")) {
+                decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
+                        new RowGroupBloomFilterSource(inputFile, rg),
+                        new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
+                        new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability());
+            }
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }

@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -84,38 +85,25 @@ class CrossColumnCoalesceTest {
 
     @Test
     void filteredColumnIsNotOverCoalesced() throws Exception {
-        // With a selective filter, the IndexedFetchPlan for `id` has
-        // page drops → multiple page groups → isCoalesceSafe() == false.
-        // That keeps `id` out of the shared region; the filtered read
-        // must transfer strictly fewer bytes than the unfiltered one.
-        // (If page-dropped columns were swept into the shared region,
-        // the dropped bytes would be re-fetched and bytes-read would
-        // meet or exceed the unfiltered total.)
-        FilterPredicate selective = FilterPredicate.lt("id", 1000L);
-
-        long filteredBytes = readBytesWith(INDEXED_FILE, selective);
-        long unfilteredBytes = readBytesWith(INDEXED_FILE, null);
-
-        assertThat(filteredBytes)
-                .as("Filtered read must not over-fetch dropped pages via the shared region")
-                .isLessThan(unfilteredBytes);
-    }
-
-    private static long readBytesWith(Path file, FilterPredicate filter) throws Exception {
-        CountingInputFile counter = new CountingInputFile(InputFile.of(file));
+        // With a selective filter, the IndexedFetchPlan for `id` has page drops. Sweeping its
+        // dropped pages into a shared region would fetch bytes no page needs, and fetch the
+        // column's later page groups a second time; the budget rejects both. `id` runs from 1, so
+        // `id < 1000` is the rows [0, 999).
+        CountingInputFile counter = new CountingInputFile(InputFile.of(INDEXED_FILE));
         counter.open();
+        long rows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(counter);
-                RowReader rows = (filter == null
-                        ? reader.buildRowReader()
-                                .projection(ColumnProjection.columns("id", "value", "category"))
-                                .build()
-                        : reader.buildRowReader()
-                                .projection(ColumnProjection.columns("id", "value", "category"))
-                                .filter(filter).build())) {
-            while (rows.hasNext()) {
-                rows.next();
+                RowReader rowReader = reader.buildRowReader()
+                        .projection(ColumnProjection.columns("id", "value", "category"))
+                        .filter(FilterPredicate.lt("id", 1000L))
+                        .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                rows++;
             }
         }
-        return counter.bytesRead();
+
+        assertThat(rows).isEqualTo(999);
+        IoBudget.of(INDEXED_FILE, List.of("id", "value", "category"), 0, 999).assertWithin(counter);
     }
 }
