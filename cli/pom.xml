@@ -639,7 +639,7 @@
         <dist.lib.extension>*.dll</dist.lib.extension>
         <zstd.os.dir>win</zstd.os.dir>
         <snappy.os.dir>Windows</snappy.os.dir>
-        <lz4.os.dir>win32</lz4.os.dir>
+        <lz4.os.dir>windows</lz4.os.dir>
         <brotli.platform>windows-${dist.arch}</brotli.platform>
       </properties>
     </profile>
