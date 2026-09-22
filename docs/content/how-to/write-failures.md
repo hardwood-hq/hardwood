@@ -11,11 +11,11 @@
 -->
 # Handle Write Failures
 
-A `ParquetFileWriter` publishes its file on `close()`. When writing fails part way, the file should not be published, and how that happens depends on where the failure is raised.
+A `ParquetFileWriter` publishes its file on `close()`. When writing fails part way, the file should not be published.
 
 ## A Write Throws
 
-No extra code is needed. When `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, the writer rejects further writes, and `close()` discards the output. This holds for every exception out of a write call: a rejected batch or record, an exception thrown by the filler, a destination `IOException` or a codec failure.
+No extra code is needed. When `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, the writer rejects further writes, and `close()` discards the output. This holds for every exception a write call throws, including one thrown by the filler.
 
 ```java
 try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
