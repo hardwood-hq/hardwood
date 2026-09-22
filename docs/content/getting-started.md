@@ -13,7 +13,7 @@
 
 Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
-If you only want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](reference/cli.md) page for details.
+To inspect or convert Parquet files from the command line without writing code, install the [command-line tool](#command-line-tool).
 
 ## Dependency Management
 
@@ -59,8 +59,6 @@ Then declare dependencies inside your project's `<dependencies>` block without s
 
 ### Specifying the Version Directly
 
-If you prefer not to use the BOM, you can specify the version directly:
-
 **Maven:**
 
 ```xml
@@ -86,7 +84,7 @@ Bindings are available for all popular logger implementations, for instance for 
 
 ### Compression Libraries
 
-Hardwood reads Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4 in both of its framings, and Brotli. It writes all of those except the Hadoop-framed `LZ4`; the [Writer Reference](reference/writer.md#compression-codecs) lists what each codec needs. The compression libraries are optional dependencies; add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
+The compression libraries are optional dependencies; add only the ones you need. The [Writer Reference](reference/writer.md#compression-codecs) lists what each codec needs. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
 
 Writing compresses with ZSTD where `zstd-jni` is on the classpath, and writes uncompressed pages where it is not, so add that dependency to get compressed output under the default configuration.
 
@@ -114,42 +112,70 @@ When using the BOM, declare without a version. For example, to add Snappy:
 implementation 'org.xerial.snappy:snappy-java'
 ```
 
-??? note "Without the BOM (explicit versions)"
-
-    ```xml
-    <dependency>
-        <groupId>org.xerial.snappy</groupId>
-        <artifactId>snappy-java</artifactId>
-        <version>1.1.10.8</version>
-    </dependency>
-    <dependency>
-        <groupId>com.github.luben</groupId>
-        <artifactId>zstd-jni</artifactId>
-        <version>1.5.7-6</version>
-    </dependency>
-    <dependency>
-        <groupId>at.yawk.lz4</groupId>
-        <artifactId>lz4-java</artifactId>
-        <version>1.8.1</version>
-    </dependency>
-    <dependency>
-        <groupId>com.aayushatharva.brotli4j</groupId>
-        <artifactId>brotli4j</artifactId>
-        <version>1.20.0</version>
-    </dependency>
-    ```
-
-    ```groovy
-    implementation 'org.xerial.snappy:snappy-java:1.1.10.8'
-    implementation 'com.github.luben:zstd-jni:1.5.7-6'
-    implementation 'at.yawk.lz4:lz4-java:1.8.1'
-    implementation 'com.aayushatharva.brotli4j:brotli4j:1.20.0'
-    ```
-
 If you attempt to read a file using a compression codec whose library is not on the classpath, Hardwood will throw an exception with a message indicating which dependency to add.
+
+## Command-Line Tool
+
+The `hardwood` command-line tool ships as a GraalVM native binary for Linux, macOS, and Windows, available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). The [CLI reference](reference/cli.md) documents its commands.
+
+!!! note "macOS"
+    The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:
+
+    ```shell
+    xattr -r -d com.apple.quarantine hardwood-cli-*/
+    ```
+
+### Shell Completion
+
+The distribution includes completion scripts for Bash, Zsh, and Fish under `bin/`:
+
+| Shell | Script |
+|-------|--------|
+| Bash | `bin/hardwood_completion` |
+| Zsh | `bin/hardwood_completion.zsh` |
+| Fish | `bin/hardwood_completion.fish` |
+
+Source the one for your shell to enable tab completion for commands, options, and arguments, and add that line to your shell's startup file (e.g. `~/.bashrc`, `~/.zshrc`) to make it permanent:
+
+```shell
+source hardwood_completion
+```
+
+### Docker
+
+A minimal Fedora-based image is published to the GitHub Container Registry for Linux amd64 and arm64. Pass the command after the image name, and mount a local directory to reach files on the host:
+
+```shell
+docker run --rm \
+  -v "$(pwd)":/data \
+  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
+  schema -f /data/data.parquet
+```
+
+The `dive` TUI needs an interactive terminal, so pass `-it`. With `-it` and no command, the image starts an interactive shell with tab completion loaded:
+
+```shell
+docker run --rm -it \
+  -v "$(pwd)":/data \
+  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
+  dive -f /data/data.parquet
+```
+
+### Use with AI Coding Agents
+
+The repository ships an [Agent Skill](https://agentskills.io) at `skills/hardwood-cli/` that teaches an AI coding agent when and how to reach for the CLI while debugging Parquet read/write code (checking schema and physical/logical types, diagnosing why predicate pushdown or page skipping isn't happening, reading dictionary entries, and so on).
+
+For [Claude Code](https://claude.com/claude-code), it is packaged as the `hardwood` plugin, distributed from the [`hardwood-skills`](https://github.com/hardwood-hq/hardwood-skills) marketplace. Install it once by running, inside Claude Code:
+
+```text
+/plugin marketplace add hardwood-hq/hardwood-skills
+/plugin install hardwood@hardwood-skills
+```
+
+After installing, the skill loads automatically in future sessions whenever a task involves a Parquet file. It drives the `hardwood` binary, so `hardwood` must be on your `PATH`.
+
+For other agent harnesses, or a Claude Code setup without the plugin, copy `skills/hardwood-cli/SKILL.md` into that tool's skills directory (for Claude Code that is `~/.claude/skills/hardwood-cli/`).
 
 ## Read a File
 
-With the core dependency in place, you're ready to read. The [Read Your First Parquet File](tutorial/first-read.md) tutorial walks through it end-to-end against a real dataset: printing the schema, reading rows with typed accessors, narrowing the read with a projection and a filter, and summing a column the columnar way.
-
-For the full API, including column projection, predicate pushdown and column-oriented reading, see the [How-to Guides](how-to/index.md). For example projects you can clone and run, see the [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository.
+The [Read Your First Parquet File](tutorial/first-read.md) tutorial reads a real dataset end to end; the [How-to Guides](how-to/index.md) and the [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository cover the rest of the API.

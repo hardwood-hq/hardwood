@@ -16,11 +16,7 @@ Hardwood exposes the full Parquet metadata hierarchy of a file without reading a
 !!! example "Try it yourself"
     Want to run it or explore the capabilities yourself? The [**Metadata Explorer**](https://github.com/hardwood-hq/hardwood-examples/tree/main/metadata-explorer) example describes a Parquet file from its footer alone: version, schema, and per-row-group column statistics.
 
-A Parquet file is organized as follows:
-
-- **FileMetaData** — top-level: row count, schema, key-value metadata (e.g. Spark schema, pandas metadata), the writer that produced the file (`createdBy`), and the per-column statistics ordering (`columnOrders`)
-- **RowGroup** — a horizontal partition of the data; each row group contains all columns for a subset of rows
-- **ColumnChunk** — one column within a row group; holds compression codec, byte sizes, and optional statistics (min/max values, null count) used for predicate pushdown. Per-chunk byte ranges for the column index and offset index (when present in the file) are exposed via `columnIndexOffset`/`columnIndexLength` and `offsetIndexOffset`/`offsetIndexLength` on `ColumnChunk`. The bloom-filter byte range (`bloomFilterOffset`/`bloomFilterLength`) is exposed on `ColumnMetaData`, matching its position in the Parquet Thrift schema. `ColumnMetaData.encodingStats()` returns the chunk's page counts per (page type, encoding) pair as a list of `PageEncodingStats`, empty when the file omits the field. A page type this version does not recognize is reported as `PageType.UNKNOWN`. An encoding this version does not recognize is reported as `Encoding.UNKNOWN`, in both `ColumnMetaData.encodings()` and `encodingStats()`; the metadata reads normally, and reading a page that uses such an encoding throws an `UnsupportedOperationException` naming the raw Thrift encoding value. `ColumnChunk.filePath()` is the file holding the chunk's data under the legacy split-file layout, and the empty string (never `null`) when the data sits in the file being read; `requireSameFile()` throws an `IOException` for the former, which is what reading such a chunk does.
+The metadata follows the [file layout](../concepts/parquet-layout.md#the-hierarchy). `FileMetaData` holds the row count, schema, key-value metadata (e.g. Spark schema, pandas metadata), the writer that produced the file (`createdBy`), and the per-column statistics ordering (`columnOrders`). Each `RowGroup` holds one `ColumnChunk` per column, with its compression codec, byte sizes, optional statistics (min/max values, null count), and the byte ranges of its column index, offset index and bloom filter when the file has them.
 
 ```java
 import dev.hardwood.metadata.ColumnChunk;
@@ -94,10 +90,8 @@ The map `keyValueMetadata()` returns can be handed to `ParquetFileWriter.keyValu
 ## Metadata for multiple files
 
 For a multi-file reader, use `getFileCount()` and `getFileMetaData(int)` to inspect each
-physical input file in order. The first file's footer is read when the reader is opened.
-Later footers are read when indexed metadata access or data-reader prefetch first needs them.
-In-progress, successful, and failed loads are cached for the lifetime of the parent reader, so
-metadata, row, and column access all reuse the same parsed footer.
+physical input file in order. Each footer is read once, when first needed, and reused by
+metadata, row and column access for the lifetime of the parent reader.
 
 ```java
 try (Hardwood hardwood = Hardwood.create();
@@ -111,16 +105,16 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
-Indexed metadata access reports the physical file's footer; it does not validate that file against
-the first file for a particular projection or filter. Cross-file schema validation happens when a
-row or column reader is planned. Keep every input file unchanged until the parent reader is closed.
-Close and reopen the parent reader to retry a failed footer load or inspect a changed file.
+`getFileMetaData(int)` reports the physical file's footer without validating it against the first
+file; cross-file schema validation happens when a row or column reader is planned. Leave every input
+file unchanged until the parent reader is closed. A failed footer load is cached too: close and
+reopen the parent reader to retry it or to inspect a changed file.
 
 ## Size statistics and level histograms
 
 `ColumnMetaData.sizeStatistics()` reports how much data a column chunk holds, without reading any of it:
 
-- `unencodedByteArrayDataBytes()` — the size the chunk's `BYTE_ARRAY` values would occupy unencoded and uncompressed, which the on-disk sizes do not tell you
+- `unencodedByteArrayDataBytes()` — the size the chunk's `BYTE_ARRAY` values would occupy unencoded and uncompressed
 - `definitionLevelHistogram()` — how many values sit at each definition level, `0` through the column's maximum. The entry at the maximum counts the non-null values; each lower entry counts the values that stop being present at that level: a null, or, on a repeated column, an empty list
 - `repetitionLevelHistogram()` — how many values sit at each repetition level, `0` through the column's maximum. Entry `0` counts the values that start a new row, so it is the number of rows in the chunk; each higher entry counts the values that continue a repeated field at that level
 

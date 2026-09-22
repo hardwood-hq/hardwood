@@ -45,16 +45,16 @@ try (RowReader rowReader = fileReader.rowReader()) {
 }
 ```
 
-The `PqVariantObject` view exposes the same primitive getters as a Parquet struct (`getInt`, `getString`, `getTimestamp`, …), but its complex navigation uses `getObject` and `getArray` (Variant-spec terminology) rather than `getStruct` / `getList` / `getMap`. A `PqVariantArray` is iterable and indexed; elements are heterogeneous `PqVariant`s — inspect each element's `type()` and unwrap appropriately.
+The `PqVariantObject` view exposes the same primitive getters as a Parquet struct (`getInt`, `getString`, `getTimestamp`, …), but its complex navigation uses `getObject` and `getArray` (Variant-spec terminology) rather than `getStruct` / `getList` / `getMap`. A `PqVariantArray` is iterable and indexed; elements are heterogeneous `PqVariant`s, each with its own `type()`.
 
 **Primitive extraction on `PqVariant`:** When you already hold a `PqVariant` (e.g. an array element) use the `as*()` methods — `asInt`, `asString`, `asTimestamp`, and so on. Each throws `VariantTypeException` if the variant's type tag doesn't match.
 
 **Timestamp tags:** The Variant binary format carries four timestamp tags, split along the same `isAdjustedToUTC` boundary as the Parquet TIMESTAMP logical type. `asTimestamp` returns `Instant` and accepts the UTC-adjusted tags `TIMESTAMP` / `TIMESTAMP_NANOS`; `asLocalTimestamp` returns `LocalDateTime` and accepts the wall-clock tags `TIMESTAMP_NTZ` / `TIMESTAMP_NTZ_NANOS`. `PqVariantObject.getTimestamp` / `getLocalTimestamp` follow the same split.
 
-**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
+**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value`. `metadata()` and `value()` return canonical bytes whether or not the file was shredded.
 
 ## Current limitations
 
-- **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. The leaves below the group — `metadata`, `value` and a shredded variant's `typed_value` leaves — hold the encoded variant rather than values of their own, so a comparison or set predicate on one throws `IllegalArgumentException` at reader creation; they take `isNull` and `isNotNull` only. Filter on the Variant column itself for presence, and apply the value test per row against the `PqVariant` you read. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
-- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading only the shredded `typed_value.age` column. Requires the same variant-aware planning as #309. Tracked as [#700](https://github.com/hardwood-hq/hardwood/issues/700).
+- **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) are not understood by the pushdown pipeline. The leaves below the group — `metadata`, `value` and a shredded variant's `typed_value` leaves — hold the encoded variant rather than values of their own, so a comparison or set predicate on one throws `IllegalArgumentException` at reader creation; they take `isNull` and `isNotNull` only. Filter on the Variant column itself for presence, and apply the value test per row against the `PqVariant` you read. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+- **No path projection optimization.** Reading only `v.age` from a Variant column reassembles the whole Variant for each row rather than reading only the shredded `typed_value.age` column. Tracked as [#700](https://github.com/hardwood-hq/hardwood/issues/700).
 
