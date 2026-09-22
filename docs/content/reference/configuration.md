@@ -59,22 +59,15 @@ When libdeflate is installed and available on the library path, Hardwood will au
 
 ## SIMD Acceleration with Vector API (Java 22+)
 
-Hardwood can use the Java Vector API (SIMD) to accelerate certain decoding operations like counting non-null values, marking nulls, and dictionary lookups. This feature requires **Java 22 or newer** and is enabled automatically when available.
-
-To enable the Vector API incubator module, add this JVM argument:
+Hardwood can use the Java Vector API (SIMD) to accelerate certain decoding operations like counting non-null values, marking nulls, and dictionary lookups. This feature requires **Java 22 or newer** and the Vector API incubator module, added with this JVM argument:
 
 ```bash
 --add-modules jdk.incubator.vector
 ```
 
-When SIMD is available and enabled, you'll see an INFO log message at startup:
-```
-SIMD support: enabled (256-bit vectors)
-```
-
 The vector width depends on your CPU (128-bit for SSE/NEON, 256-bit for AVX2, 512-bit for AVX-512).
 
-SIMD engages only when the incubator module is added, so to run scalar operations (for debugging or comparison) omit the `--add-modules jdk.incubator.vector` argument.
+To run scalar operations (for debugging or comparison), omit the argument.
 
 ## JFR (Java Flight Recorder) Events
 

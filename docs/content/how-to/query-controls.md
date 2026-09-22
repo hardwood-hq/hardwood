@@ -56,6 +56,7 @@ FilterPredicate filter = FilterPredicate.isNotNull("email");
 FilterPredicate filter = FilterPredicate.isNull("address");     // a struct
 FilterPredicate filter = FilterPredicate.isNotNull("tags");     // a LIST
 FilterPredicate filter = FilterPredicate.isNull("attributes");  // a MAP
+```
 
 `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — as well as the name of a leaf column. `isNull("address")` matches rows where the `address` group is absent, and `isNotNull("address")` matches rows where it is present.
 
@@ -63,6 +64,7 @@ Present means present, however empty. A struct whose every field is null is pres
 
 Comparison predicates (`eq`, `gt`, `lt`, …) apply to leaf columns alone: there is no ordering or equality defined on a group, so a group name is rejected with `IllegalArgumentException` at reader creation.
 
+```java
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
 

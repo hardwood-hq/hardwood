@@ -110,7 +110,7 @@ Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the 
 
 ## Lifecycle
 
-`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps. Closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller. The two-`try`-with-resources pattern in the examples above reflects this.
+`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps. Closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller.
 
 ## Schema overrides
 
