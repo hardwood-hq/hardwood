@@ -11,8 +11,6 @@
 -->
 # How-to Guides
 
-Read and write Parquet files with Hardwood. Pick the guide that matches what you need:
-
 - [**Read Row by Row**](row-reader.md): `RowReader`, typed accessors, nested structs / lists / maps.
 - [**Read Column by Column**](column-reader.md): `ColumnReader` and `ColumnReaders`, the layer model, hot-loop patterns.
 - [**Filter, Project, Limit, and Split**](query-controls.md): predicate pushdown, column projection, row limits, split-aware reading. Apply to both reader types.
@@ -28,7 +26,7 @@ Read and write Parquet files with Hardwood. Pick the guide that matches what you
 - [**Inspect File Metadata**](metadata.md): file metadata, row groups, column chunks, schema introspection.
 
 !!! example "Runnable examples"
-    Each guide below links to a matching standalone example in the
+    Most guides link to a matching standalone example in the
     [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository. Every example is a
     complete project you can clone and run with a single command. To start, see
     [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood).
@@ -52,8 +50,6 @@ Both support column projection and predicate pushdown. Each reader has a no-arg 
 | `ColumnReader` (single) | `reader.columnReader("id")` | `reader.buildColumnReader("id").…build()` |
 | `ColumnReaders` (multiple) | `reader.columnReaders(projection)` | `reader.buildColumnReaders(projection).…build()` |
 
-To read multiple files as a single dataset with cross-file prefetching, open the `ParquetFileReader` with a list of `InputFile`s via the `Hardwood` class; see [Reading Multiple Files](multi-file.md).
-
 ## Choosing a Writer
 
 Writing mirrors the same split. Both APIs come from one `ParquetFileWriter` and produce the same layout, but a file is written through one of them, not both:
@@ -61,6 +57,6 @@ Writing mirrors the same split. Both APIs come from one `ParquetFileWriter` and 
 - **`RowWriter`**: record-oriented, obtained from `writer.rowWriter()`. Fields are addressed by name, and logical-type values are written as the Java types the reader returns for them. Best when you hold records.
 - **`ColumnWriter`**: batch-oriented, obtained from `writer.columnWriter()`. Each `writeBatch` call takes one typed array per leaf column, plus per-layer validity and offsets for nested columns. Best when you already hold columns.
 
-For the model behind the file the writer produces (why the footer comes last, what bounds memory, and how the encoding is chosen), see [The Write Model](../concepts/write-model.md).
+For the model behind the file the writer produces, see [The Write Model](../concepts/write-model.md).
 
 For the exceptions the readers and the writer can throw and when, see [Error Handling](../reference/error-handling.md).
