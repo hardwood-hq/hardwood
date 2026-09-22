@@ -93,11 +93,10 @@ Reads have no file-size ceiling, but individual column chunks are capped at 2 GB
 
 ## Roadmap
 
-Forward-looking items tracked for post-1.0. None are committed to a specific release.
+Forward-looking items, none committed to a specific release.
 
 - **Finalize `ColumnReader` API** — stabilize the API for columnar access and move it out of "Experimental" state. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
 - **Writer extensions** — object-store output, page-index and Bloom-filter writing, and parallel column encoding, on top of the write path described in [The Write Model](concepts/write-model.md). ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
-- **Bloom filter predicate pushdown** — use per-chunk bloom filters for equality-predicate skipping on high-cardinality columns, where min/max statistics can't help. ([#105](https://github.com/hardwood-hq/hardwood/issues/105))
 - **Parquet Modular Encryption** — read files encrypted under the Parquet [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md): encrypted footer, per-column keys, AES-GCM and AES-GCM-CTR. ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
 - **Apache Arrow interop** — `ColumnReader` output as Arrow `FieldVector` / `VectorSchemaRoot` for zero-copy handoff to DuckDB, DataFusion, Pandas-via-JNI, and other Arrow-native consumers. ([#153](https://github.com/hardwood-hq/hardwood/issues/153))
 
