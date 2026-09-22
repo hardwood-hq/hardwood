@@ -11,7 +11,7 @@
 -->
 # Column-Oriented Reading
 
-The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
+The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing.
 
 !!! warning "Experimental API"
     The `ColumnReader` is under active development; the shape of the batch accessors and layer representation may change in future releases without prior deprecation.
@@ -46,9 +46,9 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
-The [Validity](/api/latest/dev/hardwood/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton, with no per-batch allocation. Its `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
+The [Validity](/api/latest/dev/hardwood/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton, with no per-batch allocation. Its `hasNulls()` returns `false` in O(1); see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop).
 
-Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryStarts()` and `getBinaryEnds()` (each an `int[]` of length `getValueCount()`); the bytes of value `i` are `[starts[i], ends[i])`. Values need not be contiguous or in value order, and values of a dictionary-encoded column naming the same dictionary entry may cover the same bytes. Bound reads by each value's range, never by the buffer's length; a null value's range is empty. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. `getBinaries()` reads all three physical types; `getStrings()` reads a column that holds text (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation) and throws `IllegalArgumentException` on any other, a `DECIMAL`, a `UUID`, a `BSON` or an `INT96` among them (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where each dictionary entry's `String` is cached and reused for every value that refers to it. Compare the strings with `equals`.
+Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryStarts()` and `getBinaryEnds()` (each an `int[]` of length `getValueCount()`); the bytes of value `i` are `[starts[i], ends[i])`. Values need not be contiguous or in value order, and values of a dictionary-encoded column naming the same dictionary entry may cover the same bytes. Bound reads by each value's range, never by the buffer's length; a null value's range is empty. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. `getBinaries()` reads all three physical types; `getStrings()` reads a text column and throws `IllegalArgumentException` on any other (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where each dictionary entry's `String` is cached and reused for every value that refers to it. Compare the strings with `equals`.
 
 Pick a binary column's accessor by what you do with its values:
 
@@ -60,7 +60,7 @@ Pick a binary column's accessor by what you do with its values:
 
 Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
-A filtered column reader returns **only** the matching rows, with no client-side residual filtering required. Each batch's `getRecordCount()` and typed arrays already exclude non-matching rows, so a direct aggregate over the output is correct. The predicate may reference the column being read, another column, or a column outside the projection; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
+A filtered column reader returns **only** the matching rows: each batch's `getRecordCount()` and typed arrays exclude non-matching rows. The predicate may reference the column being read, another column, or a column outside the projection; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
 
 ### Reading Multiple Columns
 
@@ -95,7 +95,7 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-By default the batch size is chosen adaptively from the projected columns' physical widths, so the per-batch arrays stay within a fixed memory budget regardless of how wide or how many columns you project. The batch size is also capped at the rows the read can produce, so a read shorter than one batch does not allocate arrays for rows that cannot arrive. The `RowReader` path uses the same byte-budgeted sizing. To pin a specific record count instead, use `.batchSize(int)` on the builder:
+By default the batch size is chosen adaptively from the projected columns' physical widths, so the per-batch arrays stay within a fixed memory budget regardless of how wide or how many columns you project. It is capped at the rows the read can produce, so a read shorter than one batch does not allocate arrays for rows that cannot arrive. To pin a specific record count instead, use `.batchSize(int)` on the builder:
 
 ```java
 try (ColumnReaders columns = parquet.buildColumnReaders(
@@ -110,7 +110,7 @@ When the read includes a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column,
 
 The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record, including all the leaf values a repeated column holds for it, is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
 
-`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when the readers are exhausted. Partial advancement isn't possible because all readers consume from one shared decode pipeline. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
+`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when the readers are exhausted. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
 
 The readers from `getColumnReader(...)` show the group's current batch. `ColumnReaders.nextBatch()` is the only way to advance them: `ColumnReader.nextBatch()` on one of them throws `IllegalStateException`. Close the group with `ColumnReaders.close()`; closing one of its readers has no effect.
 
@@ -216,14 +216,9 @@ All three navigation methods return `null` when the group isn't of the expected 
 #### Reading nested data: the layer model
 
 `ColumnReader` exposes a nested column's schema chain as a sequence of **layers**, numbered
-`0..getLayerCount() - 1` outermost-to-innermost, with the leaf queried separately. Each layer has a
-[Validity](/api/latest/dev/hardwood/Validity.html) via `getLayerValidity(k)`; `REPEATED`
-layers (lists and maps) additionally have `getLayerOffsets(k)`; and the leaf has its own
-`getLeafValidity()`.
-
-For the full model (how `STRUCT` and `REPEATED` nodes map to layers, the four container states,
-the offset/validity encoding, and the per-layer count recursion), see
-[The Layer Model](../concepts/nested-columns.md). The examples below walk the common shapes.
+`0..getLayerCount() - 1` outermost-to-innermost, each with `getLayerValidity(k)` and, for lists
+and maps, `getLayerOffsets(k)`; the leaf has `getLeafValidity()`. The model is described in
+[The Layer Model](../concepts/nested-columns.md).
 
 #### Picking a null-check loop shape
 
@@ -235,11 +230,9 @@ the offset/validity encoding, and the per-layer count recursion), see
 | Hoisted `hasNulls()` + `isNotNull(i)` | Default for hot inner loops on analytical data, where most batches hit the `NO_NULLS` fast path. |
 | `words()` word-wise + `Long.numberOfTrailingZeros` | Null-dense regions where you want to skip whole runs of clear bits instead of scanning every position. |
 
-The two hot-path shapes are described below.
-
 #### Hot loops: hoist `hasNulls()` outside the loop
 
-`Validity.NO_NULLS` is the common case on analytical workloads, where most columns are non-null in most batches, and the API is designed to make checking for it O(1). In a per-element inner loop, **call `hasNulls()` once outside the loop and use a local boolean inside**, rather than calling `isNotNull(i)` directly per element:
+In a per-element inner loop, **call `hasNulls()` once outside the loop and use a local boolean inside**, rather than calling `isNotNull(i)` directly per element:
 
 ```java
 Validity validity = col.getLeafValidity();
@@ -251,7 +244,7 @@ for (int i = 0; i < count; i++) {
 }
 ```
 
-Extracting the check once per batch is meaningfully faster than calling it per element on no-nulls data, which is the common analytical-workload case. Examples below show the hoist applied; for cold paths (small batches, schema introspection, debug code) the direct `isNull(i)` / `isNotNull(i)` form is fine and reads better.
+On no-nulls data, the common case for analytical workloads, this is faster than calling `isNotNull(i)` per element. The examples below apply the hoist.
 
 #### Word-wise iteration via `Validity.words()`
 
@@ -276,25 +269,7 @@ if (words == null) {
 }
 ```
 
-The returned array is the `Validity`'s backing storage, not a copy. Callers must not mutate it. Bits at indices `>= count` are undefined and must not be read. For null-sparse columns this gives no measurable win over the hoisted-`hasNulls()` form above; the payoff is on null-dense columns where skipping clear bits via `tzcnt` is faster than scanning every position.
-
-#### Flat column
-
-```java
-try (ColumnReader fare = reader.columnReader("fare_amount")) {
-    while (fare.nextBatch()) {
-        int count = fare.getValueCount();
-        double[] values = fare.getDoubles();
-        Validity validity = fare.getLeafValidity();
-        boolean hasNulls = validity.hasNulls();
-        for (int i = 0; i < count; i++) {
-            if (!hasNulls || validity.isNotNull(i)) {
-                sum += values[i];
-            }
-        }
-    }
-}
-```
+The returned array is the `Validity`'s backing storage, not a copy. Callers must not mutate it. Bits at indices `>= count` are undefined and must not be read.
 
 #### Optional struct above an optional leaf
 
@@ -428,7 +403,7 @@ try (ColumnReader col = reader.columnReader("tags.list.element")) {
 
 Maps report as `REPEATED` (Hardwood does not distinguish map-shape from list-shape on the layer enum; consult `getColumnSchema()` if you need that distinction).
 
-To pair keys with values, open both leaves through `columnReaders(...)` and drive them with `ColumnReaders.nextBatch()`. The two columns share the same `map.key_value` parent, so their layer offsets agree: entry `i` of one is entry `i` of the other. Open them together: a key and a value built as separate `ColumnReader`s batch at different row boundaries.
+To pair keys with values, open both leaves through `columnReaders(...)` and drive them with `ColumnReaders.nextBatch()`. The two columns share the same `map.key_value` parent, so their layer offsets agree: entry `i` of one is entry `i` of the other.
 
 ```java
 try (ColumnReaders columns = reader.columnReaders(
@@ -469,7 +444,7 @@ try (ColumnReaders columns = reader.columnReaders(
 }
 ```
 
-Two orthogonal axes show up here, as in `list<string>`: `entryOffsets` walks map entries within a record (across the `getValueCount()` axis), `keyStarts` and `keyEnds` locate the bytes of a single key in `getBinaryValues()`.
+As in `list<string>`, `entryOffsets` walks map entries within a record, and `keyStarts` and `keyEnds` locate the bytes of a single key in `getBinaryValues()`.
 
 If the map sits under an `OPTIONAL` group (e.g. `optional group meta { map<string, int> tags }`), the chain gains a `STRUCT` layer on top. The same key/value walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
 
