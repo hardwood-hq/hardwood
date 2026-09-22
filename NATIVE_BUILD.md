@@ -39,7 +39,7 @@ cd cli
 ./build-cli-docker.sh v1.0.0       # custom tag
 ```
 
-See the [CLI reference](docs/content/reference/cli.md#docker) for running the published image.
+See [Getting Started](docs/content/getting-started.md#docker) for running the published image.
 
 ## How the native build works
 
