@@ -33,8 +33,7 @@ It is built to be:
 * **Agent-friendly**: Hardwood's CLI comes with a skill which lets your agents inspect and analyse Parquet files
 * **Compatible**: A [drop-in shim module](how-to/compat.md) facilitates migration from `parquet-java`, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`)
 
-Besides the core library, Hardwood provides a ready-to-use CLI for inspecting and analysing Parquet files,
-including an interactive TUI for exploring a file's schema, row groups, pages, and data.
+The [CLI](reference/cli.md) inspects and analyses Parquet files and includes an interactive TUI for exploring a file's schema, row groups, pages, and data.
 
 ## Quick Example
 
@@ -79,9 +78,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), sc
 ```
 
 [Set up Hardwood in your project](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
-Alternatively, [install the Hardwood CLI](reference/cli.md) for working with Parquet files on the command line.
-
-The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples, one per concept, that you can clone and run with a single command.
+Alternatively, [install the Hardwood CLI](getting-started.md#command-line-tool) for working with Parquet files on the command line.
 
 ## Status and Limitations
 
@@ -89,7 +86,7 @@ The read path is stable and suitable for production use; `ColumnReader`, with it
 The write path ships both APIs described under [Choosing a Writer](how-to/index.md#choosing-a-writer); the row-oriented `RowWriter` and its builders, and the `ColumnBatch` setters for nested and nullable columns, are annotated `@Experimental`, so their shape may still change.
 
 Writing targets local files through `OutputFile.of(Path)`.
-Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [2 GB column-chunk limit](concepts/parquet-layout.md#column-chunk).
+Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [Limits](reference/reader.md#limits).
 
 ## Roadmap
 
@@ -102,8 +99,7 @@ Forward-looking items, none committed to a specific release.
 
 ## Getting help
 
-- **Questions, ideas, design discussion** — [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions). The best first stop for "how do I…", "is X possible…", or "what's the right way to…".
-- **Bug reports and feature requests** — the [GitHub issue tracker](https://github.com/hardwood-hq/hardwood/issues). Please check whether a similar issue already exists.
+Ask questions on [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions) and file bugs on the [issue tracker](https://github.com/hardwood-hq/hardwood/issues); see [Contributing](contributing.md).
 
 ## Articles, talks & podcasts
 

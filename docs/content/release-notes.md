@@ -37,10 +37,9 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `ParquetFileReader` no longer retains a read's `RowGroupIterator` after the reader consuming it is closed ([#1170](https://github.com/hardwood-hq/hardwood/issues/1170)).
 
-- A multi-file read opens each file as it reaches it, rather than opening every file when the reader is built, so the time to the first row no longer grows with the number of files ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).
-    - A later file's I/O errors, and any `SchemaIncompatibleException` its schema raises, now surface from the reading loop rather than from `ParquetFileReader.openAll(...)` or `build()` — always before any row of that file is returned. Code that catches those around reader construction alone should catch them around iteration too.
+- A multi-file read opens each file as it reaches it rather than when the reader is built, so a later file's I/O errors and `SchemaIncompatibleException` surface from the reading loop instead of from `ParquetFileReader.openAll(...)` or `build()` ([#1107](https://github.com/hardwood-hq/hardwood/issues/1107)).
 
-- Every `LogicalType` member has a static factory, and those are the documented way to construct one — `LogicalType.string()`, `LogicalType.decimal(18, 2)`, `LogicalType.timestamp(true, TimeUnit.MICROS)` ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). The parameterless ones return a shared instance, which the reader now hands back instead of allocating a record per column while it decodes a footer. The record constructors still work.
+- Every `LogicalType` member has a static factory, such as `LogicalType.string()`, `LogicalType.decimal(18, 2)` and `LogicalType.timestamp(true, TimeUnit.MICROS)` ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)).
 
 - `print`, `convert`, `inspect` and `dive` spell a value of a given logical type the same way: decimals as plain strings (`0.0000001`, never `1E-7`), `INTERVAL` as `1mo 15d 3600000ms`, and `INT96` values and statistics as timestamps ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
 
@@ -64,29 +63,19 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `FilterPredicate.SignedBinaryColumnPredicate` is removed ([#1190](https://github.com/hardwood-hq/hardwood/issues/1190)).
 
-- The reader's exception model separates what the transport got wrong from what the file did, so a failure says whether trying again can help ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104)).
-    - `IOException` now means the transport — a read that failed, a connection reset — and is declared where the reader reaches the file: `RowReader.hasNext`/`next`/`close` and `ColumnReader.nextBatch`/`close`, as `ParquetFileWriter` has always declared it. **The canonical idiom is unaffected**, because `ParquetFileReader.open(...)` already declared `IOException` and so the enclosing method already handles it:
+- `IOException` signals a transport failure only and is declared by `RowReader.hasNext`/`next`/`close` and `ColumnReader.nextBatch`/`close`, which implement `Closeable`; the conditions below raise a different type, and a `catch (IOException)` written for them compiles but does not catch them ([#1104](https://github.com/hardwood-hq/hardwood/issues/1104); see [Error Handling](reference/error-handling.md)).
 
-      ```java
-      try (ParquetFileReader reader = ParquetFileReader.open(file);
-           RowReader rows = reader.buildRowReader().build()) {
-          while (rows.hasNext()) {
-              rows.next();
-          }
-      }
-      ```
+    | Condition | Old type | New type |
+    |-----------|----------|----------|
+    | Corrupt file: bad magic, corrupt footer, malformed page index, misplaced dictionary page, failed checksum, values that do not decode | `IOException` | `ParquetReadException` (unchecked; `SchemaIncompatibleException` extends it) |
+    | A page that will not decompress, a dictionary that will not decode | `IOException` | `ParquetReadException` |
+    | Corrupt metadata value: malformed bloom filter header, geospatial bounding box missing a required field, impossible decimal scale or precision, unknown physical type, repetition type, codec or time unit | `IllegalArgumentException`, `IllegalStateException` | `ParquetReadException` |
+    | Row group whose page-index region exceeds 2 GB | `IOException` | `UnsupportedOperationException` |
+    | Column chunk stored in a separate file; file over 2 GB opened with the mmap-backed range cache | `IOException` | `UnsupportedOperationException` |
+    | Codec library absent or native library that will not load, on the dictionary path | `IOException` | `UnsupportedOperationException` |
+    | Writer: a compression codec rejects a page body | `IOException` | `ParquetWriteException` (unchecked) |
 
-      What does need a change is a method that receives an already-open reader and reads from it without otherwise touching `IOException` — a helper like `void print(RowReader rows)` — and any read inside a lambda whose functional interface forbids a checked exception, such as `forEach` or `Stream.map`.
-    - A corrupt file now raises the new unchecked `ParquetReadException` rather than `IOException`: bad magic, a corrupt footer, a malformed page index, a misplaced dictionary page, a failed checksum, values that will not decode. `SchemaIncompatibleException` extends it. **This one is silent** — a `catch (IOException)` written for corruption keeps compiling and stops catching. It is released alongside the `throws` clauses deliberately, so the compile error brings you to the error handling the silent change would otherwise slip past.
-    - A row group whose page-index region exceeds 2 GB now raises `UnsupportedOperationException` where it used to raise `IOException`. **Silent, like the one above** — a `catch (IOException)` written for it keeps compiling and stops catching.
-    - `RowReader` and `ColumnReader` implement `Closeable`, as `ParquetFileWriter` and `InputFile` already did.
-    - A page that will not decompress and a dictionary that will not decode now raise `ParquetReadException` too. Decompressing and parsing work on bytes already in memory, so they cannot fail at I/O and no longer say they can. **Silent, like the two above.**
-    - A codec library that is absent, or a native one that will not load, now reaches you as the `UnsupportedOperationException` it always was on other paths. On the dictionary path it was being caught and reported as a failed read, which buried the message naming the dependency to add.
-    - A column chunk stored in a separate file (the legacy split-file layout) and a file over 2 GB opened with the mmap-backed range cache now raise `UnsupportedOperationException` rather than `IOException`. Both files are correct; it is Hardwood that will not read them. **Silent.**
-    - The writer raises the new unchecked `ParquetWriteException` when a compression codec rejects a page body, where it used to raise `IOException`. Nothing you passed was wrong and the destination is not involved, so retrying cannot help. **Silent.**
-    - A corrupt value inside the metadata — a malformed bloom filter header, a geospatial bounding box missing a required field, a decimal scale or precision that cannot be, an unknown physical type, repetition type, codec or time unit — now raises `ParquetReadException` rather than `IllegalArgumentException` or `IllegalStateException`. These all signal a corrupt file. **Silent.** Both types keep their meaning for calls that really are mistakes, such as asking for a column outside the projection.
-
-- `LogicalType.DecimalType` takes its precision before its scale, where it used to take scale first ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)). Every other decimal API takes them in that order — SQL's `DECIMAL(p, s)`, Arrow, Avro, Iceberg, parquet-cpp — and it is the order the annotation renders in. Only `parquet.thrift`'s field declaration and the APIs that mirror it read the other way. **This one is silent**, because a swapped call still compiles: `LogicalType.decimal(...)` rejects a scale above the precision, which catches a transposed pair at the call site, but a column whose scale equals its precision passes either way.
+- `LogicalType.DecimalType` takes its precision before its scale, and a call written in the old order compiles unchanged ([#1074](https://github.com/hardwood-hq/hardwood/issues/1074)).
 
 - `convert --format json` writes nested structs, lists, maps and repeated fields as native JSON objects and arrays instead of strings holding their display text ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
 

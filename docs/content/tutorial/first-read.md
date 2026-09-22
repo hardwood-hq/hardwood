@@ -15,10 +15,6 @@ This is a hands-on lesson. By the end you will have opened a real Parquet file, 
 schema, read rows with typed accessors, narrowed the read with a projection and a filter, and
 summed a column the fast columnar way. Follow the steps in order and run each snippet.
 
-When you're done, the [how-to guides](../how-to/index.md) cover the full range of
-choices, and the [background pages](../concepts/parquet-layout.md) explain how Parquet files
-and the reader APIs work underneath.
-
 !!! example "Try it yourself"
     Want to run this as a standalone example? The [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood)
     example mirrors these steps: opening a file, inspecting its schema and footer, reading a few
@@ -40,8 +36,7 @@ Parquet file of about 60 MB:
 curl -O https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2026-01.parquet
 ```
 
-You now have `yellow_tripdata_2026-01.parquet` in your working directory. Every snippet below
-opens this file via `Path.of("yellow_tripdata_2026-01.parquet")`.
+Every snippet below opens this file via `Path.of("yellow_tripdata_2026-01.parquet")`.
 
 ## Step 2 — See what's inside
 
@@ -103,11 +98,9 @@ try (ParquetFileReader reader =
 }
 ```
 
-Each accessor returned a typed value, one row at a time.
-
 ## Step 4 — Read less
 
-A whole file is rarely what you want. Three builder options narrow the read, and they combine:
+Three builder options narrow the read, and they combine:
 
 - **Projection**: read only the columns you name; the rest are never fetched or decoded.
 - **Filter**: a predicate pushed down to skip data that can't match.
@@ -178,15 +171,9 @@ try (ParquetFileReader reader =
 }
 ```
 
-That's the columnar path: iterate batches, read the primitive array, and check the
-[`Validity`](/api/latest/dev/hardwood/Validity.html) bitmap for nulls. On analytical work
-like this it's markedly faster than reading row by row.
-
-## What you've learned
-
-You opened a file, inspected its schema, read rows with typed accessors, pushed down a
-projection and a filter, and aggregated a column columnar-style. That's the core of reading
-Parquet with Hardwood.
+Check the [`Validity`](/api/latest/dev/hardwood/Validity.html) bitmap for nulls before using a
+value. For why this is faster than reading row by row on analytical work, see
+[RowReader vs. ColumnReader](../concepts/reader-models.md).
 
 ## Where to go next
 
