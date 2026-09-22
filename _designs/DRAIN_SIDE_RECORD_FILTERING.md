@@ -107,7 +107,12 @@ The compiler builds it for `EQ`, `NOT_EQ` and `BinaryIn` leaves whose `Compariso
 
 The short-value path lives in its own class, and the byte-wise matchers carry no branch for it: C2 profiles per class, so calls that return before the byte loop would make that loop's call site look cold, and C2 inlines a cold call site only up to `MaxInlineSize` bytes, which the per-row comparison exceeds.
 
-Evaluating the predicate in dictionary space — one comparison per dictionary entry, rows answered by index lookup — is tracked separately in #859 and is not part of this path; it would have to respect the same distinction, since a padded value hash-probes to a miss.
+Each compiled binary leaf is wrapped by dictionary-space evaluation (#859).
+For a dictionary batch, the wrapper decides only referenced entries and caches
+their outcomes; plain rows and batches without a dictionary use the matcher's
+ordinary slice and whole-batch operations. Entries are decided through the
+matcher's comparison rather than by probing for the literal's bytes, so the
+same path is sound for padded variable-width decimals.
 
 ---
 
@@ -338,11 +343,12 @@ while (combined != 0) { emit(base + Long.numberOfTrailingZeros(combined)); combi
 
 **Difficulty.** High. Tracked under #485.
 
-### Bloom-filter / dictionary-aware matchers
+### Dictionary-aware matchers
 
-**Why.** Dictionary-encoded pages let you evaluate the predicate **in dictionary space** — one compare per dictionary entry (typically 100s), then a gather over the per-row dictionary indices. For `IN`-list and equality predicates on high-cardinality columns this is asymptotically faster than per-row. Bloom filters give a cheap pre-check for `EQ`/`IN` shapes before any decode work. Tracked as #859; note that an equality shortcut testing bytes (a dictionary or bloom probe for the literal's own spelling) is sound only where `Comparison.byteExact()` holds, so a `BYTE_ARRAY` decimal needs the ordering comparison even there.
-
-**Difficulty.** Medium-high, but **independent of the drain-side architecture**. Lives at the page-decoder layer, not the matcher layer. Mentioned for completeness; tracked separately.
+**Status: implemented for binary matchers.** Dictionary-encoded binary pages
+evaluate each referenced entry once and gather outcomes by per-row entry ID;
+see [DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md).
+Fixed-width primitive dictionary evaluation remains open under #859.
 
 ---
 

@@ -357,6 +357,17 @@ public class BatchExchange<B> {
         };
     }
 
+    /// Allocates a values buffer and enables dictionary-entry ID retention when
+    /// a compiled binary matcher consumes those IDs. Primitive arrays ignore
+    /// the flag.
+    public static Object allocateArray(ColumnSchema column, int capacity, boolean retainDictionaryIndices) {
+        Object values = allocateArray(column, capacity);
+        if (retainDictionaryIndices && values instanceof BinaryBatchValues binaryValues) {
+            binaryValues.retainDictionaryIndices = true;
+        }
+        return values;
+    }
+
     /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
     /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves

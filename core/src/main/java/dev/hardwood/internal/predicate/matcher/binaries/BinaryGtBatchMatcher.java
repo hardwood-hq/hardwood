@@ -41,11 +41,16 @@ public final class BinaryGtBatchMatcher implements BinaryBatchMatcher {
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
                 if ((present & (1L << b)) != 0L
-                        && BinaryComparator.compare(bytes, offsets[i], offsets[i + 1], literal, signed) > 0) {
+                        && testValue(bytes, offsets[i], offsets[i + 1])) {
                     word |= 1L << b;
                 }
             }
             outWords[w] = word;
         }
+    }
+
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
+        return BinaryComparator.compare(bytes, from, to, literal, signed) > 0;
     }
 }

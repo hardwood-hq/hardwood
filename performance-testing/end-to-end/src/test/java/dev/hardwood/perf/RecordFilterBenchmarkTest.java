@@ -302,12 +302,12 @@ class RecordFilterBenchmarkTest {
 
         Run fixedDecimalIn = timeFilter(
                 // Padded to the column width, so membership is byte equality.
-                FilterPredicate.in("amount_fixed", decimalLiterals()),
+                FilterPredicate.in("amount_fixed", DECIMAL_IN),
                 runs);
 
         Run variableDecimalIn = timeFilter(
                 // Not byte equality: every row compares each member by value, sign-extending first.
-                FilterPredicate.in("amount_var", decimalLiterals()),
+                FilterPredicate.in("amount_var", DECIMAL_IN),
                 runs);
 
         // ----- Print results ------------------------------------------------
@@ -654,15 +654,6 @@ class RecordFilterBenchmarkTest {
                 new Schema.Field("amount_fixed", fixedDecimal, null, null),
                 new Schema.Field("amount_var", variableDecimal, null, null)));
         return schema;
-    }
-
-    /// [#DECIMAL_IN] as unscaled two's complement bytes, the literal form a decimal `IN` takes.
-    private static byte[][] decimalLiterals() {
-        byte[][] literals = new byte[DECIMAL_IN.length][];
-        for (int i = 0; i < DECIMAL_IN.length; i++) {
-            literals[i] = DECIMAL_IN[i].unscaledValue().toByteArray();
-        }
-        return literals;
     }
 
     private static String[] categories() {
