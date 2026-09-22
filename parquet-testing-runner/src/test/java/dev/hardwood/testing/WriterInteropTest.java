@@ -19,6 +19,7 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 
 import org.apache.parquet.column.Encoding;
+import org.apache.parquet.column.EncodingStats;
 import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
@@ -51,11 +52,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// that was written.
 ///
 /// The matrix varies one axis at a time — repetition, encoding, codec, layout — against a
-/// representative base, and sweeps every axis across all seven writable physical types, since
-/// the value encoders are per type and that is where an encoding defect lives. Its floor is a
-/// single-entry dictionary per physical type, the shape that produced #901: an `RLE_DICTIONARY`
-/// index stream with no run header, which Hardwood's own reader and DuckDB both accept and
-/// parquet-java rejects.
+/// representative base, and sweeps each axis across all seven writable physical types, since the
+/// value encoders are per type and that is where an encoding defect lives. Two cases are narrower:
+/// the optional encodings crossed with the codecs run each encoding on one type it accepts, and the
+/// fixed-length case varies the length of `FIXED_LEN_BYTE_ARRAY` alone. Its floor is a single-entry
+/// dictionary per physical type, which `BOOLEAN`, never dictionary-encoded, writes `PLAIN`. That
+/// dictionary shape produced #901: an `RLE_DICTIONARY` index stream with no run header, which
+/// Hardwood's own reader and DuckDB both accept and parquet-java rejects.
 ///
 /// The nested shapes are in [WriterNestedInteropTest] and the logical-type annotations in
 /// [WriterLogicalTypeInteropTest].
@@ -338,6 +341,7 @@ class WriterInteropTest {
         assertStatistics(testCase, footer);
         assertDistinctCounts(testCase, file);
         assertEncodings(testCase, footer, pages);
+        assertEncodingStats(footer, pages);
         return new Verified(footer, pages);
     }
 
@@ -555,6 +559,35 @@ class WriterInteropTest {
             assertThat(chunks(footer).get(0).getEncodings()).as("first chunk's declared encodings")
                     .contains(Encoding.RLE_DICTIONARY);
         }
+    }
+
+    /// parquet-java's decoding of each chunk's `encoding_stats` agrees with the pages it walked:
+    /// the same data-page encodings, a dictionary entry exactly where the chunk has a dictionary
+    /// page, and data-page counts that add up to the pages in the file. These complete stats provide
+    /// the metadata needed for dictionary-based row-group pruning when a reader applies that filter.
+    private void assertEncodingStats(ParquetMetadata footer, Pages pages) {
+        List<ColumnChunkMetaData> chunks = chunks(footer);
+        int dataPages = 0;
+        for (int i = 0; i < chunks.size(); i++) {
+            ColumnChunkMetaData chunk = chunks.get(i);
+            EncodingStats stats = chunk.getEncodingStats();
+            assertThat(stats).as("encoding_stats of chunk %d", i).isNotNull();
+            assertThat(stats.getDataEncodings()).as("data-page encodings of chunk %d", i)
+                    .containsExactlyInAnyOrderElementsOf(pages.chunkValueEncodings().get(i));
+            assertThat(stats.hasDictionaryPages()).as("dictionary page entry of chunk %d", i)
+                    .isEqualTo(chunk.hasDictionaryPage());
+            if (stats.hasDictionaryPages()) {
+                assertThat(stats.getDictionaryEncodings()).as("dictionary encodings of chunk %d", i)
+                        .containsExactly(Encoding.PLAIN);
+                assertThat(stats.getNumDictionaryPagesEncodedAs(Encoding.PLAIN)).isOne();
+                assertThat(stats.hasNonDictionaryEncodedPages())
+                        .as("chunk %d has a data page outside its dictionary", i).isFalse();
+            }
+            for (Encoding encoding : stats.getDataEncodings()) {
+                dataPages += stats.getNumDataPagesEncodedAs(encoding);
+            }
+        }
+        assertThat(dataPages).as("data pages counted by encoding_stats").isEqualTo(pages.dataPageCount());
     }
 
     /// parquet-java's name for the page encoding a file-wide policy produces. `AUTO` reaches

@@ -8,12 +8,16 @@
 package dev.hardwood.writer;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.Validity;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -54,6 +58,23 @@ final class WriterTestSupport {
 
     static ColumnMetaData columnMeta(ParquetFileReader reader, int columnIndex) {
         return reader.getFileMetaData().rowGroups().get(0).columns().get(columnIndex).metaData();
+    }
+
+    /// Walks a column chunk's contiguous data pages from `startOffset`, returning how many pages
+    /// cover `totalValues`.
+    static int countDataPages(byte[] file, long startOffset, long totalValues) throws Exception {
+        ByteBuffer buf = ByteBuffer.wrap(file);
+        int offset = Math.toIntExact(startOffset);
+        long seen = 0;
+        int pages = 0;
+        while (seen < totalValues) {
+            ThriftCompactReader reader = new ThriftCompactReader(buf, offset);
+            PageHeader header = PageHeaderReader.read(reader);
+            pages++;
+            seen += header.dataPageHeader().numValues();
+            offset += reader.getBytesRead() + header.compressedPageSize();
+        }
+        return pages;
     }
 
     static int[] readInts(ParquetFileReader reader, int columnIndex) throws IOException {

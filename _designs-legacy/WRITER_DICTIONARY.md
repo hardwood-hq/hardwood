@@ -194,9 +194,15 @@ single chunk.
 The list is the deduplicated set of encodings present, matching how the reader and other
 engines interpret field `2`. `RLE` appears only when the column has a level stream (max
 definition or repetition level > 0), unchanged from stage 4. The optional `encoding_stats`
-(field `13`, per-page-type encoding counts) is not written here. It is what tells a reader
-whether a chunk's dictionary covers all of the chunk's values, so a file written without it
-gets no dictionary-based row-group pruning; increment 37 adds it.
+(field `13`, per-page-type encoding counts) is written for every column chunk. A
+dictionary chunk carries exactly one `DICTIONARY_PAGE` / `PLAIN` entry with count `1` and one
+`DATA_PAGE` / `RLE_DICTIONARY` entry whose count is the number of data pages written. A
+non-dictionary chunk carries one `DATA_PAGE` entry using the selected value encoding and its
+exact data-page count. This complete inventory tells a reader whether a chunk's dictionary
+covers all of its values, so Hardwood-written dictionary chunks are eligible for dictionary-based
+row-group pruning. A flushed row group always holds at least one row, so every chunk writes at
+least one data page and the list is never empty; `ColumnMetaDataWriter` omits field `13` for an
+empty list rather than write one that claims a chunk has no pages.
 
 ## `WriterConfig`
 

@@ -174,6 +174,10 @@ class ThriftEnumLookup {
         throw new ParquetReadException("Unknown compression codec: " + value);
     }
 
+    static int thriftValue(PageType type) {
+        return indexOf(PAGE_TYPES, type, "page type");
+    }
+
     static int thriftValue(PhysicalType type) {
         return indexOf(PHYSICAL_TYPES, type, "physical type");
     }

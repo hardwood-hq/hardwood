@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate.dictionary;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -16,15 +17,19 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.PageType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -100,6 +105,41 @@ class RowGroupDictionaryFilterSourceTest {
     void wellFormedOffsetsReadTheDictionary() throws Exception {
         withFixture(SMALL_DICTIONARY, fixture ->
                 assertThat(entryCount(fixture.source().forColumn(DICTIONARY_COLUMN))).isEqualTo(10));
+    }
+
+    @Test
+    void aHardwoodWrittenFilePrunesOnItsOwnDictionaries() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("category", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        int[] ids = new int[1_000];
+        int[] categories = new int[1_000];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = i;
+            categories[i] = i % 10;
+        }
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .ints("id", ids)
+                    .ints("category", categories));
+        }
+
+        InputFile inputFile = InputFile.of(ByteBuffer.wrap(out.toByteArray()));
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
+             HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();
+            FileSchema readSchema = FileSchema.fromSchemaElements(reader.getFileMetaData().schema());
+            RowGroupDictionaryFilterSource source = new RowGroupDictionaryFilterSource(
+                    inputFile, rowGroup, readSchema, context);
+
+            Dictionary category = source.forColumn(1);
+            assertThat(category).isNotNull().isInstanceOf(Dictionary.IntDictionary.class);
+            assertThat(category.size()).isEqualTo(10);
+            assertThat(source.forColumn(0)).isNull();
+        }
     }
 
     @Test

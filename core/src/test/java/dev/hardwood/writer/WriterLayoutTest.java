@@ -29,6 +29,8 @@ import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -38,6 +40,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
 import static dev.hardwood.writer.WriterTestSupport.columnMeta;
+import static dev.hardwood.writer.WriterTestSupport.countDataPages;
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
 import static dev.hardwood.writer.WriterTestSupport.readInts;
 import static dev.hardwood.writer.WriterTestSupport.readListOfInts;
@@ -71,8 +74,11 @@ class WriterLayoutTest {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
             // One 128 MiB row group; 600k values at 262,144 per 1 MiB page ⇒ exactly 3 pages.
             assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
-            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             assertThat(countDataPages(bytes, meta.dataPageOffset(), meta.numValues())).isEqualTo(3);
+            assertThat(meta.encodingStats()).containsExactly(
+                    new PageEncodingStats(PageType.DATA_PAGE, Encoding.PLAIN, 3)
+            );
             // Arrays.equals over containsExactly: the latter is O(n) with per-element
             // boxing/description and is needlessly slow at 600k elements.
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
@@ -143,7 +149,7 @@ class WriterLayoutTest {
 
         byte[] file = out.toByteArray();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
-            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             // The page is cut before the value that would cross the target, so the target is a
             // ceiling rather than something a page overshoots. Only a value larger than the whole
             // target can breach it, having nowhere else to go.
@@ -208,10 +214,10 @@ class WriterLayoutTest {
                     .toList();
             // The byte target cut, so no group reached the row target that would have held the
             // whole file, and every group but the tail is the byte target's own cadence.
-            assertThat(numRows).hasSize(30).allSatisfy(n -> assertThat(n).isLessThan((long) rows));
+            assertThat(numRows).hasSize(30).allSatisfy(n -> assertThat(n).isLessThan(rows));
             assertThat(numRows.subList(0, numRows.size() - 1))
                     .allSatisfy(n -> assertThat(n).isEqualTo(171L));
-            assertThat(numRows.get(numRows.size() - 1)).isEqualTo(41L);
+            assertThat(numRows.getLast()).isEqualTo(41L);
         }
     }
 
@@ -301,8 +307,8 @@ class WriterLayoutTest {
             assertThat(rowGroups).hasSize(2);
 
             // Statistics describe their own row group, not everything written so far.
-            Statistics firstStats = rowGroups.get(0).columns().get(0).metaData().statistics();
-            Statistics secondStats = rowGroups.get(1).columns().get(0).metaData().statistics();
+            Statistics firstStats = rowGroups.getFirst().columns().getFirst().metaData().statistics();
+            Statistics secondStats = rowGroups.get(1).columns().getFirst().metaData().statistics();
             assertThat(StatisticsDecoder.decodeInt(firstStats.minValue())).isEqualTo(1_000_000);
             assertThat(StatisticsDecoder.decodeInt(firstStats.maxValue())).isEqualTo(1_000_000 + perGroup - 1);
             assertThat(StatisticsDecoder.decodeInt(secondStats.minValue())).isEqualTo(10);
@@ -310,7 +316,7 @@ class WriterLayoutTest {
 
             // The first group's values argued for PLAIN; the second's argue for a dictionary, so
             // the first group's verdict does not leak across the boundary either.
-            ColumnMetaData secondChunk = rowGroups.get(1).columns().get(0).metaData();
+            ColumnMetaData secondChunk = rowGroups.get(1).columns().getFirst().metaData();
             assertThat(secondChunk.encodings()).contains(Encoding.RLE_DICTIONARY);
 
             // And that dictionary holds the second group's four values and nothing else. Reading
@@ -338,7 +344,7 @@ class WriterLayoutTest {
         byte[] bytes = out.toByteArray();
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
-            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             int offset = Math.toIntExact(meta.dataPageOffset());
             ThriftCompactReader thrift = new ThriftCompactReader(ByteBuffer.wrap(bytes), offset);
             PageHeader header = PageHeaderReader.read(thrift);
@@ -406,7 +412,7 @@ class WriterLayoutTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
-            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             assertThat(meta.numValues()).isEqualTo(n); // the single record's elements span multiple pages
             int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
             assertThat(readListOfInts(reader, leaf)).containsExactly(expected);
@@ -479,23 +485,6 @@ class WriterLayoutTest {
         }
     }
 
-    /// Walks the column chunk's contiguous data pages from `startOffset`, returning
-    /// how many pages it took to cover `totalValues`.
-    private static int countDataPages(byte[] file, long startOffset, long totalValues) throws Exception {
-        ByteBuffer buf = ByteBuffer.wrap(file);
-        int offset = Math.toIntExact(startOffset);
-        long seen = 0;
-        int pages = 0;
-        while (seen < totalValues) {
-            ThriftCompactReader reader = new ThriftCompactReader(buf, offset);
-            PageHeader header = PageHeaderReader.read(reader);
-            pages++;
-            seen += header.dataPageHeader().numValues();
-            offset += reader.getBytesRead() + header.compressedPageSize();
-        }
-        return pages;
-    }
-
     /// The largest data page of a column chunk, by uncompressed body size.
     /// The page target is a ceiling under every encoding, and the width a page is cut on is the
     /// one the type or the dictionary fixes.
@@ -544,7 +533,7 @@ class WriterLayoutTest {
         byte[] file = out.toByteArray();
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
-            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
             int largest = largestDataPage(file, meta.dataPageOffset(), meta.numValues());
             assertThat(largest)
                     .as("largest %s page against a %,d-byte target", encoding, pageTarget)
@@ -557,7 +546,7 @@ class WriterLayoutTest {
         }
     }
 
-    private static int largestDataPage(byte[] file, long startOffset, long totalValues) throws Exception {
+    private static int largestDataPage(byte[] file, long startOffset, long totalValues) {
         ByteBuffer buf = ByteBuffer.wrap(file);
         int offset = Math.toIntExact(startOffset);
         long seen = 0;

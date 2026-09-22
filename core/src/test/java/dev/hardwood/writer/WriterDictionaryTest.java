@@ -22,6 +22,8 @@ import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -29,6 +31,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
 import static dev.hardwood.writer.WriterTestSupport.columnMeta;
+import static dev.hardwood.writer.WriterTestSupport.countDataPages;
 import static dev.hardwood.writer.WriterTestSupport.mapOf;
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
 import static dev.hardwood.writer.WriterTestSupport.oneOptionalColumn;
@@ -62,10 +65,15 @@ class WriterDictionaryTest {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        byte[] file = out.toByteArray();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
+            int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
             assertThat(meta.dictionaryPageOffset()).as("dictionary page written").isNotNull();
             assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY, Encoding.PLAIN);
+            assertThat(meta.encodingStats()).containsExactly(
+                    new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+                    new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPages));
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
         }
     }
@@ -151,10 +159,14 @@ class WriterDictionaryTest {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        byte[] file = out.toByteArray();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
+            int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
             assertThat(meta.dictionaryPageOffset()).isNull();
             assertThat(meta.encodings()).doesNotContain(Encoding.RLE_DICTIONARY);
+            assertThat(meta.encodingStats()).containsExactly(
+                    new PageEncodingStats(PageType.DATA_PAGE, Encoding.PLAIN, dataPages));
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
         }
     }
@@ -322,9 +334,8 @@ class WriterDictionaryTest {
 
     @Test
     void dictionaryEncodesColumnWithLeadingNullPage() throws Exception {
-        // A leading run of nulls long enough to fill the first page seals it as PLAIN before any
-        // value is interned; later pages then dictionary-encode. The resulting PLAIN-before-
-        // RLE_DICTIONARY chunk must still read back, since page encoding is per-page.
+        // Flush-time encoding selection applies to the complete chunk, so a leading null-only
+        // page remains RLE_DICTIONARY data even though it precedes the present dictionary values.
         int n = 60;
         int leadingNulls = 24; // exceeds the ~15 level entries a 64-byte page holds for INT32
         int[] values = new int[n];
@@ -346,10 +357,15 @@ class WriterDictionaryTest {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values, nulls));
         }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        byte[] file = out.toByteArray();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
             ColumnMetaData meta = columnMeta(reader, 0);
+            int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
             assertThat(meta.dictionaryPageOffset()).as("dictionary page still written").isNotNull();
             assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY, Encoding.PLAIN);
+            assertThat(meta.encodingStats()).containsExactly(
+                    new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+                    new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPages));
             assertThat(readNullable(reader, 0)).containsExactly(expected);
         }
     }

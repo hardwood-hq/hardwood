@@ -28,13 +28,17 @@ import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.FileSchema.ElementBuilder;
 
+import static dev.hardwood.writer.WriterTestSupport.countDataPages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -92,6 +96,7 @@ class WriterEncodingPolicyTest {
         byte[] file = write(type, RepetitionType.REQUIRED, config, null);
 
         assertRoundTrip(file, type, null);
+        assertEncodingStats(file, encoding == ColumnEncoding.AUTO ? null : expected(encoding));
     }
 
     @ParameterizedTest(name = "{0} / {1}")
@@ -133,6 +138,7 @@ class WriterEncodingPolicyTest {
             assertThat(reader.getFileMetaData().rowGroups().size()).as("row groups").isGreaterThan(1);
         }
         assertRoundTrip(file, type, null, rows);
+        assertEncodingStats(file, encoding == ColumnEncoding.AUTO ? null : expected(encoding));
     }
 
     @ParameterizedTest(name = "{0} / {1}")
@@ -156,6 +162,7 @@ class WriterEncodingPolicyTest {
             assertThat(columnMeta(reader).statistics().nullCount()).as("every row null")
                     .isEqualTo(ROWS);
         }
+        assertEncodingStats(file, encoding == ColumnEncoding.AUTO ? null : expected(encoding));
     }
 
     @ParameterizedTest(name = "{0} / {1}")
@@ -502,6 +509,29 @@ class WriterEncodingPolicyTest {
     }
 
     // ==================== Helpers ====================
+
+    /// Asserts each row group's `encoding_stats`. A `null` `encoding` stands for `AUTO`, which
+    /// may write a chunk either way; a named encoding builds no dictionary, so its chunks must
+    /// carry a single data-page entry under that encoding.
+    private static void assertEncodingStats(byte[] file, Encoding encoding) throws Exception {
+        try (ParquetFileReader reader = open(file)) {
+            for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
+                ColumnMetaData meta = rowGroup.columns().get(0).metaData();
+                int dataPages = countDataPages(file, meta.dataPageOffset(), meta.numValues());
+                if (meta.dictionaryPageOffset() != null) {
+                    assertThat(encoding).as("a named encoding builds no dictionary").isNull();
+                    assertThat(meta.encodingStats()).containsExactly(
+                            new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+                            new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPages));
+                }
+                else {
+                    assertThat(meta.encodingStats()).containsExactly(
+                            new PageEncodingStats(PageType.DATA_PAGE,
+                                    encoding == null ? Encoding.PLAIN : encoding, dataPages));
+                }
+            }
+        }
+    }
 
     private static Encoding expected(ColumnEncoding encoding) {
         return switch (encoding) {
