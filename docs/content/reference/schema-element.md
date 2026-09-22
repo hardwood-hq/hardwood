@@ -21,7 +21,7 @@
 
 ## Factories
 
-The static factories build the common element kinds. Each factory sets the fields for its kind.
+The static factories build the common element kinds.
 
 | Factory | Builds |
 |---|---|
@@ -51,15 +51,13 @@ FileSchema schema = FileSchema.fromSchemaElements(elements);
 
 The Parquet format leaves `repetition_type` unset on the root element and requires it on every other element.
 
-`root` builds the root element with no repetition. The group and primitive factories require a non-null repetition value and reject a null one.
+`root` builds the root element with no repetition; the other factories require one.
 
 `fromSchemaElements` accepts an element with no repetition value, as a footer may carry one. It uses `REQUIRED` for the root and `OPTIONAL` for other elements. `FileSchema.toSchemaElements()` writes `REQUIRED` for the root of a schema built with `FileSchema.builder(String)`.
 
 ## Name
 
-A valid Parquet footer has a name for each schema element. The Thrift field is required.
-
-A malformed or truncated footer can omit the name. The reader then creates an element with `name == null`. The factories pass a null name through without a check.
+The Thrift name field is required, but a malformed or truncated footer can omit it; the reader then creates an element with `name == null`. The factories pass a null name through without a check.
 
 ## Type length
 
@@ -70,7 +68,7 @@ A malformed or truncated footer can omit the name. The reader then creates an el
 | `FIXED_LEN_BYTE_ARRAY` | the byte length of each value |
 | any other physical type | the maximum bit length needed to store any value |
 
-`fixedLengthPrimitive` sets the physical type to `FIXED_LEN_BYTE_ARRAY` and takes the byte length as its second argument. `primitive` rejects `FIXED_LEN_BYTE_ARRAY`.
+`fixedLengthPrimitive` sets the physical type to `FIXED_LEN_BYTE_ARRAY` and takes the byte length as its second argument.
 
 The maximum bit length has no factory. Use the canonical constructor for it:
 
@@ -94,7 +92,7 @@ The factories throw `IllegalArgumentException` for these inputs:
 | `numChildren` is negative | `group`, `root` |
 | `typeLength` is zero or less | `fixedLengthPrimitive` |
 
-A factory checks one element. Rules for the complete list stay in `fromSchemaElements`. The method consumes the list in depth-first order and builds the schema tree.
+A factory checks one element; `fromSchemaElements` checks the complete list.
 
 ## Canonical constructor
 
@@ -106,9 +104,7 @@ new SchemaElement(name, type, typeLength, repetitionType,
                   fieldId, logicalType);
 ```
 
-Use the constructor when the factories do not cover the metadata. The factories do not set `convertedType`, `scale`, `precision`, or `fieldId`.
-
-Use the constructor for:
+Use the constructor for metadata the factories do not set:
 
 - a legacy `ConvertedType` annotation, such as `ConvertedType.LIST` or `ConvertedType.MAP`;
 - legacy decimal metadata with `scale` and `precision`;
@@ -123,5 +119,3 @@ Use the constructor for:
 |---|---|
 | `isGroup()` | `type` is `null` |
 | `isPrimitive()` | `type` is not `null` |
-
-A null physical type marks a group. `primitive` rejects a null type because it would create a group.
