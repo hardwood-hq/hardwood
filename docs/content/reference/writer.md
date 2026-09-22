@@ -70,7 +70,7 @@ An annotation is built with the `LogicalType` static factory of the same name. T
 | `LogicalType.list()` | `LIST` |
 | `LogicalType.map()` | `MAP` |
 | `LogicalType.intType(bitWidth, isSigned)` | `INT_8` … `UINT_64` — `bitWidth` is 8, 16, 32 or 64 |
-| `LogicalType.decimal(precision, scale)` | `DECIMAL(precision, scale)` |
+| `LogicalType.decimal(precision, scale)` | `DECIMAL(precision, scale)` — `precision` is positive and `scale` lies in `[0, precision]`; other values throw `IllegalArgumentException` |
 | `LogicalType.time(isAdjustedToUTC, unit)` | `TIME` — `unit` is `TimeUnit.MILLIS`, `MICROS` or `NANOS` |
 | `LogicalType.timestamp(isAdjustedToUTC, unit)` | `TIMESTAMP` — same units, over an `INT64` or a `FIXED_LEN_BYTE_ARRAY(12)` |
 | `LogicalType.variant(specVersion)` | `VARIANT` — `specVersion` is `1`; the writer rejects a column carrying it |
