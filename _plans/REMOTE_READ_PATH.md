@@ -30,9 +30,9 @@ The read fetches only the page-index and bloom-filter slices it needs, for the r
 | OffsetIndex | Projected columns and filter columns |
 | Bloom filter | Columns with an `eq` or `in` leaf that statistics left undecided |
 
-Writers lay these out by structure, then row group, then column, so one column's entries are strided through a block. The read plans the list of needed slices, sorts it by offset and merges it under the gap policy: a narrow schema, or a small index region, collapses to one request, and a wide schema with a large region splits instead of fetching the indexes of columns the read does not use. Indexes the read does not need are fetched only inside a gap of at most `G` between two needed slices, and no byte is fetched twice. None is fetched when the footer read already covered them. Like every merge a request spans at most `MAX`, so an index region larger than that is read in several requests, split between slices (#1113).
+Writers lay these out by structure, then row group, then column, so one column's entries are strided through a block. The read plans the list of needed slices, sorts it by offset and merges it under the gap policy, each structure's slices on their own: a narrow schema, or a small index region, collapses to one request, and a wide schema with a large region splits instead of fetching the indexes of columns the read does not use. Indexes the read does not need are fetched only inside a gap of at most `G` between two needed slices, and no byte is fetched twice. None is fetched when the footer read already covered them. Like every merge a request spans at most `MAX`, so an index region larger than that is read in several requests, split between slices (#1113).
 
-A read that may stop early (`maxRows` under a filter, a consumer that abandons iteration) fetches the slices for a window of row groups that grows as the read advances, rather than for the whole file.
+The slices are fetched for a window of row groups at a time: a large file's page index reaches hundreds of megabytes. A window takes as many row groups as fit a byte budget, so a file whose page index fits it costs one request per structure for the whole read. [WINDOWED_INDEX_READS.md](WINDOWED_INDEX_READS.md) has the details.
 
 ### Gap value
 
