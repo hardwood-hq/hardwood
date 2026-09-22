@@ -23,6 +23,13 @@ env:
 # added to one does not get written against the other's shape. The one thing the two
 # do not share is a `concurrency:` group: a push to `main` that supersedes a running
 # build must still be verified, so nothing here is cancelled.
+#
+# The PR build restores the Maven caches these jobs save but saves none of its own,
+# so every job there has one here under the same job name, resolving at least the
+# dependencies it does. That is also why `build-modules` compiles `predicate-audit`
+# and `performance-testing` like its PR counterpart, and why the native CLI is built
+# here. The PR build's `predicate-audit` job, which runs the audit only for some
+# changes, restores the `build-modules` cache.
 
 jobs:
   build-core:
@@ -113,6 +120,14 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: ./mvnw -B -fae clean install -pl :hardwood-s3,:hardwood-aws-auth,:hardwood-cli,:hardwood-parquet-java-compat
 
+      - name: 'Compile predicate-audit'
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: ./mvnw -ntp -B -Ppredicate-audit compile -pl :hardwood-predicate-audit
+
+      - name: 'Compile performance-testing'
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: ./mvnw -ntp -B -Pperformance-test -Dtestdata.download.skip=true test-compile -pl :hardwood-performance-testing -amd
+
   javadoc-and-integration-tests:
     name: 'Javadoc and integration tests'
     runs-on: ubuntu-latest
@@ -187,3 +202,60 @@ jobs:
       - name: 'Run integration tests'
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: ./mvnw -B clean verify -pl :hardwood-integration-test
+
+  native-build-check:
+    name: 'Verify native CLI build'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
+        with:
+          submodules: 'true'
+
+      - name: 'Pre-pull s3proxy image in background'
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
+
+      - name: 'Set up Graal'
+        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Cache Maven dependencies'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ github.job }}-
+            maven-${{ runner.os }}-build-modules-
+            maven-${{ runner.os }}-build-core-
+            maven-${{ runner.os }}-
+
+      - name: 'Drop any cached Hardwood artifacts'
+        # Every job builds its own dependency closure, so a Hardwood jar restored from
+        # the cache can only stand in for one the closure failed to build, turning a
+        # missing dependency into a silent compile against an earlier run's code.
+        # Removing them makes such a gap a build error.
+        run: rm -rf ~/.m2/repository/dev/hardwood
+
+      - name: 'Build the dependencies'
+        run: ./mvnw -ntp -B -Dquick install -pl :hardwood-cli -am
+
+      - name: 'Build Native Image'
+        # -DskipSurefire=true skips the JVM unit test suite, which the `build-modules` job
+        # runs. -Dnative clears the `native` tag exclusion so the ITs that spawn the
+        # binary run at all; -Dgroups=native then holds failsafe to those eleven, since
+        # the other 87 are the JVM S3 command ITs `build-modules` has already run, and
+        # running them again here cost ten seconds for no additional coverage.
+        #
+        # Nothing here tunes native-image itself. Across eight runs of identical input
+        # the image build took between 68 s and 124 s, so an option has to be worth
+        # more than 1.8x to be visible at all, and neither -Ob nor a capped builder
+        # heap was: -Ob moved more work into the analysis phase than it took out of
+        # compilation, and the heap cap did not separate from the spread.
+        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true -Dgroups=native

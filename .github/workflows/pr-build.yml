@@ -45,6 +45,14 @@ concurrency:
 # costs a second or two. The BOMs the modules import need no place in it: `-am` does
 # not follow an imported BOM, but Maven resolves one out of the source tree without
 # it having been installed at all.
+#
+# Jobs restore the Maven cache but never save it. A pull request can restore only
+# caches saved on its own ref or on `main`, so a cache saved here serves re-runs of
+# this one pull request and takes up space that `main`'s caches and the performance
+# test datasets need. `main-build.yml` saves a cache under each job name used here,
+# and a job restores the one saved under its own name first. A job added here needs
+# a counterpart there that resolves the same dependencies, or every run of it
+# downloads what the cache is missing.
 
 jobs:
   build-core:
@@ -63,8 +71,8 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+      - name: 'Restore Maven dependencies'
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
@@ -110,8 +118,8 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+      - name: 'Restore Maven dependencies'
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
@@ -178,8 +186,8 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+      - name: 'Restore Maven dependencies'
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
@@ -291,8 +299,8 @@ jobs:
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+      - name: 'Restore Maven dependencies'
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
@@ -358,9 +366,9 @@ jobs:
           java-version: '25'
           distribution: 'temurin'
 
-      - name: 'Cache Maven dependencies'
+      - name: 'Restore Maven dependencies'
         if: steps.changes.outputs.run == 'true'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
