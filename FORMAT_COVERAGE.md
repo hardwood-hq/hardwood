@@ -96,7 +96,7 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 10 | index_page_offset | ❌ | explicit skip; index pages superseded by Column Index |
 | 11 | dictionary_page_offset | ✅ | |
 | 12 | statistics | ✅ | row-group filtering |
-| 13 | encoding_stats | ✅ | on public record; dictionary row-group pruning (#105) and the CLI's data-page encoding column |
+| 13 | encoding_stats | ✅ | on public record; dictionary row-group pruning (#105) and the CLI's data-page encoding column; written for every column chunk |
 | 14 | bloom_filter_offset | ✅ | shown in dive; filter body read & decoded (#669); used for `eq`/`in` row-group pruning (#105) |
 | 15 | bloom_filter_length | ✅ | shown in dive; #669 read path; #105 pushdown |
 | 16 | size_statistics | 🟡 | on public record, no functional consumer |

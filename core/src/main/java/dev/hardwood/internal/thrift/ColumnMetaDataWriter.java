@@ -12,7 +12,7 @@ import dev.hardwood.metadata.Encoding;
 
 /// Writer for ColumnMetaData to Thrift Compact Protocol, the inverse of
 /// [ColumnMetaDataReader]. Serializes the required fields plus the optional
-/// `dictionary_page_offset` and `statistics`; index offsets are written by later
+/// `dictionary_page_offset`, `statistics`, and `encoding_stats`; index offsets are written by later
 /// increments.
 public class ColumnMetaDataWriter {
 
@@ -67,6 +67,12 @@ public class ColumnMetaDataWriter {
             if (metaData.statistics() != null) {
                 writer.writeFieldBegin(12, ThriftCompactConstants.FieldType.STRUCT);
                 StatisticsWriter.write(writer, metaData.statistics());
+            }
+
+            // 13: encoding_stats (list<PageEncodingStats>)
+            if (!metaData.encodingStats().isEmpty()) {
+                writer.writeFieldBegin(13, ThriftCompactConstants.FieldType.LIST);
+                PageEncodingStatsWriter.write(writer, metaData.encodingStats());
             }
 
             writer.writeFieldStop();

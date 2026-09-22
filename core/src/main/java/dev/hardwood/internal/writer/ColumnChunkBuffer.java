@@ -25,6 +25,8 @@ import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageEncodingStats;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
@@ -386,6 +388,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         // A dictionary chunk's values are its indices, one width whatever the values behind them
         // were, so its store's offsets say nothing about what its pages carry.
         int[] valueOffsets = hasDictionary ? null : values.storedValueOffsets();
+        int dataPageCount = 0;
         int entryFrom = 0;
         int valueFrom = 0;
         while (entryFrom < entryCount) {
@@ -394,6 +397,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             int valueCount = (int) cut;
             dataPagesCompressedSize += writeDataPage(out, entryFrom, entries, valueFrom, valueCount,
                     dictionarySize);
+            dataPageCount++;
             entryFrom += entries;
             valueFrom += valueCount;
             numValues += entries;
@@ -418,8 +422,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 null,
                 null,
                 null,
-                // The writer does not emit encoding_stats or size_statistics yet.
-                List.of(),
+                hasDictionary
+                        ? List.of(
+                                new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
+                                new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPageCount))
+                        : List.of(new PageEncodingStats(PageType.DATA_PAGE, valueEncoding(), dataPageCount)),
                 null);
     }
 
