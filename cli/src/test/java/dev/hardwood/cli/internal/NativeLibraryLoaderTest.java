@@ -184,12 +184,14 @@ class NativeLibraryLoaderTest {
         Path tmp = root.resolve("tmp");
         Path home = root.resolve("home");
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES, List.of(tmp, home),
-                recordingLoader(loaded, true));
+                recordingLoader(loaded, true), problems);
 
         assertThat(result).isTrue();
         assertThat(loaded).containsExactly(tmp.resolve(cacheFileName()));
+        assertThat(problems).isEmpty();
         assertThat(home).doesNotExist();
     }
 
@@ -198,15 +200,21 @@ class NativeLibraryLoaderTest {
         Path tmp = root.resolve("tmp");
         Path home = root.resolve("home");
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
         NativeLibraryLoader.LibraryLoader noexecTmp = libFile -> {
             loaded.add(libFile);
-            return !libFile.startsWith(tmp);
+            if (libFile.startsWith(tmp)) {
+                throw new UnsatisfiedLinkError("failed to map segment from shared object");
+            }
         };
 
-        boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES, List.of(tmp, home), noexecTmp);
+        boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES, List.of(tmp, home), noexecTmp,
+                problems);
 
         assertThat(result).isTrue();
         assertThat(loaded).containsExactly(tmp.resolve(cacheFileName()), home.resolve(cacheFileName()));
+        assertThat(problems).containsExactly("Could not load test native library from " + tmp.resolve(cacheFileName())
+                + ": failed to map segment from shared object");
         assertThat(tmp.resolve(cacheFileName())).doesNotExist();
         assertThat(home.resolve(cacheFileName())).exists();
     }
@@ -218,12 +226,14 @@ class NativeLibraryLoaderTest {
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
         Files.write(home.resolve(cacheFileName()), LIB_BYTES);
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES, List.of(tmp, home),
-                recordingLoader(loaded, true));
+                recordingLoader(loaded, true), problems);
 
         assertThat(result).isTrue();
         assertThat(loaded).containsExactly(home.resolve(cacheFileName()));
+        assertThat(problems).isEmpty();
         assertThat(tmp).doesNotExist();
     }
 
@@ -234,23 +244,30 @@ class NativeLibraryLoaderTest {
         Files.write(shared.resolve(cacheFileName()), LIB_BYTES);
         Path home = root.resolve("home");
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES, List.of(shared, home),
-                recordingLoader(loaded, true));
+                recordingLoader(loaded, true), problems);
 
         assertThat(result).isTrue();
         assertThat(loaded).containsExactly(home.resolve(cacheFileName()));
+        assertThat(problems).containsExactly("Not using " + shared
+                + " for native libraries: it is a symbolic link, not writable, or writable by other users.");
     }
 
     @Test
     void loadEmbeddedReturnsFalseWhenNoDirectoryWorks(@TempDir Path root) {
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.loadEmbedded("test", "libtest", LIB_BYTES,
-                List.of(root.resolve("a"), root.resolve("b")), recordingLoader(loaded, false));
+                List.of(root.resolve("a"), root.resolve("b")), recordingLoader(loaded, false), problems);
 
         assertThat(result).isFalse();
         assertThat(loaded).hasSize(2);
+        assertThat(problems).containsExactly(
+                "Could not load test native library from " + root.resolve("a").resolve(cacheFileName()) + ": rejected",
+                "Could not load test native library from " + root.resolve("b").resolve(cacheFileName()) + ": rejected");
         assertThat(root.resolve("a").resolve(cacheFileName())).doesNotExist();
         assertThat(root.resolve("b").resolve(cacheFileName())).doesNotExist();
     }
@@ -261,30 +278,36 @@ class NativeLibraryLoaderTest {
         Path external = Files.createFile(libDir.resolve("libzstd-jni-1.5.7-9.so"));
         Path cacheDir = root.resolve("cache");
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.load("zstd", "libzstd-jni", libDir, List.of(cacheDir),
-                recordingLoader(loaded, true));
+                recordingLoader(loaded, true), problems);
 
         assertThat(result).isTrue();
         assertThat(loaded).containsExactly(external);
+        assertThat(problems).isEmpty();
         assertThat(cacheDir).doesNotExist();
     }
 
     @Test
     void loadReportsMissingEmbeddedResource(@TempDir Path root) {
         List<Path> loaded = new ArrayList<>();
+        List<String> problems = new ArrayList<>();
 
         boolean result = NativeLibraryLoader.load("test", "libnonexistent", null, List.of(root),
-                recordingLoader(loaded, true));
+                recordingLoader(loaded, true), problems);
 
         assertThat(result).isFalse();
         assertThat(loaded).isEmpty();
+        assertThat(problems).containsExactly("Embedded native library not found: native/linux-x86_64/libnonexistent.so");
     }
 
     private static NativeLibraryLoader.LibraryLoader recordingLoader(List<Path> loaded, boolean succeed) {
         return libFile -> {
             loaded.add(libFile);
-            return succeed;
+            if (!succeed) {
+                throw new UnsatisfiedLinkError("rejected");
+            }
         };
     }
 

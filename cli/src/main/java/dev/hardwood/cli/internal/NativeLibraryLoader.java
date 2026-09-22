@@ -57,11 +57,11 @@ public final class NativeLibraryLoader {
     private NativeLibraryLoader() {
     }
 
-    /// Loads a native library file, returning whether that succeeded. Tests substitute it to
-    /// simulate `System.load()` outcomes without a real native library.
+    /// Loads a native library file, throwing [UnsatisfiedLinkError] if that fails. Tests
+    /// substitute it to simulate `System.load()` outcomes without a real native library.
     @FunctionalInterface
     interface LibraryLoader {
-        boolean load(Path libFile);
+        void load(Path libFile);
     }
 
     public static boolean inImageCode() {
@@ -118,8 +118,12 @@ public final class NativeLibraryLoader {
         if (!inImageCode()) {
             return;
         }
-        LibraryLoader loader = libFile -> loadNative(name, libFile, postLoad);
-        if (!load(name, baseName, externalLibDir(), resolveCacheDirs(), loader)) {
+        LibraryLoader loader = libFile -> loadNative(libFile, postLoad);
+        List<String> problems = new ArrayList<>();
+        if (!load(name, baseName, externalLibDir(), resolveCacheDirs(), loader, problems)) {
+            for (String problem : problems) {
+                System.err.println("WARNING: " + problem);
+            }
             System.err.println("WARNING: Could not load the " + name + " native library; files compressed with "
                     + name + " cannot be read.");
         }
@@ -128,12 +132,15 @@ public final class NativeLibraryLoader {
     /// Loads a library from `externalLibDir` when given and it holds the library, otherwise
     /// from the embedded resource.
     ///
+    /// @param problems receives a description of each failed attempt; reported only when no
+    ///                 attempt succeeds, so a working fallback stays silent
     /// @return `true` if the library was loaded
-    static boolean load(String name, String baseName, Path externalLibDir, List<Path> cacheDirs, LibraryLoader loader) {
+    static boolean load(String name, String baseName, Path externalLibDir, List<Path> cacheDirs, LibraryLoader loader,
+            List<String> problems) {
         if (externalLibDir != null) {
             Path libFile = resolveLibFile(externalLibDir, baseName);
             if (libFile != null) {
-                return loader.load(libFile);
+                return tryLoad(name, libFile, loader, problems);
             }
             System.err.println("WARNING: No " + name + " native library in HARDWOOD_LIB_PATH directory "
                     + externalLibDir + "; using the embedded one.");
@@ -145,14 +152,14 @@ public final class NativeLibraryLoader {
             bytes = readEmbeddedResource(resource);
         }
         catch (IOException e) {
-            System.err.println("WARNING: Could not read embedded native library " + resource + ": " + e.getMessage());
+            problems.add("Could not read embedded native library " + resource + ": " + e.getMessage());
             return false;
         }
         if (bytes.isEmpty()) {
-            System.err.println("WARNING: Embedded native library not found: " + resource);
+            problems.add("Embedded native library not found: " + resource);
             return false;
         }
-        return loadEmbedded(name, baseName, bytes.get(), cacheDirs, loader);
+        return loadEmbedded(name, baseName, bytes.get(), cacheDirs, loader, problems);
     }
 
     /// Extracts `libBytes` into the first cache directory where the result can be loaded, and
@@ -161,14 +168,14 @@ public final class NativeLibraryLoader {
     ///
     /// @return `true` if the library was loaded
     static boolean loadEmbedded(String name, String baseName, byte[] libBytes, List<Path> cacheDirs,
-            LibraryLoader loader) {
+            LibraryLoader loader, List<String> problems) {
         byte[] digest = sha256(libBytes);
         String sha256Hex = HexFormat.of().formatHex(digest);
         String fileName = cacheFileName(shortHash(digest), baseName);
 
         for (Path cacheDir : existingCopyFirst(cacheDirs, fileName)) {
             if (!ensurePrivateDirectory(cacheDir)) {
-                System.err.println("WARNING: Not using " + cacheDir
+                problems.add("Not using " + cacheDir
                         + " for native libraries: it is a symbolic link, not writable, or writable by other users.");
                 continue;
             }
@@ -177,11 +184,11 @@ public final class NativeLibraryLoader {
                 target = extractToCache(cacheDir, fileName, libBytes, sha256Hex);
             }
             catch (IOException e) {
-                System.err.println("WARNING: Could not extract the " + name + " native library to " + cacheDir + ": "
+                problems.add("Could not extract the " + name + " native library to " + cacheDir + ": "
                         + e.getMessage());
                 continue;
             }
-            if (loader.load(target)) {
+            if (tryLoad(name, target, loader, problems)) {
                 return true;
             }
             deleteIfExistsBestEffort(target);
@@ -204,17 +211,21 @@ public final class NativeLibraryLoader {
         return ordered;
     }
 
-    private static boolean loadNative(String name, Path libFile, Consumer<Path> postLoad) {
+    private static boolean tryLoad(String name, Path libFile, LibraryLoader loader, List<String> problems) {
         try {
-            System.load(libFile.toAbsolutePath().toString());
-            if (postLoad != null) {
-                postLoad.accept(libFile);
-            }
+            loader.load(libFile);
             return true;
         }
         catch (UnsatisfiedLinkError e) {
-            System.err.println("WARNING: Could not load " + name + " native library from " + libFile + ": " + e.getMessage());
+            problems.add("Could not load " + name + " native library from " + libFile + ": " + e.getMessage());
             return false;
+        }
+    }
+
+    private static void loadNative(Path libFile, Consumer<Path> postLoad) {
+        System.load(libFile.toAbsolutePath().toString());
+        if (postLoad != null) {
+            postLoad.accept(libFile);
         }
     }
 

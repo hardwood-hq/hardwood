@@ -73,7 +73,7 @@ The solution differs by codec:
 
   **Load-failure fallback:** a library that cannot be loaded from `java.io.tmpdir` (for example `/tmp` mounted `noexec`) is deleted and extracted to `~/.hardwood/` instead. A directory already holding the library is tried first on later runs, so such a system does not retry `/tmp` each time.
 
-  **`HARDWOOD_LIB_PATH`** names a directory of native libraries to load instead of the embedded ones. A library is matched by its base name, with or without version suffix or `lib` prefix (e.g. `libzstd-jni-1.5.7-9.so`, `snappyjava.dll`); a library missing there is loaded from the embedded copy.
+  **`HARDWOOD_LIB_PATH`** names a directory of native libraries to load instead of the embedded ones. A library is matched by its base name, with or without version suffix or `lib` prefix (e.g. `libzstd-jni-1.5.7-9.so`, `snappyjava.dll`); a library missing there is loaded from the embedded copy. The Docker image extracts the libraries once at image build time into `/usr/local/lib/hardwood/` and sets `HARDWOOD_LIB_PATH` to it, so containers need no writable, executable directory.
 
 - **libdeflate (GZIP acceleration)** — libdeflate uses the Java 22+ Foreign Function & Memory (FFM) API, which relies on runtime downcall handles that cannot be created inside a native image. `LibdeflateLoader` detects the native image context via the `org.graalvm.nativeimage.imagecode` system property and returns `isAvailable() = false`, dead-code-eliminating the entire FFM path. The `--initialize-at-build-time` directive in `core`'s `native-image.properties` ensures GraalVM constant-folds this check at image build time.
 

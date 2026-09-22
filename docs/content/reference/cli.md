@@ -506,6 +506,8 @@ A directory is used only if neither group nor others can write to it; a missing 
 
 To load the libraries from a directory of your own instead, set `HARDWOOD_LIB_PATH` to that directory. A codec whose library is not in it falls back to the one contained in the binary.
 
+The [Docker image](#docker) sets `HARDWOOD_LIB_PATH` to libraries stored in the image, so it writes nothing at startup and runs with `--read-only`.
+
 ## Shell Completion
 
 The distribution includes completion scripts for Bash, Zsh, and Fish under `bin/`:

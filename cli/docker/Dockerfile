@@ -35,6 +35,18 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh && \
     chmod 0755 /usr/local/bin/hardwood && chmod -s /usr/local/bin/hardwood
 RUN chmod 0644 /etc/profile.d/hardwood-completion.sh
 
+# Extract the codec native libraries embedded in the binary once, at build time, and load
+# them from the image via HARDWOOD_LIB_PATH. The container then needs no writable, executable
+# directory at run time, so it also works with --read-only or a noexec /tmp.
+RUN hardwood --version >/dev/null && \
+    mkdir -p /usr/local/lib/hardwood && \
+    for lib in libzstd-jni libsnappyjava liblz4-java libbrotli; do \
+      cp /tmp/hardwood-root/hardwood-*-"$lib".so /usr/local/lib/hardwood/"$lib".so || exit 1; \
+    done && \
+    chmod 0755 /usr/local/lib/hardwood && chmod 0644 /usr/local/lib/hardwood/*.so && \
+    rm -rf /tmp/hardwood-root
+ENV HARDWOOD_LIB_PATH=/usr/local/lib/hardwood
+
 # Give UID 1000 (group 0) a passwd entry and a writable home, so interactive
 # shells resolve a name and HOME instead of "I have no name!" / failing `id`.
 RUN echo 'hardwood:x:1000:0:hardwood:/home/hardwood:/bin/bash' >> /etc/passwd && \
