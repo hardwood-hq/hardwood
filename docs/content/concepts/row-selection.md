@@ -11,7 +11,7 @@
 -->
 # Row Selection
 
-You rarely want every row of a Parquet file. Hardwood gives a `RowReader` five controls for
+Hardwood gives a `RowReader` five controls for
 narrowing what comes back: `filter`, `head`, `tail`, `skip`, and the `byteRange` row-group
 predicate. **Row selection counts over the result set, not over the file.**
 
@@ -41,7 +41,7 @@ survive a `WHERE`:
 
 So `skip(n).head(k)` is `OFFSET n LIMIT k`: it returns at most `k` matching rows, starting after
 the first `n` matches. None of these count physical rows, so a matching row sitting deep in the
-file is still the first row `head(1)` returns. (`tail` is not in this table because it cannot
+file is the first row `head(1)` returns. (`tail` is not in this table because it cannot
 combine with a filter; see [Supported combinations](#supported-combinations).)
 
 ## The no-filter coincidence
@@ -54,39 +54,20 @@ that fetches none of the bytes in between. `head(n)` is the first `n` rows of th
 Add a filter and the coincidence breaks. Row-group statistics bound the *values* in a group, not
 the *count* of rows that match, so the reader cannot know how many matches lie ahead without
 looking. `head` and `skip` then stream over the matched rows, decoding earlier groups to count
-them, though groups whose statistics prove no row can match are still skipped wholesale. This is
-why `skip(n)` is an O(1) seek without a filter but a forward scan with one: same control, but the
-relation it counts over changed.
+them, though groups whose statistics prove no row can match are skipped wholesale.
 
 ## Physical splitting is separate
 
-`byteRange(start, end)` keeps a row group when its midpoint falls in `[start, end)`. Across a
-partition of the file into disjoint ranges, every row group lands in exactly one, which is the basis for
-handing each parallel reader its own slice of the file. It composes with the logical controls by
-intersection: under `byteRange(...).filter(p).skip(n).head(k)`, the result set is the matching
-rows *within this reader's row groups*, and `skip`/`head` count over that.
-
-Reach for `byteRange` to decide *which bytes a reader owns*; reach for `filter`/`skip`/`head` to
-decide *which rows it returns*. Using `skip` to position a scan physically under a filter is the
-wrong tool; that is what `byteRange` is for.
-
-## Choosing a control
-
-| You want…                                          | Use                              |
-|----------------------------------------------------|----------------------------------|
-| the first `n` rows matching a predicate            | `filter(p).head(n)`              |
-| rows `n … n+k` of the matching rows                | `filter(p).skip(n).head(k)`      |
-| row `n` of the file, ignoring content              | `skip(n)` (no filter: a seek)    |
-| the last `n` rows of the file                      | `tail(n)` (no filter)            |
-| this reader to own a byte range of the file        | `filter(byteRange(a, b))`        |
+`byteRange(start, end)` assigns each row group to exactly one of a set of disjoint byte ranges
+(see [Split-Aware Reading](../how-to/query-controls.md#split-aware-reading)). It composes with the
+logical controls by intersection: under `byteRange(...).filter(p).skip(n).head(k)`, the result
+set is the matching rows *within this reader's row groups*, and `skip`/`head` count over that.
 
 ## Supported combinations
 
-`head`, `skip`, and `byteRange` each compose with a `FilterPredicate`; `head`/`skip` count over
-the matched rows. `tail` + filter is **not** supported and is rejected at `build()`: unlike the
-forward-streaming `head`/`skip`, the *last* `n` matching rows have no row-group-statistics
-shortcut, so it would require a reverse scan over the whole file. Until that lands, take the tail
-of the unfiltered file, or filter and keep the trailing matches yourself.
+`head`, `skip`, and `byteRange` each compose with a `FilterPredicate`. `tail` + filter is rejected
+at `build()`: the *last* `n` matching rows have no row-group-statistics shortcut, so it would
+require a reverse scan over the whole file.
 
 ## Further reading
 

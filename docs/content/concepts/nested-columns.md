@@ -25,10 +25,8 @@ worked code against it, see [Column-Oriented Reading](../how-to/column-reader.md
     same shapes through the Row API.
 
 > **A note on lineage.** The layer model (flat value arrays, offset buffers, and set-bit-present
-> validity bitmaps) takes inspiration from [Apache Arrow](https://arrow.apache.org/)'s columnar
-> representation, so the shapes feel familiar if you come from an Arrow-based engine. The
-> resemblance is conceptual only: Hardwood implements no part of the Arrow specification, and the
-> buffers are plain Java arrays rather than an Arrow-bit-compatible layout.
+> validity bitmaps) follows [Apache Arrow](https://arrow.apache.org/)'s columnar representation
+> in concept only: the buffers are plain Java arrays, not an Arrow-bit-compatible layout.
 
 ## Layers
 
@@ -41,11 +39,6 @@ along the chain contributes zero or one layer:
 | `OPTIONAL` group (struct) | yes | `STRUCT` |
 | `LIST` / `MAP`-annotated group | yes — exactly one | `REPEATED` |
 | synthetic `repeated group` inside a `LIST` / `MAP` | no | — |
-
-Layers follow a column's *logical* structure rather than its physical schema nodes, so node count
-and layer count diverge wherever a `LIST` or `MAP` appears: its stack of group nodes contributes a
-single `REPEATED` layer. [How schema nodes map to layers](#how-schema-nodes-map-to-layers) works this
-through on a concrete schema.
 
 Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost, and the leaf is queried
 separately. A flat column reports `getLayerCount() == 0`.
@@ -78,7 +71,8 @@ needed.
 
 ## STRUCT keeps cardinality, REPEATED expands it
 
-Two rules govern how item counts flow down the chain:
+Write `count(k)` for the number of items at layer `k`; `count(0)` equals `getRecordCount()`. Two
+rules govern how item counts flow down the chain:
 
 1. **STRUCT keeps cardinality.** Items at layer `k+1` equal items at layer `k`. STRUCT layers
    carry validity, no offsets.
@@ -86,9 +80,8 @@ Two rules govern how item counts flow down the chain:
    REPEATED layers carry both validity and offsets.
 
 The leaf array and `getLayerOffsets` carry **real items only**: phantom slots from null/empty
-parents at any `REPEATED` layer are excluded. `getValueCount()` returns the real leaf count.
-`STRUCT` layers do not expand or contract the item stream; only `REPEATED` layers add cardinality,
-via their offsets.
+parents at any `REPEATED` layer are excluded. `getValueCount()` returns the real leaf count,
+which the same rules give one step past the innermost layer.
 
 Those two rules generate the layer shape of any chain:
 
@@ -154,17 +147,3 @@ depth is the number of `repeated` nodes on the path (equivalently, the leaf's ma
 level), not the number of `LIST` annotations. To walk to the leaf logically, recurse
 `getListElement()` while the result `isList()`, which works the same for both encodings. To inspect the raw
 physical tree instead, walk `children()`.
-
-## Counts at each layer
-
-Every per-layer buffer is sized to `count(k)`, defined recursively:
-
-- `count(0) == getRecordCount()`
-- For `k > 0`: `count(k)` equals `count(k-1)` if layer `k-1` is `STRUCT`, or
-  `getLayerOffsets(k-1)[count(k-1)]` (the trailing sentinel) if layer `k-1` is `REPEATED`.
-
-The leaf array itself follows the same rule one step past the innermost layer, so
-`getValueCount()` matches `count(layerCount)`. Deeper nestings extend the same chain: at depth N you
-walk `getLayerOffsets(0)` through `getLayerOffsets(N - 1)`, checking `getLayerValidity(k)` (and, for
-`REPEATED` layers, the zero-length offsets diff that flags an empty container) at each step before
-descending.

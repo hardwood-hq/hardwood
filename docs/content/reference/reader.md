@@ -11,11 +11,9 @@
 -->
 # Reader Reference
 
-The `ReaderConfig` options, their defaults, and how an unrecognised key is handled. The accessor-to-type correspondence is in [Typed Accessors](accessors.md), predicates and projection in [Query Controls](query-controls.md), and the exceptions a read can throw in [Error Handling](error-handling.md). Runtime acceleration and JFR events are in [Configuration](configuration.md).
-
 ## Reader Options
 
-Read-time behaviour is configured with an immutable `ReaderConfig`, passed to `ParquetFileReader.open(...)`. It is separate from `HardwoodContext`, which holds the shared runtime resources (the decode thread pool and native decompression pools): a single context can back reads with different `ReaderConfig`s, so a behaviour knob never forces a fresh thread pool.
+Read-time behaviour is configured with an immutable `ReaderConfig`, passed to `ParquetFileReader.open(...)`. It is separate from `HardwoodContext`, which holds the shared runtime resources (the decode thread pool and native decompression pools): a single context can back reads with different `ReaderConfig`s.
 
 ```java
 import dev.hardwood.HardwoodContext;
@@ -38,6 +36,9 @@ Options are string-keyed and keys are matched case-sensitively; boolean option v
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `hardwood.fixed-list-fast-path` | `false` | Set to `"true"` to decode fixed-size `LIST` columns (e.g. embedding vectors, where every row holds the same number of non-null elements) without reconstructing per-row definition and repetition levels. Off by default, so every column takes the general nested-decode path unless the option is enabled. |
+| `hardwood.fixed-list-fast-path` | `false` | Set to `"true"` to decode fixed-size `LIST` columns (e.g. embedding vectors, where every row holds the same number of non-null elements) without reconstructing per-row definition and repetition levels. |
 | `hardwood.metadata-filtering` | `true` | Set to `"false"` to disable metadata-based filtering: no row groups or pages are skipped from min/max statistics, bloom filters, dictionary pages, or page indexes, and filter predicates are instead evaluated against every decoded row. Filtered results then depend only on the data pages, for files whose footer or page-index metadata is unreliable. |
 
+## Limits
+
+Each column chunk must be at most 2 GB of *compressed* data. The limit is per chunk, not per file: local memory-mapped files and S3-backed files may be arbitrarily large overall. The in-memory (`ByteBuffer`) backend additionally caps the *whole file* at 2 GB, and so does an S3 file opened with [`RangeBacking.SPARSE_TEMPFILE`](s3.md#range-backing), which the `dive` TUI uses for every file. For datasets that don't fit a single supported file, split the data into multiple files at write time and read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
