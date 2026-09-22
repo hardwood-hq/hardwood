@@ -21,7 +21,7 @@ see [Predicate Pushdown, Projection, Limits, and Splits](../how-to/query-control
 | Comparison operators | `eq`, `notEq` on every column; `lt`, `ltEq`, `gt`, `gtEq` on a column whose type defines an order |
 | Set operators | `in`, over every literal type but `boolean` |
 | Null operators | `isNull`, `isNotNull` (any type) |
-| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column. It skips row groups whose bounding box does not overlap the query box and returns every row of the others (see [Geospatial](../how-to/geospatial.md)). A query box with `xmin > xmax` wraps across the antimeridian on either type; a `NaN` bound throws `IllegalArgumentException` when the predicate is built. It has no inverse, so `not` over a predicate holding one throws `IllegalArgumentException` at reader creation |
+| Spatial operators | `intersects`, on a `GEOMETRY` or `GEOGRAPHY` column, by row-group bounding-box overlap (see [Geospatial](../how-to/geospatial.md#spatial-filter-pushdown)) |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions, and throw `IllegalArgumentException` when given none) |
 | Column form | By name or dot-separated path (`address.city`). Comparison predicates take leaf columns only; `isNull` / `isNotNull` also take the name of a group — a struct, a `LIST` or a `MAP`. Any name below a repeated path is rejected |
 
@@ -61,20 +61,10 @@ lt("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✓ rows up to 00
 eq("ts", Instant.parse("2026-01-01T00:00:00.000000500Z"))   // ✗ throws: finer than the column's MICROS
 ```
 
-```java
-FilterPredicate filter = FilterPredicate.in("status", "ACTIVE", "PENDING");
-FilterPredicate filter = FilterPredicate.in("ratio", 0.25f, 0.5f);
-FilterPredicate filter = FilterPredicate.in("placed_at",
-        Instant.parse("2025-01-01T00:00:00Z"), Instant.parse("2025-07-01T00:00:00Z"));
-```
-
-`eq`, `notEq` and the set form are available on every column below. The ordered operators `lt`,
-`ltEq`, `gt` and `gtEq` are available on the types that define an order, which is every one except
-`INTERVAL`, `GEOMETRY`, `GEOGRAPHY` and `NULL`; on those four they throw `IllegalArgumentException`
-at reader creation. On a `DECIMAL`, `FLOAT16` or `INT96` column they take the typed literal, and a
-`byte[]` literal takes `eq`, `notEq` and the set form only (see [Binary columns](#binary-columns)).
-`BOOLEAN` is the one type with no set form, since `eq`, `notEq` and `isNotNull` express every set
-of two values.
+The ordered operators `lt`, `ltEq`, `gt` and `gtEq` throw `IllegalArgumentException` at reader
+creation on an `INTERVAL`, `GEOMETRY`, `GEOGRAPHY` or `NULL` column, and with a `byte[]` literal
+where [Binary columns](#binary-columns) says so. `BOOLEAN` has no set form, since `eq`, `notEq` and
+`isNotNull` express every set of two values.
 
 | Logical type | Physical type | Literal | Compared as |
 |---|---|---|---|
@@ -110,7 +100,8 @@ creation. Filtering on a shredded variant's sub-paths is in progress, tracked by
 [#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
 A `FLOAT` column compares by the `Float.compare` total order and a `DOUBLE` column by
-`Double.compare`, so all `NaN` values equal each other and `-0.0` differs from `+0.0`. This holds
+`Double.compare`, so all `NaN` values equal each other and sort above every other value, and
+`-0.0` sorts below `+0.0`. This holds
 whatever `ColumnOrder` the file declares, `IEEE_754_TOTAL_ORDER` included.
 
 A `BigDecimal` literal is rescaled to the column's scale before it is compared. A column with
@@ -123,12 +114,7 @@ An `INT96` column is a legacy timestamp, which [`getTimestamp`](accessors.md) re
 `Instant`. An `Instant` literal compares as the instant the value encodes. The format lets one
 instant be stored under more than one encoding, since the nanoseconds of the day are not bounded by
 one day, and every encoding of an instant matches an `Instant` literal of it. The column also takes
-the 12 stored bytes that `getBinary` returns, which match the rows storing exactly those bytes; a
-`byte[]` literal of any other length throws `IllegalArgumentException` at reader creation.
-
-```java
-FilterPredicate filter = FilterPredicate.gtEq("event_time", Instant.parse("2015-06-01T00:00:00Z"));
-```
+the 12 stored bytes that `getBinary` returns (see [Binary columns](#binary-columns)).
 
 An unsigned column's literal is the stored two's-complement bit pattern, the same form
 [the accessors](accessors.md) hand back for it: `4_000_000_000` in a `UINT_32` column is the `int`
@@ -137,8 +123,8 @@ Write one with `Integer.parseUnsignedInt` / `Long.parseUnsignedLong`. Comparison
 unsigned magnitude regardless, so that literal is above every positive `int` rather than below
 zero.
 
-A column that carries an annotation also takes the literal for its physical type, comparing the
-value as it is stored: an `int` against a `DATE` column tests the epoch day directly.
+An annotated column's physical-type literal compares the value as it is stored: an `int` against a
+`DATE` column tests the epoch day directly.
 
 ### Binary columns
 
@@ -170,9 +156,8 @@ and `gtEq` with a `byte[]` throw `IllegalArgumentException` at reader creation, 
 A `byte[]` literal of another length than the table gives throws `IllegalArgumentException` at
 reader creation.
 
-A `String` literal is the literal of a text column — `STRING`, `ENUM`, `JSON` and an unannotated
-`BYTE_ARRAY` — where its UTF-8 encoding is exactly the stored bytes. These are the columns
-[`getString`](accessors.md#text-columns) reads. On any other binary column a `String`
+On a text column, the columns [`getString`](accessors.md#text-columns) reads, a `String`
+literal's UTF-8 encoding is exactly the stored bytes. On any other binary column a `String`
 literal throws `IllegalArgumentException` at reader creation, naming the literals the column
 does take. A `String` that is not well-formed UTF-16, such as one holding an unpaired surrogate, has
 no UTF-8 encoding and throws `IllegalArgumentException` when the predicate is built. A row whose
@@ -181,11 +166,8 @@ malformed sequence with U+FFFD, so the string it returns for such a row does not
 such a row with its `byte[]`.
 
 An `INTERVAL` column's other literal is the `PqInterval` that [`getInterval`](accessors.md)
-returns. Each of its three components is stored as an unsigned 32-bit value.
-
-```java
-FilterPredicate filter = FilterPredicate.eq("uptime", new PqInterval(0, 1, 3_600_000));
-```
+returns, for example `new PqInterval(0, 1, 3_600_000)`. Each of its three components is stored
+as an unsigned 32-bit value.
 
 Every factory rejects a null column name or literal, and `and`, `or` and `not` a null child, with a
 `NullPointerException` naming the argument.
@@ -237,8 +219,7 @@ to its annotation.
 
 Pruning compares a unit's `min` / `max` bounds. A pair a reader cannot compare against is
 ignored rather than trusted, so the row group or page is kept and its rows are read and filtered
-one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored for
-one of seven reasons:
+one by one. Results are the same either way; only the I/O saved is lost. Bounds are ignored when:
 
 | Reason | Bounds |
 |---|---|
@@ -258,6 +239,26 @@ value satisfies — `notEq`, `gt` or `gtEq` against a number, or `eq`, `ltEq` or
 `NaN` — prunes a `FLOAT`, `DOUBLE` or `FLOAT16` row group or page from its bounds only where the
 unit records a `nan_count` of zero. `eq`, `lt` and `ltEq` against a number, and `gt` against
 `NaN`, prune from the bounds alone.
+
+A comparison whose literal lies past the range the column's carrier holds is decided from the
+unit's null count alone.
+
+### Bloom filter and dictionary pruning
+
+A Bloom filter and a fully dictionary-encoded column chunk's dictionary answer membership, and
+sharpen `eq` and `in` on integer, floating-point and binary columns. `lt`, `ltEq`, `gt`, `gtEq`
+and `notEq` are left to statistics alone. Some equality probes skip one or both:
+
+| Predicate | Bloom filter | Dictionary |
+|---|---|---|
+| `eq(NaN)`, or an `in` list holding `NaN` | not used | used |
+| a `float` literal on a `FLOAT16` column | not used | used |
+| a `BigDecimal` on a `DECIMAL` over `BYTE_ARRAY` | not used | not used |
+| any comparison with an `Instant` on an `INT96` column | not used | not used |
+| `eq` or `in` with the stored 12 bytes on an `INT96` column | used | used |
+
+An `INT96` comparison with an `Instant` therefore reads every row group and page and filters the
+rows one by one.
 
 ## Column projection forms
 

@@ -13,9 +13,7 @@
 
 ## Faster GZIP with libdeflate (Java 22+)
 
-Hardwood can use [libdeflate](https://github.com/ebiggers/libdeflate) for GZIP decompression, which is significantly faster than the built-in Java implementation. This feature requires **Java 22 or newer** (it uses the Foreign Function & Memory API which became stable in Java 22).
-
-Enabling libdeflate is two steps: a JVM flag to allow native access, plus the native library installed on the system.
+Hardwood can use [libdeflate](https://github.com/ebiggers/libdeflate) for GZIP decompression instead of the built-in Java implementation. This feature requires **Java 22 or newer** (it uses the Foreign Function & Memory API).
 
 **1. JVM flag** (allow Hardwood to bind native functions):
 
@@ -71,7 +69,7 @@ To run scalar operations (for debugging or comparison), omit the argument.
 
 ## JFR (Java Flight Recorder) Events
 
-Hardwood emits JFR events during file reading, enabling detailed performance profiling with zero overhead when recording is off. Start a JFR recording to capture them:
+Hardwood emits JFR events during file reading. Start a JFR recording to capture them:
 
 ```bash
 java -XX:StartFlightRecording=filename=recording.jfr,settings=profile ...
@@ -90,14 +88,14 @@ Or attach dynamically via `jcmd <pid> JFR.start`.
 | `dev.hardwood.RowGroupFilter` | Filter | Row groups dropped by statistics/bloom predicate pushdown. Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped, rowGroupsFullyMatching |
 | `dev.hardwood.RowGroupDictionaryFilter` | Filter | Row group dropped by dictionary predicate pushdown when the read reaches it, one event per row group dropped. `RowGroupFilter` counts that row group as kept. Fields: file, rowGroupIndex |
 | `dev.hardwood.RowGroupByteRangeFilter` | Filter | Row groups selected by a byte-range split predicate (split-aware reading). Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped |
-| `dev.hardwood.PageFilter` | Filter | Pages filtered by Column Index predicate pushdown, one event per column chunk considered. Fields: file, rowGroupIndex, column, totalPages, pagesKept, pagesSkipped |
+| `dev.hardwood.PageFilter` | Filter | Pages filtered by Column Index predicate pushdown within a kept row group, one event per column chunk the Column Index narrowed; a chunk without a Column Index has its pages dropped from page-header statistics, which no event reports. Fields: file, rowGroupIndex, column, totalPages, pagesKept, pagesSkipped |
 | `dev.hardwood.RecordFilter` | Filter | Records filtered by record-level predicate evaluation, one event per file read. Fields: file, totalRecords, recordsKept, recordsSkipped |
 | `dev.hardwood.BatchWait` | Pipeline | Consumer blocked waiting for the assembly pipeline; the event's duration is the stall. Fields: column |
 
 Events appear under the **Hardwood** category in JDK Mission Control (JMC) or any JFR analysis tool. Use them to identify:
 
 - **I/O bottlenecks** — large `FileMapping` durations
-- **Filter effectiveness** — `RowGroupFilter` shows how many row groups were dropped by statistics/bloom pushdown, `RowGroupDictionaryFilter` which were dropped by their dictionaries, and `RowGroupByteRangeFilter` how many were excluded by split selection; `PageFilter` shows how many of a column chunk's pages survived the Column Index within a row group that was kept, with no event for a column chunk the Column Index did not narrow — including a chunk that has no Column Index, whose pages are instead dropped from page-header statistics and are not reported; `RecordFilter` shows how many individual records the predicate decided on per file once that pruning is done
+- **Filter effectiveness**: `RowGroupFilter`, `RowGroupDictionaryFilter`, `RowGroupByteRangeFilter`, `PageFilter` and `RecordFilter` counts
 - **Decode hotspots** — `PageDecoded` events with large uncompressed sizes or high frequency
 - **Pipeline stalls** — `BatchWait` events indicate the reader is waiting for decoded data
 
