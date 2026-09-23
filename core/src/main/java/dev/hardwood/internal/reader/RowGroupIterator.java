@@ -77,12 +77,10 @@ public class RowGroupIterator implements Closeable {
     private final boolean ownsFileMetadataCache;
     private final Consumer<RowGroupIterator> closeListener;
 
-    /// Several owners can reach [#close()]: the group that consumes this iterator,
-    /// the `FilterCoordinator` that tears that group down on the filtered path, and
-    /// every reader of a no-rows group, which has neither. A read handed a single
-    /// reader out of a group it never sees reaches the iterator only through the
-    /// last two. Closing twice releases nothing twice. Volatile because the
-    /// prefetch tasks, which may still run after [#close()], read it.
+    /// [#close()] can be reached more than once, for instance through a
+    /// column-reader scan that its group and every reader of that group close.
+    /// Closing twice releases nothing twice. Volatile because the prefetch tasks,
+    /// which may still run after [#close()], read it.
     private volatile boolean closed;
     private final HardwoodContextImpl context;
     private final long maxRows;

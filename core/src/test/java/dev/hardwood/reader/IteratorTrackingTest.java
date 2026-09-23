@@ -100,9 +100,8 @@ class IteratorTrackingTest {
         }
     }
 
-    /// The filtered paths hand their readers to a `FilterCoordinator`, which closes
-    /// the whole projection rather than one child. That must release the shared
-    /// iterator too.
+    /// The filtered paths decode the payload and predicate columns through one
+    /// `ColumnScan`, whose close releases the shared iterator.
     @Test
     void closingAFilteredChildReaderStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
@@ -146,6 +145,20 @@ class IteratorTrackingTest {
         }
     }
 
+    /// The readers of an unfiltered group share one pipeline, so closing any one of
+    /// them closes the group and releases its iterator.
+    @Test
+    void closingOneReaderOfAnUnfilteredGroupStopsTrackingItsIterator() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)));
+             ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id", "value"))) {
+            assertThat(columns.nextBatch()).isTrue();
+
+            columns.getColumnReader("id").close();
+
+            assertThat(reader.trackedIteratorCount()).isZero();
+        }
+    }
+
     /// The nested row path is a separate reader class with its own `close()`, so
     /// the flat fixture every other test uses would not catch a regression there.
     @Test
@@ -164,9 +177,8 @@ class IteratorTrackingTest {
         }
     }
 
-    /// A read whose row groups are all pruned is served by a group of exhausted
-    /// readers with no coordinator. The group still holds the iterator, so closing
-    /// it releases it.
+    /// A read whose row groups are all pruned is served by a scan with no cursors.
+    /// The scan still holds the iterator, so closing the group releases it.
     @Test
     void closingAPrunedColumnReadersGroupStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
@@ -185,9 +197,8 @@ class IteratorTrackingTest {
 
     /// The pruned counterpart of
     /// [#closingAFilteredSingleColumnReaderStopsTrackingItsIterator]: the caller is
-    /// handed one exhausted reader out of a group it never sees, and that group has
-    /// no coordinator to route the close through, so the reader itself has to
-    /// release the iterator.
+    /// handed one exhausted reader out of a group it never sees, so closing that
+    /// reader has to release the iterator.
     @Test
     void closingAPrunedFilteredSingleColumnReaderStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {

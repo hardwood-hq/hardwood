@@ -16,15 +16,10 @@ import dev.hardwood.Validity;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.FlatColumnWorker;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.LogicalAccessorKind;
 import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
-import dev.hardwood.internal.reader.PageSource;
-import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -70,28 +65,30 @@ import dev.hardwood.schema.FileSchema;
 @Experimental
 public class ColumnReader implements Closeable {
 
+    private final ColumnScan scan;
+    private final int payloadIndex;
     private final ColumnSchema column;
     private final boolean nested;
     private final NestedLevelComputer.Layers layers;
-    private final BatchExchange<BatchExchange.Batch> flatBuffer;
-    private final BatchExchange<NestedBatch> nestedBuffer;
-    private final AutoCloseable columnWorker;
-    private final RowGroupIterator rowGroupIterator;
 
-    // Current batch state (flat uses BatchExchange.Batch, nested uses NestedBatch)
+    /// The [ColumnScan#generation()] this view last adopted. When it equals the
+    /// scan's, [#nextBatch()] advances the scan; otherwise a sibling already did,
+    /// and this view adopts that step.
+    private long consumedGeneration;
+
+    // Current batch state, adopted from the payload cursor (flat uses
+    // BatchExchange.Batch, nested uses NestedBatch)
     private BatchExchange.Batch currentFlatBatch;
     private NestedBatch currentNestedBatch;
     private int recordCount;
-    private boolean exhausted;
-    private boolean closed;
 
     // Real-items-only view for nested batches, computed lazily and cached per
-    // batch. Invalidated in `nextBatch()`.
+    // batch. Invalidated when a step is adopted.
     private NestedLevelComputer.RealView currentRealView;
     private boolean realViewComputed;
 
     // Cached real-items-only typed leaf arrays for nested batches. Allocated
-    // on first access and invalidated in `nextBatch()`.
+    // on first access and invalidated when a step is adopted.
     private Object cachedRealValues;
     private byte[] cachedRealBinaryBytes;
     private int[] cachedRealBinaryOffsets;
@@ -101,61 +98,13 @@ public class ColumnReader implements Closeable {
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
-    // Exact-filtering coordination (#624). When a filter is configured, the
-    // owning [FilterCoordinator] drives every reader in lockstep, computes a
-    // per-batch record selection, and compacts each exposed reader's batch down
-    // to the matching records via [#applySelection(int[])]. `coordinator` is
-    // `null` for the unfiltered path, where [#nextBatch()] advances directly.
-    private FilterCoordinator coordinator;
-    private long consumedGeneration;
-
-    @SuppressWarnings("unchecked")
-    private ColumnReader(ColumnSchema column, boolean nested,
-                         NestedLevelComputer.Layers layers,
-                         BatchExchange<?> buffer, AutoCloseable columnWorker,
-                         RowGroupIterator rowGroupIterator) {
+    /// A view of payload column `payloadIndex` of `scan`.
+    ColumnReader(ColumnScan scan, int payloadIndex, FileSchema schema, ColumnSchema column) {
+        this.scan = scan;
+        this.payloadIndex = payloadIndex;
         this.column = column;
-        this.nested = nested;
-        this.layers = layers;
-        this.flatBuffer = nested ? null : (BatchExchange<BatchExchange.Batch>) buffer;
-        this.nestedBuffer = nested ? (BatchExchange<NestedBatch>) buffer : null;
-        this.columnWorker = columnWorker;
-        this.rowGroupIterator = rowGroupIterator;
-    }
-
-    static ColumnReader forFlat(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatBuffer,
-                                AutoCloseable columnWorker, RowGroupIterator rowGroupIterator) {
-        return new ColumnReader(column, false,
-                NestedLevelComputer.Layers.of(new LayerKind[0], new int[0]),
-                flatBuffer, columnWorker, rowGroupIterator);
-    }
-
-    static ColumnReader forNested(ColumnSchema column, NestedLevelComputer.Layers layers,
-                                  BatchExchange<NestedBatch> nestedBuffer,
-                                  AutoCloseable columnWorker, RowGroupIterator rowGroupIterator) {
-        return new ColumnReader(column, true, layers, nestedBuffer, columnWorker, rowGroupIterator);
-    }
-
-    /// A reader that yields no batches, for when row-group pruning has dropped
-    /// every row group so nothing can match. Allocates no batch buffer and
-    /// starts no worker thread — [#nextBatch()] reports exhausted immediately.
-    ///
-    /// Every reader of such a group holds `rowGroupIterator`, because a no-rows
-    /// group has no [FilterCoordinator] and no per-column state, so each reader is
-    /// independent and closing any one of them must release the iterator: the
-    /// filtered single-column entry point is handed one reader out of the group and
-    /// never sees the group itself. [RowGroupIterator#close()] is idempotent, so the
-    /// group and its readers releasing the same iterator releases it once.
-    static ColumnReader exhausted(FileSchema schema, ColumnSchema column,
-                                  RowGroupIterator rowGroupIterator) {
-        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
-                schema.getRootNode(), column.columnIndex());
-        boolean nested = layers.count() > 0 || column.maxRepetitionLevel() > 0;
-        ColumnReader reader = nested
-                ? forNested(column, layers, null, null, rowGroupIterator)
-                : forFlat(column, null, null, rowGroupIterator);
-        reader.exhausted = true;
-        return reader;
+        this.layers = NestedLevelComputer.computeLayers(schema.getRootNode(), column.columnIndex());
+        this.nested = ColumnCursor.isNested(layers, column);
     }
 
     // ==================== Batch Iteration ====================
@@ -176,11 +125,12 @@ public class ColumnReader implements Closeable {
     ///
     /// To read several columns of the same rows, use [ColumnReaders], from
     /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]. Its
-    /// readers share one [dev.hardwood.internal.reader.RowGroupIterator] and one batch size,
-    /// and [ColumnReaders#nextBatch()] advances them together and checks that their record
-    /// counts agree. Advance them through that method rather than this one: this method moves
-    /// a single reader, so calling it on one member of a [ColumnReaders] leaves the rest
-    /// behind on the batch they already hold.
+    /// readers share one decode pipeline and one batch size. [ColumnReaders#nextBatch()]
+    /// advances the whole group in one call. Calling this method on each member in turn also
+    /// moves the group once per turn: the first member called advances the group, and each
+    /// other member takes up that same batch. A member called twice before its siblings
+    /// advances the group twice, and the siblings then take up the later batch, skipping the
+    /// one in between.
     ///
     /// @return true if a batch is available, false if exhausted
     /// @throws IOException if the bytes could not be read
@@ -190,70 +140,39 @@ public class ColumnReader implements Closeable {
     ///         checksum fails, values that do not decode under the encoding declared for
     ///         them. In a multi-file read this covers a later file that is not Parquet at
     ///         all, or whose schema cannot be reconciled with the first file's
+    /// @throws IllegalStateException if this reader, or any reader of its group, was closed
     public boolean nextBatch() throws IOException {
-        if (coordinator != null) {
-            // Filtered path: a single [FilterCoordinator] advances every reader
-            // in the projection together so the per-batch selection is computed
-            // once and applied to all of them. Whichever reader is asked first
-            // triggers the shared advance; siblings already at that generation
-            // simply adopt the just-produced batch.
-            if (consumedGeneration == coordinator.generation()) {
-                boolean ok = coordinator.advance();
-                consumedGeneration = coordinator.generation();
-                return ok;
-            }
-            consumedGeneration = coordinator.generation();
-            return coordinator.hasBatch();
+        scan.requireOpen();
+        if (consumedGeneration == scan.generation()) {
+            scan.advance();
         }
-        return rawNextBatch();
+        return adoptCurrentStep();
     }
 
-    /// Advances this reader to its next decoded batch without applying any
-    /// record selection. The unfiltered public entry point and the filtered
-    /// [FilterCoordinator] both funnel through here.
-    boolean rawNextBatch() throws IOException {
-        if (exhausted) {
+    /// Takes up the scan's current step: points this view at the payload cursor's
+    /// current batch, or at none once the scan is exhausted, and drops the
+    /// per-batch caches of the previous step.
+    ///
+    /// @return whether the step holds a batch
+    boolean adoptCurrentStep() {
+        consumedGeneration = scan.generation();
+        invalidatePerBatchCaches();
+        if (!scan.hasBatch()) {
+            currentFlatBatch = null;
+            currentNestedBatch = null;
             return false;
         }
-
-        if (nested) {
-            NestedBatch batch = pollNestedBatch();
-            if (batch == null || batch.recordCount == 0) {
-                nestedBuffer.checkError();
-                exhausted = true;
-                currentFlatBatch = null;
-                currentNestedBatch = null;
-                return false;
-            }
-            currentNestedBatch = batch;
-            currentFlatBatch = null;
-            recordCount = batch.recordCount;
-            currentFileName = batch.fileName;
-        }
-        else {
-            BatchExchange.Batch batch = pollFlatBatch();
-            if (batch == null || batch.recordCount == 0) {
-                flatBuffer.checkError();
-                exhausted = true;
-                currentFlatBatch = null;
-                currentNestedBatch = null;
-                return false;
-            }
-            currentFlatBatch = batch;
-            currentNestedBatch = null;
-            recordCount = batch.recordCount;
-            currentFileName = batch.fileName;
-        }
-
-        invalidatePerBatchCaches();
-
+        ColumnCursor cursor = scan.cursor(payloadIndex);
+        currentFlatBatch = cursor.flatBatch();
+        currentNestedBatch = cursor.nestedBatch();
+        recordCount = cursor.recordCount();
+        currentFileName = cursor.fileName();
         return true;
     }
 
     /// Clears the lazily-computed, per-batch derived state (nested real view and
     /// the materialised binary/string views) so the accessors recompute against
-    /// the batch now current. Called when a new batch is polled and after a
-    /// selection compacts the current batch in place.
+    /// the batch now current.
     private void invalidatePerBatchCaches() {
         realViewComputed = false;
         currentRealView = null;
@@ -262,26 +181,6 @@ public class ColumnReader implements Closeable {
         cachedRealBinaryOffsets = null;
         cachedBinaries = null;
         cachedStrings = null;
-    }
-
-    private BatchExchange.Batch pollFlatBatch() throws IOException {
-        try {
-            return flatBuffer.poll();
-        }
-        catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return null;
-        }
-    }
-
-    private NestedBatch pollNestedBatch() throws IOException {
-        try {
-            return nestedBuffer.poll();
-        }
-        catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return null;
-        }
     }
 
     /// Number of top-level records in the current batch.
@@ -510,223 +409,16 @@ public class ColumnReader implements Closeable {
         return column;
     }
 
-    /// Releases the resources held by this reader. Idempotent: calling it more
+    /// Releases the resources held by this reader. Closing any reader of a
+    /// [ColumnReaders] group closes the whole group, after which [#nextBatch()] on any
+    /// of its readers throws [IllegalStateException]. Idempotent: calling it more
     /// than once has no further effect.
     @Override
     public void close() throws IOException {
-        // When a coordinator owns this reader, closing any single reader tears
-        // down the whole projection (all sibling readers plus the shared
-        // iterator). This keeps `try (ColumnReader r = ...filter(...).build())`
-        // working for the single-column entry point.
-        if (coordinator != null) {
-            coordinator.close();
-            return;
-        }
-        rawClose();
-    }
-
-    /// Closes this reader's own worker and (if owned) its iterator, without
-    /// involving the [FilterCoordinator]. Called directly on the unfiltered
-    /// path and by the coordinator when it tears down the projection.
-    void rawClose() throws IOException {
-        if (closed) {
-            return;
-        }
-        closed = true;
-        if (columnWorker != null) {
-            try {
-                columnWorker.close();
-            }
-            catch (Exception e) {
-                throw new RuntimeException("Failed to close column worker", e);
-            }
-        }
-        if (rowGroupIterator != null) {
-            rowGroupIterator.close();
-        }
-    }
-
-    // ==================== Exact-filter coordination (#624) ====================
-
-    /// Installs the [FilterCoordinator] that drives this reader on the filtered
-    /// path. Once set, [#nextBatch()] delegates to the coordinator.
-    void setCoordinator(FilterCoordinator coordinator) {
-        this.coordinator = coordinator;
-    }
-
-    /// Whether this reader decodes through the nested pipeline.
-    boolean isNested() {
-        return nested;
-    }
-
-    /// The current (pre-selection) flat batch, for predicate evaluation by the
-    /// [SelectionEngine]. Only valid for flat readers between a successful
-    /// [#rawNextBatch()] and the next advance.
-    BatchExchange.Batch currentFlatBatch() {
-        return currentFlatBatch;
-    }
-
-    /// The current (pre-selection) nested batch, for predicate evaluation by the
-    /// [SelectionEngine].
-    NestedBatch currentNestedBatch() {
-        return currentNestedBatch;
-    }
-
-    /// The record count of the current batch before any selection is applied.
-    int rawRecordCount() {
-        return recordCount;
-    }
-
-    /// Adopts the coordinator's current generation without triggering an
-    /// advance — used when [ColumnReaders#nextBatch()] drives the group.
-    void syncGeneration() {
-        if (coordinator != null) {
-            consumedGeneration = coordinator.generation();
-        }
-    }
-
-    /// Compacts the current batch down to the `count` records whose ascending
-    /// indices occupy `kept[0..count)`. A negative `count` means "every record
-    /// matches" — a no-op fast path that leaves the decoded batch untouched.
-    /// `kept` is a reusable buffer owned by the [SelectionEngine]; only its
-    /// `[0, count)` prefix is read. After this call the public accessors observe
-    /// only the matching records.
-    void applySelection(int[] kept, int count) {
-        if (count < 0) {
-            return;
-        }
-        if (nested) {
-            currentNestedBatch = compactNestedBatch(currentNestedBatch, kept, count);
-        }
-        else {
-            compactFlatBatchInPlace(currentFlatBatch, kept, count);
-        }
-        recordCount = count;
-        invalidatePerBatchCaches();
-    }
-
-    /// Compacts a flat batch to the kept records. The fixed-width value array is
-    /// gathered **in place** — `kept` is strictly ascending with `kept[j] >= j`,
-    /// so `values[j] = values[kept[j]]` never overwrites a slot still to be
-    /// read. The batch is detached (consumer-owned, never recycled) and not yet
-    /// observed by the caller, so mutating it is safe and avoids a fresh
-    /// per-batch `values[]` allocation on the common path. Variable-length
-    /// (`BinaryBatchValues`) leaves can't gather in place and get a compacted
-    /// copy; validity is rebuilt only when a kept record is null.
-    private static void compactFlatBatchInPlace(BatchExchange.Batch batch, int[] kept, int count) {
-        Object values = batch.values;
-        if (values instanceof BinaryBatchValues binary) {
-            batch.values = LeafCompaction.compactBinary(binary, kept, count);
-        }
-        else {
-            compactPrimitiveInPlace(values, kept, count);
-        }
-        batch.validity = compactValidity(batch.validity, kept, count);
-        batch.recordCount = count;
-    }
-
-    private static void compactPrimitiveInPlace(Object values, int[] kept, int count) {
-        switch (values) {
-            case int[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
-            case long[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
-            case float[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
-            case double[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
-            case boolean[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
-            default -> throw new IllegalStateException("Unexpected leaf array type: " + values.getClass());
-        }
-    }
-
-    /// Gathers the present/null bits at the kept record positions into a fresh
-    /// bitmap. Mirrors the set-bit-=-present polarity of
-    /// [BatchExchange.Batch#validity]; returns `null` when no kept record is
-    /// null (the sparse "all present" representation).
-    private static long[] compactValidity(long[] src, int[] kept, int count) {
-        if (src == null) {
-            return null;
-        }
-        long[] out = null;
-        for (int j = 0; j < count; j++) {
-            int idx = kept[j];
-            boolean present = (src[idx >>> 6] & (1L << idx)) != 0L;
-            if (present) {
-                if (out != null) {
-                    out[j >>> 6] |= 1L << j;
-                }
-            }
-            else if (out == null) {
-                // First null encountered: materialise the bitmap and mark every
-                // earlier kept record present.
-                out = new long[(count + 63) >>> 6];
-                for (int b = 0; b < j; b++) {
-                    out[b >>> 6] |= 1L << b;
-                }
-            }
-        }
-        return out;
-    }
-
-    /// Compacts a nested batch to the selected top-level records by slicing the
-    /// raw `(definitionLevels, repetitionLevels, values)` triplet per record —
-    /// each record is the contiguous level run `[recordOffsets[r], end)`. The
-    /// real-items view is recomputed lazily from the sliced raw arrays by
-    /// [#ensureRealView()], so no layer bookkeeping is rebuilt here.
-    private static NestedBatch compactNestedBatch(NestedBatch src, int[] kept, int count) {
-        int[] recordOffsets = src.recordOffsets;
-        int srcRecordCount = src.recordCount;
-        int srcValueCount = src.valueCount;
-
-        // Total kept leaf slots, to size the gather index up front.
-        int total = 0;
-        for (int j = 0; j < count; j++) {
-            int r = kept[j];
-            int start = recordOffsets[r];
-            int end = (r + 1 < srcRecordCount) ? recordOffsets[r + 1] : srcValueCount;
-            total += end - start;
-        }
-
-        int[] keptLeaves = new int[total];
-        int[] newRecordOffsets = new int[count];
-        int pos = 0;
-        for (int j = 0; j < count; j++) {
-            int r = kept[j];
-            newRecordOffsets[j] = pos;
-            int start = recordOffsets[r];
-            int end = (r + 1 < srcRecordCount) ? recordOffsets[r + 1] : srcValueCount;
-            for (int k = start; k < end; k++) {
-                keptLeaves[pos++] = k;
-            }
-        }
-
-        NestedBatch out = new NestedBatch();
-        out.fileName = src.fileName;
-        out.fixedListK = src.fixedListK;
-        out.recordCount = count;
-        out.valueCount = total;
-        out.values = LeafCompaction.compact(src.values, keptLeaves);
-        // A fixed-width batch carries no level arrays; selection keeps whole
-        // k-element records, so it stays fixed-width and the real view is rebuilt
-        // arithmetically from the new record count.
-        out.definitionLevels = src.definitionLevels != null ? gather(src.definitionLevels, keptLeaves) : null;
-        out.repetitionLevels = src.repetitionLevels != null ? gather(src.repetitionLevels, keptLeaves) : null;
-        out.recordOffsets = newRecordOffsets;
-        return out;
-    }
-
-    private static int[] gather(int[] src, int[] indices) {
-        int[] out = new int[indices.length];
-        for (int i = 0; i < indices.length; i++) {
-            out[i] = src[indices[i]];
-        }
-        return out;
+        scan.close();
     }
 
     // ==================== Internal ====================
-
-    /// The file the current batch was read from, for the sibling readers of the
-    /// same projection to attribute their per-batch work to.
-    String currentFileName() {
-        return currentFileName;
-    }
 
     private String prefix() {
         return ExceptionContext.filePrefix(currentFileName);
@@ -876,57 +568,5 @@ public class ColumnReader implements Closeable {
     private IllegalStateException typeMismatch(String expected) {
         return new IllegalStateException(prefix()
                 + "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
-    }
-
-    // ==================== Factory ====================
-
-    /// Creates a ColumnReader from a pre-configured RowGroupIterator.
-    /// Used by both single-file and multi-file paths.
-    ///
-    /// Routing rule: any column whose schema chain contributes at least one
-    /// `STRUCT` or `REPEATED` layer is driven by [NestedColumnWorker] (def
-    /// levels are needed to compute per-layer validity); only the
-    /// no-layers-at-all case takes the [FlatColumnWorker] fast path.
-    static ColumnReader createFromIterator(ColumnSchema columnSchema, FileSchema schema,
-                                           RowGroupIterator rowGroupIterator,
-                                           HardwoodContextImpl context,
-                                           boolean fixedListFastPathEnabled,
-                                           int projectedColumnIndex,
-                                           RowGroupIterator ownedIterator,
-                                           int batchSize,
-                                           NestedColumnWorker.IndexMode indexMode) {
-        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
-                schema.getRootNode(), columnSchema.columnIndex());
-        boolean nested = layers.count() > 0 || columnSchema.maxRepetitionLevel() > 0;
-
-        PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
-
-        if (nested) {
-            BatchExchange<NestedBatch> nestedBuf = BatchExchange.detaching(
-                    columnSchema.name(), () -> {
-                        NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
-                        return b;
-                    });
-            NestedColumnWorker nestedWorker = new NestedColumnWorker(
-                    pageSource, nestedBuf, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), 0,
-                    layers, indexMode, fixedListFastPathEnabled);
-            nestedWorker.start();
-            return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
-        }
-        else {
-            BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
-                    columnSchema.name(), () -> {
-                        BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
-                        return b;
-                    });
-            FlatColumnWorker flatWorker = new FlatColumnWorker(
-                    pageSource, flatBuf, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), 0, null);
-            flatWorker.start();
-            return ColumnReader.forFlat(columnSchema, flatBuf, flatWorker, ownedIterator);
-        }
     }
 }

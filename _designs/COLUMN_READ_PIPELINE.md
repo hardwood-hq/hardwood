@@ -1,8 +1,8 @@
 # Design: the column-read pipeline behind `ColumnReader`
 
-**Status: Proposed.** Tracking issue: #1281. Restructures the plumbing behind
-[EXACT_COLUMN_READER_FILTERING.md](EXACT_COLUMN_READER_FILTERING.md) (#624); results and the
-public API's signatures are unchanged.
+**Status: Implemented.** Tracking issue: #1281. Describes the plumbing behind the column
+readers, including the exact filtering of
+[EXACT_COLUMN_READER_FILTERING.md](EXACT_COLUMN_READER_FILTERING.md) (#624).
 
 ## Scope
 
@@ -22,13 +22,14 @@ It answers:
 
 - `advance()`: polls the exchange for the next batch, rethrowing a pipeline error; returns
   `false` at end of stream;
-- the current batch (`flatBatch()` / `nestedBatch()`), whether it is nested, its record count,
-  its file name and its `filterAlwaysMatches` flag;
+- the current batch (`flatBatch()` / `nestedBatch()`), whether it is nested, its record count
+  and its file name;
 - `close()`: stops the worker.
 
-It carries no accessor, layer or cache state. `ColumnCursor.create(...)` takes over the worker
-construction and routing rule of today's `ColumnReader.createFromIterator` (a column whose
-schema chain contributes a layer, or that repeats, is nested).
+It carries no accessor, layer or cache state. `ColumnCursor.create(...)` builds and starts the
+worker and applies the routing rule: a column whose schema chain contributes a `STRUCT` or
+`REPEATED` layer, or that repeats, decodes through `NestedColumnWorker`; every other column
+through `FlatColumnWorker`.
 
 ## Scan
 
@@ -41,11 +42,13 @@ schema chain contributes a layer, or that repeats, is nested).
 - the `RowGroupIterator` the cursors draw from, and the per-file `RecordFilterTally`.
 
 `advance()` polls every cursor once, in lockstep, and checks that they agree: every cursor
-produced a batch, or none did, and all batches have the same record count. The mismatch
-errors are those of today's two loops. With a filter, it then computes the selection and
-compacts each payload cursor's batch to the matching records (flat: in place through
-`LeafCompaction`; nested: the raw level/value triplet, as today). It records the step's
-record count and increments a **generation** counter.
+produced a batch, or none did, and all batches have the same record count; a cursor exhausted
+before the first, or a differing record count, throws `IllegalStateException`. With a filter,
+it then computes the selection and compacts each payload cursor's batch to the matching
+records: flat primitive values are gathered in place, binary values through
+`LeafCompaction`, and a nested batch is sliced per record across its level and value arrays.
+It records the step's record count and, when the step holds a batch, increments a
+**generation** counter.
 
 A read in which pruning dropped every row group gets a scan with no cursors, whose first
 `advance()` returns `false`.
@@ -55,48 +58,38 @@ fails.
 
 ## Views
 
-`ColumnReader` holds its scan and the index of its payload cursor, plus the per-batch caches it
-has today (the real-items view, materialised binaries and strings), which it drops whenever it
-adopts a new step. Its accessors read the cursor's current (compacted) batch.
+`ColumnReader` holds its scan and the index of its payload cursor, plus per-batch caches (the
+real-items view, materialised binaries and strings), which it drops whenever it adopts a new
+step. Its accessors read the cursor's current (compacted) batch.
 
 **Advancing.** Each view remembers the generation it last consumed. `ColumnReader.nextBatch()`
 advances the scan when the view has already consumed the current generation, and otherwise
 adopts the step a sibling already advanced to. `ColumnReaders.nextBatch()` advances the scan
 and marks every member as having consumed the new generation. So calling `nextBatch()` on each
 member in turn moves the group once, in every group, filtered or not; a member cannot run ahead
-of its siblings and pair rows from different steps.
+of its siblings and pair rows from different steps. `ColumnReaders.getRecordCount()` reads the
+scan's current step, so it reports the batch a member advanced the group to.
 
 **Closing.** Closing any view of a group closes the scan: the members share one pipeline and
 cannot outlive it separately.
 
 A single-column reader, filtered or not, is the only view of a one-payload-column scan. A
-filtered single column's scan also holds the cursors of the predicate columns.
-
-## What goes away
-
-- `FilterCoordinator`: its lockstep advance, selection and compaction move into `ColumnScan`.
-- The second lockstep loop in `ColumnReaders.nextBatch()`.
-- `ColumnReader`'s pipeline fields and package-private hooks: the worker and exchange,
-  `rawNextBatch`, `rawRecordCount`, `rawClose`, `setCoordinator`, `syncGeneration`,
-  `applySelection`, `currentFlatBatch` / `currentNestedBatch`, `isNested`, and the coordinator
-  field.
-- `ColumnReader` instances for predicate columns outside the projection; those are cursors.
+filtered single column's scan also holds the cursors of the predicate columns. A predicate
+column outside the projection has a cursor in the scan and no `ColumnReader`.
 
 ## Testing
 
-The existing column-reader suites (`ColumnReaderExactFilterTest`, `ColumnReadersTest`,
+The column-reader suites (`ColumnReaderExactFilterTest`, `ColumnReadersTest`,
 `ColumnReaderLayerModelTest`, `ColumnReaderBatchArrayIdentityTest` and the multi-file and S3
-variants) pin results and are unchanged. New:
+variants) pin results. `ColumnReadersTest`, `IteratorTrackingTest` and `PrunedToEmptyReadTest`
+cover the shared advance and close:
 
-- advancing the members of an **unfiltered** group one at a time yields aligned rows, as it
-  does for a filtered group;
-- closing one member of an unfiltered group closes the group;
+- advancing the members of an unfiltered group one at a time yields aligned rows;
+- a member advanced alone moves the group, and the group's record count follows it;
+- closing one member of a group closes the group;
 - a read that pruning emptied yields no batch from any member.
 
 ## Documentation
 
-`docs/content/how-to/column-reader.md` states that calling `ColumnReader.nextBatch()` on a
-member of a group leaves its siblings behind and misaligns rows. It is rewritten to the
-behaviour above: members advanced one at a time share the group's advance, and
-`ColumnReaders.nextBatch()` remains the way to drive a group. The same holds for the Javadoc
-of `ColumnReaders.nextBatch()` and `ColumnReader.nextBatch()`.
+`docs/content/how-to/column-reader.md` and the Javadoc of `ColumnReaders.nextBatch()` and
+`ColumnReader.nextBatch()` state the shared advance and the group-wide close.

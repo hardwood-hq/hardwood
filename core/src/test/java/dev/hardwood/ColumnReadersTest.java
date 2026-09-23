@@ -695,6 +695,116 @@ class ColumnReadersTest {
         }
     }
 
+    @Test
+    void testMembersAdvancedOneAtATimeShareTheGroupAdvance() throws Exception {
+        // Calling nextBatch() on each member of an unfiltered group in turn moves the group
+        // once per turn: the first member advances it, the others take up the same batch.
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(
+                             ColumnProjection.columns("id", "value", "label"))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            ColumnReader valueReader = columns.getColumnReader("value");
+            ColumnReader labelReader = columns.getColumnReader("label");
+
+            int batches = 0;
+            long totalRows = 0;
+            while (idReader.nextBatch() & valueReader.nextBatch() & labelReader.nextBatch()) {
+                int count = idReader.getRecordCount();
+                assertThat(valueReader.getRecordCount()).isEqualTo(count);
+                assertThat(labelReader.getRecordCount()).isEqualTo(count);
+
+                long[] ids = idReader.getLongs();
+                long[] values = valueReader.getLongs();
+                String[] labels = labelReader.getStrings();
+                for (int i = 0; i < count; i++) {
+                    assertThat(values[i]).isEqualTo(ids[i]);
+                    assertThat(labels[i]).isEqualTo(expectedLabel(ids[i]));
+                }
+
+                batches++;
+                totalRows += count;
+            }
+
+            assertThat(batches).isGreaterThan(1);
+            assertThat(totalRows).isEqualTo(300);
+        }
+    }
+
+    @Test
+    void testMemberAdvancedAloneMovesTheWholeGroup() throws Exception {
+        // A member advanced on its own moves the group, so a sibling called afterwards takes
+        // up the batch that member reached rather than the one before it.
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            ColumnReader valueReader = columns.getColumnReader("value");
+
+            assertThat(idReader.nextBatch()).isTrue();
+            assertThat(idReader.nextBatch()).isTrue();
+            assertThat(valueReader.nextBatch()).isTrue();
+
+            assertThat(idReader.getLongs()).containsExactly(8L, 9L, 10L, 11L, 12L, 13L, 14L);
+            assertThat(valueReader.getLongs()).containsExactly(8L, 9L, 10L, 11L, 12L, 13L, 14L);
+        }
+    }
+
+    @Test
+    void testGroupReportsTheStepAMemberAdvancedTo() throws Exception {
+        // The group's record count follows the shared step, whichever reader advanced it:
+        // 300 rows in batches of 7 end on a batch of 6, and past the end there is no batch.
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+
+            assertThat(columns.nextBatch()).isTrue();
+            assertThat(columns.getRecordCount()).isEqualTo(7);
+
+            int lastCount = 0;
+            while (idReader.nextBatch()) {
+                assertThat(columns.getRecordCount()).isEqualTo(idReader.getRecordCount());
+                lastCount = idReader.getRecordCount();
+            }
+            assertThat(lastCount).isEqualTo(6);
+
+            assertThatThrownBy(columns::getRecordCount)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("No batch available — call nextBatch() first, and check that it returned true");
+        }
+    }
+
+    @Test
+    void testMemberCannotAdvanceOnceASiblingClosedTheGroup() throws Exception {
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            ColumnReader valueReader = columns.getColumnReader("value");
+            assertThat(idReader.nextBatch()).isTrue();
+
+            idReader.close();
+
+            assertThatThrownBy(valueReader::nextBatch)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("The column read is closed: closing any reader of a group closes every"
+                            + " reader of it");
+        }
+    }
+
     /// `filter_pushdown_int.parquet` labels every row `rg<N>_<id>`, `N` being its 1-based
     /// hundred, so a label identifies the exact row its neighbours must have come from.
     private static String expectedLabel(long id) {

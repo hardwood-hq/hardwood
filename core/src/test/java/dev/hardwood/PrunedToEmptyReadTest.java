@@ -21,13 +21,13 @@ import dev.hardwood.reader.RowGroupPredicate;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Exercises the empty-projection short-circuit that
 /// [ParquetFileReader#buildColumnReaders] takes when row-group pruning drops
-/// every row group: it exposes the projected columns as immediately-exhausted
-/// no-op readers ([ColumnReader#exhausted]) instead of building per-column
-/// worker threads, batch buffers, and (on the filtered path) a selection
-/// engine. Both the plain-projection path (dropped by a [RowGroupPredicate])
+/// every row group: it exposes the projected columns as readers over a scan
+/// with no cursors instead of building per-column worker threads, batch
+/// buffers, and (on the filtered path) a selection engine. Both the plain-projection path (dropped by a [RowGroupPredicate])
 /// and the exact-filter path (dropped by statistics) are covered, for flat and
 /// nested columns.
 class PrunedToEmptyReadTest {
@@ -57,6 +57,38 @@ class PrunedToEmptyReadTest {
                 assertThat(cols.getColumnReader(name).nextBatch()).isFalse();
             }
             assertThat(cols.getColumnReader(0).nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void membersOfAPrunedReadYieldNoBatchBeforeTheGroupAdvances() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FIXTURE));
+             ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.columns("id", "label"))
+                     .filter(dropAll(INT_FIXTURE))
+                     .build()) {
+
+            ColumnReader id = cols.getColumnReader("id");
+            ColumnReader label = cols.getColumnReader("label");
+            assertThat(id.nextBatch()).isFalse();
+            assertThat(label.nextBatch()).isFalse();
+            assertThatThrownBy(id::getLongs)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("No batch available. Call nextBatch() first.");
+
+            assertThat(cols.nextBatch()).isFalse();
+            assertThat(id.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void prunedSingleColumnReadYieldsNoBatch() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FIXTURE));
+             ColumnReader label = reader.buildColumnReader("label")
+                     .filter(dropAll(INT_FIXTURE))
+                     .build()) {
+
+            assertThat(label.nextBatch()).isFalse();
+            assertThat(label.nextBatch()).isFalse();
         }
     }
 

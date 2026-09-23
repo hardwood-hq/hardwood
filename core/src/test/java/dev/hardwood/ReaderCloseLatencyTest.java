@@ -120,12 +120,9 @@ class ReaderCloseLatencyTest {
 
     /// The same question asked of the filtered path.
     ///
-    /// Both paths converge on `ColumnWorker.close()`, so the release itself is shared — what
-    /// differs is the traversal that reaches it, and which readers it reaches. Unfiltered,
-    /// [ColumnReaders#close()] loops over the projected readers; filtered, it delegates to
-    /// [dev.hardwood.reader.FilterCoordinator], which closes the *augmented* set — the payload
-    /// columns plus the predicate columns that never surface to the caller. This covers that
-    /// wider set, and holds the two traversals to the same guarantee should they diverge.
+    /// Both paths close through the same `ColumnScan`, which on the filtered path closes the
+    /// *augmented* set of columns: the payload columns plus the predicate columns that never
+    /// surface to the caller. This covers that wider set.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void filteredCloseDoesNotScaleWithProjectionWidth() throws Exception {

@@ -23,12 +23,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 ///
 /// The decode pipeline crosses task boundaries a checked exception cannot travel through, so a
 /// failed read arrives at the reader wrapped in an [UncheckedIOException] and has to be unwrapped
-/// before it escapes. `ColumnReader` does that for itself; `ColumnReaders` reaches its columns
-/// through `FilterCoordinator`, which calls the raw batch advance rather than the unwrapping one,
-/// so the filtered path needs its own unwrap and had none.
-///
-/// A filter is what puts a coordinator in play, so the filtered case is the one asserted here; the
-/// unfiltered path delegates to `ColumnReader.nextBatch` and was never affected.
+/// before it escapes. Every column reader, filtered or not, reaches its columns through the same
+/// `ColumnCursor` advance; the filtered case is the one asserted here because it decodes the
+/// predicate columns alongside the payload columns.
 class ColumnReadersTransportFailureTest {
 
     /// Reads normally until [#failFrom] is set, so a file can be opened and its footer parsed

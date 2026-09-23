@@ -82,12 +82,12 @@ makes the result exact.
 ## SelectionEngine
 
 `SelectionEngine` (package-private in `dev.hardwood.reader`, alongside
-`ColumnReader`/`ColumnReaders`/`FilterCoordinator`) owns predicate evaluation for
-one grouped read. It lives in this package rather than `internal.reader` because
-it reads each reader's current batch and drives compaction through
-`ColumnReader`'s package-private hooks (`currentFlatBatch()`, `applySelection`,
-`rawNextBatch`); keeping it here avoids widening those to a public/internal
-surface. After the aligned batches for a step are available, it produces the
+`ColumnScan` and `ColumnCursor`) owns predicate evaluation for one grouped read.
+It lives in this package rather than `internal.reader` because it reads each
+column's current batch from the package-private `ColumnCursor`; the pipeline
+behind the readers is described in
+[COLUMN_READ_PIPELINE.md](COLUMN_READ_PIPELINE.md). After the aligned batches for
+a step are available, it produces the
 selection through one of two backends, chosen once at construction by
 `BatchFilterCompiler.tryCompile`:
 
@@ -118,8 +118,9 @@ backend-agnostic.
 ## Compaction
 
 The selection is a record-level mask. Compaction differs by column shape, and in
-both cases reuses the index-map compaction already present on `ColumnReader`
-(`compactPrimitive` / `compactBinary`):
+both cases runs in `ColumnScan` on the payload cursors' batches: flat primitive
+values are gathered in place, everything else goes through the index-map
+compaction of `LeafCompaction`:
 
 **Flat column.** Record == leaf. Build the matching-record index map from the
 selection and compact the value array, the validity bitmap, and (for binary) the
@@ -137,17 +138,18 @@ bookkeeping in one place and avoids re-deriving layer offsets by hand.
 
 ## Wiring
 
-**`ColumnReaders` (grouped).** Built over the augmented projected schema.
-`nextBatch()` advances every reader, then asks the `SelectionEngine` for the
-batch selection and shares it with each exposed `ColumnReader`. The hidden
-predicate columns are excluded from the `readersByName` / `readersByIndex` view.
+**`ColumnReaders` (grouped).** Built over a `ColumnScan` of the augmented
+projected schema. Each advance of the scan polls every column's cursor, then asks
+the `SelectionEngine` for the batch selection and compacts each payload cursor's
+batch to it. The hidden predicate columns have cursors in the scan but no
+`ColumnReader` view.
 The record-count alignment guard compares post-compaction counts — all columns
 share one selection, so they remain equal; the exhaustion/empty-batch path is
 preserved.
 
 **`buildColumnReader(col).filter(pred)` (single).** Resolves the predicate,
 forms the augmented projection `{col} ∪ predicateColumns`, builds a private
-grouped engine, and exposes only `col`. Distinct single readers over the same
+grouped scan, and exposes only `col`. Distinct single readers over the same
 file each decode the predicate column independently — a redundant decode the
 issue accepts for now. Sharing the computed selection across sibling readers on
 the owning `ParquetFileReader` is the #74 / #70 follow-up; it is a pure

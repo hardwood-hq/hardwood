@@ -12,17 +12,13 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.NestedColumnWorker;
-import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/// Holds multiple [ColumnReader] instances backed by a shared
-/// [RowGroupIterator] for batch-oriented projection reads. Works for both
-/// single- and multi-file [ParquetFileReader] inputs; the iterator
+/// Holds multiple [ColumnReader] instances backed by one shared decode
+/// pipeline for batch-oriented projection reads. Works for both
+/// single- and multi-file [ParquetFileReader] inputs; the pipeline
 /// transparently handles cross-file prefetching when more than one file is
 /// involved.
 ///
@@ -48,119 +44,24 @@ import dev.hardwood.schema.FileSchema;
 /// ```
 public class ColumnReaders implements Closeable {
 
+    /// The pipeline every reader of this group is a view of.
+    private final ColumnScan scan;
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
-    /// Non-null on the exact-filtering path (#624): drives all readers in
-    /// lockstep and compacts each to the matching records per batch. `null` on
-    /// the plain projection path.
-    private final FilterCoordinator coordinator;
-    /// The iterator every column in this group decodes through. No individual
-    /// column reader owns it, so this group releases it, which is also what stops
-    /// the owning [ParquetFileReader] tracking it. Never `null`: every group is
-    /// built around an iterator, [#noRows] included.
-    private final RowGroupIterator rowGroupIterator;
-    private int recordCount;
-    private boolean batchAvailable;
 
-    ColumnReaders(HardwoodContextImpl context,
-                  boolean fixedListFastPathEnabled,
-                  RowGroupIterator rowGroupIterator,
-                  FileSchema schema,
-                  ProjectedSchema projectedSchema,
-                  int batchSize) {
-        int projectedColumnCount = projectedSchema.getProjectedColumnCount();
-        this.readersByName = new LinkedHashMap<>(projectedColumnCount);
-        this.readersByIndex = new ColumnReader[projectedColumnCount];
-        this.coordinator = null;
-        this.rowGroupIterator = rowGroupIterator;
-
-        for (int i = 0; i < projectedColumnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
-            ColumnSchema columnSchema = schema.getColumn(originalIndex);
-
-            ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
-                    NestedColumnWorker.IndexMode.REAL_VIEW);
-
+    /// A group of views over the payload columns of `scan`: the first
+    /// [ProjectedSchema#exposedColumnCount] columns of `projected`.
+    ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema projected) {
+        int payloadCount = projected.exposedColumnCount();
+        this.scan = scan;
+        this.readersByName = new LinkedHashMap<>(payloadCount);
+        this.readersByIndex = new ColumnReader[payloadCount];
+        for (int i = 0; i < payloadCount; i++) {
+            ColumnSchema columnSchema = schema.getColumn(projected.toOriginalIndex(i));
+            ColumnReader reader = new ColumnReader(scan, i, schema, columnSchema);
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
         }
-    }
-
-    private ColumnReaders(Map<String, ColumnReader> readersByName,
-                          ColumnReader[] readersByIndex,
-                          FilterCoordinator coordinator,
-                          RowGroupIterator rowGroupIterator) {
-        this.readersByName = readersByName;
-        this.readersByIndex = readersByIndex;
-        this.coordinator = coordinator;
-        this.rowGroupIterator = rowGroupIterator;
-    }
-
-    /// Builds a filtered [ColumnReaders] that returns only the records matching
-    /// `resolved` (#624). Every column of `augProjected` is decoded through one shared
-    /// iterator; the exposed readers are its first
-    /// [ProjectedSchema#exposedColumnCount] columns, compacted to the matching records
-    /// each batch. The columns past that carry the predicate and are decoded to evaluate
-    /// it, not exposed.
-    static ColumnReaders filtered(HardwoodContextImpl context,
-                                  boolean fixedListFastPathEnabled,
-                                  RowGroupIterator rowGroupIterator,
-                                  FileSchema schema,
-                                  ProjectedSchema augProjected,
-                                  ResolvedPredicate resolved,
-                                  int batchSize) {
-        int augCount = augProjected.getProjectedColumnCount();
-        ColumnReader[] allReaders = new ColumnReader[augCount];
-        Map<String, ColumnReader> byPath = new LinkedHashMap<>(augCount);
-        for (int i = 0; i < augCount; i++) {
-            ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(i));
-            ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
-                    NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS);
-            allReaders[i] = reader;
-            byPath.put(columnSchema.fieldPath().toString(), reader);
-        }
-
-        int payloadCount = augProjected.exposedColumnCount();
-        Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
-        ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
-        for (int p = 0; p < payloadCount; p++) {
-            ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(p));
-            ColumnReader reader = byPath.get(columnSchema.fieldPath().toString());
-            payloadReaders[p] = reader;
-            readersByName.put(columnSchema.fieldPath().toString(), reader);
-        }
-
-        SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
-        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine, rowGroupIterator);
-        for (ColumnReader reader : allReaders) {
-            reader.setCoordinator(coordinator);
-        }
-        return new ColumnReaders(readersByName, payloadReaders, coordinator, rowGroupIterator);
-    }
-
-    /// Builds a [ColumnReaders] for the case where row-group pruning
-    /// (statistics/bloom) dropped every row group, so no record can match.
-    /// Exposes the `payloadProjected` columns as immediately-exhausted no-op
-    /// readers — no worker threads, no batch buffers, no [SelectionEngine] or
-    /// [FilterCoordinator]. The group and every reader in it release
-    /// `rowGroupIterator`: with no coordinator to tear the projection down, a
-    /// caller handed a single reader out of this group has nothing else to reach
-    /// it through. Used by [ParquetFileReader#buildColumnReaders] to skip the
-    /// whole per-column decode setup when there is nothing to decode.
-    static ColumnReaders noRows(FileSchema schema, ProjectedSchema projected,
-                                RowGroupIterator rowGroupIterator) {
-        int payloadCount = projected.exposedColumnCount();
-        Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
-        ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
-        for (int p = 0; p < payloadCount; p++) {
-            ColumnSchema columnSchema = schema.getColumn(projected.toOriginalIndex(p));
-            ColumnReader reader = ColumnReader.exhausted(schema, columnSchema, rowGroupIterator);
-            payloadReaders[p] = reader;
-            readersByName.put(columnSchema.fieldPath().toString(), reader);
-        }
-        return new ColumnReaders(readersByName, payloadReaders, null, rowGroupIterator);
     }
 
     /// Get the number of projected columns.
@@ -192,25 +93,24 @@ public class ColumnReaders implements Closeable {
 
     /// Advance every underlying [ColumnReader] to its next batch in lockstep.
     ///
-    /// All readers share the same [RowGroupIterator], so they always publish batches at
-    /// the same row boundaries. This method drives every reader once and returns:
+    /// All readers share one pipeline, so they always publish batches at the same row
+    /// boundaries. This method advances that pipeline once and returns:
     ///
-    /// - `true` when every reader produced a new batch — callers can then read values
-    ///   via the per-column accessors. The aligned record count is exposed through
+    /// - `true` when a new batch is available — callers can then read values via the
+    ///   per-column accessors. The aligned record count is exposed through
     ///   [#getRecordCount()].
-    /// - `false` when any reader is exhausted — partial advancement is impossible
-    ///   because all readers consume from the shared iterator, so once one is done they
+    /// - `false` when the readers are exhausted — partial advancement is impossible
+    ///   because all readers consume from the shared pipeline, so once one is done they
     ///   all are.
     ///
-    /// As a defensive guard, a mismatch between the readers' published record counts
+    /// As a defensive guard, a mismatch between the columns' decoded record counts
     /// throws [IllegalStateException]. Under correct internal behavior this can't
     /// happen — the guard exists to detect future regressions in the per-column drain
     /// workers, not to be triggered in production.
     ///
-    /// This method is how these readers are advanced. [ColumnReader#nextBatch()] on one of
-    /// them moves that reader alone and leaves its siblings on the batch they already hold;
-    /// the counts still match, so the guard above stays silent and every later batch pairs
-    /// values from different rows.
+    /// Calling [ColumnReader#nextBatch()] on each reader in turn instead moves the group
+    /// once as well: the first reader called advances it, and the others take up the same
+    /// batch.
     ///
     /// @return true if a new aligned batch is available across all readers, false if exhausted
     /// @throws IOException if the bytes could not be read
@@ -220,86 +120,36 @@ public class ColumnReaders implements Closeable {
     ///         checksum fails, values that do not decode under the encoding declared for
     ///         them. In a multi-file read this covers a later file that is not Parquet at
     ///         all, or whose schema cannot be reconciled with the first file's
-    /// @throws IllegalStateException if the readers report mismatched record counts
+    /// @throws IllegalStateException if the readers report mismatched record counts, or the
+    ///         group was closed
     public boolean nextBatch() throws IOException {
-        if (coordinator != null) {
-            boolean advanced = coordinator.advance();
-            for (ColumnReader reader : readersByIndex) {
-                reader.syncGeneration();
-            }
-            recordCount = coordinator.recordCount();
-            batchAvailable = advanced;
-            return advanced;
+        boolean advanced = scan.advance();
+        for (ColumnReader reader : readersByIndex) {
+            reader.adoptCurrentStep();
         }
-        if (readersByIndex.length == 0) {
-            batchAvailable = false;
-            recordCount = 0;
-            return false;
-        }
-        boolean firstAdvanced = readersByIndex[0].nextBatch();
-        if (!firstAdvanced) {
-            batchAvailable = false;
-            recordCount = 0;
-            // Drain any remaining readers so the shared iterator finalizes cleanly.
-            for (int i = 1; i < readersByIndex.length; i++) {
-                readersByIndex[i].nextBatch();
-            }
-            return false;
-        }
-        int firstCount = readersByIndex[0].getRecordCount();
-        for (int i = 1; i < readersByIndex.length; i++) {
-            if (!readersByIndex[i].nextBatch()) {
-                throw new IllegalStateException(
-                        "ColumnReader '" + readersByIndex[i].getColumnSchema().name()
-                                + "' exhausted before peer column '"
-                                + readersByIndex[0].getColumnSchema().name()
-                                + "' — readers from the same projection should advance"
-                                + " in lockstep");
-            }
-            int count = readersByIndex[i].getRecordCount();
-            if (count != firstCount) {
-                throw new IllegalStateException(
-                        "ColumnReader batch sizes diverged: column '"
-                                + readersByIndex[0].getColumnSchema().name() + "' has "
-                                + firstCount + " records, column '"
-                                + readersByIndex[i].getColumnSchema().name() + "' has "
-                                + count);
-            }
-        }
-        recordCount = firstCount;
-        batchAvailable = true;
-        return true;
+        return advanced;
     }
 
-    /// Number of records in the most recently published batch.
+    /// Number of records in the group's current batch, whether [#nextBatch()] or
+    /// [ColumnReader#nextBatch()] on one of its readers advanced the group to it.
     ///
-    /// Equal to every underlying reader's [ColumnReader#getRecordCount()] — alignment is
-    /// validated by [#nextBatch()].
+    /// Equal to every underlying reader's [ColumnReader#getRecordCount()] once that reader
+    /// has taken up the batch — alignment is validated when the group advances.
     ///
     /// @throws IllegalStateException if no batch is currently available — call
     ///         [#nextBatch()] first
     public int getRecordCount() {
-        if (!batchAvailable) {
+        if (!scan.hasBatch()) {
             throw new IllegalStateException(
                     "No batch available — call nextBatch() first, and check that it returned true");
         }
-        return recordCount;
+        return scan.recordCount();
     }
 
+    /// Releases the resources held by every reader of this group. Idempotent.
     @Override
     public void close() throws IOException {
-        // Released even when a reader's teardown fails, so a failed close cannot
-        // leave the work list reachable for the parent reader's whole lifetime.
-        try (rowGroupIterator) {
-            if (coordinator != null) {
-                coordinator.close();
-            }
-            else {
-                for (ColumnReader reader : readersByIndex) {
-                    reader.close();
-                }
-            }
-        }
+        scan.close();
     }
 
 }

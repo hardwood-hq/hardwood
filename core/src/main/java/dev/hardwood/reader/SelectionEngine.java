@@ -47,7 +47,7 @@ import dev.hardwood.schema.FileSchema;
 /// filter exact (#624). Given the already-decoded batches of an augmented
 /// projection (payload columns plus the predicate columns), it produces the
 /// ascending indices of the records that satisfy the predicate, which the
-/// [FilterCoordinator] then uses to compact each payload column.
+/// [ColumnScan] then uses to compact each payload column.
 ///
 /// Two backends, chosen once at construction:
 ///
@@ -67,7 +67,7 @@ final class SelectionEngine {
     private final BatchMatchMerger merger;
     /// The batches [#merger] reads, indexed by projected column index. Staged
     /// here rather than passed straight through because the merger takes the
-    /// batches, and this engine holds readers. `null` on the record-matcher
+    /// batches, and this engine holds cursors. `null` on the record-matcher
     /// backend.
     private final BatchExchange.Batch[] stagedBatches;
     /// The projected indices [#merger] reads — its own set, read once at
@@ -75,7 +75,7 @@ final class SelectionEngine {
     /// `null` on the record-matcher backend.
     private final int[] stagedColumns;
 
-    private final ColumnReader[] readersByProjectedIndex;
+    private final ColumnCursor[] cursorsByProjectedIndex;
 
     // Record-matcher backend (null when the drain-side backend is used).
     private final RowMatcher rowMatcher;
@@ -83,28 +83,28 @@ final class SelectionEngine {
 
     /// Reusable buffer holding the matching record indices of the current batch
     /// in `[0, count)`. Owned by the engine and overwritten every batch, so the
-    /// [FilterCoordinator] must consume it (apply it to all payload readers)
+    /// [ColumnScan] must consume it (apply it to all payload cursors)
     /// before the next [#computeSelection]. Sized to the batch capacity.
     private final int[] selection;
 
     private SelectionEngine(BatchMatchMerger merger, int columnCount,
-                            ColumnReader[] readersByProjectedIndex,
+                            ColumnCursor[] cursorsByProjectedIndex,
                             RowMatcher rowMatcher, PredicateRowView predicateView, int[] selection) {
         this.merger = merger;
         this.stagedBatches = merger != null ? new BatchExchange.Batch[columnCount] : null;
         this.stagedColumns = merger != null ? merger.referencedColumns() : null;
-        this.readersByProjectedIndex = readersByProjectedIndex;
+        this.cursorsByProjectedIndex = cursorsByProjectedIndex;
         this.rowMatcher = rowMatcher;
         this.predicateView = predicateView;
         this.selection = selection;
     }
 
     /// Builds an engine for `resolved` over the augmented projection, reading
-    /// predicate values from `readersByProjectedIndex` (indexed by the
+    /// predicate values from the current batches of `cursorsByProjectedIndex` (indexed by the
     /// augmented projected column index).
     static SelectionEngine create(FileSchema schema, ProjectedSchema augProjected,
                                   ResolvedPredicate resolved,
-                                  ColumnReader[] readersByProjectedIndex, int batchSize) {
+                                  ColumnCursor[] cursorsByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
@@ -114,9 +114,9 @@ final class SelectionEngine {
             // Owning mode: no column workers ran the matchers, so the merger runs
             // them itself into buffers it allocates.
             BatchMatchMerger merger = BatchMatchMerger.owning(
-                    compiled, readersByProjectedIndex.length, wordsLen);
-            return new SelectionEngine(merger, readersByProjectedIndex.length,
-                    readersByProjectedIndex, null, null, selection);
+                    compiled, cursorsByProjectedIndex.length, wordsLen);
+            return new SelectionEngine(merger, cursorsByProjectedIndex.length,
+                    cursorsByProjectedIndex, null, null, selection);
         }
 
         // Record-matcher backend. Name-keyed compilation (no indexed-leaf
@@ -124,9 +124,9 @@ final class SelectionEngine {
         // name, which works uniformly for flat and nested predicate columns.
         RowMatcher matcher = RecordFilterCompiler.compile(resolved, schema);
         PredicateRowView view = PredicateRowView.create(
-                schema, augProjected, resolved, readersByProjectedIndex);
-        return new SelectionEngine(null, readersByProjectedIndex.length,
-                readersByProjectedIndex, matcher, view, selection);
+                schema, augProjected, resolved, cursorsByProjectedIndex);
+        return new SelectionEngine(null, cursorsByProjectedIndex.length,
+                cursorsByProjectedIndex, matcher, view, selection);
     }
 
     /// Computes the matching records of the current batch into the reusable
@@ -148,7 +148,7 @@ final class SelectionEngine {
     private int computeDrainSide(int recordCount) {
         for (int i = 0; i < stagedColumns.length; i++) {
             int p = stagedColumns[i];
-            stagedBatches[p] = readersByProjectedIndex[p].currentFlatBatch();
+            stagedBatches[p] = cursorsByProjectedIndex[p].flatBatch();
         }
         return collectSetBits(merger.merge(stagedBatches, recordCount), recordCount);
     }
@@ -222,7 +222,7 @@ final class SelectionEngine {
 
         private final Map<String, FlatField> flatByName;
         private final NestedBatchDataView nestedView;
-        private final ColumnReader[] nestedReaders;
+        private final ColumnCursor[] nestedCursors;
         private final ColumnSchema[] nestedColumnSchemas;
         private final NestedBatch[] nestedBatches;
         private int record;
@@ -232,46 +232,47 @@ final class SelectionEngine {
         /// accessors are a direct array index rather than a fresh `getXxx()`
         /// dispatch + cast each call.
         private static final class FlatField {
-            final ColumnReader reader;
+            final ColumnCursor cursor;
             Object values;
             Validity validity;
 
-            FlatField(ColumnReader reader) {
-                this.reader = reader;
+            FlatField(ColumnCursor cursor) {
+                this.cursor = cursor;
             }
 
             void refresh() {
-                values = reader.currentFlatBatch().values;
-                validity = reader.getLeafValidity();
+                BatchExchange.Batch batch = cursor.flatBatch();
+                values = batch.values;
+                validity = Validity.of(batch.validity);
             }
         }
 
         private PredicateRowView(Map<String, FlatField> flatByName,
                                  NestedBatchDataView nestedView,
-                                 ColumnReader[] nestedReaders,
+                                 ColumnCursor[] nestedCursors,
                                  ColumnSchema[] nestedColumnSchemas) {
             this.flatByName = flatByName;
             this.nestedView = nestedView;
-            this.nestedReaders = nestedReaders;
+            this.nestedCursors = nestedCursors;
             this.nestedColumnSchemas = nestedColumnSchemas;
-            this.nestedBatches = nestedReaders != null ? new NestedBatch[nestedReaders.length] : null;
+            this.nestedBatches = nestedCursors != null ? new NestedBatch[nestedCursors.length] : null;
         }
 
         static PredicateRowView create(FileSchema schema, ProjectedSchema augProjected,
                                        ResolvedPredicate resolved,
-                                       ColumnReader[] readersByProjectedIndex) {
+                                       ColumnCursor[] cursorsByProjectedIndex) {
             Set<Integer> indices = new LinkedHashSet<>();
             collectColumnIndices(resolved, indices);
 
             Map<String, FlatField> flatByName = new LinkedHashMap<>();
             List<String> nestedPaths = new ArrayList<>();
             for (int columnIndex : indices) {
-                ColumnReader reader = readersByProjectedIndex[augProjected.toProjectedIndex(columnIndex)];
-                if (reader.isNested()) {
+                ColumnCursor cursor = cursorsByProjectedIndex[augProjected.toProjectedIndex(columnIndex)];
+                if (cursor.isNested()) {
                     nestedPaths.add(schema.getColumn(columnIndex).fieldPath().toString());
                 }
                 else {
-                    flatByName.put(schema.getColumn(columnIndex).name(), new FlatField(reader));
+                    flatByName.put(schema.getColumn(columnIndex).name(), new FlatField(cursor));
                 }
             }
 
@@ -281,15 +282,15 @@ final class SelectionEngine {
             ProjectedSchema nestedProjected = ProjectedSchema.create(
                     schema, ColumnProjection.columns(nestedPaths.toArray(new String[0])));
             int q = nestedProjected.getProjectedColumnCount();
-            ColumnReader[] nestedReaders = new ColumnReader[q];
+            ColumnCursor[] nestedCursors = new ColumnCursor[q];
             ColumnSchema[] nestedColumnSchemas = new ColumnSchema[q];
             for (int j = 0; j < q; j++) {
                 int originalIndex = nestedProjected.toOriginalIndex(j);
                 nestedColumnSchemas[j] = schema.getColumn(originalIndex);
-                nestedReaders[j] = readersByProjectedIndex[augProjected.toProjectedIndex(originalIndex)];
+                nestedCursors[j] = cursorsByProjectedIndex[augProjected.toProjectedIndex(originalIndex)];
             }
             NestedBatchDataView view = new NestedBatchDataView(schema, nestedProjected);
-            return new PredicateRowView(flatByName, view, nestedReaders, nestedColumnSchemas);
+            return new PredicateRowView(flatByName, view, nestedCursors, nestedColumnSchemas);
         }
 
         /// Re-points the nested view and resolves each flat field's backing
@@ -306,8 +307,8 @@ final class SelectionEngine {
                 field.refresh();
             }
             if (nestedView != null) {
-                for (int j = 0; j < nestedReaders.length; j++) {
-                    NestedBatch batch = nestedReaders[j].currentNestedBatch();
+                for (int j = 0; j < nestedCursors.length; j++) {
+                    NestedBatch batch = nestedCursors[j].nestedBatch();
                     batch.elementValidity = NestedLevelComputer.computeElementValidity(
                             batch.definitionLevels, batch.valueCount, nestedColumnSchemas[j].maxDefinitionLevel());
                     nestedBatches[j] = batch;
