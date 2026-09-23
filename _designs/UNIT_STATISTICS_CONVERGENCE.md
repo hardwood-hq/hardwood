@@ -236,10 +236,7 @@ full.
   column's page boundaries are its own — and `FlatRowReader` and `NestedRowReader` read the flag
   from one column's batch on the understanding that every column flushes at the same row. Set
   against that, the saving is narrow: for a range predicate on sorted data only the row group
-  holding the cutoff is undecided, and the column readers do not consume the proof at all.
-- **`ColumnReader` / `SelectionEngine`.** `computeSelection` has an every-record fast path;
-  feeding it from the always-match proof is the remaining half of the #795 follow-up and is not
-  part of this work.
+  holding the cutoff is undecided.
 - **Bloom filters and dictionaries** prove absence only, are row-group scoped, and stay outside
   `UnitStats`. `RowGroupFilterEvaluator` applies them after the statistics decision.
 - **Geospatial statistics** live on `ColumnMetaData` alone, so `GeospatialPredicate` has no page
