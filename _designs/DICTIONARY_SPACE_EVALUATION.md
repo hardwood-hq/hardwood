@@ -164,9 +164,10 @@ Performance validation has two layers:
 - `RecordFilterBenchmarkTest` measures end-to-end binary equality, ordering,
   membership, and negated membership before and after dictionary evaluation;
   and
-- a single-threaded JMH benchmark measures cold dictionary-state
-  initialization and hot cross-batch reuse for equality, ordering, and
-  membership, separating sparse/early-stop reads from full scans.
+- a single-threaded JMH benchmark compares packed matching with eager and lazy
+  dictionary tables, measuring cold initialization and hot cross-batch reuse
+  for equality, ordering, and membership across sparse/early-stop and full
+  scans.
 
 ## Documentation and roadmap
 
