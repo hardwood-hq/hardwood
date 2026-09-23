@@ -35,10 +35,11 @@ through `FlatColumnWorker`.
 
 `ColumnScan` (package-private in `dev.hardwood.reader`) owns:
 
-- the cursors of every decoded column, in decoded order: the payload columns first, then any
-  predicate columns outside the projection;
+- the cursors of every decoded column, in the order of `ReadProjection#decoded()`: the payload
+  columns first, then any filter-only columns, the predicate columns outside the projection;
 - for a filtered read, the `SelectionEngine`, which reads predicate values from the cursors'
-  current batches;
+  current batches, on its record-matcher backend through the `PredicateView` the row readers
+  evaluate against;
 - the `RowGroupIterator` the cursors draw from, and the per-file `RecordFilterTally`.
 
 `advance()` polls every cursor once, in lockstep, and checks that they agree: every cursor

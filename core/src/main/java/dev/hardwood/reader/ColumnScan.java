@@ -20,6 +20,7 @@ import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.RecordFilterTally;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.schema.FileSchema;
 
 /// One column-reader read: the [ColumnCursor]s of every decoded column, advanced
@@ -61,29 +62,30 @@ final class ColumnScan implements Closeable {
         this.rowGroupIterator = rowGroupIterator;
     }
 
-    /// A scan over every column of `projected`. With a `filter`, the columns past
-    /// [ProjectedSchema#exposedColumnCount] carry the predicate and are decoded to
+    /// A scan over every decoded column of `projection`. With a `filter`, the
+    /// filter-only columns past the payload carry the predicate and are decoded to
     /// evaluate it; the payload columns are compacted to the matching records.
     static ColumnScan open(HardwoodContextImpl context,
                            boolean fixedListFastPathEnabled,
                            RowGroupIterator rowGroupIterator,
                            FileSchema schema,
-                           ProjectedSchema projected,
+                           ReadProjection projection,
                            ResolvedPredicate filter,
                            int batchSize) {
         NestedColumnWorker.IndexMode indexMode = filter == null
                 ? NestedColumnWorker.IndexMode.REAL_VIEW
                 : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
-        int columnCount = projected.getProjectedColumnCount();
+        ProjectedSchema decoded = projection.decoded();
+        int columnCount = decoded.getProjectedColumnCount();
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            cursors[i] = ColumnCursor.create(schema.getColumn(projected.toOriginalIndex(i)), schema,
+            cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
                     rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
         }
         SelectionEngine engine = filter == null
                 ? null
-                : SelectionEngine.create(schema, projected, filter, cursors, batchSize);
-        return new ColumnScan(cursors, projected.exposedColumnCount(), engine, rowGroupIterator);
+                : SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+        return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
     }
 
     /// A scan for a read in which pruning dropped every row group: it has no

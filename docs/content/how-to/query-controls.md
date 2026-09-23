@@ -244,7 +244,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-The filter column does not need to be in the projection. The projection is what the row exposes: a filter column outside it is not a field of the row at any depth, and is not addressable. Project a column you intend to read.
+The filter column does not need to be in the projection. The projection is what the row exposes: a filter column outside it is not a field of the row at any depth, and is not addressable (see [Query Controls](../reference/query-controls.md#column-projection-forms) for the exceptions an accessor raises). Project a column you intend to read.
 
 ## Row Limit
 

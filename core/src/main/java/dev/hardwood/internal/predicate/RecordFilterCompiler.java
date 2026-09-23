@@ -12,7 +12,6 @@ import java.util.function.IntUnaryOperator;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.reader.FilterPredicate.Operator;
-import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -34,19 +33,14 @@ public final class RecordFilterCompiler {
         return compile(predicate, schema, null);
     }
 
-    /// Indexed-access overload: when the row reader is known to be a
-    /// [RowReader] whose `getXxx(int)` accessors can address top-level
-    /// fields directly, pass a `topLevelFieldIndex` callback that maps a
-    /// **file leaf-column index** to the **field index** the reader's
-    /// indexed accessors expect. The function should return `-1` for
-    /// columns that aren't directly addressable that way (e.g. not in the
-    /// projection); the compiler then falls back to the name-keyed leaf.
-    ///
-    /// The semantic of the returned index differs by reader:
-    /// - [dev.hardwood.internal.reader.FlatRowReader]: projected leaf-column
-    ///   index (since for flat schemas every leaf is a top-level field).
-    /// - [dev.hardwood.internal.reader.NestedRowReader]: projected
-    ///   top-level field index in the row reader's projected fields.
+    /// Indexed-access overload: when the accessor the matcher is tested against
+    /// can address a top-level column by an `int` through its `getXxx(int)`
+    /// accessors, pass a `topLevelFieldIndex` callback that maps a **file
+    /// leaf-column index** to that index. The function returns `-1` for columns
+    /// that aren't directly addressable that way; the compiler then falls back
+    /// to the name-keyed leaf. The index space is the accessor's own; for
+    /// [dev.hardwood.internal.reader.PredicateView] it is the one
+    /// [dev.hardwood.internal.reader.PredicateView#indexOf] returns.
     ///
     /// Nested paths (path length > 1) always use the name-keyed leaves
     /// regardless, since indexed access is only meaningful for top-level
@@ -171,10 +165,10 @@ public final class RecordFilterCompiler {
         };
     }
 
-    /// Returns the reader field index for a top-level column, or `-1` when
-    /// the leaf cannot use indexed access — either because it isn't
-    /// top-level (path length > 1), no callback was supplied, or the
-    /// callback declines to map this column.
+    /// Returns the accessor's index for a top-level column, or `-1` when the
+    /// leaf cannot use indexed access — either because it isn't top-level
+    /// (path length > 1), no callback was supplied, or the callback declines
+    /// to map this column.
     static int indexedTopLevel(FileSchema schema, int columnIndex,
             IntUnaryOperator topLevelFieldIndex) {
         if (topLevelFieldIndex == null) {
@@ -533,12 +527,9 @@ public final class RecordFilterCompiler {
 
     // ==================== Indexed leaf factories ====================
     //
-    // Used when the row is known to be a [RowReader] and the leaf operates
-    // on a top-level column. The cast is safe by construction — the matcher is
-    // invoked only by a row reader, which passes itself. The compiler emits these
-    // leaves only when the caller passes a `topLevelFieldIndex` callback,
-    // which today is done by both [dev.hardwood.internal.reader.FlatRowReader]
-    // and [dev.hardwood.internal.reader.NestedRowReader].
+    // Used when the leaf operates on a top-level column the accessor addresses
+    // by index. The compiler emits these leaves only when the caller passes a
+    // `topLevelFieldIndex` callback.
 
     /// Record-level comparison for an unsigned `INT32` column. `EQ` and `NOT_EQ` read the same
     /// under either interpretation, so they reuse the signed leaf; the four ordered operators
@@ -548,10 +539,10 @@ public final class RecordFilterCompiler {
         int b = v ^ Integer.MIN_VALUE;
         return switch (op) {
             case EQ, NOT_EQ -> indexedIntLeaf(idx, op, v);
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) < b; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) <= b; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) > b; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) >= b; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) <= b; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getInt(idx) ^ Integer.MIN_VALUE) >= b; };
         };
     }
 
@@ -572,10 +563,10 @@ public final class RecordFilterCompiler {
         long b = v ^ Long.MIN_VALUE;
         return switch (op) {
             case EQ, NOT_EQ -> indexedLongLeaf(idx, op, v);
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) < b; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) <= b; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) > b; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) >= b; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) < b; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) <= b; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) > b; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && (r.getLong(idx) ^ Long.MIN_VALUE) >= b; };
         };
     }
 
@@ -593,53 +584,53 @@ public final class RecordFilterCompiler {
 
     private static RowMatcher indexedIntLeaf(int idx, Operator op, int v) {
         return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) == v; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) != v; };
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) < v; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) <= v; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) > v; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getInt(idx) >= v; };
+            case EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) == v; };
+            case NOT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) != v; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) < v; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) <= v; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) > v; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getInt(idx) >= v; };
         };
     }
 
     private static RowMatcher indexedLongLeaf(int idx, Operator op, long v) {
         return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) == v; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) != v; };
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) < v; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) <= v; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) > v; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getLong(idx) >= v; };
+            case EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) == v; };
+            case NOT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) != v; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) < v; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) <= v; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) > v; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getLong(idx) >= v; };
         };
     }
 
     private static RowMatcher indexedFloatLeaf(int idx, Operator op, float v) {
         return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) == 0; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) != 0; };
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) < 0; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) <= 0; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) > 0; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) >= 0; };
+            case EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) == 0; };
+            case NOT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) != 0; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) < 0; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) <= 0; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) > 0; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) >= 0; };
         };
     }
 
     private static RowMatcher indexedDoubleLeaf(int idx, Operator op, double v) {
         return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) == 0; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) != 0; };
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) < 0; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) <= 0; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) > 0; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) >= 0; };
+            case EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) == 0; };
+            case NOT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) != 0; };
+            case LT -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) < 0; };
+            case LT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) <= 0; };
+            case GT -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) > 0; };
+            case GT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && Double.compare(r.getDouble(idx), v) >= 0; };
         };
     }
 
     /// See [#booleanLeaf]: an ordered operator is answered before a matcher is asked for.
     private static RowMatcher indexedBooleanLeaf(int idx, Operator op, boolean v) {
         return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getBoolean(idx) == v; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && r.getBoolean(idx) != v; };
+            case EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getBoolean(idx) == v; };
+            case NOT_EQ -> row -> { StructAccessor r = row; return !r.isNull(idx) && r.getBoolean(idx) != v; };
             case LT, LT_EQ, GT, GT_EQ -> throw new IllegalStateException(
                     "Operator " + op + " on the boolean column at index " + idx
                             + " reached the record-level matcher; the resolver answers it as an"
@@ -648,11 +639,11 @@ public final class RecordFilterCompiler {
     }
 
     private static RowMatcher indexedIsNullLeaf(int idx) {
-        return row -> ((RowReader) row).isNull(idx);
+        return row -> row.isNull(idx);
     }
 
     private static RowMatcher indexedIsNotNullLeaf(int idx) {
-        return row -> !((RowReader) row).isNull(idx);
+        return row -> !row.isNull(idx);
     }
 
     // ==================== Path resolution ====================

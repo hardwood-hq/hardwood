@@ -49,15 +49,14 @@ public class ColumnReaders implements Closeable {
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
 
-    /// A group of views over the payload columns of `scan`: the first
-    /// [ProjectedSchema#exposedColumnCount] columns of `projected`.
-    ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema projected) {
-        int payloadCount = projected.exposedColumnCount();
+    /// A group of views over the payload columns of `scan`, the columns of `payload`.
+    ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema payload) {
+        int payloadCount = payload.getProjectedColumnCount();
         this.scan = scan;
         this.readersByName = new LinkedHashMap<>(payloadCount);
         this.readersByIndex = new ColumnReader[payloadCount];
         for (int i = 0; i < payloadCount; i++) {
-            ColumnSchema columnSchema = schema.getColumn(projected.toOriginalIndex(i));
+            ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(i));
             ColumnReader reader = new ColumnReader(scan, i, schema, columnSchema);
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;

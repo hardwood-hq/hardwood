@@ -13,8 +13,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.Arrays;
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
@@ -22,7 +20,7 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -31,7 +29,6 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.SchemaNode;
 
 /// Row reader for nested schemas using the v3 pipeline.
 ///
@@ -46,9 +43,13 @@ public final class NestedRowReader implements FileAwareRowReader {
     private final int columnCount;
 
     private final FileSchema fileSchema;
-    private final ProjectedSchema projectedSchema;
+    /// Backs the accessors. It spans the payload projection alone, so a predicate column
+    /// outside the projection is not reachable through it at any depth.
     private final NestedBatchDataView dataView;
-    private final ColumnSchema[] columnSchemas;
+    /// The payload columns' schemas and current batches: the leading
+    /// [ReadProjection#payloadColumnCount()] of the decoded ones.
+    private final ColumnSchema[] payloadSchemas;
+    private final NestedBatch[] payloadBatches;
     /// Per-file record-filter counts for JFR, or `null` when the read has no
     /// filter and nothing evaluates records.
     private final RecordFilterTally tally;
@@ -74,6 +75,11 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// Record-level predicate, or `null` when the read has no filter. Present or absent
     /// purely by whether the caller asked for a filter — never by what a file holds.
     private final RowMatcher recordMatcher;
+    /// What [#recordMatcher] is tested against: the predicate columns of the current batch.
+    /// Refreshed only for a batch the matcher evaluates, since a predicate column outside the
+    /// projection is not decoded for a batch statistics proved. `null` exactly when
+    /// [#recordMatcher] is.
+    private final PredicateView predicateView;
     /// Cap on matching rows yielded (SQL LIMIT over the filtered relation);
     /// [ColumnWorker#UNLIMITED] means no cap.
     private final long maxMatchedRows;
@@ -87,26 +93,26 @@ public final class NestedRowReader implements FileAwareRowReader {
     private boolean closed;
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
-                    FileSchema fileSchema, ProjectedSchema projectedSchema,
-                    long maxMatchedRows, RowMatcher recordMatcher, RecordFilterTally tally,
-                    RowGroupIterator rowGroupIterator) {
+                    FileSchema fileSchema, ProjectedSchema payload,
+                    long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
+                    RecordFilterTally tally, RowGroupIterator rowGroupIterator) {
         this.rowGroupIterator = rowGroupIterator;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
+        this.predicateView = predicateView;
         this.tally = tally;
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
         this.fileSchema = fileSchema;
-        this.projectedSchema = projectedSchema;
-        this.dataView = new NestedBatchDataView(fileSchema, projectedSchema);
+        this.dataView = new NestedBatchDataView(fileSchema, payload);
         this.previousBatches = new NestedBatch[columnCount];
 
-        // Cache column schemas for batch wrapping
-        this.columnSchemas = new ColumnSchema[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
-            columnSchemas[i] = fileSchema.getColumn(originalIndex);
+        int payloadCount = payload.getProjectedColumnCount();
+        this.payloadSchemas = new ColumnSchema[payloadCount];
+        this.payloadBatches = new NestedBatch[payloadCount];
+        for (int i = 0; i < payloadCount; i++) {
+            payloadSchemas[i] = fileSchema.getColumn(payload.toOriginalIndex(i));
         }
     }
 
@@ -127,7 +133,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     ///
     /// @param rowGroupIterator pre-configured iterator
     /// @param schema the file schema
-    /// @param projectedSchema the projected column schema
+    /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
     /// @param fixedListFastPathEnabled whether the fixed-size-list read fast path may engage
     /// @param filter resolved predicate, or `null` for no filtering
@@ -140,13 +146,14 @@ public final class NestedRowReader implements FileAwareRowReader {
     /// @return a [NestedRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
-                            ProjectedSchema projectedSchema,
+                            ReadProjection projection,
                             HardwoodContextImpl context,
                             boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
                             long maxRows,
                             int batchSize) throws IOException {
-        int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+        ProjectedSchema decoded = projection.decoded();
+        int projectedColumnCount = decoded.getProjectedColumnCount();
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // workers still take it — they hold it only while statistics prove every row
         // they assemble matches, and drop it at the first row group that is not proven,
@@ -160,7 +167,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
 
         for (int i = 0; i < projectedColumnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
+            int originalIndex = decoded.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
@@ -184,60 +191,19 @@ public final class NestedRowReader implements FileAwareRowReader {
         }
 
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
-        // Indexed compile path: for nested schemas the reader's `getInt(int)` etc. take a
-        // *projected top-level field index* rather than a leaf-column index, so the
-        // mapping from each file leaf-column to its projected top-level field (or `-1`
-        // for nested-leaf columns and unprojected fields) is precomputed.
-        RowMatcher recordMatcher = null;
-        if (filter != null) {
-            int[] topLevelLookup = buildTopLevelFieldIndexLookup(schema, projectedSchema);
-            recordMatcher = RecordFilterCompiler.compile(filter, schema, col -> topLevelLookup[col]);
-        }
+        // The matcher is tested against a view of the predicate columns rather than the
+        // reader itself, whose accessors reach the projected columns alone.
+        PredicateView predicateView = filter != null
+                ? PredicateView.create(schema, decoded, filter, p -> true, false)
+                : null;
+        RowMatcher recordMatcher = predicateView != null
+                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
+                : null;
         long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
-        NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projectedSchema,
-                readerMatchLimit, recordMatcher, tally, rowGroupIterator);
+        NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projection.payload(),
+                readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();
         return reader;
-    }
-
-    /// Builds a `fileLeafColumnIndex → projectedTopLevelFieldIndex` lookup.
-    /// Returns `-1` for any column whose path is not a single top-level
-    /// element, or whose top-level field is not in the projection.
-    ///
-    /// The projected top-level field index matches the index space used by
-    /// [NestedBatchDataView]'s indexed accessors (i.e. `getInt(int)`).
-    private static int[] buildTopLevelFieldIndexLookup(FileSchema schema, ProjectedSchema projectedSchema) {
-        int columnCount = schema.getColumnCount();
-        int[] lookup = new int[columnCount];
-        Arrays.fill(lookup, -1);
-
-        int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
-        List<SchemaNode> children = schema.getRootNode().children();
-
-        for (int col = 0; col < columnCount; col++) {
-            FieldPath path = schema.getColumn(col).fieldPath();
-            if (path.elements().size() != 1) {
-                continue;
-            }
-            String topLevelName = path.topLevelName();
-            int origTopLevelIdx = -1;
-            for (int i = 0; i < children.size(); i++) {
-                if (children.get(i).name().equals(topLevelName)) {
-                    origTopLevelIdx = i;
-                    break;
-                }
-            }
-            if (origTopLevelIdx < 0) {
-                continue;
-            }
-            for (int i = 0; i < projectedFieldIndices.length; i++) {
-                if (projectedFieldIndices[i] == origTopLevelIdx) {
-                    lookup[col] = i;
-                    break;
-                }
-            }
-        }
-        return lookup;
     }
 
     // ==================== Iteration ====================
@@ -287,16 +253,23 @@ public final class NestedRowReader implements FileAwareRowReader {
                 }
             }
             rowIndex++;
-            dataView.setRowIndex(rowIndex);
+            // Only the predicate view is positioned here; `next()` positions the payload
+            // view for the row it commits, so a rejected row costs it nothing.
             // Statistics already decided this batch's row group in full — reachable only
-            // under a cap, which needs every match counted as it goes.
-            boolean matched = currentRowsAlwaysMatch || activeMatcher.test(this);
+            // under a cap, which needs every match counted as it goes. The view is not
+            // positioned then: it was not refreshed for this batch.
+            boolean matched = currentRowsAlwaysMatch || matchesAt(rowIndex);
             tally.record(matched);
             if (matched) {
                 pendingRowIndex = rowIndex;
                 return true;
             }
         }
+    }
+
+    private boolean matchesAt(int row) {
+        predicateView.setRecord(row);
+        return activeMatcher.test(predicateView);
     }
 
     @Override
@@ -383,7 +356,11 @@ public final class NestedRowReader implements FileAwareRowReader {
                 tally.recordBatch(batchSize, batchSize);
             }
         }
-        dataView.setBatchData(batches, columnSchemas, currentFileName);
+        System.arraycopy(batches, 0, payloadBatches, 0, payloadBatches.length);
+        dataView.setBatchData(payloadBatches, payloadSchemas, currentFileName);
+        if (predicateView != null && !currentRowsAlwaysMatch) {
+            predicateView.refresh(null, batches, currentFileName);
+        }
         rowIndex = -1;
         return true;
     }

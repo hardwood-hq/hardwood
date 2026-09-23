@@ -9,8 +9,6 @@ package dev.hardwood.internal.schema;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntPredicate;
@@ -36,31 +34,15 @@ public final class ProjectedSchema {
     private final int[] originalToProjected;   // original index -> projected index (-1 if not projected)
     private final List<ColumnSchema> projectedColumns;
     private final int[] projectedFieldIndices; // indices of projected top-level fields in root children
-    /// How many leading projected columns a reader exposes. Equal to the projected column
-    /// count except for a schema from [#createAugmented], where the predicate-only columns
-    /// follow the exposed ones. See `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
-    private final int exposedColumnCount;
-    /// How many leading entries of [#projectedFieldIndices] a reader exposes, the top-level
-    /// counterpart of [#exposedColumnCount].
-    private final int exposedFieldCount;
 
     private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
                             int[] originalToProjected, List<ColumnSchema> projectedColumns,
                             int[] projectedFieldIndices) {
-        this(originalSchema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices,
-                projectedToOriginal.length, projectedFieldIndices.length);
-    }
-
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
-                            int[] projectedFieldIndices, int exposedColumnCount, int exposedFieldCount) {
         this.originalSchema = originalSchema;
         this.projectedToOriginal = projectedToOriginal;
         this.originalToProjected = originalToProjected;
         this.projectedColumns = projectedColumns;
         this.projectedFieldIndices = projectedFieldIndices;
-        this.exposedColumnCount = exposedColumnCount;
-        this.exposedFieldCount = exposedFieldCount;
     }
 
     /// Creates a projected schema from the given full schema and projection.
@@ -153,43 +135,17 @@ public final class ProjectedSchema {
         return new ProjectedSchema(schema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices);
     }
 
-    /// Resolves `projection` and appends the leaves of `predicateColumns` it does not already
-    /// cover, so a filter can be evaluated against columns the caller did not project.
-    ///
-    /// The appended columns follow the projected ones, which leaves every exposed column at
-    /// the index it would have had without them. A reader therefore decodes
-    /// [#getProjectedColumnCount] columns and exposes the first [#exposedColumnCount], and the
-    /// record-filter compiler, which addresses columns by projected index, needs no knowledge
-    /// of the split. See `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
-    ///
-    /// @param schema the file schema
-    /// @param projection the columns to expose
-    /// @param predicateColumns names of the predicate's leaf columns
-    /// @param completeContainers as for [#create(FileSchema, ColumnProjection, boolean)]
-    /// @return the augmented projection
-    public static ProjectedSchema createAugmented(FileSchema schema, ColumnProjection projection,
-            Collection<String> predicateColumns, boolean completeContainers) {
-        ProjectedSchema exposed = create(schema, projection, completeContainers);
-        if (projection.projectsAll() || predicateColumns.isEmpty()) {
-            return exposed;
-        }
-        LinkedHashSet<String> names = new LinkedHashSet<>(projection.getProjectedColumnNames());
-        if (!names.addAll(predicateColumns)) {
-            return exposed;
-        }
-        ProjectedSchema augmented = create(schema, ColumnProjection.columns(names.toArray(new String[0])),
-                completeContainers);
-        if (augmented.getProjectedColumnCount() == exposed.getProjectedColumnCount()) {
-            return exposed;
-        }
+    /// Returns `all` reordered so that the columns and top-level fields of `leading` come
+    /// first, at the indices they hold in `leading`, and the rest follow in their original
+    /// order. `leading` must be a subset of `all`. Used by [ReadProjection] to place the
+    /// payload columns ahead of the predicate-only ones.
+    static ProjectedSchema leadingThenRest(ProjectedSchema leading, ProjectedSchema all) {
+        int[] projectedToOriginal = partition(all.projectedToOriginal,
+                original -> leading.toProjectedIndex(original) >= 0);
+        int[] fieldIndices = partition(all.projectedFieldIndices,
+                field -> contains(leading.projectedFieldIndices, field));
 
-        // Both index spaces are partitioned so the exposed entries keep their order and their
-        // indices, and the predicate-only ones follow.
-        int[] projectedToOriginal = partition(augmented.projectedToOriginal,
-                original -> exposed.toProjectedIndex(original) >= 0);
-        int[] fieldIndices = partition(augmented.projectedFieldIndices,
-                field -> contains(exposed.projectedFieldIndices, field));
-
+        FileSchema schema = all.originalSchema;
         int[] originalToProjected = new int[schema.getColumnCount()];
         Arrays.fill(originalToProjected, -1);
         List<ColumnSchema> projectedColumns = new ArrayList<>(projectedToOriginal.length);
@@ -198,7 +154,7 @@ public final class ProjectedSchema {
             projectedColumns.add(schema.getColumns().get(projectedToOriginal[i]));
         }
         return new ProjectedSchema(schema, projectedToOriginal, originalToProjected, projectedColumns,
-                fieldIndices, exposed.getProjectedColumnCount(), exposed.projectedFieldIndices.length);
+                fieldIndices);
     }
 
     /// Returns `values` with every entry `exposed` accepts first, in their original order,
@@ -387,19 +343,6 @@ public final class ProjectedSchema {
     /// Returns the number of projected columns.
     public int getProjectedColumnCount() {
         return projectedToOriginal.length;
-    }
-
-    /// Returns how many of the projected columns a reader exposes. Equal to
-    /// [#getProjectedColumnCount] unless [#createAugmented] appended predicate-only columns,
-    /// which a reader decodes without exposing.
-    public int exposedColumnCount() {
-        return exposedColumnCount;
-    }
-
-    /// Returns how many of [#getProjectedFieldIndices] a reader exposes, the top-level
-    /// counterpart of [#exposedColumnCount].
-    public int exposedFieldCount() {
-        return exposedFieldCount;
     }
 
     /// Converts a projected column index to the original column index.

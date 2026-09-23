@@ -227,10 +227,15 @@ class PredicatePushDownTest {
                         .isInstanceOf(IndexOutOfBoundsException.class)
                         .hasMessage("[filter_pushdown_int.parquet] Field index 1 is out of bounds"
                                 + " for a projection of 1 columns");
-                // Not a guarantee, pinned so a change to it is deliberate: 'id' is decoded for
-                // the filter, so a name-keyed read of it currently resolves. Only the projection
-                // is supported; see `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
-                assertThat(rows.getLong("id")).isEqualTo(51L);
+                // 'id' is decoded for the filter and is not reachable through the row, by name
+                // or by index. See `_designs/FILTER_ONLY_COLUMN_SKIP.md`.
+                assertThatThrownBy(() -> rows.getLong("id"))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("[filter_pushdown_int.parquet] Column not in projection: id");
+                // The JVM's own bounds check raises it; its message is dropped once the
+                // throw site is compiled, so only the type is pinned.
+                assertThatThrownBy(() -> rows.getLong(1))
+                        .isInstanceOf(IndexOutOfBoundsException.class);
                 assertThatThrownBy(() -> rows.getLong("value"))
                         .isInstanceOf(IllegalArgumentException.class)
                         .hasMessage("[filter_pushdown_int.parquet] Column not in projection: value");
