@@ -1233,7 +1233,226 @@ class DiveStateTest {
         return stack;
     }
 
+    @Test
+    void jumpPromptOpensOnColonAndCollectsTyping() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "43");
+
+        assertThat(preview(stack).jump()).isNotNull();
+        assertThat(preview(stack).jump().input()).isEqualTo("43");
+        assertThat(preview(stack).jump().error()).isNull();
+    }
+
+    @Test
+    void jumpPromptBackspaceTrimsTheTypedTarget() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "43");
+        DataPreviewScreen.handle(key(KeyCode.BACKSPACE), model, stack);
+
+        assertThat(preview(stack).jump().input()).isEqualTo("4");
+    }
+
+    @Test
+    void jumpPromptEscapeClosesWithoutMoving() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "4321");
+        DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        assertThat(preview(stack).jump()).as("prompt closed").isNull();
+        assertThat(preview(stack).firstRow()).as("view stayed put").isZero();
+    }
+
+    @Test
+    void jumpToARowSelectsItAtTheTopOfTheViewport() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "4321");
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        ScreenState.DataPreview state = preview(stack);
+        assertThat(state.jump()).as("prompt closed on a successful jump").isNull();
+        assertThat(state.firstRow()).isEqualTo(4321L);
+        assertThat(state.selectedRow()).isZero();
+        // `id` in column_index_pushdown.parquet is sorted 0..9999, so the
+        // selected row proves the seek landed on the row that was asked for.
+        assertThat(state.rows().get(0).get(0)).isEqualTo("4321");
+    }
+
+    @Test
+    void jumpToARowPastTheLastIsRefusedAndNothingMoves() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "10000");
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        ScreenState.DataPreview state = preview(stack);
+        assertThat(state.jump()).as("prompt stayed open").isNotNull();
+        assertThat(state.jump().input()).as("typed text kept").isEqualTo("10000");
+        assertThat(state.jump().error()).isEqualTo("Row 10,000 is outside 0–9,999");
+        assertThat(state.firstRow()).as("not clamped to the last row").isZero();
+    }
+
+    @Test
+    void jumpToSomethingUnreadableIsRefused() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "abc");
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(preview(stack).jump().error())
+                .isEqualTo("Type a row, or rg followed by a row group");
+        assertThat(preview(stack).firstRow()).isZero();
+    }
+
+    @Test
+    void jumpWithNothingTypedIsRefused() {
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        DataPreviewScreen.handle(charKey(':'), model, stack);
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(preview(stack).jump().error())
+                .isEqualTo("Type a row, or rg followed by a row group");
+    }
+
+    @Test
+    void jumpPromptSwallowsNavigationKeys() {
+        // A PgDn that reached the table would move the view out from under
+        // the target being typed.
+        NavigationStack stack = rooted(DataPreviewScreen.initialState(model, 10));
+
+        type(model, stack, "43");
+        boolean handled = DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+
+        assertThat(handled).isTrue();
+        assertThat(preview(stack).firstRow()).isZero();
+        assertThat(preview(stack).jump().input()).isEqualTo("43");
+    }
+
+    @Test
+    void jumpToARowGroupLandsOnItsFirstRow() throws Exception {
+        // 3 row groups of 100 rows; ids run 1..300.
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(DataPreviewScreen.initialState(rowGroups, 10));
+
+            type(rowGroups, stack, "rg 2");
+            DataPreviewScreen.handle(key(KeyCode.ENTER), rowGroups, stack);
+
+            ScreenState.DataPreview state = preview(stack);
+            assertThat(state.jump()).isNull();
+            assertThat(state.firstRow()).isEqualTo(200L);
+            assertThat(state.selectedRow()).isZero();
+            assertThat(state.rows().get(0).get(0)).isEqualTo("201");
+        }
+    }
+
+    @Test
+    void jumpToARowGroupAcceptsItWithoutASpace() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(DataPreviewScreen.initialState(rowGroups, 10));
+
+            type(rowGroups, stack, "rg1");
+            DataPreviewScreen.handle(key(KeyCode.ENTER), rowGroups, stack);
+
+            assertThat(preview(stack).firstRow()).isEqualTo(100L);
+        }
+    }
+
+    @Test
+    void jumpToARowGroupPastTheLastIsRefused() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(DataPreviewScreen.initialState(rowGroups, 10));
+
+            type(rowGroups, stack, "rg 3");
+            DataPreviewScreen.handle(key(KeyCode.ENTER), rowGroups, stack);
+
+            ScreenState.DataPreview state = preview(stack);
+            assertThat(state.jump().error()).isEqualTo("Row group 3 is outside 0–2");
+            assertThat(state.firstRow()).isZero();
+        }
+    }
+
+    @Test
+    void rowGroupsScreenOpensTheDataPreviewAtTheSelectedGroup() throws Exception {
+        // 3 row groups of 100 rows; ids run 1..300.
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroups(0));
+            RowGroupsScreen.handle(key(KeyCode.DOWN), rowGroups, stack);
+
+            boolean handled = RowGroupsScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(handled).isTrue();
+            ScreenState.DataPreview state = preview(stack);
+            assertThat(state.firstRow()).isEqualTo(100L);
+            assertThat(state.selectedRow()).isZero();
+            assertThat(state.rows().get(0).get(0)).isEqualTo("101");
+        }
+    }
+
+    @Test
+    void rowGroupDetailScreenOpensTheDataPreviewAtItsGroup() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                    2, ScreenState.RowGroupDetail.Pane.MENU, 0));
+
+            boolean handled = RowGroupDetailScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(handled).isTrue();
+            assertThat(preview(stack).firstRow()).isEqualTo(200L);
+        }
+    }
+
+    @Test
+    void rowGroupDetailScreenOpensTheDataPreviewFromTheFactsPaneToo() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                    1, ScreenState.RowGroupDetail.Pane.FACTS, 0));
+
+            RowGroupDetailScreen.handle(charKey('d'), rowGroups, stack);
+
+            assertThat(preview(stack).firstRow()).isEqualTo(100L);
+        }
+    }
+
+    @Test
+    void openingTheDataPreviewLeavesTheRowGroupsScreenBehindToReturnTo() throws Exception {
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = rooted(new ScreenState.RowGroups(2));
+
+            RowGroupsScreen.handle(charKey('d'), rowGroups, stack);
+            stack.pop();
+
+            assertThat(stack.top()).isInstanceOf(ScreenState.RowGroups.class);
+        }
+    }
+
     private static KeyEvent key(KeyCode code) {
         return new KeyEvent(code, KeyModifiers.NONE, '\0');
+    }
+
+    private static KeyEvent charKey(char c) {
+        return new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, c);
+    }
+
+    /// Opens the `:` prompt and types `text` into it, one key at a time.
+    private static void type(ParquetModel model, NavigationStack stack, String text) {
+        DataPreviewScreen.handle(charKey(':'), model, stack);
+        for (int i = 0; i < text.length(); i++) {
+            DataPreviewScreen.handle(charKey(text.charAt(i)), model, stack);
+        }
+    }
+
+    private static ScreenState.DataPreview preview(NavigationStack stack) {
+        return (ScreenState.DataPreview) stack.top();
     }
 }

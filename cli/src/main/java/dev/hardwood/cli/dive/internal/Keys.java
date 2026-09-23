@@ -17,6 +17,13 @@ public final class Keys {
     }
 
     /// `g` (no modifiers): jump to first visible row / page boundary.
+    /// `d` opens the Data preview at the row group under the cursor. Modifier
+    /// free, like the other single-letter keys.
+    public static boolean isOpenDataPreview(KeyEvent event) {
+        return event.code() == KeyCode.CHAR && event.character() == 'd'
+                && !event.hasCtrl() && !event.hasAlt();
+    }
+
     public static boolean isJumpTop(KeyEvent event) {
         return event.code() == KeyCode.CHAR
                 && event.character() == 'g'

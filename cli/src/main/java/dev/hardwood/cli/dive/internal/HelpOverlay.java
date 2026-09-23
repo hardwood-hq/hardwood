@@ -81,6 +81,10 @@ public final class HelpOverlay {
         lines.addAll(kv("← / →", "scroll visible columns", descBudget));
         lines.addAll(kv("Enter", "open / expand the record field", descBudget));
         lines.addAll(kv("e / c", "expand / collapse all fields", descBudget));
+        lines.addAll(kv(":", "jump to a row, or rg N for a row group", descBudget));
+        lines.add(Line.empty());
+        lines.add(Line.from(new Span("Row groups", Theme.accent().bold())));
+        lines.addAll(kv("d", "open the Data preview at this row group", descBudget));
         return lines;
     }
 
