@@ -7,11 +7,11 @@
  */
 package dev.hardwood.internal;
 
-import dev.hardwood.reader.ParquetReadException;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.concurrent.CompletionException;
+
+import dev.hardwood.reader.ParquetReadException;
 
 /// Utility for enriching exception messages with the file, and where in it a read failed.
 ///
@@ -107,10 +107,36 @@ public final class ExceptionContext {
         return prefix.append("] ").toString();
     }
 
-
-    /// Reclassifies a runtime failure raised while interpreting file bytes. Unchecked transport I/O,
-    /// already typed read failures, and unsupported features retain their existing type; other
-    /// runtime failures become [ParquetReadException]s with the original failure as their cause.
+    /// What a runtime failure raised while interpreting file bytes means.
+    ///
+    /// A corrupt dictionary index reaches a decoder as an
+    /// [ArrayIndexOutOfBoundsException], an impossible RLE run header as an
+    /// [IllegalStateException], a length that will not fit as an
+    /// [ArithmeticException]; a malformed footer value or Variant buffer reaches
+    /// the boundaries that call this as whatever its guard raised. Every one of
+    /// them is the file being wrong, and every one of them reads to a user as a
+    /// defect in this library. They become a [ParquetReadException] keeping the
+    /// original as their cause.
+    ///
+    /// Three kinds pass through unchanged. An [UncheckedIOException] is the
+    /// transport: an [dev.hardwood.InputFile] is implementable from outside, and
+    /// one that answers a failed `readRange` with the unchecked form is still
+    /// describing the transport, so it must not be relabelled as the file being
+    /// wrong. A [ParquetReadException] already says what it is — including a
+    /// [dev.hardwood.reader.SchemaIncompatibleException]. And an
+    /// [UnsupportedOperationException] is a codec library that is absent or an
+    /// encoding not implemented, which is this library's limit rather than a
+    /// fault in the file.
+    ///
+    /// The cost is that a defect of ours reaching a decoder is reported as a
+    /// problem with the file. That is the rarer mistake: without this, every
+    /// corrupt file is reported as a defect of ours.
+    ///
+    /// This mapping is the judgement the reader's exception model rests on, and
+    /// it is asserted directly for every arm of it rather than only through a
+    /// corrupt file. A checked [IOException] never reaches it — the column
+    /// worker routes transport failures around it — and an [Error] propagates
+    /// as it was raised.
     ///
     /// @param e the runtime failure raised while reading file content
     /// @return the failure classified as a read error, or the original pass-through exception
@@ -123,7 +149,6 @@ public final class ExceptionContext {
         return new ParquetReadException(
                 e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
     }
-
 
     /// Amends the exception message with a `[fileName] ` prefix. Preserves the
     /// original exception type and cause chain. Returns the original exception
