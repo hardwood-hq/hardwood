@@ -11,6 +11,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
+import dev.hardwood.reader.ParquetReadException;
+
 /// Column index for a column chunk, providing per-page min/max statistics for page-level filtering.
 ///
 /// The level histograms hold one histogram per page, concatenated into a single array in
@@ -63,7 +65,7 @@ public record ColumnIndex(
     ///
     /// @param pageIndex page to slice, in `[0, getPageCount())`
     /// @throws IndexOutOfBoundsException if `pageIndex` is outside that range
-    /// @throws IllegalStateException if the histogram's length is not a whole number of
+    /// @throws ParquetReadException if the histogram's length is not a whole number of
     ///     pages, so no per-page stride describes it
     public long[] repetitionLevelHistogram(int pageIndex) {
         return pageSlice(repetitionLevelHistograms, pageIndex, "repetition");
@@ -74,7 +76,7 @@ public record ColumnIndex(
     ///
     /// @param pageIndex page to slice, in `[0, getPageCount())`
     /// @throws IndexOutOfBoundsException if `pageIndex` is outside that range
-    /// @throws IllegalStateException if the histogram's length is not a whole number of
+    /// @throws ParquetReadException if the histogram's length is not a whole number of
     ///     pages, so no per-page stride describes it
     public long[] definitionLevelHistogram(int pageIndex) {
         return pageSlice(definitionLevelHistograms, pageIndex, "definition");
@@ -93,7 +95,7 @@ public record ColumnIndex(
         int pageCount = getPageCount();
         Objects.checkIndex(pageIndex, pageCount);
         if (histograms.length % pageCount != 0) {
-            throw new IllegalStateException("Malformed Parquet metadata: " + level
+            throw new ParquetReadException("Malformed Parquet metadata: " + level
                     + "-level histogram holds " + histograms.length + " entries for " + pageCount
                     + " pages, which is not a whole number of entries per page");
         }

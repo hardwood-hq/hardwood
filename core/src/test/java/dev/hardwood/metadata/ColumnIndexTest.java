@@ -12,6 +12,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.reader.ParquetReadException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -52,7 +54,7 @@ class ColumnIndexTest {
         ColumnIndex index = columnIndex(2, null, new long[]{ 1, 2, 3, 4, 5 }, null);
 
         assertThatThrownBy(() -> index.definitionLevelHistogram(0))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Malformed Parquet metadata: definition-level histogram holds 5 entries for 2 "
                          + "pages, which is not a whole number of entries per page");
     }
