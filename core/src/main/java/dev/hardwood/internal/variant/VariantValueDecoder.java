@@ -438,7 +438,7 @@ public final class VariantValueDecoder {
     }
 
     private static void checkBounds(byte[] buf, int offset, int needed) {
-        if (offset < 0 || needed < 0 || offset > buf.length - needed) {
+        if (offset < 0 || needed < 0 || offset + needed > buf.length) {
             throw new ParquetReadException(
                     "Variant value buffer truncated: need " + needed + " bytes at offset " + offset + ", buffer length " + buf.length);
         }
