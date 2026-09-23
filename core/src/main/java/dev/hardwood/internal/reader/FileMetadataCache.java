@@ -180,7 +180,7 @@ public final class FileMetadataCache {
                     ExceptionContext.filePrefix(inputFile.name()) + "Failed to read metadata", e);
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addFileContext(inputFile.name(), e);
+            throw ExceptionContext.addFileContext(inputFile.name(), ExceptionContext.asReadFailure(e));
         }
     }
 

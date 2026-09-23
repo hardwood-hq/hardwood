@@ -7,11 +7,11 @@
  */
 package dev.hardwood.internal;
 
+import dev.hardwood.reader.ParquetReadException;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.concurrent.CompletionException;
-
-import dev.hardwood.reader.ParquetReadException;
 
 /// Utility for enriching exception messages with the file, and where in it a read failed.
 ///
@@ -106,6 +106,24 @@ public final class ExceptionContext {
         }
         return prefix.append("] ").toString();
     }
+
+
+    /// Reclassifies a runtime failure raised while interpreting file bytes. Unchecked transport I/O,
+    /// already typed read failures, and unsupported features retain their existing type; other
+    /// runtime failures become [ParquetReadException]s with the original failure as their cause.
+    ///
+    /// @param e the runtime failure raised while reading file content
+    /// @return the failure classified as a read error, or the original pass-through exception
+    public static RuntimeException asReadFailure(RuntimeException e) {
+        if (e instanceof UncheckedIOException
+                || e instanceof ParquetReadException
+                || e instanceof UnsupportedOperationException) {
+            return e;
+        }
+        return new ParquetReadException(
+                e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
+    }
+
 
     /// Amends the exception message with a `[fileName] ` prefix. Preserves the
     /// original exception type and cause chain. Returns the original exception

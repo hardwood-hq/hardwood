@@ -7,8 +7,12 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.schema.ColumnSchema;
+
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,12 +20,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
-
-import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.compression.DecompressorFactory;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.reader.ParquetReadException;
-import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles batches.
 ///
@@ -609,48 +607,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         return typed;
     }
 
-    /// What a decoder threw, said as what it means.
-    ///
-    /// A corrupt dictionary index reaches here as an
-    /// [ArrayIndexOutOfBoundsException] from `dict[i]`, an impossible RLE run
-    /// header as an [IllegalStateException], a length that will not fit as an
-    /// [ArithmeticException]. Every one of them is the file being wrong, and every
-    /// one of them reads to a user as a defect in this library. They become a
-    /// [ParquetReadException] keeping the original as its cause.
-    ///
-    /// Four things pass through. [Error] is neither the file's fault nor
-    /// something to retry. An [IOException] is the transport, as is an
-    /// [UncheckedIOException]: nothing under this reader raises one — every wrap
-    /// made to leave a lambda is undone by the method enclosing it — but an
-    /// [dev.hardwood.InputFile] is implementable from outside, and one that
-    /// answers a failed `readRange` with the unchecked form is still describing
-    /// the transport, so it must not be relabelled as the file being wrong. A
-    /// [ParquetReadException] already says what it is — including a
-    /// [dev.hardwood.reader.SchemaIncompatibleException]. And an
-    /// [UnsupportedOperationException] is a codec library that is absent or an
-    /// encoding not implemented, which is this library's limit rather than a
-    /// fault in the file.
-    ///
-    /// The cost is that a defect of ours reaching a decoder is reported as a
-    /// problem with the file. That is the rarer mistake: without this, every
-    /// corrupt file is reported as a defect of ours.
-    /// Package-private rather than private: this mapping is the judgement the reader's exception
-    /// model rests on, and it is asserted directly rather than through a corrupt file for every
-    /// arm of it.
-    /// `Error` is not an arm here: the pipeline catches `Exception`, so an `Error` never
-    /// reaches this and propagates as it was raised.
+    /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
     static Exception asReadFailure(Exception e) {
-        if (e instanceof IOException
-                || e instanceof UncheckedIOException
-                || e instanceof ParquetReadException
-                || e instanceof UnsupportedOperationException) {
-            return e;
-        }
-        if (e instanceof RuntimeException) {
-            return new ParquetReadException(
-                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
-        }
-        return e;
+        return e instanceof RuntimeException runtime
+                ? ExceptionContext.asReadFailure(runtime)
+                : e;
     }
 
     private void unparkRetriever() {
