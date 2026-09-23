@@ -7,6 +7,14 @@
  */
 package dev.hardwood.internal.conversion;
 
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -14,14 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.stream.Stream;
-
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-
-import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -72,10 +72,48 @@ class LogicalTypeConverterTest {
                 .isEqualTo(new BigDecimal("-25.0"));
     }
 
+
+    @Test
+    void uuidWrongWidthIsAReadFailureForBothOverloads() {
+        assertThatThrownBy(() -> LogicalTypeConverter.bytesToUuid(new byte[15]))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("UUID requires exactly 16 bytes, got 15");
+        assertThatThrownBy(() -> LogicalTypeConverter.bytesToUuid(new byte[20], 2, 15))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("UUID requires exactly 16 bytes, got 15");
+    }
+
+    @Test
+    void intervalWrongWidthIsAReadFailureForBothOverloads() {
+        assertThatThrownBy(() -> LogicalTypeConverter.bytesToInterval(new byte[11]))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("INTERVAL requires exactly 12 bytes, got 11");
+        assertThatThrownBy(() -> LogicalTypeConverter.bytesToInterval(new byte[13], 1, 11))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("INTERVAL requires exactly 12 bytes, got 11");
+    }
+
+    @Test
+    void nullTypeRejectsNonNullValuesButPassesNullThrough() {
+        assertThatThrownBy(() -> LogicalTypeConverter.convert(7, PhysicalType.INT32, LogicalType.nullType()))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Non-null physical value on NULL-typed column: 7");
+        assertThat(LogicalTypeConverter.convert(null, PhysicalType.INT32, LogicalType.nullType())).isNull();
+    }
+
+    @Test
+    void structuralLogicalTypeStillCannotReachPrimitiveConversion() {
+        assertThatThrownBy(() -> LogicalTypeConverter.convert(
+                new byte[0], PhysicalType.BYTE_ARRAY, LogicalType.list()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Structural logical type ListType reached primitive-value conversion");
+    }
+
+
     @Test
     void int96ToInstantRejectsWrongLength() {
         assertThatThrownBy(() -> LogicalTypeConverter.int96ToInstant(new byte[11]))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("INT96 requires exactly 12 bytes, got 11");
     }
 

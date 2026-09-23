@@ -23,6 +23,7 @@ import java.util.UUID;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.row.PqInterval;
 
 /// Converts physical values to their logical type representations.
@@ -206,7 +207,7 @@ public final class LogicalTypeConverter {
             // NullType columns must have all-null values; the null short-circuit
             // at the top of this method means this arm is unreachable for a
             // well-formed file.
-            case LogicalType.NullType n -> throw new IllegalStateException(
+            case LogicalType.NullType n -> throw new ParquetReadException(
                     "Non-null physical value on NULL-typed column: " + physicalValue);
             // Structural / self-describing logical types are carried on group
             // nodes (handled by RecordAssembler / variant flyweights) and
@@ -323,7 +324,7 @@ public final class LogicalTypeConverter {
     /// The [UUID] a 16-byte `UUID` payload stands for, most significant half first.
     public static UUID bytesToUuid(byte[] bytes) {
         if (bytes.length != UUID_BYTES) {
-            throw new IllegalArgumentException("UUID requires exactly " + UUID_BYTES + " bytes, got " + bytes.length);
+            throw new ParquetReadException("UUID requires exactly " + UUID_BYTES + " bytes, got " + bytes.length);
         }
         ByteBuffer bb = ByteBuffer.wrap(bytes);
         long mostSigBits = bb.getLong();
@@ -335,7 +336,7 @@ public final class LogicalTypeConverter {
     /// holding the payload inside a larger buffer.
     public static UUID bytesToUuid(byte[] bytes, int offset, int length) {
         if (length != UUID_BYTES) {
-            throw new IllegalArgumentException("UUID requires exactly " + UUID_BYTES + " bytes, got " + length);
+            throw new ParquetReadException("UUID requires exactly " + UUID_BYTES + " bytes, got " + length);
         }
         return new UUID(longAt(bytes, offset), longAt(bytes, offset + 8));
     }
@@ -354,7 +355,7 @@ public final class LogicalTypeConverter {
     /// as little-endian unsigned 4-byte fields.
     public static PqInterval bytesToInterval(byte[] bytes) {
         if (bytes.length != INTERVAL_BYTES) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + bytes.length);
         }
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
@@ -368,7 +369,7 @@ public final class LogicalTypeConverter {
     /// caller holding the payload inside a larger buffer.
     public static PqInterval bytesToInterval(byte[] bytes, int offset, int length) {
         if (length != INTERVAL_BYTES) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "INTERVAL requires exactly " + INTERVAL_BYTES + " bytes, got " + length);
         }
         return new PqInterval(
@@ -395,7 +396,7 @@ public final class LogicalTypeConverter {
     /// a caller holding the payload inside a larger buffer.
     public static float bytesToFloat16(byte[] bytes, int offset, int length) {
         if (length != FLOAT16_BYTES) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "FLOAT16 requires exactly " + FLOAT16_BYTES + " bytes, got " + length);
         }
         // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
@@ -407,7 +408,7 @@ public final class LogicalTypeConverter {
     /// 4 bytes Julian day) to an [Instant]. Used by Apache Spark and Hive.
     public static Instant int96ToInstant(byte[] bytes) {
         if (bytes.length != INT96_BYTES) {
-            throw new IllegalArgumentException("INT96 requires exactly " + INT96_BYTES + " bytes, got " + bytes.length);
+            throw new ParquetReadException("INT96 requires exactly " + INT96_BYTES + " bytes, got " + bytes.length);
         }
         ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         long nanosOfDay = bb.getLong(0);
