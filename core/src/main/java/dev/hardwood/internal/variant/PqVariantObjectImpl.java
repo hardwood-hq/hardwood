@@ -17,7 +17,11 @@ import java.util.UUID;
 
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
 import dev.hardwood.reader.ParquetReadException;
-import dev.hardwood.row.*;
+import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantArray;
+import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.VariantType;
 
 /// [PqVariantObject] implementation. Caches the parsed [ObjectLayout] so
 /// repeated field accesses don't re-walk the header. Field lookup resolves the
@@ -39,7 +43,6 @@ final class PqVariantObjectImpl implements PqVariantObject {
         this.depth = depth;
     }
 
-
     private int fieldIdAt(int index) {
         int id = VariantValueDecoder.objectFieldId(valueBuf, layout, index);
         if (id < 0 || id >= metadata.size()) {
@@ -48,7 +51,6 @@ final class PqVariantObjectImpl implements PqVariantObject {
         }
         return id;
     }
-
 
     /// Locate the child-array index for the given field name, or -1 if absent.
     ///

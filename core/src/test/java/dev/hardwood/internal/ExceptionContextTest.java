@@ -7,13 +7,14 @@
  */
 package dev.hardwood.internal;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+
+import org.junit.jupiter.api.Test;
+
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.SchemaIncompatibleException;
-import org.junit.jupiter.api.Test;
-
-import java.io.IOException;
-import java.io.UncheckedIOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -140,7 +141,6 @@ class ExceptionContextTest {
         assertThat(wrapped.getMessage()).isEqualTo("[test.parquet] RuntimeException");
     }
 
-
     @Test
     void decoderRuntimeFailuresBecomeReadFailuresKeepingTheirCause() {
         for (RuntimeException raised : new RuntimeException[]{
@@ -179,7 +179,6 @@ class ExceptionContextTest {
         assertThat(ExceptionContext.asReadFailure(schema)).isSameAs(schema);
         assertThat(ExceptionContext.asReadFailure(unsupported)).isSameAs(unsupported);
     }
-
 
     @Test
     void fallsBackToRuntimeExceptionForExoticType() {

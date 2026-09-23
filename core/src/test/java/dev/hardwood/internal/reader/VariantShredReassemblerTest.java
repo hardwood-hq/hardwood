@@ -65,7 +65,6 @@ class VariantShredReassemblerTest {
                          + "typed_value and the unshredded value object");
     }
 
-
     @Test
     void outOfDictionaryEncodedFieldIdIsAReadFailure() {
         ShredLevel fieldDup = new ShredLevel(-1, 0,
@@ -103,7 +102,6 @@ class VariantShredReassemblerTest {
                 .isInstanceOf(SchemaIncompatibleException.class)
                 .hasMessage("Shredded Variant field 'missing' not present in metadata dictionary");
     }
-
 
     /// A `BYTE_ARRAY` `DECIMAL` typed_value stored as no bytes is zero, as the column's
     /// accessors read it.

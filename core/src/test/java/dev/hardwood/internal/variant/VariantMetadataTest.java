@@ -98,7 +98,6 @@ class VariantMetadataTest {
                 .hasMessage("Variant metadata buffer is empty");
     }
 
-
     @Test
     void truncatedStringSectionIsAReadFailure() {
         byte[] bytes = {0x01, 0x01, 0x00, 0x02, 'a'};
@@ -117,7 +116,6 @@ class VariantMetadataTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant metadata string offsets are invalid");
     }
-
 
     private static byte[] readResource(String name) throws IOException {
         try (InputStream in = VariantMetadataTest.class.getResourceAsStream(name)) {

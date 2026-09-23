@@ -7,19 +7,20 @@
  */
 package dev.hardwood.reader;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.CountingInputFile;
-import dev.hardwood.internal.thrift.FooterRewriter;
-import dev.hardwood.metadata.FileMetaData;
-import dev.hardwood.metadata.SchemaElement;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+
+import org.junit.jupiter.api.Test;
+
+import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.thrift.FooterRewriter;
+import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.SchemaElement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

@@ -148,14 +148,12 @@ public final class VariantMetadata {
         return Integer.compare(len, target.length);
     }
 
-
     private void validateStringRange(int start, int end) {
         int stringLength = buf.length - stringsStart;
         if (start < 0 || end < start || end > stringLength) {
             throw new ParquetReadException("Variant metadata string offsets are invalid");
         }
     }
-
 
     private int readOffset(int index) {
         return VariantBinary.readUnsignedLE(buf, offsetsStart + index * offsetSize, offsetSize);

@@ -185,9 +185,7 @@ class PqVariantInvalidInputTest {
                          + "bytes)");
     }
 
-
     // Additional malformed-accessor regressions are covered immediately below.
-
 
     @Test
     void unknownPrimitiveTagIsAReadFailureForTypeAndValueAccessors() {
@@ -243,7 +241,6 @@ class PqVariantInvalidInputTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Field id out of range: 1 (size=1)");
     }
-
 
     @Test
     void deeplyNestedArrayRejected() {

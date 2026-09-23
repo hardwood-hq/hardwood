@@ -10,7 +10,11 @@ package dev.hardwood.internal.variant;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.time.*;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import dev.hardwood.reader.ParquetReadException;
@@ -399,12 +403,10 @@ public final class VariantValueDecoder {
 
     // ==================== Helpers ====================
 
-
     private static byte readByte(byte[] buf, int offset) {
         checkBounds(buf, offset, 1);
         return buf[offset];
     }
-
 
     private static int readIntLE(byte[] buf, int offset, int width) {
         checkBounds(buf, offset, width);

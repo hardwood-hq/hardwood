@@ -7,12 +7,13 @@
  */
 package dev.hardwood.internal.thrift;
 
+import java.nio.ByteBuffer;
+
+import org.junit.jupiter.api.Test;
+
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetReadException;
-import org.junit.jupiter.api.Test;
-
-import java.nio.ByteBuffer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -98,7 +99,6 @@ class LogicalTypeReaderTest {
         }
     }
 
-
     @Test
     void invalidVariantSpecVersionIsAReadFailure() throws Exception {
         assertThatThrownBy(() -> read(variantType(0)))
@@ -126,7 +126,6 @@ class LogicalTypeReaderTest {
         writer.writeFieldStop();
         return writer;
     }
-
 
     /// The `INT` union member, as a footer carries it: field id 10 holding an `IntType`
     /// struct of an i8 `bitWidth` and a bool `isSigned`.

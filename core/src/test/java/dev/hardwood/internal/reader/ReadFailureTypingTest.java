@@ -7,11 +7,12 @@
  */
 package dev.hardwood.internal.reader;
 
-import dev.hardwood.reader.ParquetReadException;
-import org.junit.jupiter.api.Test;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
+
+import org.junit.jupiter.api.Test;
+
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

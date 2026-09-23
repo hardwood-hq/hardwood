@@ -7,14 +7,6 @@
  */
 package dev.hardwood.internal.conversion;
 
-import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.reader.ParquetReadException;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -22,6 +14,15 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.stream.Stream;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -72,7 +73,6 @@ class LogicalTypeConverterTest {
                 .isEqualTo(new BigDecimal("-25.0"));
     }
 
-
     @Test
     void uuidWrongWidthIsAReadFailureForBothOverloads() {
         assertThatThrownBy(() -> LogicalTypeConverter.bytesToUuid(new byte[15]))
@@ -108,7 +108,6 @@ class LogicalTypeConverterTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Structural logical type ListType reached primitive-value conversion");
     }
-
 
     @Test
     void int96ToInstantRejectsWrongLength() {

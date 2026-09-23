@@ -7,21 +7,6 @@
  */
 package dev.hardwood;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.ParquetReadException;
-import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnSchema;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -30,6 +15,22 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

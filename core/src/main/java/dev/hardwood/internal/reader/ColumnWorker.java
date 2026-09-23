@@ -7,11 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.compression.DecompressorFactory;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.schema.ColumnSchema;
-
 import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +15,11 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
+
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles batches.
 ///
