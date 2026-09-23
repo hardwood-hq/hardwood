@@ -228,17 +228,16 @@ public class ParquetFileReader implements Closeable {
         first.open();
         try {
             ReadFooter firstFileFooter;
+            FileMetaData firstFileMetaData;
+            FileSchema schema;
             try {
                 firstFileFooter = ParquetMetadataReader.readFooter(first);
+                firstFileMetaData = firstFileFooter.metaData();
+                schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
             }
             catch (RuntimeException e) {
-                // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
-                // corrupt enum values) that escape the IOException-only contract of
-                // readFooter — enrich them with file context so they're attributable.
-                throw ExceptionContext.addFileContext(first.name(), e);
+                throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));
             }
-            FileMetaData firstFileMetaData = firstFileFooter.metaData();
-            FileSchema schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
 
             FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
             fileOpenedEvent.begin();

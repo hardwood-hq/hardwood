@@ -7,10 +7,14 @@
  */
 package dev.hardwood.internal;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.SchemaIncompatibleException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -135,6 +139,45 @@ class ExceptionContextTest {
         RuntimeException wrapped = ExceptionContext.addFileContext("test.parquet", original);
 
         assertThat(wrapped.getMessage()).isEqualTo("[test.parquet] RuntimeException");
+    }
+
+    @Test
+    void decoderRuntimeFailuresBecomeReadFailuresKeepingTheirCause() {
+        for (RuntimeException raised : new RuntimeException[]{
+                new ArrayIndexOutOfBoundsException("Index 7 out of bounds for length 4"),
+                new IllegalStateException("Invalid RLE run header"),
+                new ArithmeticException("integer overflow"),
+                new IllegalArgumentException("negative page length"),
+                new NullPointerException()}) {
+            RuntimeException typed = ExceptionContext.asReadFailure(raised);
+
+            assertThat(typed)
+                    .as("%s from a decoder is the file being wrong", raised.getClass().getSimpleName())
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasCause(raised);
+        }
+    }
+
+    @Test
+    void readFailureMessageFallsBackToTheTypeWhenTheOriginalHasNone() {
+        RuntimeException typed =
+                ExceptionContext.asReadFailure(new ArrayIndexOutOfBoundsException());
+
+        assertThat(typed).hasMessage("ArrayIndexOutOfBoundsException");
+    }
+
+    @Test
+    void transportAndAlreadyTypedFailuresPassThroughUnchanged() {
+        UncheckedIOException transport = new UncheckedIOException(new IOException("connection reset"));
+        ParquetReadException read = new ParquetReadException("bad magic");
+        SchemaIncompatibleException schema = new SchemaIncompatibleException("column type differs");
+        UnsupportedOperationException unsupported =
+                new UnsupportedOperationException("BROTLI requires com.aayushatharva.brotli4j:brotli4j");
+
+        assertThat(ExceptionContext.asReadFailure(transport)).isSameAs(transport);
+        assertThat(ExceptionContext.asReadFailure(read)).isSameAs(read);
+        assertThat(ExceptionContext.asReadFailure(schema)).isSameAs(schema);
+        assertThat(ExceptionContext.asReadFailure(unsupported)).isSameAs(unsupported);
     }
 
     @Test

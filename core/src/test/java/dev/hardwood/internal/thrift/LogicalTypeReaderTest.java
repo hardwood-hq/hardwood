@@ -99,6 +99,34 @@ class LogicalTypeReaderTest {
         }
     }
 
+    @Test
+    void invalidVariantSpecVersionIsAReadFailure() throws Exception {
+        assertThatThrownBy(() -> read(variantType(0)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid VariantType: specVersion=0");
+    }
+
+    @Test
+    void validAndAbsentVariantSpecVersionsDecode() throws Exception {
+        assertThat(read(variantType(1))).isEqualTo(LogicalType.variant(1));
+        assertThat(read(variantType(2))).isEqualTo(LogicalType.variant(2));
+        assertThat(read(variantType(null))).isEqualTo(LogicalType.variant(1));
+    }
+
+    private static ThriftCompactWriter variantType(Integer specVersion) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(16, FieldType.STRUCT);
+        short savedMember = writer.pushFieldIdContext();
+        if (specVersion != null) {
+            writer.writeFieldBegin(1, FieldType.BYTE);
+            writer.writeByte(specVersion.byteValue());
+        }
+        writer.writeFieldStop();
+        writer.popFieldIdContext(savedMember);
+        writer.writeFieldStop();
+        return writer;
+    }
+
     /// The `INT` union member, as a footer carries it: field id 10 holding an `IntType`
     /// struct of an i8 `bitWidth` and a bool `isSigned`.
     private static ThriftCompactWriter intType(byte bitWidth, boolean isSigned) {

@@ -17,6 +17,7 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.row.VariantType;
 
 /// Stateless decoder for the Variant value buffer. Parses a value's header byte
@@ -48,13 +49,13 @@ public final class VariantValueDecoder {
 
     /// Returns the [VariantType] of the value starting at `buf[offset]`.
     ///
-    /// @throws IllegalArgumentException if the header is malformed or the primitive
+    /// @throws ParquetReadException if the header is malformed or the primitive
     ///     type tag is unrecognized
     public static VariantType type(byte[] buf, int offset) {
         checkBounds(buf, offset, 1);
         VariantType type = VariantBinary.typeOf(buf[offset]);
         if (type == null) {
-            throw new IllegalArgumentException("Unrecognized Variant type tag at offset " + offset);
+            throw new ParquetReadException("Unrecognized Variant type tag at offset " + offset);
         }
         return type;
     }
@@ -75,7 +76,7 @@ public final class VariantValueDecoder {
     public static int asInt(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         return switch (t) {
-            case INT8 -> buf[offset + 1];
+            case INT8 -> readByte(buf, offset + 1);
             case INT16 -> readIntLE(buf, offset + 1, 2);
             case INT32 -> readIntLE(buf, offset + 1, 4);
             default -> throw VariantErrors.expectedOneOf("INT8/INT16/INT32", t);
@@ -85,7 +86,7 @@ public final class VariantValueDecoder {
     public static long asLong(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         return switch (t) {
-            case INT8 -> buf[offset + 1];
+            case INT8 -> readByte(buf, offset + 1);
             case INT16 -> readIntLE(buf, offset + 1, 2);
             case INT32 -> readIntLE(buf, offset + 1, 4);
             case INT64 -> readLongLE(buf, offset + 1, 8);
@@ -110,6 +111,7 @@ public final class VariantValueDecoder {
     }
 
     public static String asString(byte[] buf, int offset) {
+        checkBounds(buf, offset, 1);
         int basic = VariantBinary.basicType(buf[offset]);
         if (basic == VariantBinary.BASIC_TYPE_SHORT_STRING) {
             int length = VariantBinary.valueHeader(buf[offset]);
@@ -141,16 +143,19 @@ public final class VariantValueDecoder {
         VariantType t = type(buf, offset);
         return switch (t) {
             case DECIMAL4 -> {
+                checkBounds(buf, offset + 1, 5);
                 int scale = buf[offset + 1] & 0xFF;
                 int unscaled = readIntLE(buf, offset + 2, 4);
                 yield BigDecimal.valueOf(unscaled, scale);
             }
             case DECIMAL8 -> {
+                checkBounds(buf, offset + 1, 9);
                 int scale = buf[offset + 1] & 0xFF;
                 long unscaled = readLongLE(buf, offset + 2, 8);
                 yield BigDecimal.valueOf(unscaled, scale);
             }
             case DECIMAL16 -> {
+                checkBounds(buf, offset + 1, 17);
                 int scale = buf[offset + 1] & 0xFF;
                 // 16 bytes little-endian, signed two's complement — convert to big-endian for BigInteger
                 byte[] be = new byte[16];
@@ -255,6 +260,7 @@ public final class VariantValueDecoder {
                               int offsetsStart, int valuesStart) {}
 
     public static ObjectLayout parseObject(byte[] buf, int offset) {
+        checkBounds(buf, offset, 1);
         int header = buf[offset] & 0xFF;
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic != VariantBinary.BASIC_TYPE_OBJECT) {
@@ -265,6 +271,7 @@ public final class VariantValueDecoder {
         int idSize = ((valueHeader >>> VariantBinary.OBJECT_FIELD_ID_SIZE_SHIFT) & VariantBinary.OBJECT_FIELD_ID_SIZE_MASK) + 1;
         boolean isLarge = (valueHeader & VariantBinary.OBJECT_IS_LARGE_MASK) != 0;
         int numSize = isLarge ? 4 : 1;
+        checkBounds(buf, offset + 1, numSize);
         int numElements = VariantBinary.readUnsignedLE(buf, offset + 1, numSize);
         int idsStart = offset + 1 + numSize;
         // Widen the id/offset-table arithmetic to long over the *unsigned* count:
@@ -280,6 +287,7 @@ public final class VariantValueDecoder {
     }
 
     public static ArrayLayout parseArray(byte[] buf, int offset) {
+        checkBounds(buf, offset, 1);
         int header = buf[offset] & 0xFF;
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic != VariantBinary.BASIC_TYPE_ARRAY) {
@@ -289,6 +297,7 @@ public final class VariantValueDecoder {
         int offsetSize = (valueHeader & VariantBinary.ARRAY_FIELD_OFFSET_SIZE_MASK) + 1;
         boolean isLarge = (valueHeader & VariantBinary.ARRAY_IS_LARGE_MASK) != 0;
         int numSize = isLarge ? 4 : 1;
+        checkBounds(buf, offset + 1, numSize);
         int numElements = VariantBinary.readUnsignedLE(buf, offset + 1, numSize);
         int offsetsStart = offset + 1 + numSize;
         // Widen the offset-table arithmetic to long over the *unsigned* count so a
@@ -304,6 +313,7 @@ public final class VariantValueDecoder {
     /// [dev.hardwood.internal.variant.PqVariantImpl#value()] to produce a
     /// correctly-sized copy for sub-values.
     public static int valueLength(byte[] buf, int offset) {
+        checkBounds(buf, offset, 1);
         int header = buf[offset] & 0xFF;
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic == VariantBinary.BASIC_TYPE_SHORT_STRING) {
@@ -350,7 +360,7 @@ public final class VariantValueDecoder {
             case VariantBinary.PRIM_UUID -> 16;
             case VariantBinary.PRIM_STRING,
                  VariantBinary.PRIM_BINARY -> 4 + stringPayloadLength(buf, offset);
-            default -> throw new IllegalArgumentException(
+            default -> throw new ParquetReadException(
                     "Unknown Variant primitive tag " + tag + " at offset " + offset);
         };
     }
@@ -358,7 +368,6 @@ public final class VariantValueDecoder {
     /// Reads and validates the 4-byte length prefix of a long string/binary
     /// primitive at `buf[offset]`, rejecting a truncated field or out-of-buffer length.
     private static int stringPayloadLength(byte[] buf, int offset) {
-        checkBounds(buf, offset + 1, 4);
         int declaredLength = readIntLE(buf, offset + 1, 4);
         VariantBinary.checkFits("string/binary length", declaredLength,
                 (long) offset + 5 + Integer.toUnsignedLong(declaredLength), buf.length);
@@ -381,18 +390,26 @@ public final class VariantValueDecoder {
     /// Absolute buffer offset of the i-th field's value in an object.
     public static int objectValueOffset(byte[] buf, ObjectLayout layout, int i) {
         int rel = VariantBinary.readUnsignedLE(buf, layout.offsetsStart() + i * layout.offsetSize(), layout.offsetSize());
-        return layout.valuesStart() + rel;
+        long end = (long) layout.valuesStart() + Integer.toUnsignedLong(rel);
+        return VariantBinary.checkFits("object value offset", rel, end, buf.length);
     }
 
     /// Absolute buffer offset of the i-th element's value in an array.
     public static int arrayElementOffset(byte[] buf, ArrayLayout layout, int i) {
         int rel = VariantBinary.readUnsignedLE(buf, layout.offsetsStart() + i * layout.offsetSize(), layout.offsetSize());
-        return layout.valuesStart() + rel;
+        long end = (long) layout.valuesStart() + Integer.toUnsignedLong(rel);
+        return VariantBinary.checkFits("array element offset", rel, end, buf.length);
     }
 
     // ==================== Helpers ====================
 
+    private static byte readByte(byte[] buf, int offset) {
+        checkBounds(buf, offset, 1);
+        return buf[offset];
+    }
+
     private static int readIntLE(byte[] buf, int offset, int width) {
+        checkBounds(buf, offset, width);
         int result = 0;
         for (int i = 0; i < width; i++) {
             result |= (buf[offset + i] & 0xFF) << (8 * i);
@@ -403,6 +420,7 @@ public final class VariantValueDecoder {
     }
 
     private static long readLongLE(byte[] buf, int offset, int width) {
+        checkBounds(buf, offset, width);
         long result = 0L;
         for (int i = 0; i < width; i++) {
             result |= ((long) (buf[offset + i] & 0xFF)) << (8 * i);
@@ -411,6 +429,7 @@ public final class VariantValueDecoder {
     }
 
     private static long readLongBE(byte[] buf, int offset) {
+        checkBounds(buf, offset, Long.BYTES);
         long result = 0L;
         for (int i = 0; i < 8; i++) {
             result = (result << 8) | (buf[offset + i] & 0xFFL);
@@ -419,8 +438,8 @@ public final class VariantValueDecoder {
     }
 
     private static void checkBounds(byte[] buf, int offset, int needed) {
-        if (offset < 0 || offset + needed > buf.length) {
-            throw new IllegalArgumentException(
+        if (offset < 0 || needed < 0 || offset + needed > buf.length) {
+            throw new ParquetReadException(
                     "Variant value buffer truncated: need " + needed + " bytes at offset " + offset + ", buffer length " + buf.length);
         }
     }

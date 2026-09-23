@@ -24,6 +24,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.ColumnSchema;
@@ -112,7 +113,7 @@ class IntervalLogicalTypeTest {
     void testIntervalRejectsWrongByteLength() {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.bytesToInterval(new byte[8]))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("INTERVAL requires exactly 12 bytes, got 8");
     }
 
