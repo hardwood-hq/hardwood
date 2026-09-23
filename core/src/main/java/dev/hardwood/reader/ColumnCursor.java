@@ -171,6 +171,12 @@ final class ColumnCursor {
         return nested ? nestedBatch.recordCount : flatBatch.recordCount;
     }
 
+    /// Whether statistics proved every record of the current (pre-selection) batch
+    /// matches the filter.
+    boolean filterAlwaysMatches() {
+        return nested ? nestedBatch.filterAlwaysMatches : flatBatch.filterAlwaysMatches;
+    }
+
     String fileName() {
         return nested ? nestedBatch.fileName : flatBatch.fileName;
     }

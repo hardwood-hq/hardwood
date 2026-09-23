@@ -103,9 +103,8 @@ The flag travels retriever → drain through a per-slot buffer written alongside
 - **Page-level pre-approved ranges** (skip evaluation inside surviving pages whose
   ColumnIndex entry is `ALWAYS_MATCHES`) extend `RowRanges` and compose with the
   intra-page skip-decode work (#728); follow-up to #795.
-- **`ColumnReader` / `SelectionEngine`**: `computeSelection` already has an every-record
-  fast path (`-1`); feeding it from `Batch.filterAlwaysMatches` is part of the same
-  follow-up.
+- **`ColumnReader` / `SelectionEngine`**: `computeSelection` answers a batch whose
+  `filterAlwaysMatches` is set with its every-record result (`-1`).
 - **Row groups statistics cannot decide**: the record matcher still evaluates them a
   row at a time, on the consumer thread — which profiling for #1107 showed to be the
   pipeline's critical path (98% busy against decode workers 90–97% parked). Moving

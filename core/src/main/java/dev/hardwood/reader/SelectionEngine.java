@@ -119,7 +119,14 @@ final class SelectionEngine {
     /// [#selection] buffer and returns their count, or `-1` when every record
     /// matches (the no-compaction fast path). The indices live in
     /// `selection()[0, count)` until the next call.
+    ///
+    /// A batch whose row group statistics proved to match in full is answered
+    /// `-1` without evaluating anything. Every column's worker flushes on the
+    /// transition, so the first cursor's batch speaks for all of them.
     int computeSelection(int recordCount) {
+        if (cursorsByProjectedIndex[0].filterAlwaysMatches()) {
+            return -1;
+        }
         return merger != null
                 ? computeDrainSide(recordCount)
                 : computeRecordMatcher(recordCount);

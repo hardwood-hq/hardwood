@@ -111,6 +111,9 @@ logic over their `NestedBatch`. The row readers evaluate the same matcher agains
 the same view, so the fallback covers every shape the `RowReader` does — no second
 predicate evaluator.
 
+A batch whose row group statistics proved to match in full is answered with the
+every-record result before either backend runs.
+
 Both backends emit the same selection representation (the set bits, plus a
 matching-record index map derived from them); downstream compaction is
 backend-agnostic.
