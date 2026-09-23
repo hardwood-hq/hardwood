@@ -12,6 +12,8 @@ import java.io.InputStream;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.reader.ParquetReadException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -65,7 +67,7 @@ class VariantMetadataTest {
         // The 4-byte dictionary_size 0xFFFFFFFF reads back as a negative int.
         byte[] bytes = { (byte) 0xC1, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF };
         assertThatThrownBy(() -> new VariantMetadata(bytes))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant metadata dictionary_size is not a valid unsigned int: -1");
     }
 
@@ -75,7 +77,7 @@ class VariantMetadataTest {
         // negative-size guard but overflows (dictionary_size + 1) * offset_size.
         byte[] bytes = { (byte) 0xC1, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> new VariantMetadata(bytes))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant metadata dictionary (858993459) does not fit within its 5-byte buffer "
                          + "(needs 3435973845 bytes)")
                 ;
@@ -85,14 +87,34 @@ class VariantMetadataTest {
     void truncatedBufferRejected() {
         byte[] bytes = { 0x01 }; // header only, no dictionary size bytes
         assertThatThrownBy(() -> new VariantMetadata(bytes))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant metadata buffer truncated before dictionary_size");
     }
 
     @Test
     void emptyBufferRejected() {
         assertThatThrownBy(() -> new VariantMetadata(new byte[0]))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant metadata buffer is empty");
+    }
+
+    @Test
+    void truncatedStringSectionIsAReadFailure() {
+        byte[] bytes = {0x01, 0x01, 0x00, 0x02, 'a'};
+
+        assertThatThrownBy(() -> new VariantMetadata(bytes))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant metadata buffer truncated before end of strings section");
+    }
+
+    @Test
+    void nonMonotonicStringOffsetsAreAReadFailure() {
+        byte[] bytes = {0x01, 0x01, 0x01, 0x00, 'a'};
+        VariantMetadata metadata = new VariantMetadata(bytes);
+
+        assertThatThrownBy(() -> metadata.getField(0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant metadata string offsets are invalid");
     }
 
     private static byte[] readResource(String name) throws IOException {

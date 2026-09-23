@@ -28,6 +28,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -114,7 +115,7 @@ class Float16LogicalTypeTest {
     void testFloat16RejectsWrongByteLength() {
         assertThatThrownBy(() ->
                 LogicalTypeConverter.bytesToFloat16(new byte[4]))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("FLOAT16 requires exactly 2 bytes, got 4");
     }
 

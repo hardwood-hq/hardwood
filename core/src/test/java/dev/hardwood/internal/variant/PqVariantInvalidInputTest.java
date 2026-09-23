@@ -13,6 +13,7 @@ import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
@@ -77,10 +78,11 @@ class PqVariantInvalidInputTest {
         VariantMetadata metadata = new VariantMetadata(
                 readResource("/variant/object_primitive.metadata"));
         assertThatThrownBy(() -> metadata.getField(metadata.size()))
-                .isInstanceOf(IndexOutOfBoundsException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Field id out of range: 7 (size=7)");
         assertThatThrownBy(() -> metadata.getField(-1))
-                .isInstanceOf(IndexOutOfBoundsException.class);
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Field id out of range: -1 (size=7)");
     }
 
     @Test
@@ -90,7 +92,7 @@ class PqVariantInvalidInputTest {
         // misinterpreting the layout.
         byte[] bytes = { 0x02 };
         assertThatThrownBy(() -> new VariantMetadata(bytes))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unsupported Variant metadata version: 2");
     }
 
@@ -99,7 +101,7 @@ class PqVariantInvalidInputTest {
         // PRIM_BINARY (0x3C), 4-byte length 0x7FFFFFFF — runs far past the buffer.
         byte[] value = { 0x3C, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant string/binary length (2147483647) does not fit within its 5-byte "
                          + "buffer (needs 2147483652 bytes)");
     }
@@ -109,7 +111,7 @@ class PqVariantInvalidInputTest {
         // SHORT_STRING (0x29) declaring length 10 with no payload bytes present.
         byte[] value = { 0x29 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant short string length (10) does not fit within its 1-byte buffer (needs "
                          + "11 bytes)");
     }
@@ -119,7 +121,7 @@ class PqVariantInvalidInputTest {
         // PRIM_STRING (0x40) whose 4-byte length prefix is truncated to 2 bytes.
         byte[] value = { 0x40, 0x05, 0x00 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant value buffer truncated: need 4 bytes at offset 1, buffer length 3");
     }
 
@@ -128,7 +130,7 @@ class PqVariantInvalidInputTest {
         // asBinary: 0x80000000 reads back negative and slipped past the old check.
         byte[] value = { 0x3C, 0x00, 0x00, 0x00, (byte) 0x80 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asBinary())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant string/binary length (2147483648) does not fit within its 5-byte "
                          + "buffer (needs 2147483653 bytes)");
     }
@@ -147,7 +149,7 @@ class PqVariantInvalidInputTest {
         // asString: PRIM_STRING (0x40) with a 0x7FFFFFFF length prefix.
         byte[] value = { 0x40, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asString())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant string/binary length (2147483647) does not fit within its 5-byte "
                          + "buffer (needs 2147483652 bytes)");
     }
@@ -158,7 +160,7 @@ class PqVariantInvalidInputTest {
         // values section — value() would size a copy far past the buffer.
         byte[] value = { 0x0E, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant object/array value (2147483647) does not fit within its 6-byte buffer "
                          + "(needs 2147483653 bytes)");
     }
@@ -169,7 +171,7 @@ class PqVariantInvalidInputTest {
         // values section — exercises the array branch of the extent guard.
         byte[] value = { 0x0F, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant object/array value (2147483647) does not fit within its 6-byte buffer "
                          + "(needs 2147483653 bytes)");
     }
@@ -179,9 +181,64 @@ class PqVariantInvalidInputTest {
         // PRIM_INT64 (0x18) header claiming an 8-byte payload with only 2 bytes present.
         byte[] value = { 0x18, 0x01, 0x02 };
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant primitive value (9) does not fit within its 3-byte buffer (needs 9 "
                          + "bytes)");
+    }
+
+    @Test
+    void unknownPrimitiveTagIsAReadFailureForTypeAndValueAccessors() {
+        PqVariant value = new PqVariantImpl(EMPTY_METADATA, new byte[]{(byte) 0xFC});
+
+        assertThatThrownBy(value::type)
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unrecognized Variant type tag at offset 0");
+        assertThatThrownBy(value::value)
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unknown Variant primitive tag 63 at offset 0");
+    }
+
+    @Test
+    void truncatedObjectAndArrayCountHeadersAreReadFailures() {
+        PqVariant object = new PqVariantImpl(EMPTY_METADATA, new byte[]{0x7E});
+        PqVariant array = new PqVariantImpl(EMPTY_METADATA, new byte[]{0x1F});
+
+        assertThatThrownBy(object::asObject)
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 4 bytes at offset 1, buffer length 1");
+        assertThatThrownBy(array::asArray)
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 4 bytes at offset 1, buffer length 1");
+    }
+
+    @Test
+    void truncatedFixedWidthAccessorIsAReadFailure() {
+        PqVariant value = new PqVariantImpl(EMPTY_METADATA, new byte[]{0x18, 0x01, 0x02});
+
+        assertThatThrownBy(value::asLong)
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 8 bytes at offset 1, buffer length 3");
+    }
+
+    @Test
+    void objectFieldNameChecksCallerIndexBeforeEncodedDictionaryId() {
+        byte[] encoded = new byte[32];
+        int length = VariantValueEncoder.writeObject(
+                encoded, 0, new int[] { 1 }, new byte[][] { LEAF_INT8 }, 1);
+        PqVariantObject object = new PqVariantImpl(SINGLE_FIELD_METADATA, Arrays.copyOf(encoded, length)).asObject();
+
+        assertThatThrownBy(() -> object.getFieldName(-1))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("Index -1 out of bounds for length 1");
+        assertThatThrownBy(() -> object.getFieldName(1))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("Index 1 out of bounds for length 1");
+        assertThatThrownBy(() -> object.getFieldName(0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Field id out of range: 1 (size=1)");
+        assertThatThrownBy(() -> object.getInt("a"))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Field id out of range: 1 (size=1)");
     }
 
     @Test

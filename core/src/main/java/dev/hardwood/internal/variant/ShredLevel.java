@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.SchemaNode;
 
 /// One node in the Variant shredding tree. Every shredded level carries an
@@ -83,12 +84,12 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
             switch (child.name()) {
                 case "value" -> valueNode = child;
                 case "typed_value" -> typedValueNode = child;
-                default -> throw new IllegalArgumentException(
+                default -> throw new ParquetReadException(
                         "Unexpected shredded-Variant child '" + child.name() + "' in group '" + group.name() + "'");
             }
         }
         if (valueNode == null && typedValueNode == null) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "Shredded-Variant group '" + group.name() + "' must contain at least one of 'value' or 'typed_value'");
         }
         return buildFromComponents(valueNode, typedValueNode, projectedSchema);
@@ -100,14 +101,14 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         int valueDefLevel = 0;
         if (valueNode instanceof SchemaNode.PrimitiveNode valuePrim) {
             if (valuePrim.type() != PhysicalType.BYTE_ARRAY) {
-                throw new IllegalArgumentException(
+                throw new ParquetReadException(
                         "Shredded-Variant 'value' column must be BYTE_ARRAY, got " + valuePrim.type());
             }
             valueCol = projectedSchema.toProjectedIndex(valuePrim.columnIndex());
             valueDefLevel = valuePrim.maxDefinitionLevel();
         }
         else if (valueNode != null) {
-            throw new IllegalArgumentException("Shredded-Variant 'value' child must be a primitive");
+            throw new ParquetReadException("Shredded-Variant 'value' child must be a primitive");
         }
         Typed typed = typedValueNode == null ? null : buildTyped(typedValueNode, projectedSchema);
         return new ShredLevel(valueCol, valueDefLevel, typed);
@@ -131,7 +132,7 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
             // `list`/`array` group for us.
             SchemaNode elementNode = group.getListElement();
             if (!(elementNode instanceof SchemaNode.GroupNode elementGroup)) {
-                throw new IllegalArgumentException(
+                throw new ParquetReadException(
                         "Shredded-Variant array typed_value must have a group element, got " + elementNode);
             }
             ShredLevel element = buildNested(elementGroup, projectedSchema);
@@ -148,7 +149,7 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         for (int i = 0; i < kids.size(); i++) {
             SchemaNode child = kids.get(i);
             if (!(child instanceof SchemaNode.GroupNode childGroup)) {
-                throw new IllegalArgumentException(
+                throw new ParquetReadException(
                         "Shredded-Variant object field '" + child.name() + "' must be a group");
             }
             names[i] = child.name();

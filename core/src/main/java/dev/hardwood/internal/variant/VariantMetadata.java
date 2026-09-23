@@ -10,6 +10,8 @@ package dev.hardwood.internal.variant;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import dev.hardwood.reader.ParquetReadException;
+
 /// Parses the Variant metadata byte buffer and provides dictionary lookup by
 /// field id or by name.
 ///
@@ -30,13 +32,13 @@ public final class VariantMetadata {
 
     public VariantMetadata(byte[] buf) {
         if (buf == null || buf.length < 1) {
-            throw new IllegalArgumentException("Variant metadata buffer is empty");
+            throw new ParquetReadException("Variant metadata buffer is empty");
         }
         this.buf = buf;
         int header = buf[0] & 0xFF;
         int version = header & VariantBinary.METADATA_VERSION_MASK;
         if (version != VariantBinary.METADATA_VERSION) {
-            throw new IllegalArgumentException("Unsupported Variant metadata version: " + version);
+            throw new ParquetReadException("Unsupported Variant metadata version: " + version);
         }
         this.sorted = (header & VariantBinary.METADATA_SORTED_MASK) != 0;
         int offsetSizeMinusOne = (header >>> VariantBinary.METADATA_OFFSET_SIZE_SHIFT) & VariantBinary.METADATA_OFFSET_SIZE_MASK;
@@ -45,12 +47,12 @@ public final class VariantMetadata {
         int headerEnd = 1;
         int requiredForSize = headerEnd + offsetSize;
         if (buf.length < requiredForSize) {
-            throw new IllegalArgumentException("Variant metadata buffer truncated before dictionary_size");
+            throw new ParquetReadException("Variant metadata buffer truncated before dictionary_size");
         }
         this.dictionarySize = VariantBinary.readUnsignedLE(buf, headerEnd, offsetSize);
         // Reject an out-of-range dictionary_size before it feeds later arithmetic.
         if (dictionarySize < 0) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "Variant metadata dictionary_size is not a valid unsigned int: " + dictionarySize);
         }
         this.offsetsStart = headerEnd + offsetSize;
@@ -61,8 +63,9 @@ public final class VariantMetadata {
         this.stringsStart = VariantBinary.checkFits(
                 "metadata dictionary", dictionarySize, stringsSectionStart, buf.length);
         int totalStringBytes = readOffset(dictionarySize);
-        if (buf.length < stringsStart + totalStringBytes) {
-            throw new IllegalArgumentException("Variant metadata buffer truncated before end of strings section");
+        long stringsEnd = (long) stringsStart + Integer.toUnsignedLong(totalStringBytes);
+        if (stringsEnd > buf.length) {
+            throw new ParquetReadException("Variant metadata buffer truncated before end of strings section");
         }
     }
 
@@ -81,15 +84,26 @@ public final class VariantMetadata {
         return sorted;
     }
 
+    /// Returns `id` once it is known to name an entry of this dictionary. Field ids
+    /// are read from a Variant value buffer, so one outside the dictionary is a
+    /// malformed file.
+    ///
+    /// @throws ParquetReadException if `id` is not in `[0, size())`
+    public int checkFieldId(int id) {
+        if (id < 0 || id >= dictionarySize) {
+            throw new ParquetReadException("Field id out of range: " + id + " (size=" + dictionarySize + ")");
+        }
+        return id;
+    }
+
     /// Returns the dictionary string at the given id, decoded as UTF-8.
     ///
-    /// @throws IndexOutOfBoundsException if `id` is not in `[0, size())`
+    /// @throws ParquetReadException if `id` is not in `[0, size())`
     public String getField(int id) {
-        if (id < 0 || id >= dictionarySize) {
-            throw new IndexOutOfBoundsException("Field id out of range: " + id + " (size=" + dictionarySize + ")");
-        }
+        checkFieldId(id);
         int start = readOffset(id);
         int end = readOffset(id + 1);
+        validateStringRange(start, end);
         return new String(buf, stringsStart + start, end - start, StandardCharsets.UTF_8);
     }
 
@@ -132,6 +146,7 @@ public final class VariantMetadata {
     private int compareDictEntry(int id, byte[] target) {
         int start = readOffset(id);
         int end = readOffset(id + 1);
+        validateStringRange(start, end);
         int len = end - start;
         int cmp = Arrays.compareUnsigned(buf, stringsStart + start, stringsStart + end,
                 target, 0, target.length);
@@ -141,6 +156,13 @@ public final class VariantMetadata {
             return cmp;
         }
         return Integer.compare(len, target.length);
+    }
+
+    private void validateStringRange(int start, int end) {
+        int stringLength = buf.length - stringsStart;
+        if (start < 0 || end < start || end > stringLength) {
+            throw new ParquetReadException("Variant metadata string offsets are invalid");
+        }
     }
 
     private int readOffset(int index) {

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Objects;
 import java.util.UUID;
 
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
@@ -41,6 +42,10 @@ final class PqVariantObjectImpl implements PqVariantObject {
         this.depth = depth;
     }
 
+    private int fieldIdAt(int index) {
+        return metadata.checkFieldId(VariantValueDecoder.objectFieldId(valueBuf, layout, index));
+    }
+
     /// Locate the child-array index for the given field name, or -1 if absent.
     ///
     /// The object's field_ids array is sorted by the **name** of each field
@@ -61,7 +66,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
         }
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
-            if (VariantValueDecoder.objectFieldId(valueBuf, layout, i) == dictId) {
+            if (fieldIdAt(i) == dictId) {
                 return i;
             }
         }
@@ -89,8 +94,8 @@ final class PqVariantObjectImpl implements PqVariantObject {
 
     @Override
     public String getFieldName(int index) {
-        int id = VariantValueDecoder.objectFieldId(valueBuf, layout, index);
-        return metadata.getField(id);
+        Objects.checkIndex(index, layout.numElements());
+        return metadata.getField(fieldIdAt(index));
     }
 
     @Override

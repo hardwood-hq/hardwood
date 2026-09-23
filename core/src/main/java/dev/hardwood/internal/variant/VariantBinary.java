@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.variant;
 
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.row.VariantType;
 
 /// Bit-layout constants and header-byte decoding for the Parquet Variant binary
@@ -119,10 +120,10 @@ public final class VariantBinary {
     /// @param end exclusive end offset computed in `long` from `declared`
     /// @param bufferLength length of the enclosing buffer
     /// @return `end` as an `int`
-    /// @throws IllegalArgumentException if `end` exceeds `bufferLength`
+    /// @throws ParquetReadException if `end` exceeds `bufferLength`
     static int checkFits(String region, int declared, long end, int bufferLength) {
         if (end > bufferLength) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "Variant " + region + " (" + Integer.toUnsignedString(declared)
                             + ") does not fit within its " + bufferLength
                             + "-byte buffer (needs " + end + " bytes)");

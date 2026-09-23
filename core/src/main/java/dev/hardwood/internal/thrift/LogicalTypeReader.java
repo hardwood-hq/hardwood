@@ -311,6 +311,9 @@ public class LogicalTypeReader {
             }
         }
 
+        if (specVersion < 1) {
+            throw new ParquetReadException("Invalid VariantType: specVersion=" + specVersion);
+        }
         return LogicalType.variant(specVersion);
     }
 
