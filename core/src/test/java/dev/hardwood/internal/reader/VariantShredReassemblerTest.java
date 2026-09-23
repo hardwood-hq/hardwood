@@ -18,6 +18,8 @@ import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.internal.variant.VariantValueEncoder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.SchemaIncompatibleException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -58,10 +60,50 @@ class VariantShredReassemblerTest {
         reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
 
         assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Malformed shredded Variant: field 'dup' appears in both the shredded "
                          + "typed_value and the unshredded value object");
     }
+
+
+    @Test
+    void outOfDictionaryEncodedFieldIdIsAReadFailure() {
+        ShredLevel fieldDup = new ShredLevel(-1, 0,
+                new Typed.Primitive(1, 1, PhysicalType.INT64, null));
+        ShredLevel root = new ShredLevel(0, 1,
+                new Typed.Object(1, new String[]{"dup"}, new ShredLevel[]{fieldDup}));
+
+        byte[] innerValue = encode(buf -> VariantValueEncoder.writeInt8(buf, 0, 5));
+        byte[] unshreddedObject = encode(buf ->
+                VariantValueEncoder.writeObject(buf, 0, new int[]{1}, new byte[][]{innerValue}, 1));
+        NestedBatchIndex batch = singleRowObjectBatch(unshreddedObject, 42L);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Field id out of range: 1 (size=1)");
+    }
+
+    @Test
+    void shreddedFieldMissingFromValueMetadataIsSchemaIncompatible() {
+        ShredLevel fieldMissing = new ShredLevel(-1, 0,
+                new Typed.Primitive(1, 1, PhysicalType.INT64, null));
+        ShredLevel root = new ShredLevel(0, 1,
+                new Typed.Object(1, new String[]{"missing"}, new ShredLevel[]{fieldMissing}));
+        byte[] unshreddedObject = encode(buf ->
+                VariantValueEncoder.writeObject(buf, 0, new int[0], new byte[0][], 0));
+        NestedBatchIndex batch = singleRowObjectBatch(unshreddedObject, 42L);
+
+        VariantShredReassembler reassembler = new VariantShredReassembler();
+        reassembler.setCurrentMetadata(new VariantMetadata(METADATA_DUP));
+
+        assertThatThrownBy(() -> reassembler.reassemble(root, batch, 0))
+                .isInstanceOf(SchemaIncompatibleException.class)
+                .hasMessage("Shredded Variant field 'missing' not present in metadata dictionary");
+    }
+
 
     /// A `BYTE_ARRAY` `DECIMAL` typed_value stored as no bytes is zero, as the column's
     /// accessors read it.

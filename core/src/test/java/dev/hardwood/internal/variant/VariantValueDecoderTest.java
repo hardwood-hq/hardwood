@@ -21,6 +21,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.variant.VariantValueDecoder.ArrayLayout;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
@@ -314,7 +315,7 @@ class VariantValueDecoderTest {
         // 0x33333333 overflows the 32-bit id/offset-table arithmetic.
         byte[] buf = { 0x7E, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> VariantValueDecoder.parseObject(buf, 0))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant object element (858993459) does not fit within its 5-byte buffer "
                          + "(needs 6871947681 bytes)")
                 
@@ -327,7 +328,7 @@ class VariantValueDecoderTest {
         // overflows the 32-bit offset-table arithmetic.
         byte[] buf = { 0x1F, 0x33, 0x33, 0x33, 0x33 };
         assertThatThrownBy(() -> VariantValueDecoder.parseArray(buf, 0))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant array element (858993459) does not fit within its 5-byte buffer "
                          + "(needs 3435973845 bytes)")
                 

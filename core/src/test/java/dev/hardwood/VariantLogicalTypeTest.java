@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantObject;
@@ -120,7 +121,7 @@ class VariantLogicalTypeTest {
                 RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
             assertThatThrownBy(() -> rowReader.getVariant("var"))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(ParquetReadException.class)
                     .hasMessage("[variant_negative_dict_size.parquet] "
                             + "Variant metadata dictionary_size is not a valid unsigned int: -1");
         }

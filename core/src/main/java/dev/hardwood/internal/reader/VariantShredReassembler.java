@@ -21,6 +21,8 @@ import dev.hardwood.internal.variant.VariantValueDecoder;
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
 import dev.hardwood.internal.variant.VariantValueEncoder;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.SchemaIncompatibleException;
 
 /// Reassembles the canonical Variant `value` bytes for a row whose Variant
 /// column was shredded. Walks the [ShredLevel] tree built at schema-construction
@@ -283,6 +285,10 @@ public final class VariantShredReassembler {
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
             int fieldId = VariantValueDecoder.objectFieldId(raw, layout, i);
+            if (fieldId < 0 || fieldId >= currentMetadata.size()) {
+                throw new ParquetReadException(
+                        "Field id out of range: " + fieldId + " (size=" + currentMetadata.size() + ")");
+            }
             String fieldName = currentMetadata.getField(fieldId);
             rejectFieldCollision(fieldName, names, shreddedCount);
             int valueStart = VariantValueDecoder.objectValueOffset(raw, layout, i);
@@ -308,7 +314,7 @@ public final class VariantShredReassembler {
     private static void rejectFieldCollision(String fieldName, String[] shreddedNames, int shreddedCount) {
         for (int i = 0; i < shreddedCount; i++) {
             if (fieldName.equals(shreddedNames[i])) {
-                throw new IllegalStateException(
+                throw new ParquetReadException(
                         "Malformed shredded Variant: field '" + fieldName + "' appears in both the "
                         + "shredded typed_value and the unshredded value object");
             }
@@ -339,7 +345,7 @@ public final class VariantShredReassembler {
             String name = names[src];
             int id = currentMetadata.findField(name);
             if (id < 0) {
-                throw new IllegalStateException(
+                throw new SchemaIncompatibleException(
                         "Shredded Variant field '" + name + "' not present in metadata dictionary");
             }
             fieldIds[i] = id;
