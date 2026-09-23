@@ -26,6 +26,7 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
@@ -63,13 +64,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
     private final FlatColumnWorker[] columnWorkers;
     private final int columnCount;
-    /// How many of the decoded columns the reader exposes. Smaller than `columnCount` when a
-    /// predicate references a column the caller did not project: those trail the exposed ones.
-    private final int exposedColumnCount;
 
     // Schema info for name lookup and logical type conversion
     private final FileSchema fileSchema;
-    private final ProjectedSchema projectedSchema;
+    /// The caller's projection (see [ReadProjection#payload()]). Its columns lead the decoded
+    /// ones, and the accessor state below spans them alone, so no accessor reaches a column a
+    /// predicate added.
+    private final ProjectedSchema payload;
     private final StringToIntMap nameToIndex;
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
@@ -103,6 +104,11 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// the read has no filter or filters on the drain side. Present or absent purely by
     /// whether the caller asked for a filter — never by what any file turned out to hold.
     private final RowMatcher recordMatcher;
+    /// What [#recordMatcher] is tested against: the predicate columns of the current batch.
+    /// Refreshed only for a batch the matcher evaluates, since a predicate column outside the
+    /// projection is not decoded for a batch statistics proved. `null` exactly when
+    /// [#recordMatcher] is.
+    private final PredicateView predicateView;
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
@@ -147,35 +153,34 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final RowGroupIterator rowGroupIterator;
 
     private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
-                         FileSchema fileSchema, ProjectedSchema projectedSchema,
+                         FileSchema fileSchema, ProjectedSchema payload,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
-                         RowMatcher recordMatcher, RecordFilterTally tally,
+                         RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
                          RowGroupIterator rowGroupIterator) {
         this.rowGroupIterator = rowGroupIterator;
         this.maxMatchedRows = maxMatchedRows;
         this.recordMatcher = recordMatcher;
+        this.predicateView = predicateView;
         this.tally = tally;
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
         this.fileSchema = fileSchema;
-        this.projectedSchema = projectedSchema;
-        this.flatValueArrays = new Object[columnCount];
-        this.flatValidity = new long[columnCount][];
+        this.payload = payload;
+        int payloadColumnCount = payload.getProjectedColumnCount();
+        this.flatValueArrays = new Object[payloadColumnCount];
+        this.flatValidity = new long[payloadColumnCount][];
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.matchMerger = matchMerger;
 
-        // Build name-to-index map and cache column metadata
-        this.exposedColumnCount = projectedSchema.exposedColumnCount();
-        // Every decoded column is reachable by name, the predicate-only ones included: the record
-        // matcher resolves half its leaf kinds by name, through these same accessors.
-        this.nameToIndex = new StringToIntMap(columnCount);
-        this.physicalTypes = new PhysicalType[columnCount];
-        this.columnSchemas = new ColumnSchema[columnCount];
-        this.kinds = new LeafKind[columnCount];
-        this.textColumns = new boolean[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
+        // Build name-to-index map and cache column metadata, for the exposed columns only
+        this.nameToIndex = new StringToIntMap(payloadColumnCount);
+        this.physicalTypes = new PhysicalType[payloadColumnCount];
+        this.columnSchemas = new ColumnSchema[payloadColumnCount];
+        this.kinds = new LeafKind[payloadColumnCount];
+        this.textColumns = new boolean[payloadColumnCount];
+        for (int i = 0; i < payloadColumnCount; i++) {
+            int originalIndex = payload.toOriginalIndex(i);
             ColumnSchema col = fileSchema.getColumn(originalIndex);
             nameToIndex.put(col.name(), i);
             physicalTypes[i] = col.type();
@@ -223,7 +228,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     ///
     /// @param rowGroupIterator pre-configured iterator (file opened, first file set, initialized)
     /// @param schema the file schema
-    /// @param projectedSchema the projected column schema
+    /// @param projection the exposed and decoded columns
     /// @param context the hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited). Without a filter this caps scanned
@@ -234,12 +239,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// @return a [FlatRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                                    FileSchema schema,
-                                   ProjectedSchema projectedSchema,
+                                   ReadProjection projection,
                                    HardwoodContextImpl context,
                                    ResolvedPredicate filter,
                                    long maxRows,
                                    int batchSize) throws IOException {
-        int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+        ProjectedSchema decoded = projection.decoded();
+        int projectedColumnCount = decoded.getProjectedColumnCount();
 
         // A row-level filter changes what `maxRows` counts: under SQL LIMIT semantics
         // the cap is on *matching* rows, not scanned rows. The workers still take it —
@@ -255,7 +261,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // predicate; null falls through to the record-matcher path below.
         CompiledBatchFilter compiledFilter = null;
         if (filter != null) {
-            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
+            compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
         }
         ColumnBatchMatcher[] columnBatchMatchers = compiledFilter != null ? compiledFilter.columnMatchers() : null;
         final boolean drainSide = compiledFilter != null;
@@ -266,7 +272,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
 
         for (int i = 0; i < projectedColumnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
+            int originalIndex = decoded.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
@@ -302,11 +308,13 @@ public final class FlatRowReader implements FileAwareRowReader {
                 : null;
 
         // Whatever the drain side could not compile, the reader evaluates a record at a
-        // time. Indexed compile path: for flat schemas every leaf column is also a
-        // top-level field, and the reader's `getInt(int)` etc. take a projected
-        // leaf-column index, so the projection maps them directly.
-        RowMatcher recordMatcher = !drainSide && filter != null
-                ? RecordFilterCompiler.compile(filter, schema, projectedSchema::toProjectedIndex)
+        // time, against a view of the predicate columns rather than the reader itself,
+        // whose accessors reach the projected columns alone.
+        PredicateView predicateView = !drainSide && filter != null
+                ? PredicateView.create(schema, decoded, filter, p -> false, false)
+                : null;
+        RowMatcher recordMatcher = predicateView != null
+                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
                 : null;
         // Filtering happens in the reader on both paths, so the reader caps matched
         // rows. Without a filter the worker already capped scanned == matched rows.
@@ -315,8 +323,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         // the record matcher single records, and either way the reader marks the file
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
-        FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
-                matchMerger, readerMatchLimit, recordMatcher, tally, rowGroupIterator);
+        FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projection.payload(),
+                matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();
         return reader;
     }
@@ -395,14 +403,20 @@ public final class FlatRowReader implements FileAwareRowReader {
             }
             rowIndex++;
             // Statistics already decided this batch's row group in full — reachable only
-            // under a cap, which needs every match counted as it goes.
-            boolean matched = currentRowsAlwaysMatch || activeMatcher.test(this);
+            // under a cap, which needs every match counted as it goes. The view is not
+            // positioned then: it was not refreshed for this batch.
+            boolean matched = currentRowsAlwaysMatch || matchesAt(rowIndex);
             tally.record(matched);
             if (matched) {
                 pendingRowIndex = rowIndex;
                 return true;
             }
         }
+    }
+
+    private boolean matchesAt(int row) {
+        predicateView.setRecord(row);
+        return activeMatcher.test(predicateView);
     }
 
     @Override
@@ -847,16 +861,17 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     @Override
     public int getFieldCount() {
-        return exposedColumnCount;
+        return payload.getProjectedColumnCount();
     }
 
     @Override
     public String getFieldName(int index) {
-        if (index < 0 || index >= exposedColumnCount) {
+        int payloadColumnCount = payload.getProjectedColumnCount();
+        if (index < 0 || index >= payloadColumnCount) {
             throw new IndexOutOfBoundsException(prefix() + "Field index " + index
-                    + " is out of bounds for a projection of " + exposedColumnCount + " columns");
+                    + " is out of bounds for a projection of " + payloadColumnCount + " columns");
         }
-        int originalIndex = projectedSchema.toOriginalIndex(index);
+        int originalIndex = payload.toOriginalIndex(index);
         return fileSchema.getColumn(originalIndex).name();
     }
 
@@ -903,8 +918,11 @@ public final class FlatRowReader implements FileAwareRowReader {
                 exhausted = true;
                 return false;
             }
-            flatValueArrays[i] = batch.values;
-            flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
+            // The payload columns lead the decoded ones and are all the accessors reach.
+            if (i < flatValueArrays.length) {
+                flatValueArrays[i] = batch.values;
+                flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
+            }
             previousBatches[i] = batch;
             if (i == 0) {
                 batchSize = batch.recordCount;
@@ -918,6 +936,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                 activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
                         ? null : recordMatcher;
             }
+        }
+        if (predicateView != null && !currentRowsAlwaysMatch) {
+            predicateView.refresh(previousBatches, null, currentFileName);
         }
         rowIndex = -1;
         if (matchMerger != null) {

@@ -7,20 +7,10 @@
  */
 package dev.hardwood.reader;
 
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
-import dev.hardwood.Validity;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
@@ -28,23 +18,13 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BatchMatchMerger;
-import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.NestedBatchDataView;
-import dev.hardwood.internal.reader.NestedLevelComputer;
+import dev.hardwood.internal.reader.PredicateView;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.row.PqInterval;
-import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqMap;
-import dev.hardwood.row.PqStruct;
-import dev.hardwood.row.PqVariant;
-import dev.hardwood.row.StructAccessor;
-import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// Computes the per-batch **record selection** that makes a column-reader
-/// filter exact (#624). Given the already-decoded batches of an augmented
+/// filter exact (#624). Given the already-decoded batches of the decoded
 /// projection (payload columns plus the predicate columns), it produces the
 /// ascending indices of the records that satisfy the predicate, which the
 /// [ColumnScan] then uses to compact each payload column.
@@ -59,8 +39,8 @@ import dev.hardwood.schema.FileSchema;
 ///   worker threads to have run them already.
 /// - **Record matcher** — otherwise (nested paths, float16, geospatial,
 ///   unsupported operators) the compiled [RowMatcher] is evaluated per record over a
-///   batch-backed [StructAccessor] view of the predicate columns, giving full
-///   parity with the row reader's filtered result.
+///   [PredicateView] of the predicate columns — the accessor the row readers
+///   evaluate the same matcher against.
 final class SelectionEngine {
 
     // Drain-side backend (null when the record-matcher backend is used).
@@ -79,7 +59,11 @@ final class SelectionEngine {
 
     // Record-matcher backend (null when the drain-side backend is used).
     private final RowMatcher rowMatcher;
-    private final PredicateRowView predicateView;
+    private final PredicateView predicateView;
+    /// The batches [#predicateView] reads, indexed by projected column index and
+    /// refreshed per evaluated batch. `null` on the drain-side backend.
+    private final BatchExchange.Batch[] flatBatches;
+    private final NestedBatch[] nestedBatches;
 
     /// Reusable buffer holding the matching record indices of the current batch
     /// in `[0, count)`. Owned by the engine and overwritten every batch, so the
@@ -89,26 +73,28 @@ final class SelectionEngine {
 
     private SelectionEngine(BatchMatchMerger merger, int columnCount,
                             ColumnCursor[] cursorsByProjectedIndex,
-                            RowMatcher rowMatcher, PredicateRowView predicateView, int[] selection) {
+                            RowMatcher rowMatcher, PredicateView predicateView, int[] selection) {
         this.merger = merger;
         this.stagedBatches = merger != null ? new BatchExchange.Batch[columnCount] : null;
         this.stagedColumns = merger != null ? merger.referencedColumns() : null;
         this.cursorsByProjectedIndex = cursorsByProjectedIndex;
         this.rowMatcher = rowMatcher;
         this.predicateView = predicateView;
+        this.flatBatches = predicateView != null ? new BatchExchange.Batch[columnCount] : null;
+        this.nestedBatches = predicateView != null ? new NestedBatch[columnCount] : null;
         this.selection = selection;
     }
 
-    /// Builds an engine for `resolved` over the augmented projection, reading
-    /// predicate values from the current batches of `cursorsByProjectedIndex` (indexed by the
-    /// augmented projected column index).
-    static SelectionEngine create(FileSchema schema, ProjectedSchema augProjected,
+    /// Builds an engine for `resolved` over the decoded projection, reading
+    /// predicate values from the current batches of `cursorsByProjectedIndex` (indexed
+    /// by the decoded column index).
+    static SelectionEngine create(FileSchema schema, ProjectedSchema decoded,
                                   ResolvedPredicate resolved,
                                   ColumnCursor[] cursorsByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, augProjected::toProjectedIndex);
+                resolved, schema, decoded::toProjectedIndex);
 
         if (compiled != null) {
             // Owning mode: no column workers ran the matchers, so the merger runs
@@ -119,12 +105,12 @@ final class SelectionEngine {
                     cursorsByProjectedIndex, null, null, selection);
         }
 
-        // Record-matcher backend. Name-keyed compilation (no indexed-leaf
-        // callback) so the matcher navigates the batch view purely by field
-        // name, which works uniformly for flat and nested predicate columns.
-        RowMatcher matcher = RecordFilterCompiler.compile(resolved, schema);
-        PredicateRowView view = PredicateRowView.create(
-                schema, augProjected, resolved, cursorsByProjectedIndex);
+        // Record-matcher backend, over a view of the predicate columns' batches. The
+        // nested batches of the filtered path arrive without element validity, which
+        // the view derives from their definition levels.
+        PredicateView view = PredicateView.create(schema, decoded, resolved,
+                p -> cursorsByProjectedIndex[p].isNested(), true);
+        RowMatcher matcher = RecordFilterCompiler.compile(resolved, schema, view::indexOf);
         return new SelectionEngine(null, cursorsByProjectedIndex.length,
                 cursorsByProjectedIndex, matcher, view, selection);
     }
@@ -154,7 +140,16 @@ final class SelectionEngine {
     }
 
     private int computeRecordMatcher(int recordCount) {
-        predicateView.refresh();
+        for (int p = 0; p < cursorsByProjectedIndex.length; p++) {
+            ColumnCursor cursor = cursorsByProjectedIndex[p];
+            if (cursor.isNested()) {
+                nestedBatches[p] = cursor.nestedBatch();
+            }
+            else {
+                flatBatches[p] = cursor.flatBatch();
+            }
+        }
+        predicateView.refresh(flatBatches, nestedBatches, cursorsByProjectedIndex[0].fileName());
         int count = 0;
         for (int r = 0; r < recordCount; r++) {
             predicateView.setRecord(r);
@@ -180,246 +175,13 @@ final class SelectionEngine {
     // ==================== Predicate column discovery ====================
 
     /// File leaf-column paths referenced by `resolved`, in first-seen order.
-    /// Used to augment the projection so the predicate columns are decoded.
+    /// Used to extend the decoded projection so the predicate columns are decoded.
     static List<String> predicateColumnPaths(ResolvedPredicate resolved, FileSchema schema) {
-        Set<Integer> indices = new LinkedHashSet<>();
-        collectColumnIndices(resolved, indices);
+        Set<Integer> indices = PredicateView.predicateColumns(resolved);
         List<String> paths = new ArrayList<>(indices.size());
         for (int columnIndex : indices) {
             paths.add(schema.getColumn(columnIndex).fieldPath().toString());
         }
         return paths;
-    }
-
-    private static void collectColumnIndices(ResolvedPredicate p, Set<Integer> out) {
-        switch (p) {
-            case ResolvedPredicate.And a -> a.children().forEach(c -> collectColumnIndices(c, out));
-            case ResolvedPredicate.Or o -> o.children().forEach(c -> collectColumnIndices(c, out));
-            default -> out.add(leafColumnIndex(p));
-        }
-    }
-
-    /// The column one leaf reads, as [ResolvedPredicate#leafColumnIndex] resolves it. `And` and
-    /// `Or` never reach here — [#collectColumnIndices] peels them off first — so the `-1` that
-    /// marks them is a compiler that grew a case this method did not.
-    private static int leafColumnIndex(ResolvedPredicate p) {
-        int columnIndex = ResolvedPredicate.leafColumnIndex(p);
-        if (columnIndex < 0) {
-            throw new IllegalStateException(p.getClass().getSimpleName() + " is not a leaf");
-        }
-        return columnIndex;
-    }
-
-    // ==================== Batch-backed predicate accessor ====================
-
-    /// A [StructAccessor] over the current (pre-selection) predicate-column
-    /// batches, positioned at one record. Flat predicate columns are served
-    /// from their typed arrays; nested predicate columns are served through a
-    /// [NestedBatchDataView] so `getStruct(...)` navigation works exactly as in
-    /// the nested row reader. Only the accessor methods the compiled
-    /// [RowMatcher] actually calls are implemented; the rest throw.
-    private static final class PredicateRowView implements StructAccessor {
-
-        private final Map<String, FlatField> flatByName;
-        private final NestedBatchDataView nestedView;
-        private final ColumnCursor[] nestedCursors;
-        private final ColumnSchema[] nestedColumnSchemas;
-        private final NestedBatch[] nestedBatches;
-        private int record;
-
-        /// A flat predicate column with its backing array and validity resolved
-        /// once per batch (in [PredicateRowView#refresh()]), so the per-record
-        /// accessors are a direct array index rather than a fresh `getXxx()`
-        /// dispatch + cast each call.
-        private static final class FlatField {
-            final ColumnCursor cursor;
-            Object values;
-            Validity validity;
-
-            FlatField(ColumnCursor cursor) {
-                this.cursor = cursor;
-            }
-
-            void refresh() {
-                BatchExchange.Batch batch = cursor.flatBatch();
-                values = batch.values;
-                validity = Validity.of(batch.validity);
-            }
-        }
-
-        private PredicateRowView(Map<String, FlatField> flatByName,
-                                 NestedBatchDataView nestedView,
-                                 ColumnCursor[] nestedCursors,
-                                 ColumnSchema[] nestedColumnSchemas) {
-            this.flatByName = flatByName;
-            this.nestedView = nestedView;
-            this.nestedCursors = nestedCursors;
-            this.nestedColumnSchemas = nestedColumnSchemas;
-            this.nestedBatches = nestedCursors != null ? new NestedBatch[nestedCursors.length] : null;
-        }
-
-        static PredicateRowView create(FileSchema schema, ProjectedSchema augProjected,
-                                       ResolvedPredicate resolved,
-                                       ColumnCursor[] cursorsByProjectedIndex) {
-            Set<Integer> indices = new LinkedHashSet<>();
-            collectColumnIndices(resolved, indices);
-
-            Map<String, FlatField> flatByName = new LinkedHashMap<>();
-            List<String> nestedPaths = new ArrayList<>();
-            for (int columnIndex : indices) {
-                ColumnCursor cursor = cursorsByProjectedIndex[augProjected.toProjectedIndex(columnIndex)];
-                if (cursor.isNested()) {
-                    nestedPaths.add(schema.getColumn(columnIndex).fieldPath().toString());
-                }
-                else {
-                    flatByName.put(schema.getColumn(columnIndex).name(), new FlatField(cursor));
-                }
-            }
-
-            if (nestedPaths.isEmpty()) {
-                return new PredicateRowView(flatByName, null, null, null);
-            }
-            ProjectedSchema nestedProjected = ProjectedSchema.create(
-                    schema, ColumnProjection.columns(nestedPaths.toArray(new String[0])));
-            int q = nestedProjected.getProjectedColumnCount();
-            ColumnCursor[] nestedCursors = new ColumnCursor[q];
-            ColumnSchema[] nestedColumnSchemas = new ColumnSchema[q];
-            for (int j = 0; j < q; j++) {
-                int originalIndex = nestedProjected.toOriginalIndex(j);
-                nestedColumnSchemas[j] = schema.getColumn(originalIndex);
-                nestedCursors[j] = cursorsByProjectedIndex[augProjected.toProjectedIndex(originalIndex)];
-            }
-            NestedBatchDataView view = new NestedBatchDataView(schema, nestedProjected);
-            return new PredicateRowView(flatByName, view, nestedCursors, nestedColumnSchemas);
-        }
-
-        /// Re-points the nested view and resolves each flat field's backing
-        /// array + validity for the current batch. Called once per batch before
-        /// per-record evaluation, so the per-record accessors avoid repeated
-        /// lookups and `getXxx()` dispatch.
-        ///
-        /// The filtered read path publishes nested batches without the leaf
-        /// validity the view reads nulls from, so it is derived here from the
-        /// definition levels. Without it, a leaf that is null under a present
-        /// struct reads as a value.
-        void refresh() {
-            for (FlatField field : flatByName.values()) {
-                field.refresh();
-            }
-            if (nestedView != null) {
-                for (int j = 0; j < nestedCursors.length; j++) {
-                    NestedBatch batch = nestedCursors[j].nestedBatch();
-                    batch.elementValidity = NestedLevelComputer.computeElementValidity(
-                            batch.definitionLevels, batch.valueCount, nestedColumnSchemas[j].maxDefinitionLevel());
-                    nestedBatches[j] = batch;
-                }
-                nestedView.setBatchData(nestedBatches, nestedColumnSchemas, nestedBatches[0].fileName);
-            }
-        }
-
-        void setRecord(int record) {
-            this.record = record;
-            if (nestedView != null) {
-                nestedView.setRowIndex(record);
-            }
-        }
-
-        private FlatField flat(String name) {
-            FlatField field = flatByName.get(name);
-            if (field == null) {
-                throw new IllegalStateException("No flat predicate column named '" + name + "'");
-            }
-            return field;
-        }
-
-        @Override public boolean isNull(String name) {
-            FlatField field = flatByName.get(name);
-            if (field != null) {
-                return field.validity.isNull(record);
-            }
-            return nestedView.isNull(name);
-        }
-
-        @Override public int getInt(String name) {
-            return ((int[]) flat(name).values)[record];
-        }
-
-        @Override public long getLong(String name) {
-            return ((long[]) flat(name).values)[record];
-        }
-
-        @Override public float getFloat(String name) {
-            Object values = flat(name).values;
-            // A FLOAT16 column is held as two-byte binary values, read as the half they encode.
-            return values instanceof float[] floats
-                    ? floats[record]
-                    : ((BinaryBatchValues) values).float16At(record);
-        }
-
-        @Override public double getDouble(String name) {
-            return ((double[]) flat(name).values)[record];
-        }
-
-        @Override public boolean getBoolean(String name) {
-            return ((boolean[]) flat(name).values)[record];
-        }
-
-        @Override public byte[] getBinary(String name) {
-            return ((BinaryBatchValues) flat(name).values).byteArrayAt(record);
-        }
-
-        @Override public PqStruct getStruct(String name) {
-            if (nestedView == null) {
-                throw new UnsupportedOperationException(
-                        "Nested-path predicate on a non-nullable struct path is not supported"
-                                + " for column readers; column '" + name + "' did not decode as nested");
-            }
-            return nestedView.getStruct(name);
-        }
-
-        // ---- Methods never invoked by the compiled RowMatcher for supported predicates ----
-
-        private static UnsupportedOperationException unsupported() {
-            return new UnsupportedOperationException(
-                    "Accessor not supported during predicate evaluation");
-        }
-
-        @Override public String getString(String name) { throw unsupported(); }
-        @Override public LocalDate getDate(String name) { throw unsupported(); }
-        @Override public LocalTime getTime(String name) { throw unsupported(); }
-        @Override public Instant getTimestamp(String name) { throw unsupported(); }
-        @Override public LocalDateTime getLocalTimestamp(String name) { throw unsupported(); }
-        @Override public BigDecimal getDecimal(String name) { throw unsupported(); }
-        @Override public UUID getUuid(String name) { throw unsupported(); }
-        @Override public PqInterval getInterval(String name) { throw unsupported(); }
-        @Override public Object getValue(String name) { throw unsupported(); }
-        @Override public Object getRawValue(String name) { throw unsupported(); }
-        @Override public PqList getList(String name) { throw unsupported(); }
-        @Override public PqMap getMap(String name) { throw unsupported(); }
-        @Override public PqVariant getVariant(String name) { throw unsupported(); }
-        @Override public int getFieldCount() { throw unsupported(); }
-        @Override public String getFieldName(int index) { throw unsupported(); }
-
-        @Override public boolean isNull(int fieldIndex) { throw unsupported(); }
-        @Override public int getInt(int fieldIndex) { throw unsupported(); }
-        @Override public long getLong(int fieldIndex) { throw unsupported(); }
-        @Override public float getFloat(int fieldIndex) { throw unsupported(); }
-        @Override public double getDouble(int fieldIndex) { throw unsupported(); }
-        @Override public boolean getBoolean(int fieldIndex) { throw unsupported(); }
-        @Override public String getString(int fieldIndex) { throw unsupported(); }
-        @Override public byte[] getBinary(int fieldIndex) { throw unsupported(); }
-        @Override public LocalDate getDate(int fieldIndex) { throw unsupported(); }
-        @Override public LocalTime getTime(int fieldIndex) { throw unsupported(); }
-        @Override public Instant getTimestamp(int fieldIndex) { throw unsupported(); }
-        @Override public LocalDateTime getLocalTimestamp(int fieldIndex) { throw unsupported(); }
-        @Override public BigDecimal getDecimal(int fieldIndex) { throw unsupported(); }
-        @Override public UUID getUuid(int fieldIndex) { throw unsupported(); }
-        @Override public PqInterval getInterval(int fieldIndex) { throw unsupported(); }
-        @Override public PqVariant getVariant(int fieldIndex) { throw unsupported(); }
-        @Override public PqStruct getStruct(int fieldIndex) { throw unsupported(); }
-        @Override public PqList getList(int fieldIndex) { throw unsupported(); }
-        @Override public PqMap getMap(int fieldIndex) { throw unsupported(); }
-        @Override public Object getValue(int fieldIndex) { throw unsupported(); }
-        @Override public Object getRawValue(int fieldIndex) { throw unsupported(); }
     }
 }

@@ -26,6 +26,7 @@ import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
@@ -466,7 +467,8 @@ public class ParquetFileReader implements Closeable {
             iterator.setTailSkip(skip);
         }
 
-        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, null, 0, subset);
+        RowReader reader = createRowReader(iterator, schema, ReadProjection.of(projectedSchema), context, null, 0,
+                subset);
 
         if (!fastSkip) {
             // Fallback: at least one projected column closes the per-page
@@ -517,14 +519,14 @@ public class ParquetFileReader implements Closeable {
         // The predicate's columns are decoded whether or not the caller projected them, so a
         // filter reaches a column the read does not expose. See
         // `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
-        ProjectedSchema projectedSchema = resolved == null
-                ? ProjectedSchema.create(schema, projection, true)
-                : ProjectedSchema.createAugmented(schema, projection,
+        ReadProjection readProjection = resolved == null
+                ? ReadProjection.of(ProjectedSchema.create(schema, projection, true))
+                : ReadProjection.withPredicateColumns(schema, projection,
                         SelectionEngine.predicateColumnPaths(resolved, schema), true);
 
         RowGroupIterator iterator = trackedIterator(maxRows, tailSkip, physicalSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
-        iterator.initialize(projectedSchema, resolved, metadataFilteringEnabled);
+        iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
 
         // Physical-skip residue: the iterator has seeked to the row group the offset
         // lands in and exposes the leading rows of that group still to be dropped. The
@@ -533,7 +535,7 @@ public class ParquetFileReader implements Closeable {
         // discard a no-op — for non-skip reads and for the filtered (logical) skip path.
         long firstRowGroupSkip = iterator.firstRowGroupSkip();
         long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, firstRowGroupSkip);
-        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, resolved, readerMaxRows,
+        RowReader reader = createRowReader(iterator, schema, readProjection, context, resolved, readerMaxRows,
                 firstFileRowGroups);
         return discardLeadingRows(reader, firstRowGroupSkip);
     }
@@ -547,7 +549,7 @@ public class ParquetFileReader implements Closeable {
     ///
     /// @param rowGroupIterator initialized iterator over row groups
     /// @param schema file schema
-    /// @param projectedSchema column projection
+    /// @param projection the exposed and decoded columns
     /// @param context hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited)
@@ -555,20 +557,20 @@ public class ParquetFileReader implements Closeable {
     ///        fan-out and the bound on the rows the read can produce
     private RowReader createRowReader (RowGroupIterator rowGroupIterator,
                             FileSchema schema,
-                            ProjectedSchema projectedSchema,
+                            ReadProjection projection,
                             HardwoodContextImpl context,
                             ResolvedPredicate filter,
                             long maxRows,
                             List<RowGroup> rowGroups) throws IOException {
         // Both paths size their batches through the one funnel the column readers use, so a
         // projection sizes the same whichever reader reads it.
-        int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projectedSchema, rowGroups);
+        int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
         if (schema.isFlatSchema()) {
-            return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows,
+            return FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows,
                     batchSize);
         }
         else {
-            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled,
+            return NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
                     filter, maxRows, batchSize);
         }
     }
@@ -627,8 +629,8 @@ public class ParquetFileReader implements Closeable {
             if (iterator.workItemAt(0) == null) {
                 return new ColumnReaders(ColumnScan.empty(iterator), schema, projected);
             }
-            ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema, projected,
-                    null, resolveBatchSize(batchSize, projected, rowGroups));
+            ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema,
+                    ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups));
             return new ColumnReaders(scan, schema, projected);
         }
 
@@ -637,11 +639,11 @@ public class ParquetFileReader implements Closeable {
         // stay row-aligned regardless of per-column page-skip capability), then
         // compact each exposed column to the matching records per batch.
         // `false`: the columnar paths read individual leaves, so the projection stays literal.
-        ProjectedSchema augmented = ProjectedSchema.createAugmented(schema, projection,
+        ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, projection,
                 SelectionEngine.predicateColumnPaths(resolved, schema), false);
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
-        ProjectedSchema augProjected = iterator.initialize(augmented, resolved, metadataFilteringEnabled);
+        ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
         // Statistics/bloom pruning dropped every row group — no record can match.
         // Skip building the cursors (worker threads + ~batch-sized buffers) and the
         // selection engine entirely: the scan has no cursors and is exhausted from
@@ -649,13 +651,13 @@ public class ParquetFileReader implements Closeable {
         // releases the fetch plans and the parent's tracking entry.
         // Asked of the first work item, so a read that has one plans no further.
         if (iterator.workItemAt(0) == null) {
-            return new ColumnReaders(ColumnScan.empty(iterator), schema, augProjected);
+            return new ColumnReaders(ColumnScan.empty(iterator), schema, readProjection.payload());
         }
-        // Size against the augmented projection — the predicate columns allocate
+        // Size against the decoded columns — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
-        ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema, augProjected,
-                resolved, resolveBatchSize(batchSize, augProjected, rowGroups));
-        return new ColumnReaders(scan, schema, augProjected);
+        ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema, readProjection,
+                resolved, resolveBatchSize(batchSize, decoded, rowGroups));
+        return new ColumnReaders(scan, schema, readProjection.payload());
     }
 
     /// Resolves a requested batch size to a concrete record count. A positive

@@ -37,6 +37,7 @@ import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource
 import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageFilterEvent;
@@ -97,7 +98,9 @@ public class RowGroupIterator implements Closeable {
 
     // Set after first file
     private FileSchema referenceSchema;
-    private ProjectedSchema projectedSchema;
+    /// The columns the read exposes and decodes; `null` until [#initialize]. Every plan spans
+    /// its decoded columns.
+    private ReadProjection projection;
     private ResolvedPredicate filterPredicate;
     /// Planning state, carried between files because a file is planned when the
     /// read reaches it rather than all at once.
@@ -342,6 +345,7 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Applies a pre-built projected schema and optional filter, builds the full work list.
+    /// Every projected column is exposed.
     ///
     /// @param projected pre-built projected schema
     /// @param filter resolved predicate, or `null` for no filtering
@@ -351,11 +355,25 @@ public class RowGroupIterator implements Closeable {
     /// @return the projected schema (same as input)
     public ProjectedSchema initialize(ProjectedSchema projected, ResolvedPredicate filter,
                                       boolean metadataFilteringEnabled) throws IOException {
+        return initialize(ReadProjection.of(projected), filter, metadataFilteringEnabled);
+    }
+
+    /// Applies a read projection and optional filter, builds the full work list. The
+    /// iterator plans [ReadProjection#decoded()], and knows which of its columns are
+    /// filter-only.
+    ///
+    /// @param projection the exposed and decoded columns
+    /// @param filter resolved predicate, or `null` for no filtering
+    /// @param metadataFilteringEnabled as for [#initialize(ProjectedSchema, ResolvedPredicate, boolean)]
+    /// @return the decoded projection
+    public ProjectedSchema initialize(ReadProjection projection, ResolvedPredicate filter,
+                                      boolean metadataFilteringEnabled) throws IOException {
         if (referenceSchema == null) {
             throw new IllegalStateException("openFirst() must be called before initialize()");
         }
+        ProjectedSchema projected = projection.decoded();
         this.metadataFilteringEnabled = metadataFilteringEnabled;
-        this.projectedSchema = projected;
+        this.projection = projection;
         this.filterPredicate = filter;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
@@ -369,7 +387,7 @@ public class RowGroupIterator implements Closeable {
         planSkipRemaining = physicalSkip;
         nextFileToPlan = 0;
 
-        return projectedSchema;
+        return projected;
     }
 
     /// Returns the ordered work list of (file, rowGroup) pairs.
@@ -382,7 +400,7 @@ public class RowGroupIterator implements Closeable {
 
     /// Returns the projected schema.
     public ProjectedSchema projectedSchema() {
-        return projectedSchema;
+        return projection != null ? projection.decoded() : null;
     }
 
     /// Returns the reference schema (from the first file).
@@ -449,7 +467,7 @@ public class RowGroupIterator implements Closeable {
                 }
 
                 MaskCapability maskCapability = masksApplicableForRowGroup(
-                        projectedSchema, workItem.rowGroup(), workItem.fileSchema(),
+                        projection.decoded(), workItem.rowGroup(), workItem.fileSchema(),
                         workItem.columnOrdinals(), workItem.inputFile())
                         ? MaskCapability.YES : MaskCapability.NO;
 
@@ -689,7 +707,7 @@ public class RowGroupIterator implements Closeable {
 
     private FetchPlan[] computeFetchPlans(WorkItem workItem) throws IOException {
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
-        int projectedCount = projectedSchema.getProjectedColumnCount();
+        int projectedCount = projection.decoded().getProjectedColumnCount();
         if (shared.droppedByDictionary()) {
             FetchPlan[] empty = new FetchPlan[projectedCount];
             Arrays.fill(empty, FetchPlan.EMPTY);
@@ -739,7 +757,7 @@ public class RowGroupIterator implements Closeable {
         FetchPlan[] plans = new FetchPlan[projectedCount];
 
         for (int projCol = 0; projCol < projectedCount; projCol++) {
-            int originalIndex = projectedSchema.toOriginalIndex(projCol);
+            int originalIndex = projection.decoded().toOriginalIndex(projCol);
             int fileOrdinal = workItem.columnOrdinals().fileOrdinal(originalIndex);
             ColumnChunk columnChunk = rowGroup.columns().get(fileOrdinal);
             ColumnSchema columnSchema = workItem.fileSchema().getColumn(fileOrdinal);
@@ -1286,7 +1304,7 @@ public class RowGroupIterator implements Closeable {
             }
 
             workItemRefCounts.put(workItems.size(),
-                    new AtomicInteger(projectedSchema.getProjectedColumnCount()));
+                    new AtomicInteger(projection.decoded().getProjectedColumnCount()));
             workItems.add(new WorkItem(
                     prepared.inputFile(),
                     rg,

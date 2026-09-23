@@ -104,12 +104,12 @@ mode is the only thing the two readers do differently at the merge.
 predicate paths, geospatial, unsupported `(type, op)`, or a column read by two
 independent subtrees — the engine
 evaluates the compiled `RowMatcher` (`RecordFilterCompiler`) per record over a
-**batch-backed `StructAccessor`** view of the aligned predicate-column batches,
-setting one selection bit per matching record. Flat predicate columns are served
-directly from their typed arrays; nested predicate columns are served through the
-nested record-navigation logic over their `NestedBatch`. This reuses the row
-reader's predicate evaluation wholesale, so the fallback covers every shape the
-`RowReader` does — no second predicate evaluator.
+`PredicateView` of the aligned predicate-column batches, setting one selection bit
+per matching record. Flat predicate columns are served directly from their typed
+arrays; nested predicate columns are served through the nested record-navigation
+logic over their `NestedBatch`. The row readers evaluate the same matcher against
+the same view, so the fallback covers every shape the `RowReader` does — no second
+predicate evaluator.
 
 Both backends emit the same selection representation (the set bits, plus a
 matching-record index map derived from them); downstream compaction is
@@ -155,10 +155,11 @@ issue accepts for now. Sharing the computed selection across sibling readers on
 the owning `ParquetFileReader` is the #74 / #70 follow-up; it is a pure
 optimization and does not change results.
 
-**Augmented-projection indexing.** Column ordering in the augmented projected
-schema and the `toProjectedIndex` mapping handed to `BatchFilterCompiler` and the
-fallback adapter must stay consistent, so the predicate fragments and the
-record-navigation view address the same columns the workers fill.
+**Augmented-projection indexing.** The augmented projection is
+`ReadProjection#decoded()`. Its column ordering and the `toProjectedIndex` mapping
+handed to `BatchFilterCompiler` and the `PredicateView` must stay consistent, so the
+predicate fragments and the record-navigation view address the same columns the
+workers fill.
 
 ## Testing
 

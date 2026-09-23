@@ -267,3 +267,10 @@ unit records a `nan_count` of zero. `eq`, `lt` and `ltEq` against a number, and 
 | `ColumnProjection.columns("id", "name")` | Read specific columns by name |
 | `ColumnProjection.columns("address")` | Select an entire struct and all its children |
 | `ColumnProjection.columns("address.city")` | Select a specific nested field (dot notation) |
+
+A `RowReader`'s accessors reach the projected columns only. A filter column outside the projection is decoded where the filter needs its values and is not readable through the row:
+
+| Access | Raises |
+|---|---|
+| By name, on the row or on a `PqStruct` | `IllegalArgumentException` |
+| By index at or past `getFieldCount()`, on the row or on a `PqStruct` | `IndexOutOfBoundsException` |

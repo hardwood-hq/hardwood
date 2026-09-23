@@ -298,7 +298,7 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public int getFieldCount() {
-        return desc.exposedChildren().length;
+        return desc.children().length;
     }
 
     @Override
@@ -306,16 +306,14 @@ final class PqStructImpl implements PqStruct {
         return childAt(index).name();
     }
 
-    /// Resolves a field index against the children the struct exposes. A struct decodes a
-    /// child the caller did not project when a predicate reaches a leaf below it; that child
-    /// is resolvable by name and is not addressable by index.
+    /// Resolves a field index against the struct's projected children.
     private TopLevelFieldMap.FieldDesc childAt(int fieldIndex) {
-        int[] exposed = desc.exposedChildren();
-        if (fieldIndex < 0 || fieldIndex >= exposed.length) {
+        TopLevelFieldMap.FieldDesc[] children = desc.children();
+        if (fieldIndex < 0 || fieldIndex >= children.length) {
             throw new IndexOutOfBoundsException("Field index " + fieldIndex
-                    + " is out of bounds for a struct of " + exposed.length + " fields");
+                    + " is out of bounds for a struct of " + children.length + " fields");
         }
-        return desc.children()[exposed[fieldIndex]];
+        return children[fieldIndex];
     }
 
     // ==================== Primitive Read Helpers ====================
