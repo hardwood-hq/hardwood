@@ -74,7 +74,7 @@ reference is needed for that: the record knows its own page count from `nullPage
 concatenation holds `maxLevel + 1` entries per page, so the stride is
 `histograms.length / getPageCount()` and the column's maximum level follows from the two
 lengths. A length that is not a whole number of pages has no stride describing it and
-raises `IllegalStateException`; an absent histogram stays `null`, as it is on the
+raises a `ParquetReadException`; an absent histogram stays `null`, as it is on the
 whole-chunk accessor.
 
 The slice is a copy. The whole-chunk accessors hand out the array the file was read into,

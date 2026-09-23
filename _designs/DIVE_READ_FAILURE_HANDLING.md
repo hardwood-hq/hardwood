@@ -38,8 +38,10 @@ into it.
   dictionary index past its dictionary is an `ArrayIndexOutOfBoundsException`,
   an impossible RLE run header an `IllegalStateException`, a length that will
   not fit an `ArithmeticException` — and the four regions below are parsed
-  outside the read pipeline, so nothing narrows that set to
-  `ParquetReadException` on the way here. An enumeration would have to be
+  outside the read pipeline, so the pipeline's classification never narrows the
+  set on the way here: the value guards those regions call directly raise
+  `ParquetReadException` themselves, while the raw decoder shapes above still
+  arrive as themselves. An enumeration would have to be
   revisited every time a decoder learns a new way to fail, and the promise this
   guard exists to make is that no file ends the session. The price is that a
   defect of ours in a render path is reported as a read failure.
