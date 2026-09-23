@@ -33,6 +33,11 @@ worker and applies the routing rule: a column whose schema chain contributes a `
 `REPEATED` layer, or that repeats, decodes through `NestedColumnWorker`; every other column
 through `FlatColumnWorker`.
 
+A cursor's exchange is detaching: every batch it hands out is fresh, since a caller may keep the
+arrays a `ColumnReader` returns. The exception is a flat filter-only column's cursor, whose batches
+never reach the caller: it draws them from a recycling exchange and hands each back on its next
+`advance()` (see [FILTER_ONLY_COLUMN_SKIP.md](FILTER_ONLY_COLUMN_SKIP.md)).
+
 ## Scan
 
 `ColumnScan` (package-private in `dev.hardwood.reader`) owns:

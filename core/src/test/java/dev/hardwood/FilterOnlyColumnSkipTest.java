@@ -349,6 +349,36 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     }
 
     @Test
+    void columnReadersRecycleTheFilterOnlyColumnsBatches() throws Exception {
+        // 64-row batches cycle the filter-only column's batch pool many times over. With the
+        // `IN` list every row group is evaluated, so each reused batch must hold its own values.
+        List<String> scattered = readLabels(FilterPredicate.in("id", 3L, 700L, 1001L, 1234L, 1999L, 2500L, 2999L));
+        assertThat(scattered).containsExactly(
+                label(3), label(700), label(1001), label(1234), label(1999), label(2500), label(2999));
+
+        // Here the filter-only column is not read in the first row group, so its cursor keeps
+        // one batch across the proven steps before the second row group's cycle the pool.
+        assertThat(readLabels(FilterPredicate.lt("id", THRESHOLD))).isEqualTo(expectedLabels(THRESHOLD));
+    }
+
+    private List<String> readLabels(FilterPredicate filter) throws IOException {
+        List<String> labels = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("label"))
+                     .filter(filter)
+                     .batchSize(64)
+                     .build()) {
+            while (columns.nextBatch()) {
+                String[] values = columns.getColumnReader("label").getStrings();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    labels.add(values[i]);
+                }
+            }
+        }
+        return labels;
+    }
+
+    @Test
     void nestedColumnReaderSkipsANestedFilterOnlyColumn() throws Exception {
         List<Double> amounts = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
