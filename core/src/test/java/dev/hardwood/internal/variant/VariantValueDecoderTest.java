@@ -331,8 +331,53 @@ class VariantValueDecoderTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Variant array element (858993459) does not fit within its 5-byte buffer "
                          + "(needs 3435973845 bytes)")
-                
+
                 ;
+    }
+
+    @Test
+    void truncatedDecimalPayloadIsAReadFailure() {
+        // PRIM_DECIMAL4/8/16 headers, a scale byte, then only 2 payload bytes: the
+        // fixed-width arms must reject the truncation, not read past the buffer.
+        byte[] decimal4 = { 0x20, 0x02, 0x01, 0x02 };
+        assertThatThrownBy(() -> VariantValueDecoder.asDecimal(decimal4, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 5 bytes at offset 1, buffer length 4");
+        byte[] decimal8 = { 0x24, 0x02, 0x01, 0x02 };
+        assertThatThrownBy(() -> VariantValueDecoder.asDecimal(decimal8, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 9 bytes at offset 1, buffer length 4");
+        byte[] decimal16 = { 0x28, 0x02, 0x01, 0x02 };
+        assertThatThrownBy(() -> VariantValueDecoder.asDecimal(decimal16, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant value buffer truncated: need 17 bytes at offset 1, buffer length 4");
+    }
+
+    @Test
+    void objectElementOffsetPastBufferIsAReadFailure() {
+        // OBJECT header 0x02: 1-byte count, ids and offsets. The single field's
+        // stored offset points far past the buffer, which only the per-element
+        // offset read catches — the count-based table guard passes.
+        byte[] buf = { 0x02, 0x01, 0x00, 0x7F, 0x00 };
+        VariantValueDecoder.ObjectLayout layout = VariantValueDecoder.parseObject(buf, 0);
+
+        assertThatThrownBy(() -> VariantValueDecoder.objectValueOffset(buf, layout, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant object value offset (127) does not fit within its 5-byte buffer "
+                         + "(needs 132 bytes)");
+    }
+
+    @Test
+    void arrayElementOffsetPastBufferIsAReadFailure() {
+        // ARRAY header 0x03: 1-byte count and offsets. The single element's stored
+        // offset points far past the buffer.
+        byte[] buf = { 0x03, 0x01, 0x7F, 0x00 };
+        VariantValueDecoder.ArrayLayout layout = VariantValueDecoder.parseArray(buf, 0);
+
+        assertThatThrownBy(() -> VariantValueDecoder.arrayElementOffset(buf, layout, 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Variant array element offset (127) does not fit within its 4-byte buffer "
+                         + "(needs 131 bytes)");
     }
 
     @Test
