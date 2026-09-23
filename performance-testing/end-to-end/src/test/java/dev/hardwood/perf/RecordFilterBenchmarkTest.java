@@ -78,7 +78,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Run:
 ///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
-///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=5
+///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=10
 class RecordFilterBenchmarkTest {
 
     private static final Path BENCHMARK_FILE = Path.of("target/record_filter_benchmark_with_long_strings.parquet");
@@ -119,7 +119,8 @@ class RecordFilterBenchmarkTest {
     /// Three of the 100 categories — excluding them keeps ~97% of rows.
     private static final String[] NOT_IN_CATEGORIES = {CATEGORIES[7], CATEGORIES[42], CATEGORIES[91]};
     private static final int TOTAL_ROWS = 10_000_000;
-    private static final int DEFAULT_RUNS = 5;
+    private static final int DEFAULT_RUNS = 10;
+    private static final int CATEGORY_EQ_WARMUPS = 3;
 
     private static final String PATH_DRAIN = "(Drain Side filtration)";
     private static final String PATH_CONSUMER = "(Consumer Side Filtration)";
@@ -248,10 +249,6 @@ class RecordFilterBenchmarkTest {
                 FilterPredicate.in("tag", new int[] {1, 5, 10, 25, 50}),
                 runs);
 
-        Run binaryEq = timeFilter(
-                FilterPredicate.eq("category", EQ_CATEGORY),
-                runs);
-
         Run binaryRange = timeFilter(
                 FilterPredicate.lt("category", RANGE_CATEGORY),
                 runs);
@@ -309,6 +306,14 @@ class RecordFilterBenchmarkTest {
                 // Not byte equality: every row compares each member by value, sign-extending first.
                 FilterPredicate.in("amount_var", DECIMAL_IN),
                 runs);
+
+        // Category EQ is the first contender that exercises both the dictionary
+        // wrapper and the short-value equality matcher. Run it last, with
+        // dedicated unmeasured warmups, so class loading and JIT compilation do
+        // not become part of its first measured samples.
+        Run binaryEq = timeFilter(
+                FilterPredicate.eq("category", EQ_CATEGORY),
+                runs, CATEGORY_EQ_WARMUPS);
 
         // ----- Print results ------------------------------------------------
         System.out.println("\nResults:");
@@ -497,10 +502,17 @@ class RecordFilterBenchmarkTest {
     }
 
     private Run timeFilter(FilterPredicate filter, int runs) throws Exception {
+        return timeFilter(filter, runs, 0);
+    }
+
+    private Run timeFilter(FilterPredicate filter, int runs, int warmups) throws Exception {
         // Probe the actual path the reader will take, **outside** the timing loop, so
         // the resolve + tryCompile work is not counted in the numbers.
         ColumnProjection projection = projectionFor(filter);
         String path = probePath(filter, projection);
+        for (int i = 0; i < warmups; i++) {
+            runFilter(filter, projection);
+        }
         long[] times = new long[runs];
         long[] rows = new long[runs];
         for (int i = 0; i < runs; i++) {
@@ -675,6 +687,14 @@ class RecordFilterBenchmarkTest {
         System.out.printf("  %-50s %-26s %10.1f %,15d %,12.0f%n",
                 name + " [AVG]", run.path, avgMs, run.rows[0],
                 run.rows[0] / (avgMs / 1000.0));
+        double medianMs = median(run.times) / 1_000_000.0;
+        long[] sorted = run.times.clone();
+        Arrays.sort(sorted);
+        System.out.printf("  %-50s %-26s %10.1f %,15d %,12.0f%n",
+                name + " [MEDIAN]", run.path, medianMs, run.rows[0],
+                run.rows[0] / (medianMs / 1000.0));
+        System.out.printf("    distribution: min %.1f ms, median %.1f ms, max %.1f ms%n",
+                sorted[0] / 1_000_000.0, medianMs, sorted[sorted.length - 1] / 1_000_000.0);
     }
 
     private static double avg(long[] values) {
@@ -683,5 +703,15 @@ class RecordFilterBenchmarkTest {
             total += v;
         }
         return (double) total / values.length;
+    }
+
+    private static double median(long[] values) {
+        long[] sorted = values.clone();
+        Arrays.sort(sorted);
+        int middle = sorted.length >>> 1;
+        if ((sorted.length & 1) != 0) {
+            return sorted[middle];
+        }
+        return (sorted[middle - 1] + sorted[middle]) / 2.0;
     }
 }
