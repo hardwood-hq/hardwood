@@ -115,6 +115,12 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final PredicateView predicateView;
     private int rowIndex = -1;
     private int batchSize = 0;
+    /// The row count of the current batch while the plain cursor serves it, and `0` while
+    /// a filter does or once the read is exhausted. [#hasNext] and [#next] compare
+    /// against it and nothing else, so the row loop of an unfiltered read, or of a batch
+    /// statistics proved, compiles to a bound check: every per-batch filtering decision
+    /// stays out of line in [#hasNextSlow] and [#nextSlow].
+    private int plainLimit;
     private boolean exhausted;
     private boolean closed;
 
@@ -342,6 +348,15 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     @Override
     public boolean hasNext() throws IOException {
+        if (rowIndex + 1 < plainLimit) {
+            return true;
+        }
+        return hasNextSlow();
+    }
+
+    /// Everything [#hasNext] does past the plain cursor: the end of a batch, and every
+    /// batch a filter serves.
+    private boolean hasNextSlow() throws IOException {
         if (exhausted) {
             return false;
         }
@@ -436,6 +451,15 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     @Override
     public void next() throws IOException {
+        int next = rowIndex + 1;
+        if (next < plainLimit) {
+            rowIndex = next;
+            return;
+        }
+        nextSlow();
+    }
+
+    private void nextSlow() throws IOException {
         // Both filtering modes park the row they picked in `pendingRowIndex`; this only
         // commits it. They differ in how `hasNext` finds the row, not in what `next` does.
         if (activeMerger != null || activeMatcher != null) {
@@ -893,6 +917,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     // ==================== Batch Loading ====================
 
     private boolean loadNextBatch() throws IOException {
+        plainLimit = 0;
         if (exhausted) {
             return false;
         }
@@ -928,6 +953,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             predicateView.refresh(previousBatches, null, currentFileName);
         }
         rowIndex = -1;
+        plainLimit = activeMerger == null && activeMatcher == null ? batchSize : 0;
         if (activeMerger != null) {
             // A proven batch has no filter-only batch to merge, and every row matches.
             combinedWords = currentRowsAlwaysMatch
