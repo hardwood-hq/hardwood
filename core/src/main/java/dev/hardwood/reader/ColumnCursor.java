@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.ColumnWorker;
@@ -101,7 +102,8 @@ final class ColumnCursor {
     /// Takes the next batch from the exchange.
     ///
     /// @return `false` at the end of the stream, and on every call after it
-    /// @throws IOException if the pipeline failed to read or decode the column
+    /// @throws IOException if the pipeline failed to read or decode the column, or
+    ///         [InterruptedIOException] if the thread was interrupted while waiting
     boolean advance() throws IOException {
         if (exhausted) {
             return false;
@@ -129,13 +131,16 @@ final class ColumnCursor {
         return false;
     }
 
-    private static <B> B poll(BatchExchange<B> exchange) throws IOException {
+    private <B> B poll(BatchExchange<B> exchange) throws IOException {
         try {
             return exchange.poll();
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
+            InterruptedIOException interrupted = new InterruptedIOException(
+                    "Interrupted while waiting for the next batch of column '" + column.name() + "'");
+            interrupted.initCause(e);
+            throw interrupted;
         }
     }
 

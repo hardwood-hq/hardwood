@@ -27,9 +27,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// [ParquetFileReader#buildColumnReaders] takes when row-group pruning drops
 /// every row group: it exposes the projected columns as readers over a scan
 /// with no cursors instead of building per-column worker threads, batch
-/// buffers, and (on the filtered path) a selection engine. Both the plain-projection path (dropped by a [RowGroupPredicate])
-/// and the exact-filter path (dropped by statistics) are covered, for flat and
-/// nested columns.
+/// buffers, and (on the filtered path) a selection engine. Both the
+/// plain-projection path (dropped by a [RowGroupPredicate]) and the
+/// exact-filter path (dropped by statistics) are covered, for flat and nested
+/// columns.
 class PrunedToEmptyReadTest {
 
     private static final Path INT_FIXTURE = Paths.get("src/test/resources/filter_pushdown_int.parquet");

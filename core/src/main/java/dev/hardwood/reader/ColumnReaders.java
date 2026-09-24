@@ -24,7 +24,7 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// Use [#nextBatch()] to advance every underlying reader in lockstep — this is
 /// the structurally-safe path for multi-column consumption: a single call drives
-/// every reader, returns false when any is exhausted, and validates that the
+/// every reader, returns false when the readers are exhausted, and validates that the
 /// readers report matching record counts.
 ///
 /// ```java

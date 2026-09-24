@@ -72,8 +72,9 @@ public class ColumnReader implements Closeable {
     private final NestedLevelComputer.Layers layers;
 
     /// The [ColumnScan#generation()] this view last adopted. When it equals the
-    /// scan's, [#nextBatch()] advances the scan; otherwise a sibling already did,
-    /// and this view adopts that step.
+    /// scan's, [#nextBatch()] advances the scan; when it is one behind, a sibling
+    /// already did, and this view adopts that step; further behind, adopting would
+    /// skip a step and is refused.
     private long consumedGeneration;
 
     // Current batch state, adopted from the payload cursor (flat uses
@@ -128,9 +129,9 @@ public class ColumnReader implements Closeable {
     /// readers share one decode pipeline and one batch size. [ColumnReaders#nextBatch()]
     /// advances the whole group in one call. Calling this method on each member in turn also
     /// moves the group once per turn: the first member called advances the group, and each
-    /// other member takes up that same batch. A member called twice before its siblings
-    /// advances the group twice, and the siblings then take up the later batch, skipping the
-    /// one in between.
+    /// other member takes up that same batch. A member that the group has moved on by more
+    /// than one batch since it last took one up would skip a batch, so this method throws
+    /// [IllegalStateException] for it instead.
     ///
     /// @return true if a batch is available, false if exhausted
     /// @throws IOException if the bytes could not be read
@@ -140,11 +141,19 @@ public class ColumnReader implements Closeable {
     ///         checksum fails, values that do not decode under the encoding declared for
     ///         them. In a multi-file read this covers a later file that is not Parquet at
     ///         all, or whose schema cannot be reconciled with the first file's
-    /// @throws IllegalStateException if this reader, or any reader of its group, was closed
+    /// @throws IllegalStateException if this reader, or any reader of its group, was closed, or
+    ///         if the group moved on by more than one batch since this reader last took one up
     public boolean nextBatch() throws IOException {
         scan.requireOpen();
-        if (consumedGeneration == scan.generation()) {
+        long behind = scan.generation() - consumedGeneration;
+        if (behind == 0) {
             scan.advance();
+        }
+        else if (behind > 1) {
+            throw new IllegalStateException(prefix() + "ColumnReader '" + column.name()
+                    + "' would skip " + (behind - 1) + " batch(es): other readers of its group"
+                    + " advanced the group past them. Call nextBatch() on every reader of the"
+                    + " group in turn, or use ColumnReaders.nextBatch()");
         }
         return adoptCurrentStep();
     }
