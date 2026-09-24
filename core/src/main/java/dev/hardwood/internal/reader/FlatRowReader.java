@@ -120,10 +120,15 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     /// Owns the whole per-batch match merge — the plan, the evaluator and its
     /// scratch, the per-column bitmap slots and the combined buffer. Non-null is
-    /// what makes this a drain-side read: [#hasNext] then iterates via
-    /// [#nextSetBit] over [#combinedWords] instead of the plain `rowIndex++`
-    /// cursor. `null` when the read has no drain-side filter.
+    /// what makes this a drain-side read: [#hasNext] then iterates each batch it
+    /// evaluates via [#nextSetBit] over [#combinedWords] instead of the plain
+    /// `rowIndex++` cursor. `null` when the read has no drain-side filter.
     private final BatchMatchMerger matchMerger;
+    /// The merger in force for the batch being served: [#matchMerger], or `null` when
+    /// statistics decided the batch and there is no cap to count matches against. The
+    /// drain-side counterpart of [#activeMatcher]: a proven batch is served by the plain
+    /// cursor rather than walked bit by bit through an all-ones bitmap.
+    private BatchMatchMerger activeMerger;
     /// The current batch's survivor bitmap, as [BatchMatchMerger#merge] returned
     /// it when the batch loaded. Cached in the reader so the per-row
     /// [#nextSetBit] and run walk read the array through one field rather than
@@ -340,7 +345,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (exhausted) {
             return false;
         }
-        if (matchMerger != null) {
+        if (activeMerger != null) {
             if (maxMatchedRows != ColumnWorker.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
                 exhausted = true;
                 return false;
@@ -364,6 +369,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                 if (!loadNextBatch()) {
                     return false;
                 }
+                if (activeMerger == null) {
+                    return true;
+                }
             }
         }
         if (activeMatcher != null) {
@@ -381,6 +389,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     private boolean loadAndDecide() throws IOException {
         if (!loadNextBatch()) {
             return false;
+        }
+        if (activeMerger != null) {
+            return hasNext();
         }
         return activeMatcher == null || hasNextMatching();
     }
@@ -427,7 +438,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     public void next() throws IOException {
         // Both filtering modes park the row they picked in `pendingRowIndex`; this only
         // commits it. They differ in how `hasNext` finds the row, not in what `next` does.
-        if (matchMerger != null || activeMatcher != null) {
+        if (activeMerger != null || activeMatcher != null) {
             if (pendingRowIndex < 0) {
                 throw new NoSuchElementException("No matching row available. Call hasNext() first.");
             }
@@ -905,8 +916,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         // A batch statistics decided, with no cap to count matches against, needs
         // nothing evaluated and nothing counted per row: hand it to the plain cursor
         // and tally it whole.
-        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
-                ? null : recordMatcher;
+        boolean proven = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED;
+        activeMatcher = proven ? null : recordMatcher;
+        activeMerger = proven ? null : matchMerger;
         // A filter-only column is not read in a row group statistics proved, so its
         // exchange holds batches for the evaluated steps alone.
         if (!currentRowsAlwaysMatch && !pollColumns(payloadColumnCount, columnCount)) {
@@ -916,7 +928,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             predicateView.refresh(previousBatches, null, currentFileName);
         }
         rowIndex = -1;
-        if (matchMerger != null) {
+        if (activeMerger != null) {
             // A proven batch has no filter-only batch to merge, and every row matches.
             combinedWords = currentRowsAlwaysMatch
                     ? ALL_MATCHING
@@ -931,7 +943,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Ahead of any record of this batch being counted, so the counts land
             // on the file the batch came from. Batches never straddle files.
             tally.switchFile(currentFileName);
-            if (matchMerger != null) {
+            if (activeMerger != null) {
                 // The whole batch was decided on the drain thread — count it here
                 // rather than as rows are yielded, so an early exit does not leave
                 // the batch reported as all-skipped.
@@ -940,8 +952,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             else if (activeMatcher == null) {
                 // Statistics decided this batch and there is no cap, so no row of it is
                 // evaluated or counted individually: count it whole, for the same reason.
-                // A non-drain-side read with a tally always has a record matcher, so a
-                // null `activeMatcher` here means the proof, never the absence of a filter.
+                // A read with a tally always has a filter, on one side or the other, so
+                // both null here means the proof, never the absence of a filter.
                 tally.recordBatch(batchSize, batchSize);
             }
         }
