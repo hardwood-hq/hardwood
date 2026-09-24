@@ -9,7 +9,6 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.util.function.Supplier;
 
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.ColumnWorker;
@@ -36,9 +35,6 @@ final class ColumnCursor {
     private final BatchExchange<BatchExchange.Batch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
     private final ColumnWorker<?> worker;
-    /// Whether [#flatExchange] recycles its batches, so that this cursor hands each one back
-    /// before taking the next.
-    private final boolean recyclesFlatBatches;
 
     private BatchExchange.Batch flatBatch;
     private NestedBatch nestedBatch;
@@ -46,14 +42,12 @@ final class ColumnCursor {
     private boolean closed;
 
     private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
-                         BatchExchange<NestedBatch> nestedExchange, ColumnWorker<?> worker,
-                         boolean recyclesFlatBatches) {
+                         BatchExchange<NestedBatch> nestedExchange, ColumnWorker<?> worker) {
         this.column = column;
         this.nested = nestedExchange != null;
         this.flatExchange = flatExchange;
         this.nestedExchange = nestedExchange;
         this.worker = worker;
-        this.recyclesFlatBatches = recyclesFlatBatches;
     }
 
     /// Whether a column with `layers` decodes through the nested pipeline: any
@@ -67,19 +61,13 @@ final class ColumnCursor {
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
     /// detached, so every batch the cursor hands out is fresh and never reused.
-    ///
-    /// `recycleFlatBatches` instead gives a flat column a recycling exchange, whose
-    /// batches the cursor hands back on its next [#advance()]; only a cursor whose
-    /// batches never reach the caller, a filter-only column's, may pass `true`. A
-    /// nested column ignores it.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
                                boolean fixedListFastPathEnabled,
                                int projectedColumnIndex,
                                int batchSize,
-                               NestedColumnWorker.IndexMode indexMode,
-                               boolean recycleFlatBatches) {
+                               NestedColumnWorker.IndexMode indexMode) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), column.columnIndex());
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
@@ -96,25 +84,22 @@ final class ColumnCursor {
                     context.decompressorFactory(), context.executor(), 0,
                     layers, indexMode, fixedListFastPathEnabled);
             worker.start();
-            return new ColumnCursor(column, null, exchange, worker, false);
+            return new ColumnCursor(column, null, exchange, worker);
         }
-        Supplier<BatchExchange.Batch> newBatch = () -> {
-            BatchExchange.Batch b = new BatchExchange.Batch();
-            b.values = BatchExchange.allocateArray(column, batchSize);
-            return b;
-        };
-        BatchExchange<BatchExchange.Batch> exchange = recycleFlatBatches
-                ? BatchExchange.recycling(column.name(), newBatch)
-                : BatchExchange.detaching(column.name(), newBatch);
+        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                column.name(), () -> {
+                    BatchExchange.Batch b = new BatchExchange.Batch();
+                    b.values = BatchExchange.allocateArray(column, batchSize);
+                    return b;
+                });
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), 0, null);
         worker.start();
-        return new ColumnCursor(column, exchange, null, worker, recycleFlatBatches);
+        return new ColumnCursor(column, exchange, null, worker);
     }
 
-    /// Takes the next batch from the exchange, first handing the current one back to a
-    /// recycling exchange.
+    /// Takes the next batch from the exchange.
     ///
     /// @return `false` at the end of the stream, and on every call after it
     /// @throws IOException if the pipeline failed to read or decode the column, or
@@ -130,10 +115,6 @@ final class ColumnCursor {
                 return end();
             }
             return true;
-        }
-        if (recyclesFlatBatches && flatBatch != null) {
-            flatExchange.recycle(flatBatch);
-            flatBatch = null;
         }
         flatBatch = poll(flatExchange);
         if (flatBatch == null || flatBatch.recordCount == 0) {
