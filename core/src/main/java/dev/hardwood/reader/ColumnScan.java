@@ -124,7 +124,9 @@ final class ColumnScan implements Closeable {
 
     /// Advances every cursor once, checks that they agree, and, for a filtered
     /// read, compacts the payload cursors to the matching records. Increments the
-    /// generation when a batch is produced, and once more when the input ends.
+    /// generation when a batch is produced, and once more when the input ends. A
+    /// filter-only cursor is advanced only when statistics did not prove the step's
+    /// batch.
     ///
     /// @return `false` once the input is exhausted
     /// @throws IllegalStateException if the scan is closed, or the cursors did not advance
@@ -138,8 +140,17 @@ final class ColumnScan implements Closeable {
             return false;
         }
         int decodedCount = cursors[0].recordCount();
-        for (int i = 1; i < cursors.length; i++) {
+        for (int i = 1; i < payloadCount; i++) {
             checkLockstep(cursors[i], decodedCount);
+        }
+        // A filter-only column is not read in a row group statistics proved, so its cursor
+        // advances only for the steps the selection evaluates. In a proven step it keeps an
+        // earlier step's batch, which nothing reads: the selection answers the step from the
+        // first cursor, a payload column's.
+        if (!cursors[0].filterAlwaysMatches()) {
+            for (int i = payloadCount; i < cursors.length; i++) {
+                checkLockstep(cursors[i], decodedCount);
+            }
         }
         recordCount = engine == null ? decodedCount : select(decodedCount);
         hasBatch = true;

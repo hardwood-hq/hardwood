@@ -5369,6 +5369,40 @@ print("\nGenerated filter_pushdown_int_lying_stats.parquet:")
 print("  - RG3 `id` statistics falsified to [101, 200]; real data is 201-300")
 print("  - gt(id, 200) yields 0 rows if stats are trusted, 100 rows if ignored")
 
+# ============================================================================
+# Column index disagreeing with chunk statistics (hardwood-hq/hardwood#1274)
+# ============================================================================
+#
+# Two row groups of 1000 rows, `id` running 0-1999, in pages of 100 rows. RG0's
+# `id` chunk statistics are rewritten to [500, 999] while its column index still
+# records the real page bounds. `gte(id, 500) AND lt(id, 1250)` then proves RG0
+# fully matching from the chunk statistics, while page filtering drops its first
+# five pages; RG1 is left to the record filter. A column the predicate references
+# and the projection does not must stay aligned with the projected ones across
+# the two.
+
+_index_disagrees_path = 'core/src/test/resources/filter_only_column_index_disagrees.parquet'
+_index_disagrees_ids = list(range(2000))
+_index_disagrees_table = pa.table({
+    'id': pa.array(_index_disagrees_ids, type=pa.int64()),
+    'label': pa.array([f'L{i:05d}' for i in _index_disagrees_ids], type=pa.string()),
+}, schema=pa.schema([('id', pa.int64(), False), ('label', pa.string(), False)]))
+pq.write_table(
+    _index_disagrees_table,
+    _index_disagrees_path,
+    row_group_size=1000,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    data_page_size=800,
+    write_batch_size=100,
+    write_statistics=True,
+    write_page_index=True,
+)
+falsify_int64_row_group_minmax(_index_disagrees_path, 'id', 0, fake_min=500, fake_max=999)
+print("\nGenerated filter_only_column_index_disagrees.parquet:")
+print("  - RG0 `id` chunk statistics falsified to [500, 999]; its column index keeps 0-999")
+
 
 # Key-only map (set) fixture (#657).
 # Spec: the MAP value field "can be required, optional, or omitted"; if omitted

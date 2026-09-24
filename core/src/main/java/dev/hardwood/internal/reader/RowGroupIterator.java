@@ -694,9 +694,9 @@ public class RowGroupIterator implements Closeable {
                 if (nextPlans == null) {
                     return;
                 }
-                // Pre-fetch the first non-empty plan's chunk
+                // Pre-fetch the first chunk of the first plan that reads one
                 for (FetchPlan plan : nextPlans) {
-                    if (!plan.isEmpty()) {
+                    if (!plan.isEmpty() && !(plan instanceof SkippedColumnFetchPlan)) {
                         plan.prefetch();
                         break;
                     }
@@ -764,6 +764,11 @@ public class RowGroupIterator implements Closeable {
             ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(fileOrdinal);
             Dictionary preloadedDictionary = shared.dictionaries() == null
                     ? null : shared.dictionaries().loaded(fileOrdinal);
+
+            if (skipsColumn(workItem, projCol)) {
+                plans[projCol] = SkippedColumnFetchPlan.INSTANCE;
+                continue;
+            }
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
@@ -856,6 +861,18 @@ public class RowGroupIterator implements Closeable {
         coalesceAcrossColumns(plans, inputFile, workItem);
 
         return plans;
+    }
+
+    /// Whether the column at `projCol` is not read in `workItem`'s row group: the predicate
+    /// references it, the projection does not, and statistics proved every row of the row
+    /// group matches, so nothing evaluates its values there.
+    ///
+    /// This is exactly the condition under which the consumers take no batch of the column
+    /// for the row group, so the two must not diverge: a column read where no consumer takes
+    /// its batches would hand its rows to the next undecided step. Page masks and row caps on
+    /// the sibling columns do not enter into it, since the skipped column assembles no rows.
+    private boolean skipsColumn(WorkItem workItem, int projCol) {
+        return workItem.filterAlwaysMatches() && projection.isFilterOnly(projCol);
     }
 
     /// Coalesces the *first* read of multiple columns within this row group

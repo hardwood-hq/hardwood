@@ -25,6 +25,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `RowReader` filters on a column outside its projection instead of throwing partway through iteration when statistics do not settle the predicate ([#1242](https://github.com/hardwood-hq/hardwood/issues/1242)).
 
+- A filter column outside the projection is not read in row groups whose statistics prove every row matches, and a `RowReader` no longer resolves it by name ([#1274](https://github.com/hardwood-hq/hardwood/issues/1274)).
+
 - A logical type annotation a column's physical type cannot carry, or one this release does not recognize, is ignored, and the column is read as its physical type ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139)).
 
 - `INTERVAL` columns written by parquet-java, which carry `converted_type = INTERVAL` beside `logicalType = UNKNOWN`, are read and filtered as `INTERVAL` instead of as `NULL` columns ([#1217](https://github.com/hardwood-hq/hardwood/issues/1217)).

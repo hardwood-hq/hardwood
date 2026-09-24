@@ -104,7 +104,8 @@ The flag travels retriever → drain through a per-slot buffer written alongside
   ColumnIndex entry is `ALWAYS_MATCHES`) extend `RowRanges` and compose with the
   intra-page skip-decode work (#728); follow-up to #795.
 - **`ColumnReader` / `SelectionEngine`**: `computeSelection` answers a batch whose
-  `filterAlwaysMatches` is set with its every-record result (`-1`).
+  `filterAlwaysMatches` is set with its every-record result (`-1`); see
+  `FILTER_ONLY_COLUMN_SKIP.md`.
 - **Row groups statistics cannot decide**: the record matcher still evaluates them a
   row at a time, on the consumer thread — which profiling for #1107 showed to be the
   pipeline's critical path (98% busy against decode workers 90–97% parked). Moving
