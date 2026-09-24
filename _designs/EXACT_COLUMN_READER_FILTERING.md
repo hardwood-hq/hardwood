@@ -112,7 +112,7 @@ the same view, so the fallback covers every shape the `RowReader` does — no se
 predicate evaluator.
 
 A batch whose row group statistics proved to match in full is answered with the
-every-record result before either backend runs.
+every-record result before either backend runs; see `FILTER_ONLY_COLUMN_SKIP.md`.
 
 Both backends emit the same selection representation (the set bits, plus a
 matching-record index map derived from them); downstream compaction is
@@ -142,10 +142,11 @@ bookkeeping in one place and avoids re-deriving layer offsets by hand.
 ## Wiring
 
 **`ColumnReaders` (grouped).** Built over a `ColumnScan` of the augmented
-projected schema. Each advance of the scan polls every column's cursor, then asks
+projected schema. Each advance of the scan polls the columns' cursors, then asks
 the `SelectionEngine` for the batch selection and compacts each payload cursor's
 batch to it. The hidden predicate columns have cursors in the scan but no
-`ColumnReader` view.
+`ColumnReader` view, and are not polled in a step statistics proved (see
+[FILTER_ONLY_COLUMN_SKIP.md](FILTER_ONLY_COLUMN_SKIP.md)).
 The record-count alignment guard compares post-compaction counts — all columns
 share one selection, so they remain equal; the exhaustion/empty-batch path is
 preserved.

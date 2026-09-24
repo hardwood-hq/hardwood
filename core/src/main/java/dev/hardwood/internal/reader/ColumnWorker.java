@@ -54,6 +54,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private static final DecodedPage EMPTY_SENTINEL =
             new DecodedPage(new Page.IntPage(new int[0], null, null, 0, -1), PageRowMask.ALL);
 
+    /// Stored in the reorder buffer for a [PageInfo#BOUNDARY_MARKER], which is not decoded.
+    private static final DecodedPage BOUNDARY_MARKER = new DecodedPage(null, PageRowMask.ALL);
+
     private final PageSource pageSource;
     private final DecompressorFactory decompressorFactory;
     private final Executor decodeExecutor;
@@ -343,8 +346,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     break;
                 }
 
-                // Create/update PageDecoder when column metadata changes (file transitions)
-                if (pageDecoder == null || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData())) {
+                // Create/update PageDecoder when column metadata changes (file transitions).
+                // A boundary marker is never decoded and carries no metadata.
+                if (!pageInfo.isBoundaryMarker()
+                        && (pageDecoder == null || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData()))) {
                     pageDecoder = new PageDecoder(
                             pageInfo.columnMetaData(),
                             pageInfo.columnSchema(),
@@ -371,6 +376,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 rowGroupBuffer[slot] = pageSource.getCurrentRowGroupIndex();
                 pageBuffer[slot] = pageSource.getCurrentPageIndex();
                 filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
+                if (pageInfo.isBoundaryMarker()) {
+                    // Nothing to decode: hand the marker straight to the drain.
+                    reorderBuffer.set(slot, BOUNDARY_MARKER);
+                    LockSupport.unpark(drainThread);
+                    continue;
+                }
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
                 CompletableFuture<Void> f = CompletableFuture.runAsync(
@@ -536,6 +547,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             // homogeneous and the per-batch filter can be skipped for batches whose
             // row groups are proven to match in full. Row groups only ever share a
             // batch within one file, so this composes with the file flush above.
+            // A boundary marker counts as a proven page: it closes the batch in
+            // progress at the row where the columns that are read close theirs.
             if (flushOnFilterAlwaysMatchesTransition()) {
                 if (pageAlwaysMatches != currentBatchFilterAlwaysMatches && rowsInCurrentBatch > 0) {
                     publishCurrentBatch();
@@ -543,7 +556,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 currentBatchFilterAlwaysMatches = pageAlwaysMatches;
             }
 
-            assemblePage(decoded.page(), decoded.mask());
+            // A boundary marker stands for a row group this column is not read in:
+            // no consumer takes this column's batches for it, so there are no rows
+            // to assemble.
+            if (decoded != BOUNDARY_MARKER) {
+                assemblePage(decoded.page(), decoded.mask());
+            }
             consumePosition++;
             totalPagesDrained++;
             unparkRetriever();

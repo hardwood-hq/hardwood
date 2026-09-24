@@ -44,15 +44,20 @@ through `FlatColumnWorker`.
   evaluate against;
 - the `RowGroupIterator` the cursors draw from, and the per-file `RecordFilterTally`.
 
-`advance()` polls every cursor once, in lockstep, and checks that they agree: every cursor
-produced a batch, or none did, and all batches have the same record count; a cursor exhausted
-before the first, or a differing record count, throws `IllegalStateException`. With a filter,
-it then computes the selection and compacts each payload cursor's batch to the matching
-records: flat primitive values are gathered in place, binary values through
+`advance()` polls every payload cursor once, in lockstep, then every filter-only cursor unless
+the first cursor's batch reports `filterAlwaysMatches()`: a filter-only column is not read in a
+row group statistics proved, so its cursor has no batch for such a step (see
+[FILTER_ONLY_COLUMN_SKIP.md](FILTER_ONLY_COLUMN_SKIP.md)). It checks that the cursors it polled
+agree: every cursor produced a batch, or none did, and all batches have the same record count; a
+cursor exhausted before the first, or a differing record count, throws `IllegalStateException`.
+When the first cursor reaches the end of the input, `advance()` drains every other cursor,
+filter-only ones included, and one that still produces a batch throws `IllegalStateException`.
+With a filter, it then computes the selection and compacts each payload cursor's batch to the
+matching records: flat primitive values are gathered in place, binary values through
 `LeafCompaction`, and a nested batch is sliced per record across its level and value arrays.
 When the first cursor's batch reports `filterAlwaysMatches()`, the selection is every record and
 the predicate is not evaluated; every worker flushes where the flag changes, so that cursor's batch
-speaks for all of them. It records the step's record count and increments a **generation** counter
+speaks for the step. It records the step's record count and increments a **generation** counter
 for every step: each batch is a step, and so is the end of the input, the first time it is reached.
 
 A read in which pruning dropped every row group gets a scan with no cursors, whose first

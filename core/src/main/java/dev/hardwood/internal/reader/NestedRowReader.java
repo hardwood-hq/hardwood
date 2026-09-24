@@ -303,12 +303,58 @@ public final class NestedRowReader implements FileAwareRowReader {
         // Each poll is non-blocking when its exchange has a batch ready; the
         // pipeline runs ahead of the consumer in steady state, so the per-call
         // cost is dominated by the first non-blocking readyQueue.poll().
-        NestedBatch[] batches = new NestedBatch[columnCount];
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
                 exchanges[i].recycle(previousBatches[i]);
                 previousBatches[i] = null;
             }
+        }
+        int payloadColumnCount = payloadBatches.length;
+        if (!pollColumns(0, payloadColumnCount)) {
+            return false;
+        }
+
+        // Index structures are pre-computed by the drain — just assemble the view
+        currentFileName = previousBatches[0].fileName;
+        // Uniform across columns: the flag comes from the work item, and the workers
+        // flush on its transitions, so no batch mixes the two.
+        currentRowsAlwaysMatch = previousBatches[0].filterAlwaysMatches;
+        // A batch statistics decided, with no cap to count matches against, needs
+        // nothing evaluated and nothing counted per row: hand it to the plain cursor
+        // and tally it whole.
+        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
+                ? null : recordMatcher;
+        // A filter-only column is not read in a row group statistics proved, so its
+        // exchange holds batches for the evaluated steps alone.
+        if (!currentRowsAlwaysMatch && !pollColumns(payloadColumnCount, columnCount)) {
+            return false;
+        }
+        if (tally != null) {
+            // Ahead of any record of this batch being counted, so the counts land
+            // on the file the batch came from. Batches never straddle files.
+            tally.switchFile(currentFileName);
+            if (activeMatcher == null) {
+                // Statistics decided this batch and there is no cap, so no row of it is
+                // evaluated or counted individually: count it whole.
+                tally.recordBatch(batchSize, batchSize);
+            }
+        }
+        System.arraycopy(previousBatches, 0, payloadBatches, 0, payloadBatches.length);
+        dataView.setBatchData(payloadBatches, payloadSchemas, currentFileName);
+        if (predicateView != null && !currentRowsAlwaysMatch) {
+            predicateView.refresh(null, previousBatches, currentFileName);
+        }
+        rowIndex = -1;
+        return true;
+    }
+
+    /// Takes the next batch of each column in `[from, to)` into [#previousBatches].
+    ///
+    /// @return `false` at the end of the stream, or when interrupted
+    /// @throws IllegalStateException if a column other than the first has no batch, or a
+    ///         batch of another size than the first column's
+    private boolean pollColumns(int from, int to) throws IOException {
+        for (int i = from; i < to; i++) {
             NestedBatch batch;
             try {
                 batch = exchanges[i].poll();
@@ -323,45 +369,24 @@ public final class NestedRowReader implements FileAwareRowReader {
                 }
                 if (i > 0) {
                     throw new IllegalStateException(
-                            "[" + batches[0].fileName + "] "
+                            "[" + previousBatches[0].fileName + "] "
                             + "Column count mismatch: column " + i + " produced no data"
-                            + " while earlier columns had " + batches[0].recordCount + " records");
+                            + " while earlier columns had " + batchSize + " records");
                 }
                 exhausted = true;
                 return false;
             }
-            batches[i] = batch;
+            if (i == 0) {
+                batchSize = batch.recordCount;
+            }
+            else if (batch.recordCount != batchSize) {
+                throw new IllegalStateException(
+                        "[" + previousBatches[0].fileName + "] "
+                        + "Batch size mismatch: column " + i + " has " + batch.recordCount
+                        + " records while column 0 has " + batchSize);
+            }
             previousBatches[i] = batch;
         }
-
-        batchSize = batches[0].recordCount;
-
-        // Index structures are pre-computed by the drain — just assemble the view
-        currentFileName = batches[0].fileName;
-        // Uniform across columns: the flag comes from the work item, and the workers
-        // flush on its transitions, so no batch mixes the two.
-        currentRowsAlwaysMatch = batches[0].filterAlwaysMatches;
-        // A batch statistics decided, with no cap to count matches against, needs
-        // nothing evaluated and nothing counted per row: hand it to the plain cursor
-        // and tally it whole.
-        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
-                ? null : recordMatcher;
-        if (tally != null) {
-            // Ahead of any record of this batch being counted, so the counts land
-            // on the file the batch came from. Batches never straddle files.
-            tally.switchFile(currentFileName);
-            if (activeMatcher == null) {
-                // Statistics decided this batch and there is no cap, so no row of it is
-                // evaluated or counted individually: count it whole.
-                tally.recordBatch(batchSize, batchSize);
-            }
-        }
-        System.arraycopy(batches, 0, payloadBatches, 0, payloadBatches.length);
-        dataView.setBatchData(payloadBatches, payloadSchemas, currentFileName);
-        if (predicateView != null && !currentRowsAlwaysMatch) {
-            predicateView.refresh(null, batches, currentFileName);
-        }
-        rowIndex = -1;
         return true;
     }
 

@@ -121,8 +121,11 @@ final class SelectionEngine {
     /// `selection()[0, count)` until the next call.
     ///
     /// A batch whose row group statistics proved to match in full is answered
-    /// `-1` without evaluating anything. Every column's worker flushes on the
-    /// transition, so the first cursor's batch speaks for all of them.
+    /// `-1` without evaluating anything: a predicate column outside the
+    /// projection is not read for such a batch, and its cursor holds an earlier
+    /// step's batch. The first cursor is a payload column's, which every step
+    /// advances, and every worker flushes where the flag changes, so its batch
+    /// speaks for the step.
     int computeSelection(int recordCount) {
         if (cursorsByProjectedIndex[0].filterAlwaysMatches()) {
             return -1;

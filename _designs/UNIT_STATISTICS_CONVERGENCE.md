@@ -236,7 +236,8 @@ full.
   column's page boundaries are its own — and `FlatRowReader` and `NestedRowReader` read the flag
   from one column's batch on the understanding that every column flushes at the same row. Set
   against that, the saving is narrow: for a range predicate on sorted data only the row group
-  holding the cutoff is undecided.
+  holding the cutoff is undecided. A column the predicate references and the projection does not
+  is a separate matter, decided per row group: see `FILTER_ONLY_COLUMN_SKIP.md`.
 - **Bloom filters and dictionaries** prove absence only, are row-group scoped, and stay outside
   `UnitStats`. `RowGroupFilterEvaluator` applies them after the statistics decision.
 - **Geospatial statistics** live on `ColumnMetaData` alone, so `GeospatialPredicate` has no page

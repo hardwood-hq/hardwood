@@ -27,11 +27,19 @@ import dev.hardwood.schema.ColumnSchema;
 /// in for. Decoding short-circuits to an all-null typed page, preserving
 /// cross-column row alignment while skipping decompression and value decoding.
 ///
+/// The [#BOUNDARY_MARKER] stands in for a whole row group of a column that is
+/// not read there ([SkippedColumnFetchPlan]). It carries no bytes, no metadata
+/// and no rows; the worker assembles nothing for it and only closes the batch
+/// in progress where its siblings close theirs.
+///
 /// The optional [#mask()] selects which records of the decoded page the
 /// assembler should keep. Defaults to [PageRowMask#ALL] (keep everything);
 /// the filter-pushdown path attaches a tighter mask when the page only
 /// partially overlaps the matching rows.
 public class PageInfo {
+
+    /// The one page of a column that is not read in a row group. See [SkippedColumnFetchPlan].
+    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL);
 
     private final ByteBuffer pageData;
     private final ColumnSchema columnSchema;
@@ -102,6 +110,11 @@ public class PageInfo {
     /// Number of rows the null-placeholder stands in for. Zero for regular pages.
     public int placeholderNumValues() {
         return placeholderNumValues;
+    }
+
+    /// Whether this is the [#BOUNDARY_MARKER].
+    public boolean isBoundaryMarker() {
+        return this == BOUNDARY_MARKER;
     }
 
     /// Per-page row selection. [PageRowMask#ALL] when the assembler should keep

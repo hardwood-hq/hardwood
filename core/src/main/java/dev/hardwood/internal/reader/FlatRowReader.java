@@ -53,9 +53,13 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// stays a single word load + mask. Sized for the largest batch
     /// [BatchSizing] will produce, so any in-range row index reads as
     /// present. Set-bit-= -present polarity, matching [BatchExchange.Batch#validity].
-    private static final long[] ALL_PRESENT = allPresentSentinel();
+    private static final long[] ALL_PRESENT = allOnes();
 
-    private static long[] allPresentSentinel() {
+    /// The survivor bitmap of a batch statistics proved to match in full, sized like
+    /// [#ALL_PRESENT] so that every in-range row reads as a match.
+    private static final long[] ALL_MATCHING = allOnes();
+
+    private static long[] allOnes() {
         long[] words = new long[(BatchSizing.MAX_BATCH + 63) >>> 6];
         Arrays.fill(words, ~0L);
         return words;
@@ -881,7 +885,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (exhausted) {
             return false;
         }
-        // A schema with no columns has no batch to take a record count from: the loop below
+        // A schema with no columns has no batch to take a record count from: the poll below
         // reads one from column 0, and there is no column 0, so it would fall through and
         // report a batch that does not exist — leaving `hasNext()` permanently true over a
         // `batchSize` of zero. Arrow writes such a file, so it reaches this reader; there is
@@ -889,11 +893,80 @@ public final class FlatRowReader implements FileAwareRowReader {
         if (columnCount == 0) {
             return false;
         }
+        recyclePreviousBatches();
+        int payloadColumnCount = flatValueArrays.length;
+        if (!pollColumns(0, payloadColumnCount)) {
+            return false;
+        }
+        currentFileName = previousBatches[0].fileName;
+        // Uniform across columns: the flag comes from the work item, and the workers
+        // flush on its transitions, so no batch mixes the two.
+        currentRowsAlwaysMatch = previousBatches[0].filterAlwaysMatches;
+        // A batch statistics decided, with no cap to count matches against, needs
+        // nothing evaluated and nothing counted per row: hand it to the plain cursor
+        // and tally it whole.
+        activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
+                ? null : recordMatcher;
+        // A filter-only column is not read in a row group statistics proved, so its
+        // exchange holds batches for the evaluated steps alone.
+        if (!currentRowsAlwaysMatch && !pollColumns(payloadColumnCount, columnCount)) {
+            return false;
+        }
+        if (predicateView != null && !currentRowsAlwaysMatch) {
+            predicateView.refresh(previousBatches, null, currentFileName);
+        }
+        rowIndex = -1;
+        if (matchMerger != null) {
+            // A proven batch has no filter-only batch to merge, and every row matches.
+            combinedWords = currentRowsAlwaysMatch
+                    ? ALL_MATCHING
+                    : matchMerger.merge(previousBatches, batchSize);
+            // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch
+            // after nextSetBit returns -1, which happens only when pendingRowIndex < 0;
+            // next() clears it before any further hasNext(); initialize() runs with the
+            // field's default -1.
+            runEndExclusive = 0;
+        }
+        if (tally != null) {
+            // Ahead of any record of this batch being counted, so the counts land
+            // on the file the batch came from. Batches never straddle files.
+            tally.switchFile(currentFileName);
+            if (matchMerger != null) {
+                // The whole batch was decided on the drain thread — count it here
+                // rather than as rows are yielded, so an early exit does not leave
+                // the batch reported as all-skipped.
+                tally.recordBatch(batchSize, countMatches(combinedWords, batchSize));
+            }
+            else if (activeMatcher == null) {
+                // Statistics decided this batch and there is no cap, so no row of it is
+                // evaluated or counted individually: count it whole, for the same reason.
+                // A non-drain-side read with a tally always has a record matcher, so a
+                // null `activeMatcher` here means the proof, never the absence of a filter.
+                tally.recordBatch(batchSize, batchSize);
+            }
+        }
+        return true;
+    }
+
+    /// Hands every batch of the previous step back to its exchange. A filter-only column's
+    /// slot is empty after a step statistics proved, which did not take a batch of it.
+    private void recyclePreviousBatches() {
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
                 exchanges[i].recycle(previousBatches[i]);
                 previousBatches[i] = null;
             }
+        }
+    }
+
+    /// Takes the next batch of each column in `[from, to)` into [#previousBatches], and
+    /// the payload columns' arrays into the accessor state.
+    ///
+    /// @return `false` at the end of the stream, or when interrupted
+    /// @throws IllegalStateException if a column other than the first has no batch, or a
+    ///         batch of another size than the first column's
+    private boolean pollColumns(int from, int to) throws IOException {
+        for (int i = from; i < to; i++) {
             BatchExchange.Batch batch;
             try {
                 batch = exchanges[i].poll();
@@ -918,54 +991,20 @@ public final class FlatRowReader implements FileAwareRowReader {
                 exhausted = true;
                 return false;
             }
+            if (i == 0) {
+                batchSize = batch.recordCount;
+            }
+            else if (batch.recordCount != batchSize) {
+                throw new IllegalStateException(prefix()
+                        + "Batch size mismatch: column " + i + " has " + batch.recordCount
+                        + " records while column 0 has " + batchSize);
+            }
             // The payload columns lead the decoded ones and are all the accessors reach.
             if (i < flatValueArrays.length) {
                 flatValueArrays[i] = batch.values;
                 flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
             }
             previousBatches[i] = batch;
-            if (i == 0) {
-                batchSize = batch.recordCount;
-                currentFileName = batch.fileName;
-                // Uniform across columns: the flag comes from the work item, and the
-                // workers flush on its transitions, so no batch mixes the two.
-                currentRowsAlwaysMatch = batch.filterAlwaysMatches;
-                // A batch statistics decided, with no cap to count matches against, needs
-                // nothing evaluated and nothing counted per row: hand it to the plain cursor
-                // and tally it whole.
-                activeMatcher = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED
-                        ? null : recordMatcher;
-            }
-        }
-        if (predicateView != null && !currentRowsAlwaysMatch) {
-            predicateView.refresh(previousBatches, null, currentFileName);
-        }
-        rowIndex = -1;
-        if (matchMerger != null) {
-            combinedWords = matchMerger.merge(previousBatches, batchSize);
-            // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch
-            // after nextSetBit returns -1, which happens only when pendingRowIndex < 0;
-            // next() clears it before any further hasNext(); initialize() runs with the
-            // field's default -1.
-            runEndExclusive = 0;
-        }
-        if (tally != null) {
-            // Ahead of any record of this batch being counted, so the counts land
-            // on the file the batch came from. Batches never straddle files.
-            tally.switchFile(currentFileName);
-            if (matchMerger != null) {
-                // The whole batch was decided on the drain thread — count it here
-                // rather than as rows are yielded, so an early exit does not leave
-                // the batch reported as all-skipped.
-                tally.recordBatch(batchSize, countMatches(combinedWords, batchSize));
-            }
-            else if (activeMatcher == null) {
-                // Statistics decided this batch and there is no cap, so no row of it is
-                // evaluated or counted individually: count it whole, for the same reason.
-                // A non-drain-side read with a tally always has a record matcher, so a
-                // null `activeMatcher` here means the proof, never the absence of a filter.
-                tally.recordBatch(batchSize, batchSize);
-            }
         }
         return true;
     }

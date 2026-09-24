@@ -22,6 +22,8 @@ Filter predicates apply at three levels, in this order:
 2. **Page** — within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, so the same skip also reduces network I/O.
 3. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that match.
 
+In a row group whose statistics prove that every row matches, the predicate is not evaluated, and a filter column outside the projection is neither fetched nor decoded.
+
 For spatial filtering on GEOMETRY / GEOGRAPHY columns, see [Geospatial Support](geospatial.md).
 
 ```java

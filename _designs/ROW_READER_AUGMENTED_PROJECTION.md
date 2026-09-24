@@ -53,11 +53,10 @@ accessor tests whether a column is predicate-only. The record matcher evaluates 
 
 ## Cost
 
-A predicate column outside the projection is decoded for the whole read, including where
-statistics settle the predicate over every row group and no record is matched individually.
-The decode set is fixed when the workers and exchanges are built, which is before the first
-row group is planned, and planning proceeds a file at a time (#1107), so "no work item needs
-record-level evaluation" is not a question the reader can answer at that point. Narrowing the
+A predicate column outside the projection has a worker and an exchange for the whole read,
+since the decode set is fixed when they are built, before the first row group is planned. It
+is read only in row groups statistics leave undecided: in one they prove to match in full it is
+neither fetched nor decoded (`FILTER_ONLY_COLUMN_SKIP.md`). Narrowing the
 decode by selectivity is late materialization, #500.
 
 The default `ColumnProjection.all()` projection covers every predicate column by
