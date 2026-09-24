@@ -102,7 +102,7 @@ The batch size caps the number of **records** per batch, never the number of lea
 
 `ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when the readers are exhausted. Partial advancement isn't possible because all readers consume from one shared decode pipeline. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
 
-`ColumnReaders.nextBatch()` advances the whole group in one call. Calling `ColumnReader.nextBatch()` on each reader from `getColumnReader(...)` in turn also moves the group once per turn: the first reader called advances the group, and each other reader takes up that same batch. A reader called twice before its siblings advances the group twice, and the siblings then take up the later batch, skipping the one in between. Closing any reader of the group closes the whole group, after which `nextBatch()` on any of its readers throws `IllegalStateException`.
+`ColumnReaders.nextBatch()` advances the whole group in one call. Calling `ColumnReader.nextBatch()` on each reader from `getColumnReader(...)` in turn also moves the group once per turn: the first reader called advances the group, and each other reader takes up that same batch. A reader called twice before its siblings advances the group twice; a sibling then called would skip the batch in between, so its `nextBatch()` throws `IllegalStateException`. A reader that is never called does not hold the group back. Closing any reader of the group closes the whole group, after which `nextBatch()` on any of its readers throws `IllegalStateException`.
 
 ### Retaining and Handing Off Batch Arrays
 

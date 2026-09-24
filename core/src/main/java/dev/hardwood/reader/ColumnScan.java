@@ -31,9 +31,11 @@ import dev.hardwood.schema.FileSchema;
 /// records of the aligned batches and compacts every payload cursor's batch down
 /// to them.
 ///
-/// A monotonically increasing [#generation()] lets the views share one advance:
-/// a view that has already consumed the current generation advances the scan, a
-/// view that has not adopts the step a sibling advanced to.
+/// A monotonically increasing [#generation()] numbers the steps the views share:
+/// every batch is a step, and so is the end of the input. A view that has already
+/// consumed the current generation advances the scan; a view one generation behind
+/// adopts the step a sibling advanced to; a view further behind would skip a step
+/// and is refused.
 final class ColumnScan implements Closeable {
 
     private final ColumnCursor[] cursors;
@@ -46,6 +48,7 @@ final class ColumnScan implements Closeable {
     private final RecordFilterTally tally = new RecordFilterTally();
 
     private long generation;
+    private boolean ended;
     private boolean hasBatch;
     private int recordCount;
     private boolean closed;
@@ -119,7 +122,7 @@ final class ColumnScan implements Closeable {
 
     /// Advances every cursor once, checks that they agree, and, for a filtered
     /// read, compacts the payload cursors to the matching records. Increments the
-    /// generation when a batch is produced.
+    /// generation when a batch is produced, and once more when the input ends.
     ///
     /// @return `false` once the input is exhausted
     /// @throws IllegalStateException if the scan is closed, or the cursors did not advance
@@ -128,14 +131,8 @@ final class ColumnScan implements Closeable {
         requireOpen();
         hasBatch = false;
         recordCount = 0;
-        if (cursors.length == 0) {
-            return false;
-        }
-        if (!cursors[0].advance()) {
-            // Drain the remaining cursors so the shared iterator finalizes cleanly.
-            for (int i = 1; i < cursors.length; i++) {
-                cursors[i].advance();
-            }
+        if (cursors.length == 0 || !cursors[0].advance()) {
+            drainAfterEnd();
             return false;
         }
         int decodedCount = cursors[0].recordCount();
@@ -146,6 +143,25 @@ final class ColumnScan implements Closeable {
         hasBatch = true;
         generation++;
         return true;
+    }
+
+    /// Drains the remaining cursors so the shared iterator finalizes cleanly, checking
+    /// that none of them still produces a batch, and counts the end of the input as
+    /// a step the first time it is reached.
+    private void drainAfterEnd() throws IOException {
+        for (int i = 1; i < cursors.length; i++) {
+            if (cursors[i].advance()) {
+                throw new IllegalStateException(
+                        "ColumnReader '" + cursors[i].column().name()
+                                + "' produced a batch after peer column '"
+                                + cursors[0].column().name()
+                                + "' was exhausted — readers from the same projection must advance in lockstep");
+            }
+        }
+        if (!ended) {
+            ended = true;
+            generation++;
+        }
     }
 
     private void checkLockstep(ColumnCursor cursor, int expectedCount) throws IOException {

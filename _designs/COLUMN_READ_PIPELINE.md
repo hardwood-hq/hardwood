@@ -47,8 +47,8 @@ before the first, or a differing record count, throws `IllegalStateException`. W
 it then computes the selection and compacts each payload cursor's batch to the matching
 records: flat primitive values are gathered in place, binary values through
 `LeafCompaction`, and a nested batch is sliced per record across its level and value arrays.
-It records the step's record count and, when the step holds a batch, increments a
-**generation** counter.
+It records the step's record count and increments a **generation** counter for every step:
+each batch is a step, and so is the end of the input, the first time it is reached.
 
 A read in which pruning dropped every row group gets a scan with no cursors, whose first
 `advance()` returns `false`.
@@ -63,11 +63,13 @@ real-items view, materialised binaries and strings), which it drops whenever it 
 step. Its accessors read the cursor's current (compacted) batch.
 
 **Advancing.** Each view remembers the generation it last consumed. `ColumnReader.nextBatch()`
-advances the scan when the view has already consumed the current generation, and otherwise
-adopts the step a sibling already advanced to. `ColumnReaders.nextBatch()` advances the scan
-and marks every member as having consumed the new generation. So calling `nextBatch()` on each
-member in turn moves the group once, in every group, filtered or not; a member cannot run ahead
-of its siblings and pair rows from different steps. `ColumnReaders.getRecordCount()` reads the
+advances the scan when the view has already consumed the current generation, adopts the step a
+sibling advanced to when the view is one generation behind, and throws `IllegalStateException`
+when it is further behind, since adopting would skip a batch. `ColumnReaders.nextBatch()`
+advances the scan and marks every member as having consumed the new generation. So calling
+`nextBatch()` on each member in turn moves the group once, in every group, filtered or not; a
+member cannot pair rows from different steps, and a member left behind fails instead of
+silently dropping batches. A member that is never advanced does not hold the others back. `ColumnReaders.getRecordCount()` reads the
 scan's current step, so it reports the batch a member advanced the group to.
 
 **Closing.** Closing any view of a group closes the scan: the members share one pipeline and
@@ -86,6 +88,8 @@ cover the shared advance and close:
 
 - advancing the members of an unfiltered group one at a time yields aligned rows;
 - a member advanced alone moves the group, and the group's record count follows it;
+- a member the group moved past by more than one step, before a batch or at the end of the
+  input, throws;
 - closing one member of a group closes the group;
 - a read that pruning emptied yields no batch from any member.
 

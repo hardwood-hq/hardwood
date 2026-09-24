@@ -580,10 +580,9 @@ public class ParquetFileReader implements Closeable {
     ColumnReader buildColumnReader(
             String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) throws IOException {
         ensureSingleFile("columnReader(String)");
-        if (filter == null) {
-            // Rejects a name that is not a leaf column's path.
-            schema.getColumn(columnName);
-        }
+        // Rejects a name that is not a leaf column's path, such as a group's, which the
+        // projection below would otherwise expand to every leaf under it.
+        schema.getColumn(columnName);
         return buildSingleColumnReader(columnName, filter, rowGroupFilter, batchSize);
     }
 
