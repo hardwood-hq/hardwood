@@ -353,6 +353,18 @@ final class Columns {
         return innerStructNull(row) || row % 47 == 19 ? null : (long) row;
     }
 
+    static long topLevelKey(int row) {
+        return ROWS - 1 - row;
+    }
+
+    static long requiredKey(int row) {
+        return row;
+    }
+
+    static String requiredName(int row) {
+        return String.format("r%04d", row);
+    }
+
     static boolean listNull(int row) {
         return row % 5 == 0;
     }
@@ -364,6 +376,9 @@ final class Columns {
                 "s.x", new Col("s.x", Sem.I32, 0, 0, Columns::nestedX, false),
                 "s.name", new Col("s.name", Sem.STRING, 0, 0,
                         row -> nestedName(row) == null ? null : utf8(nestedName(row)), false),
-                "s.t.y", new Col("s.t.y", Sem.I64, 0, 0, Columns::nestedY, false));
+                "s.t.y", new Col("s.t.y", Sem.I64, 0, 0, Columns::nestedY, false),
+                "key", new Col("key", Sem.I64, 0, 0, Columns::topLevelKey, false),
+                "r.key", new Col("r.key", Sem.I64, 0, 0, Columns::requiredKey, false),
+                "r.name", new Col("r.name", Sem.STRING, 0, 0, row -> utf8(requiredName(row)), false));
     }
 }

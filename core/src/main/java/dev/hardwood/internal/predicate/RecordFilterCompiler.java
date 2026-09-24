@@ -34,46 +34,46 @@ public final class RecordFilterCompiler {
     }
 
     /// Indexed-access overload: when the accessor the matcher is tested against
-    /// can address a top-level column by an `int` through its `getXxx(int)`
-    /// accessors, pass a `topLevelFieldIndex` callback that maps a **file
-    /// leaf-column index** to that index. The function returns `-1` for columns
+    /// can address a column by an `int` through its `getXxx(int)` accessors,
+    /// pass a `leafIndex` callback that maps a **file leaf-column index** to
+    /// that index. The function returns `-1` for columns
     /// that aren't directly addressable that way; the compiler then falls back
     /// to the name-keyed leaf. The index space is the accessor's own; for
     /// [dev.hardwood.internal.reader.PredicateView] it is the one
     /// [dev.hardwood.internal.reader.PredicateView#indexOf] returns.
     ///
-    /// Nested paths (path length > 1) always use the name-keyed leaves
-    /// regardless, since indexed access is only meaningful for top-level
-    /// columns.
+    /// The callback decides for a column at any depth: a leaf below a struct
+    /// that the accessor holds as a flat column of its own is addressable by
+    /// index as well.
     public static RowMatcher compile(ResolvedPredicate predicate, FileSchema schema,
-            IntUnaryOperator topLevelFieldIndex) {
+            IntUnaryOperator leafIndex) {
         return switch (predicate) {
             case ResolvedPredicate.IntPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedIntLeaf(idx, p.op(), p.value())
                         : intLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.LongPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedLongLeaf(idx, p.op(), p.value())
                         : longLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.UnsignedIntPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedUnsignedIntLeaf(idx, p.op(), p.value())
                         : unsignedIntLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.UnsignedLongPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedUnsignedLongLeaf(idx, p.op(), p.value())
                         : unsignedLongLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.FloatPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedFloatLeaf(idx, p.op(), p.value())
                         : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
@@ -84,50 +84,86 @@ public final class RecordFilterCompiler {
                 // payload itself. The Float16Predicate distinction matters for
                 // stats pushdown (different decode width on min/max bytes), not
                 // for per-row reads.
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedFloatLeaf(idx, p.op(), p.value())
                         : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.DoublePredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedDoubleLeaf(idx, p.op(), p.value())
                         : doubleLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.BooleanPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedBooleanLeaf(idx, p.op(), p.value())
                         : booleanLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
-            case ResolvedPredicate.BinaryPredicate p ->
-                    binaryLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()),
-                            p.op(), p.value(), p.comparison());
-            case ResolvedPredicate.IntInPredicate p ->
-                    intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
-            case ResolvedPredicate.LongInPredicate p ->
-                    longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            case ResolvedPredicate.BinaryPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedBinaryLeaf(idx, p.op(), p.value(), p.comparison())
+                        : binaryLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()),
+                                p.op(), p.value(), p.comparison());
+            }
+            case ResolvedPredicate.IntInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedIntInLeaf(idx, p.values())
+                        : intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
+            case ResolvedPredicate.LongInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedLongInLeaf(idx, p.values())
+                        : longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
             // Membership is bit equality, which reads the same signed or unsigned, so an unsigned
             // IN list matches through the same leaf as a signed one.
-            case ResolvedPredicate.UnsignedIntInPredicate p ->
-                    intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
-            case ResolvedPredicate.UnsignedLongInPredicate p ->
-                    longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
-            case ResolvedPredicate.BinaryInPredicate p ->
-                    binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
-                            p.comparison());
-            case ResolvedPredicate.FloatInPredicate p ->
-                    floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
-            case ResolvedPredicate.DoubleInPredicate p ->
-                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            case ResolvedPredicate.UnsignedIntInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedIntInLeaf(idx, p.values())
+                        : intInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
+            case ResolvedPredicate.UnsignedLongInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedLongInLeaf(idx, p.values())
+                        : longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
+            case ResolvedPredicate.BinaryInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedBinaryInLeaf(idx, p.values(), p.comparison())
+                        : binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(),
+                                p.comparison());
+            }
+            case ResolvedPredicate.FloatInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedFloatInLeaf(idx, p.values())
+                        : floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
+            case ResolvedPredicate.DoubleInPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedDoubleInLeaf(idx, p.values())
+                        : doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
             // `getFloat` decodes a FLOAT16 column's two bytes itself, as for Float16Predicate, so
             // membership reads the half through the FLOAT path.
-            case ResolvedPredicate.Float16InPredicate p ->
-                    floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            case ResolvedPredicate.Float16InPredicate p -> {
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
+                yield idx >= 0
+                        ? indexedFloatInLeaf(idx, p.values())
+                        : floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            }
             case ResolvedPredicate.IsNullPredicate p -> {
                 if (!p.group()) {
-                    int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                    int idx = indexedLeaf(p.columnIndex(), leafIndex);
                     yield idx >= 0
                             ? indexedIsNullLeaf(idx)
                             : isNullLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()));
@@ -138,7 +174,7 @@ public final class RecordFilterCompiler {
             }
             case ResolvedPredicate.IsNotNullPredicate p -> {
                 if (!p.group()) {
-                    int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                    int idx = indexedLeaf(p.columnIndex(), leafIndex);
                     yield idx >= 0
                             ? indexedIsNotNullLeaf(idx)
                             : isNotNullLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()));
@@ -151,40 +187,35 @@ public final class RecordFilterCompiler {
             // test and an unsatisfiable comparison return, which is what a comparison whose
             // literal lies past the column's range answers.
             case ResolvedPredicate.EveryNonNullRowPredicate p -> {
-                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                int idx = indexedLeaf(p.columnIndex(), leafIndex);
                 yield idx >= 0
                         ? indexedIsNotNullLeaf(idx)
                         : isNotNullLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()));
             }
             case ResolvedPredicate.NoRowPredicate ignored -> row -> false;
-            case ResolvedPredicate.And and -> compileAnd(and.children(), schema, topLevelFieldIndex);
-            case ResolvedPredicate.Or or -> compileOr(or.children(), schema, topLevelFieldIndex);
+            case ResolvedPredicate.And and -> compileAnd(and.children(), schema, leafIndex);
+            case ResolvedPredicate.Or or -> compileOr(or.children(), schema, leafIndex);
             // Spatial intersects is bbox-only pushdown (row group + page level). Per-row WKB
             // decoding is left to the caller, so every surviving row passes here.
             case ResolvedPredicate.GeospatialPredicate p -> row -> true;
         };
     }
 
-    /// Returns the accessor's index for a top-level column, or `-1` when the
-    /// leaf cannot use indexed access — either because it isn't top-level
-    /// (path length > 1), no callback was supplied, or the callback declines
-    /// to map this column.
-    static int indexedTopLevel(FileSchema schema, int columnIndex,
-            IntUnaryOperator topLevelFieldIndex) {
-        if (topLevelFieldIndex == null) {
+    /// Returns the accessor's index for a column, or `-1` when the leaf cannot
+    /// use indexed access — either because no callback was supplied, or the
+    /// callback declines to map this column.
+    static int indexedLeaf(int columnIndex, IntUnaryOperator leafIndex) {
+        if (leafIndex == null) {
             return -1;
         }
-        if (schema.getColumn(columnIndex).fieldPath().elements().size() > 1) {
-            return -1;
-        }
-        return topLevelFieldIndex.applyAsInt(columnIndex);
+        return leafIndex.applyAsInt(columnIndex);
     }
 
     // ==================== Compounds ====================
 
     private static RowMatcher compileAnd(List<ResolvedPredicate> children, FileSchema schema,
-            IntUnaryOperator topLevelFieldIndex) {
-        RowMatcher[] compiled = compileAll(children, schema, topLevelFieldIndex);
+            IntUnaryOperator leafIndex) {
+        RowMatcher[] compiled = compileAll(children, schema, leafIndex);
         return switch (compiled.length) {
             case 1 -> compiled[0];
             case 2 -> new And2Matcher(compiled[0], compiled[1]);
@@ -195,8 +226,8 @@ public final class RecordFilterCompiler {
     }
 
     private static RowMatcher compileOr(List<ResolvedPredicate> children, FileSchema schema,
-            IntUnaryOperator topLevelFieldIndex) {
-        RowMatcher[] compiled = compileAll(children, schema, topLevelFieldIndex);
+            IntUnaryOperator leafIndex) {
+        RowMatcher[] compiled = compileAll(children, schema, leafIndex);
         return switch (compiled.length) {
             case 1 -> compiled[0];
             case 2 -> new Or2Matcher(compiled[0], compiled[1]);
@@ -337,10 +368,10 @@ public final class RecordFilterCompiler {
     }
 
     private static RowMatcher[] compileAll(List<ResolvedPredicate> children, FileSchema schema,
-            IntUnaryOperator topLevelFieldIndex) {
+            IntUnaryOperator leafIndex) {
         RowMatcher[] out = new RowMatcher[children.size()];
         for (int i = 0; i < out.length; i++) {
-            out[i] = compile(children.get(i), schema, topLevelFieldIndex);
+            out[i] = compile(children.get(i), schema, leafIndex);
         }
         return out;
     }
@@ -527,9 +558,9 @@ public final class RecordFilterCompiler {
 
     // ==================== Indexed leaf factories ====================
     //
-    // Used when the leaf operates on a top-level column the accessor addresses
-    // by index. The compiler emits these leaves only when the caller passes a
-    // `topLevelFieldIndex` callback.
+    // Used when the leaf operates on a column the accessor addresses by index.
+    // The compiler emits these leaves only when the caller passes a `leafIndex`
+    // callback.
 
     /// Record-level comparison for an unsigned `INT32` column. `EQ` and `NOT_EQ` read the same
     /// under either interpretation, so they reuse the signed leaf; the four ordered operators
@@ -635,6 +666,73 @@ public final class RecordFilterCompiler {
                     "Operator " + op + " on the boolean column at index " + idx
                             + " reached the record-level matcher; the resolver answers it as an"
                             + " equality or a constant");
+        };
+    }
+
+    private static RowMatcher indexedBinaryLeaf(int idx, Operator op, byte[] v, Comparison comparison) {
+        return switch (op) {
+            case EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) == 0;
+            case NOT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) != 0;
+            case LT -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) < 0;
+            case LT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) <= 0;
+            case GT -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) > 0;
+            case GT_EQ -> row -> !row.isNull(idx) && comparison.compare(row.getBinary(idx), v) >= 0;
+        };
+    }
+
+    private static RowMatcher indexedIntInLeaf(int idx, int[] values) {
+        return row -> {
+            if (row.isNull(idx)) return false;
+            int val = row.getInt(idx);
+            for (int value : values) {
+                if (value == val) return true;
+            }
+            return false;
+        };
+    }
+
+    private static RowMatcher indexedLongInLeaf(int idx, long[] values) {
+        return row -> {
+            if (row.isNull(idx)) return false;
+            long val = row.getLong(idx);
+            for (long value : values) {
+                if (value == val) return true;
+            }
+            return false;
+        };
+    }
+
+    /// See [#binaryInLeaf].
+    private static RowMatcher indexedBinaryInLeaf(int idx, byte[][] values, Comparison comparison) {
+        return row -> {
+            if (row.isNull(idx)) return false;
+            byte[] val = row.getBinary(idx);
+            for (byte[] value : values) {
+                if (comparison.compare(val, value) == 0) return true;
+            }
+            return false;
+        };
+    }
+
+    private static RowMatcher indexedFloatInLeaf(int idx, float[] values) {
+        return row -> {
+            if (row.isNull(idx)) return false;
+            float val = row.getFloat(idx);
+            for (float member : values) {
+                if (Float.compare(val, member) == 0) return true;
+            }
+            return false;
+        };
+    }
+
+    private static RowMatcher indexedDoubleInLeaf(int idx, double[] values) {
+        return row -> {
+            if (row.isNull(idx)) return false;
+            double val = row.getDouble(idx);
+            for (double member : values) {
+                if (Double.compare(val, member) == 0) return true;
+            }
+            return false;
         };
     }
 

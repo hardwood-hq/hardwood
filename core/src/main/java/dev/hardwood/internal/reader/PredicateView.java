@@ -125,7 +125,11 @@ public final class PredicateView implements StructAccessor {
         for (int slot = 0; slot < flatCount; slot++) {
             int columnIndex = flatColumns.get(slot);
             flatProjected[slot] = decoded.toProjectedIndex(columnIndex);
-            flatSlotByName.put(schema.getColumn(columnIndex).name(), slot);
+            // A flat column below a struct is reached by index only; under its leaf name it would
+            // shadow a top-level column of the same name.
+            if (schema.getColumn(columnIndex).fieldPath().elements().size() == 1) {
+                flatSlotByName.put(schema.getColumn(columnIndex).name(), slot);
+            }
             indexByColumn[columnIndex] = slot;
         }
 
@@ -313,12 +317,13 @@ public final class PredicateView implements StructAccessor {
     }
 
     /// The nested view, which serves every name the flat slots do not. A leaf below a
-    /// struct that decodes as a flat column (every level of its path required) has no
-    /// nested view to be navigated through by name.
+    /// struct that decodes as a flat column (every level of its path required) is not
+    /// navigated by name: [#indexOf] maps it to its flat slot, and every leaf the matcher
+    /// compiles for it reads by index.
     private NestedBatchDataView nested(String name) {
         if (nestedView == null) {
-            throw new UnsupportedOperationException("Nested-path predicate on a non-nullable struct path is"
-                    + " not supported for column readers; field '" + name + "' did not decode as nested");
+            throw new IllegalStateException("Predicate view has no nested column to serve field '"
+                    + name + "'; a flat column below a struct is read by index");
         }
         return nestedView;
     }
@@ -357,6 +362,12 @@ public final class PredicateView implements StructAccessor {
                 : nestedView.getBoolean(nestedIndex(index));
     }
 
+    @Override public byte[] getBinary(int index) {
+        return index < flatProjected.length
+                ? ((BinaryBatchValues) flatValues[index]).byteArrayAt(record)
+                : nestedView.getBinary(nestedIndex(index));
+    }
+
     // ---- Never invoked by a compiled RowMatcher ----
 
     private static UnsupportedOperationException unsupported() {
@@ -380,7 +391,6 @@ public final class PredicateView implements StructAccessor {
     @Override public String getFieldName(int index) { throw unsupported(); }
 
     @Override public String getString(int index) { throw unsupported(); }
-    @Override public byte[] getBinary(int index) { throw unsupported(); }
     @Override public LocalDate getDate(int index) { throw unsupported(); }
     @Override public LocalTime getTime(int index) { throw unsupported(); }
     @Override public Instant getTimestamp(int index) { throw unsupported(); }

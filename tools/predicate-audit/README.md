@@ -37,7 +37,7 @@ The script:
     | `legacy` | converted types only |
     | `dropped` | annotations the physical type cannot carry |
     | `lowcard` | 40 distinct values, so every chunk is dictionary-encoded |
-    | `nested` | nulls at every level of a struct, and a `LIST` |
+    | `nested` | nulls at every level of a struct, a `LIST`, and a struct required all the way down beside a top-level column named like one of its leaves |
 
 - **Resolver** (`resolver.tsv`): one literal of every kind under every operator against every column and group, including `VARIANT` leaves, `MAP`s and repeated leaves, with each outcome and message. Also the build-time checks, each with the outcome the rule gives it.
 - **Consultation** (`consultation.tsv`): evidence that Bloom filters (a zeroed copy loses rows) and dictionaries (the `dev.hardwood.RowGroupFilter` JFR event) are consulted, so agreement is not an artefact of layouts the reader ignores. Each check states the expected outcome, including a Bloom filter left unread for a comparison that is not byte-exact.

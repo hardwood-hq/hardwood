@@ -179,7 +179,7 @@ final class ResolverMatrix {
             return refusal == null ? "ACCEPT" : "REFUSE (" + refusal + ")";
         }
         return switch (file + ":" + column) {
-            case "nested_single:s", "nested_single:s.t", "nested_single:l", "shapes:v", "shapes:sv", "shapes:m", "shapes:st",
+            case "nested_single:s", "nested_single:s.t", "nested_single:r", "nested_single:l", "shapes:v", "shapes:sv", "shapes:m", "shapes:st",
                  "shapes:st.inner" -> nullTest ? "ACCEPT" : "REFUSE (group)";
             case "nested_single:l.list", "nested_single:l.list.element", "shapes:m.key_value", "shapes:m.key_value.key",
                  "shapes:m.key_value.value", "shapes:rep" -> "REFUSE (below a repeated path)";
