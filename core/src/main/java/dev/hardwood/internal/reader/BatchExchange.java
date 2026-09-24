@@ -23,7 +23,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// - **Recycling** (`BatchExchange.recycling()`): pre-allocates batch holders that cycle
 ///   between drain and consumer via `freeQueue` and `readyQueue`. No per-batch allocation.
 ///   Used by [FlatRowReader] and [NestedRowReader] where the consumer returns batches
-///   after reading, and for the filter-only flat columns of a filtered column read.
+///   after reading.
 ///
 /// - **Detaching** (`BatchExchange.detaching()`): allocates a fresh batch each time
 ///   the drain needs one via the `batchFactory`. The consumer keeps ownership of each

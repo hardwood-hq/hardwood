@@ -79,11 +79,8 @@ final class ColumnScan implements Closeable {
         int columnCount = decoded.getProjectedColumnCount();
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            // A filter-only column is read by the selection alone and never handed to the
-            // caller, so its batches are recycled rather than allocated afresh for every batch.
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode,
-                    projection.isFilterOnly(i));
+                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
         }
         SelectionEngine engine = filter == null
                 ? null

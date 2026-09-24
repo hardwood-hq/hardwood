@@ -141,11 +141,6 @@ group: no I/O, no decompression, no decoding, no value copy and no batch. In a `
 group a filter-only column is read like any other. Reads without a filter, and filtered reads whose
 predicate columns are all projected, have no filter-only column, so no plan is a skip plan.
 
-On the column-reader path a flat filter-only column's `ColumnCursor` draws its batches from a
-recycling exchange and hands each back on its next advance, as the row readers do for every column.
-Its batches never reach the caller, so they need not be detached. The payload cursors stay
-detaching, since a caller may keep the arrays a `ColumnReader` returns.
-
 The record-matcher fallback on the row readers evaluates through the predicate view instead of the
 reader. The view resolves each flat field's array once per batch, so a per-record access is an
 array index, the same as the reader's indexed accessors.
@@ -167,8 +162,6 @@ one filter proves a row group fully matching, leaves one undecided and prunes on
   and inside a fully matching or undecided row group that follows an undecided one.
 - Accessors: the name and the index of a filter-only column raise in every row of every row group,
   including a predicate leaf below a projected struct.
-- 64-row batches on the column-reader path, so the filter-only column's recycled batches are
-  reused many times, with every row group evaluated and with a fully matching row group first.
 - Filter-only columns that decode as nested on the column-reader path.
 - A fully matching row group whose column index disagrees with its chunk statistics, so that page
   filtering narrows the payload columns there, followed by an undecided row group; row and column
