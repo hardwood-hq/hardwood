@@ -104,6 +104,7 @@ final class Matrix {
                     case "s" -> Columns.structNull(row);
                     case "s.t" -> Columns.innerStructNull(row);
                     case "l" -> Columns.listNull(row);
+                    case "r" -> false;
                     default -> leaves.get(name).at(row) == null;
                 };
             }

@@ -105,11 +105,12 @@ final class Cases {
                 new Intersects("geom", 10, 0, 0, 600));
     }
 
-    /// Null tests on struct, list and leaf nodes, and comparisons on struct leaves with nulls at
-    /// every level above them.
+    /// Null tests on struct, list and leaf nodes, comparisons on struct leaves with nulls at every
+    /// level above them, and every leaf kind on a required struct's leaves, alone and beside the
+    /// top-level column that shares a leaf's name.
     static List<P> nested() {
         List<P> cases = new ArrayList<>();
-        for (String node : List.of("s", "s.t", "l", "s.x", "s.name", "s.t.y")) {
+        for (String node : List.of("s", "s.t", "l", "s.x", "s.name", "s.t.y", "r", "r.key", "r.name")) {
             cases.add(new IsNull(node));
             cases.add(new IsNotNull(node));
             cases.add(new Not(new IsNull(node)));
@@ -131,7 +132,23 @@ final class Cases {
             }
             cases.add(new Leaf("s.name", op, "n0310"));
             cases.add(new Not(new Leaf("s.name", op, "n0310")));
+            for (Object literal : List.of(305L, 306L)) {
+                P leaf = new Leaf("r.key", op, literal);
+                cases.add(leaf);
+                cases.add(new Not(leaf));
+                cases.add(new And(List.of(new Leaf("key", op, literal), leaf)));
+                cases.add(new Or(List.of(new Leaf("key", op, literal), new Leaf("s.t.y", op, literal))));
+            }
+            cases.add(new Leaf("r.name", op, "r0310"));
+            cases.add(new Not(new Leaf("r.name", op, "r0310")));
+            cases.add(new And(List.of(new Leaf("r.name", op, "r0310"), new Leaf("s.x", op, 20))));
         }
+        cases.add(new In("r.key", List.of(305L, 306L)));
+        cases.add(new In("key", List.of(305L, 306L)));
+        cases.add(new In("r.name", List.of("r0305", "r0306")));
+        cases.add(new Not(new In("r.name", List.of("r0305", "r0306"))));
+        cases.add(new And(List.of(new In("key", List.of(293L, 294L)), new In("r.key", List.of(305L, 306L)))));
+        cases.add(new And(List.of(new In("key", List.of(293L, 294L)), new Leaf("r.key", Op.LT, 400L))));
         cases.add(new In("s.x", List.of(20, 22)));
         cases.add(new Not(new In("s.x", List.of(20, 22))));
         cases.add(new And(List.of(new IsNotNull("s"), new IsNull("s.x"))));

@@ -58,8 +58,9 @@ A row reader holds two views over the batches it loads:
   are served from their typed arrays, nested ones through a `NestedBatchDataView` over a
   projection of the predicate paths. It is refreshed per batch only when the batch is evaluated.
   Its indexed accessors address the flat predicate columns first and the nested projection's
-  top-level fields after them; `PredicateView#indexOf` maps a top-level file leaf column into that
-  space for `RecordFilterCompiler`.
+  top-level fields after them; `PredicateView#indexOf` maps a file leaf column into that space for
+  `RecordFilterCompiler`, which uses it at any depth. A leaf below a struct that is required all
+  the way down decodes as a flat column on the column-reader path, and is reached by index.
 
 The drain-side path (`BatchFilterCompiler`, `BatchMatchMerger`) reads batches by projected index
 and does not use either accessor surface.
