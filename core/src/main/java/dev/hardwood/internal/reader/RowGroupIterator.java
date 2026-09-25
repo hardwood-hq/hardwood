@@ -173,6 +173,10 @@ public class RowGroupIterator implements Closeable {
     /// `maskCapability` to decide whether `tailSkip` is viable in the
     /// first place).
     ///
+    /// `maskCapability` is probed on first request, which comes only from
+    /// a row group whose plans would apply a page mask or from the tail-read
+    /// fast path, so an unmasked read issues no probe.
+    ///
     /// `dictionaries` holds the dictionaries pruning read for this row group, for
     /// the fetch plans to decode with rather than read them again; `null` when
     /// pruning read none. A row group they prove holds no match is
@@ -180,7 +184,7 @@ public class RowGroupIterator implements Closeable {
     public record SharedRowGroupMetadata(
             RowGroupIndexBuffers indexBuffers,
             RowRanges matchingRows,
-            MaskCapability maskCapability,
+            LazyMaskCapability maskCapability,
             RowGroupDictionaryFilterSource dictionaries,
             boolean droppedByDictionary
     ) {}
@@ -419,7 +423,8 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @param workItem the work item to get metadata for
     /// @return shared metadata (index buffers, filter-derived matching row
-    ///         ranges, and the row-group-wide mask-applicability decision)
+    ///         ranges, and the row-group-wide mask-applicability decision,
+    ///         probed on first request)
     public SharedRowGroupMetadata getSharedMetadata(WorkItem workItem) throws IOException {
         try {
             return computeSharedMetadata(workItem);
@@ -449,8 +454,8 @@ public class RowGroupIterator implements Closeable {
                     }
                     if (decision == FilterDecision.CANNOT_MATCH) {
                         emitDictionaryDropEvent(workItem);
-                        return new SharedRowGroupMetadata(null, RowRanges.ALL, MaskCapability.YES,
-                                null, true);
+                        return new SharedRowGroupMetadata(null, RowRanges.ALL,
+                                LazyMaskCapability.of(MaskCapability.YES), null, true);
                     }
                 }
                 boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
@@ -466,10 +471,10 @@ public class RowGroupIterator implements Closeable {
                             workItem.columnOrdinals().boundsReadability());
                 }
 
-                MaskCapability maskCapability = masksApplicableForRowGroup(
-                        projection.decoded(), workItem.rowGroup(), workItem.fileSchema(),
-                        workItem.columnOrdinals(), workItem.inputFile())
-                        ? MaskCapability.YES : MaskCapability.NO;
+                // Probed only when a plan would apply a page mask: an unfiltered scan
+                // never asks, and needs no page-header read to decide nothing.
+                LazyMaskCapability maskCapability = new LazyMaskCapability(
+                        () -> probeMaskCapability(workItem));
 
                 return new SharedRowGroupMetadata(indexBuffers, matchingRows, maskCapability,
                         dictionaries, false);
@@ -480,6 +485,23 @@ public class RowGroupIterator implements Closeable {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// Runs the page-format probe behind the row-group-wide mask gate, see
+    /// [#masksApplicableForRowGroup].
+    private MaskCapability probeMaskCapability(WorkItem workItem) throws IOException {
+        try (FetchReason.Scope ignored = FetchReason.set(
+                "rg=" + workItem.rowGroupIndex() + " indexes")) {
+            return masksApplicableForRowGroup(
+                    projection.decoded(), workItem.rowGroup(), workItem.fileSchema(),
+                    workItem.columnOrdinals(), workItem.inputFile())
+                    ? MaskCapability.YES : MaskCapability.NO;
+        }
+        catch (IOException e) {
+            throw new IOException(
+                    ExceptionContext.filePrefix(workItem.inputFile().name())
+                    + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
+        }
     }
 
     /// Reports a row group its dictionaries dropped once the read reached it.
@@ -544,9 +566,9 @@ public class RowGroupIterator implements Closeable {
 
     /// Pre-probes the row-group-wide mask gate for every work item,
     /// returning `true` iff per-page masking is applicable across all of
-    /// them. Used by the tail-read fast path: a single pass through
-    /// [#getSharedMetadata] populates the cache and surfaces the gate
-    /// decision, so [#computeFetchPlans] does not run a second probe.
+    /// them. Used by the tail-read fast path: it probes each row group's
+    /// cached [LazyMaskCapability], so [#computeFetchPlans] reuses the
+    /// result rather than running a second probe.
     ///
     /// Tail reading is single-file only — this method asserts that
     /// invariant rather than silently ignoring non-first-file work items.
@@ -565,7 +587,7 @@ public class RowGroupIterator implements Closeable {
         // them, so this one plans the read out. Single-file only, so that is one footer.
         ensureFullyPlanned();
         for (WorkItem workItem : workItems) {
-            if (getSharedMetadata(workItem).maskCapability() == MaskCapability.NO) {
+            if (getSharedMetadata(workItem).maskCapability().get() == MaskCapability.NO) {
                 return false;
             }
         }
@@ -726,14 +748,14 @@ public class RowGroupIterator implements Closeable {
         }
 
         // Per-page masks are honoured for this row group only when every
-        // projected column is mask-friendly (e.g., has an OffsetIndex, is flat,
+        // decoded column is mask-friendly (e.g., has an OffsetIndex, is flat,
         // or is nested with `DATA_PAGE_V2` pages). Masking a subset of
         // columns would leave sibling columns row-misaligned. When the gate
         // is closed we promote `matchingRows` to ALL so neither plan applies
         // a mask; row-group-level statistics still drop the group when
         // possible, and the row reader applies the residual filter to
         // surviving rows.
-        if (!matchingRows.isAll() && shared.maskCapability() == MaskCapability.NO) {
+        if (!matchingRows.isAll() && shared.maskCapability().get() == MaskCapability.NO) {
             matchingRows = RowRanges.ALL;
         }
 
@@ -1121,8 +1143,9 @@ public class RowGroupIterator implements Closeable {
         event.commit();
     }
 
-    /// Whether per-page row masks may be applied by the projected plans of
-    /// this row group. Returns `true` iff every projected column is one of:
+    /// Whether per-page row masks may be applied by the plans of this row
+    /// group. Returns `true` iff every decoded column (the projected columns
+    /// and any filter-only column, see [ReadProjection]) is one of:
     ///
     /// - backed by an OffsetIndex (its plan is an [IndexedFetchPlan], which
     ///   honours masks);
@@ -1142,7 +1165,7 @@ public class RowGroupIterator implements Closeable {
     /// of masking only the columns we know how to handle.
     ///
     /// Performs at most one bounded page-header read per nested-without-
-    /// OffsetIndex column to detect v1 vs v2; files where every projected
+    /// OffsetIndex column to detect v1 vs v2; files where every decoded
     /// column has an OffsetIndex (parquet-mr default since 1.11) pay no I/O
     /// here.
     public static boolean masksApplicableForRowGroup(ProjectedSchema projectedSchema,
