@@ -60,6 +60,16 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 - **Why:** Easy to regress on `nextSetBit` density or branch prediction by adding an innocent-looking check.
 - **How:** PR description claims performance improvement → look for end-to-end and JMH numbers in `performance-testing/`. PR description silent on perf but touches `core/src/main/java/dev/hardwood/internal/reader/` or `internal/predicate/` → ask for them.
 
+### A9. What didn't change but should have
+- **Rule:** Every contract, invariant or condition the diff changes is changed at every site that depends on it.
+- **Why:** Omissions don't show up in a diff, so they are the easiest defect to miss. A planner skip condition changed without the consumers' poll condition, a reader fix without the matching writer change, a row-path fix without the column path.
+- **How:** For each changed method signature, condition, constant or documented behaviour, grep for its callers and for sibling implementations (row vs column path, flat vs nested, reader vs writer, CLI vs dive). Each one either appears in the diff or has a stated reason not to.
+
+### A10. Can't explain it, flag it
+- **Rule:** Every non-trivial block's correctness can be explained from the code, its comments and its tests.
+- **Why:** A block the reviewer cannot justify by reading is one the next maintainer cannot safely change. Passing it silently hides a clarity defect and often a real bug behind it.
+- **How:** If you cannot state in one sentence why a block is correct (which invariant makes the index safe, why the branch is unreachable, why the ordering matters), flag it: ask for the missing invariant, comment or test. Say that it is unexplained, not that it is wrong.
+
 ---
 
 ## B. API semantics
