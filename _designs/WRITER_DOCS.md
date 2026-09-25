@@ -1,7 +1,7 @@
 # Writer documentation (#9, stage 20)
 
 **Status: Implemented.** Tracking issue: #9. Delivery stage 20 (Docs) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md).
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md).
 
 ## Context
 

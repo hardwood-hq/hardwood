@@ -1,7 +1,7 @@
 # Write-path benchmark coverage (#9, stage 21)
 
 **Status: 21a complete, 21b outstanding.** Tracking issue: #989. Delivery stage 21 (Benchmark)
-of [WRITER_SUPPORT.md](WRITER_SUPPORT.md). The encoding axis and its baseline are in
+of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). The encoding axis and its baseline are in
 [The recorded baseline](#the-recorded-baseline); the nested and schema-width shapes are not
 built yet.
 

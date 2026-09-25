@@ -1,7 +1,7 @@
 # Logical-type write support (#9, stage 13)
 
 **Status: Complete.** Tracking issue: #9. Delivery stage 13 (Breadth) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md), delivered in increments 13a (annotations) and 13b
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md), delivered in increments 13a (annotations) and 13b
 (order-correct statistics). This document is the reference the logical-type increments
 implement against.
 

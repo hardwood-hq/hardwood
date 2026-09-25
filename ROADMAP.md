@@ -175,7 +175,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ## Phase 6: Writer Implementation
 
 > Architecture and delivery sequencing for write support live in
-> [_designs/WRITER_SUPPORT.md](_designs/WRITER_SUPPORT.md) (#9), which is the plan of
+> [_plans/WRITER_SUPPORT.md](_plans/WRITER_SUPPORT.md) (#1291), which is the plan of
 > record. The boxes below are the fine-grained inventory ticked as increments land.
 
 ### 6.1 Writer Architecture

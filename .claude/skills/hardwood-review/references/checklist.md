@@ -100,22 +100,26 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 
 ## C. Design discipline
 
-### C1. Design doc exists for non-trivial changes
-- **Rule:** New features / refactorings need a design markdown under `_designs/` before implementation.
-- **How:** Large PR (> 1k LOC) with no `_designs/*.md` added or updated → flag it. Small PRs are fine without.
+### C1. Plan exists for multi-PR or design-changing work
+- **Rule:** Work that spans several PRs or alters the system design has a plan under `_plans/` before implementation. The PR that completes the work folds the end state into `_designs/` and deletes the plan.
+- **How:** Large PR (> 1k LOC) with no `_plans/*.md` or `_designs/*.md` added or updated → flag it. A PR that ticks the last open item of a plan but leaves the plan in place → flag it. Small PRs are fine without.
 
-### C2. Design doc is end-state, not process
-- **Rule:** Design docs describe the intended end state. No references to prior approaches that were rejected, evolution commentary, or "we used to do X".
-- **How:** Read added/modified `_designs/*.md` for phrases like "previously", "v1", "originally we", "considered but rejected". These belong in commit messages or PR descriptions, not the design doc.
+### C2. Design doc describes the current state, not the process
+- **Rule:** `_designs/*.md` describe the system as it is: structure, contracts, invariants and the reasoning behind them. No status field, no stages, no benchmark results, no rejected alternatives, no evolution commentary. Tuning constants and class internals stay out; an invariant names the test that enforces it or is marked untested.
+- **How:** Read added/modified `_designs/*.md` for phrases like "previously", "v1", "originally we", "considered but rejected", "Phase", "Step", "Status:". Process content belongs in `_plans/`, commit messages or PR descriptions.
+
+### C2a. Behaviour change updates its design doc
+- **Rule:** A PR that changes behaviour a design doc describes updates that doc in the same PR.
+- **How:** For each changed subsystem, find the design doc that covers it (`grep -l` the touched class names in `_designs/`). If the diff changes a contract, invariant, gate or supported set it states, and the doc is not in the diff → flag it, quoting the stale sentence.
 
 ### C3. Doc/code drift on load-bearing claims
 - **Rule:** If a design doc states a gate condition, eligibility rule, or supported set, the code must match.
 - **Why:** The PR #418 design said "≥ 2 distinct projected columns" but the code was `leaves.size() < 2`. Both shipped together. Easy to catch if you grep.
 - **How:** Read the design doc's gate descriptions. For each numeric or boolean claim, find the code that implements it. Quote them side-by-side if they differ.
 
-### C4. ROADMAP / status update
-- **Rule:** When a feature ships, mark the design doc done and update ROADMAP.md.
-- **How:** Diff includes a completed design but no `ROADMAP.md` change → flag.
+### C4. ROADMAP update
+- **Rule:** When a feature ships, update ROADMAP.md.
+- **How:** Diff completes a plan or ships a roadmap item but has no `ROADMAP.md` change → flag.
 
 ---
 

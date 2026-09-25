@@ -1,7 +1,7 @@
 # Primitive type write support (#9, stage 12)
 
 **Status: Complete.** Tracking issue: #9. Delivery stage 12 (Breadth) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md), delivered in increments 12a (fixed-width) and 12b
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md), delivered in increments 12a (fixed-width) and 12b
 (variable-width). This document is the reference the primitive-type increments implement
 against.
 
@@ -188,7 +188,7 @@ untruncated binary bound), and `StatisticsWriter` emits `is_min_value_exact` /
 
 The whole writer surface is `@Experimental` and is not yet in the user documentation under
 `docs/content/`; it is documented as a settled API by the milestone's dedicated docs increment
-(stage 20 of [WRITER_SUPPORT.md](WRITER_SUPPORT.md)), not per primitive-type increment.
+(stage 20 of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md)), not per primitive-type increment.
 
 ## Row-group flush
 
@@ -223,7 +223,7 @@ as `Integer.SIZE`. This holds only while every value is four bytes. Two changes 
 
 ## Validation strategy
 
-The two-tier check from [WRITER_SUPPORT.md](WRITER_SUPPORT.md) applies unchanged, exercised
+The two-tier check from [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md) applies unchanged, exercised
 across the new types:
 
 1. **DuckDB differential (primary)** — hardwood writes each physical type, flat and nested,

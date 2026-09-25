@@ -1,7 +1,7 @@
 # Dictionary write support (#9, stage 9)
 
 **Status: Settled; implemented in stage 9.** Tracking issue: #9. Delivery stage 9 (Dimension)
-of [WRITER_SUPPORT.md](WRITER_SUPPORT.md). This document is the reference the dictionary
+of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). This document is the reference the dictionary
 increment implements against.
 
 **Superseded in part by later stages.** How a chunk's encoding is *chosen* has moved twice
@@ -170,7 +170,7 @@ from the start with no dictionary page — the stage 1–8 behaviour.
 
 The mid-chunk fallback described here is the stage-9 mechanism: the encoding is chosen
 value-by-value from a byte-limit heuristic, so a chunk can carry an `RLE_DICTIONARY` prefix
-followed by `PLAIN` pages. Stage 18 ([WRITER_SUPPORT.md](WRITER_SUPPORT.md)) replaces the
+followed by `PLAIN` pages. Stage 18 ([WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md)) replaces the
 heuristic with a row-group-global decision taken once the group is buffered — each chunk is
 encoded `RLE_DICTIONARY` or `PLAIN` as a whole from its true cardinality, so no chunk mixes
 encodings and no dictionary page is written for a chunk that ends up `PLAIN`. The
@@ -215,7 +215,7 @@ width is deferred with the variable-width work in stage 12.
 ## Component architecture
 
 Dictionary support extends the writer components from
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md); it adds one encoder and one page-header variant and
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md); it adds one encoder and one page-header variant and
 reworks the column-chunk buffer's value section.
 
 | Layer | Package | Change |
@@ -234,7 +234,7 @@ supplied per page — so no new index encoder is needed; the value section prepe
 
 ## Validation strategy
 
-The two-tier check from [WRITER_SUPPORT.md](WRITER_SUPPORT.md) applies unchanged, with cases
+The two-tier check from [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md) applies unchanged, with cases
 chosen to stress the dictionary layout:
 
 1. **DuckDB differential (primary)** — hardwood writes dictionary-encoded files that DuckDB
@@ -254,7 +254,7 @@ chosen to stress the dictionary layout:
 
 ## Delivery
 
-This is stage 9 of [WRITER_SUPPORT.md](WRITER_SUPPORT.md). It lands with the DuckDB
+This is stage 9 of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). It lands with the DuckDB
 differential and round-trip checks above, so `main` never holds dictionary write code that
 cannot produce a readable file. It completes roadmap box 2.2 (dictionary encoding write).
 Stage 10 (compression) then compresses these — dictionary and plain — page bodies, and stage
