@@ -1,6 +1,6 @@
 ---
 name: hardwood-review
-description: Review a Hardwood PR, local branch, or staged diff against the project's CLAUDE.md conventions and recurring failure modes. Use whenever the user asks to "review", "look over", "check", "audit", or "assess" a PR number, a branch, or pending changes in the hardwood-hq/hardwood repo. Also use when the user pastes a PR URL or says they want feedback before merging. Produces a checkbox markdown file with findings grouped by priority.
+description: Review a Hardwood PR, local branch, or staged diff against the project's CLAUDE.md conventions and recurring failure modes. Use whenever the user asks to "review", "look over", "check", "audit", or "assess" a PR number, a branch, or pending changes in the hardwood-hq/hardwood repo. Also use when the user pastes a PR URL or says they want feedback before merging. Produces a checkbox markdown file with findings grouped by priority, then addresses them through the `hardwood-address-review` skill: decisions surfaced to the user, fixes landed as a separate commit. Skip the addressing only when the user asks for the review alone ("just review", "review only", "don't fix").
 ---
 
 # Hardwood code review
@@ -189,14 +189,21 @@ Session: <session-id>
 
 Use `[ ]` not `[x]` — the maintainer checks items off as they're addressed (per CLAUDE.md "Code Reviews" section).
 
-### 9. Hand back a short summary
+### 9. Hand over to addressing
 
-After writing the file, give the user a 3–5 sentence summary: what the PR does, the highest-priority finding(s), and the path to the findings file. Do not repeat the whole list inline — they can read the file.
+A review runs straight into addressing its findings. After writing the file:
+
+1. Give the user a 3–5 sentence summary: what the PR does, the highest-priority finding(s), and the path to the findings file. Do not repeat the whole list inline — they can read the file.
+2. **Stop here** when the file has no open items, or when the user asked for the review alone ("just review", "review only", "don't fix", "findings only").
+3. Otherwise invoke the `hardwood-address-review` skill via the `Skill` tool, passing the target (`<N>` for a PR, the branch name for a branch review, `working-tree` for an uncommitted diff). Do not ask whether to proceed; the Premise items and Decisions it surfaces are the user's checkpoint. That skill settles those with the user, makes the fixes, ticks the file and commits them as one separate commit on top of the reviewed work, without pushing.
+
+The "don't build" rule of step 1 covers the review only. The addressing phase builds, because it has changed code.
 
 ## When NOT to use this skill
 
 - Reviewing a PR in a different repo. The checklist is hardwood-specific.
-- Asked to apply a fix or implement a feature. This skill produces findings, not edits.
+- Asked to apply a fix or implement a feature with no review. Just do the work.
+- Asked to address an existing review file. Use `hardwood-address-review` directly.
 - Asked for a one-line opinion ("does this look OK?"). Just answer.
 
 ## Output discipline
