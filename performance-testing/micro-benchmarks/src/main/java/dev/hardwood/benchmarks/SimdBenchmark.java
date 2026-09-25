@@ -7,7 +7,6 @@
  */
 package dev.hardwood.benchmarks;
 
-import java.util.BitSet;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
@@ -52,7 +51,6 @@ public class SimdBenchmark {
     private int[] indices;
     private int[] dictInt;
     private long[] dictLong;
-    private byte[] packedData;
     private SimdOperations ops;
 
     @Setup
@@ -80,22 +78,11 @@ public class SimdBenchmark {
         for (int i = 0; i < size; i++) {
             indices[i] = random.nextInt(dictInt.length);
         }
-
-        // Packed bit data for bit-width 1 (one byte = 8 values)
-        packedData = new byte[size / 8 + 10];
-        random.nextBytes(packedData);
     }
 
     @Benchmark
     public int countNonNulls() {
         return ops.countNonNulls(defLevels, 3);
-    }
-
-    @Benchmark
-    public void markNulls(Blackhole bh) {
-        BitSet nulls = new BitSet(size);
-        ops.markNulls(nulls, defLevels, 0, 0, size, 3);
-        bh.consume(nulls);
     }
 
     @Benchmark
@@ -109,14 +96,6 @@ public class SimdBenchmark {
     public void applyDictionaryLongs(Blackhole bh) {
         long[] output = new long[size];
         ops.applyDictionaryLongs(output, dictLong, indices, size);
-        bh.consume(output);
-    }
-
-    @Benchmark
-    public void unpackBitWidth1(Blackhole bh) {
-        int[] output = new int[size];
-        int count = Math.min(size, packedData.length * 8);
-        ops.unpackBitWidth1(packedData, 0, output, 0, count);
         bh.consume(output);
     }
 }
