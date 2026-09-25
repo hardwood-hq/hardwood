@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -46,24 +47,30 @@ public class ColumnReaders implements Closeable {
 
     /// The pipeline every reader of this group is a view of.
     private final ColumnScan scan;
+    /// The first position's reader of each column.
     private final Map<String, ColumnReader> readersByName;
+    /// One reader per position, in the order the projection requests the columns. A column
+    /// requested more than once has a reader of its own at each position, all views of the one
+    /// payload cursor, so that each tracks the batch it last took up.
     private final ColumnReader[] readersByIndex;
 
     /// A group of views over the payload columns of `scan`, the columns of `payload`.
     ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema payload) {
-        int payloadCount = payload.getProjectedColumnCount();
+        int positionCount = payload.requestedColumnCount();
         this.scan = scan;
-        this.readersByName = new LinkedHashMap<>(payloadCount);
-        this.readersByIndex = new ColumnReader[payloadCount];
-        for (int i = 0; i < payloadCount; i++) {
-            ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(i));
-            ColumnReader reader = new ColumnReader(scan, i, schema, columnSchema);
-            readersByName.put(columnSchema.fieldPath().toString(), reader);
-            readersByIndex[i] = reader;
+        this.readersByName = new LinkedHashMap<>(positionCount);
+        this.readersByIndex = new ColumnReader[positionCount];
+        for (int position = 0; position < positionCount; position++) {
+            int projectedIndex = payload.requestedColumn(position);
+            ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(projectedIndex));
+            ColumnReader reader = new ColumnReader(scan, projectedIndex, schema, columnSchema);
+            readersByName.putIfAbsent(columnSchema.fieldPath().toString(), reader);
+            readersByIndex[position] = reader;
         }
     }
 
-    /// Get the number of projected columns.
+    /// Get the number of requested columns, counting a column once for every name in the
+    /// projection that selects it.
     public int getColumnCount() {
         return readersByIndex.length;
     }
@@ -84,7 +91,15 @@ public class ColumnReaders implements Closeable {
 
     /// Get the ColumnReader by index within the requested columns.
     ///
-    /// @param index index within the requested column names (0-based)
+    /// Indices follow the order the projection names its columns in, one index for every leaf
+    /// column a name selects. A name that selects several columns, such as a group or
+    /// [ColumnProjection#all()], contributes them in schema order, so a column listed after a
+    /// group in `columns(...)` sits after all of that group's leaf columns and moves when the
+    /// group gains or loses a field. A column that several names select appears at each of
+    /// their positions, with a reader of its own at each; [#getColumnReader(String)] returns
+    /// the first.
+    ///
+    /// @param index index among the requested leaf columns (0-based)
     /// @return the ColumnReader at the given index
     public ColumnReader getColumnReader(int index) {
         return readersByIndex[index];

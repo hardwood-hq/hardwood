@@ -9,8 +9,8 @@ package dev.hardwood.internal.schema;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Set;
 import java.util.function.IntPredicate;
 
 import dev.hardwood.schema.ColumnProjection;
@@ -27,22 +27,61 @@ import dev.hardwood.schema.SchemaNode;
 /// For nested schemas, projecting a parent group includes all its child columns.
 /// For example, if "address" is a struct containing "city" and "street", projecting
 /// "address" includes both child columns.
+///
+/// Projected column indices follow file schema order; they address the decode pipeline.
+/// What a reader exposes by index follows the order the projection requests its columns
+/// in instead, in two forms:
+///
+/// - [#requestedColumn] lists the leaf columns each request selects, request after request,
+///   so a column selected by several requests appears once for each. The columnar readers
+///   expose this list.
+/// - [#exposedColumn], [#getProjectedFieldIndices] and [#projectedChildren] give every leaf
+///   column, top-level field and struct child one position, ordered by the first request that
+///   selects it. The row readers expose these.
+///
+/// Either way, the columns a single request selects follow schema order among themselves.
 public final class ProjectedSchema {
 
     private final FileSchema originalSchema;
     private final int[] projectedToOriginal;   // projected index -> original index
     private final int[] originalToProjected;   // original index -> projected index (-1 if not projected)
     private final List<ColumnSchema> projectedColumns;
-    private final int[] projectedFieldIndices; // indices of projected top-level fields in root children
+    private final int[] projectedFieldIndices; // projected top-level fields in root children, in request order
+    private final int[] requestByOriginal;     // original index -> first request selecting it (-1 if not projected)
+    private final int[] exposedToProjected;    // exposed position -> projected index
+    private final int[] projectedToExposed;    // projected index -> exposed position
+    private final int[] requestedOriginals;    // requested position -> original index, repeats included
+    private final int[] requestedToProjected;  // requested position -> projected index
 
-    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal,
-                            int[] originalToProjected, List<ColumnSchema> projectedColumns,
-                            int[] projectedFieldIndices) {
+    private ProjectedSchema(FileSchema originalSchema, int[] projectedToOriginal, int[] projectedFieldIndices,
+                            int[] requestByOriginal, int[] requestedOriginals) {
         this.originalSchema = originalSchema;
         this.projectedToOriginal = projectedToOriginal;
-        this.originalToProjected = originalToProjected;
-        this.projectedColumns = projectedColumns;
         this.projectedFieldIndices = projectedFieldIndices;
+        this.requestByOriginal = requestByOriginal;
+        this.requestedOriginals = requestedOriginals;
+
+        int projectedCount = projectedToOriginal.length;
+        List<ColumnSchema> originalColumns = originalSchema.getColumns();
+        this.originalToProjected = new int[originalColumns.size()];
+        Arrays.fill(originalToProjected, -1);
+        this.projectedColumns = new ArrayList<>(projectedCount);
+        long[] exposureKeys = new long[projectedCount];
+        for (int i = 0; i < projectedCount; i++) {
+            int originalIndex = projectedToOriginal[i];
+            originalToProjected[originalIndex] = i;
+            projectedColumns.add(originalColumns.get(originalIndex));
+            exposureKeys[i] = requestOrderKey(requestByOriginal[originalIndex], i);
+        }
+        this.exposedToProjected = sortedByRequest(exposureKeys);
+        this.projectedToExposed = new int[projectedCount];
+        for (int position = 0; position < projectedCount; position++) {
+            projectedToExposed[exposedToProjected[position]] = position;
+        }
+        this.requestedToProjected = new int[requestedOriginals.length];
+        for (int position = 0; position < requestedOriginals.length; position++) {
+            requestedToProjected[position] = originalToProjected[requestedOriginals[position]];
+        }
     }
 
     /// Creates a projected schema from the given full schema and projection.
@@ -68,71 +107,98 @@ public final class ProjectedSchema {
     /// @param completeContainers whether to pull in required sibling leaves of
     ///        projected MAP / VARIANT groups
     /// @return the resolved projection
+    /// @throws IllegalArgumentException if a requested name is not found in the schema
     public static ProjectedSchema create(FileSchema schema, ColumnProjection projection,
             boolean completeContainers) {
         if (projection.projectsAll()) {
             return createAllColumnsProjection(schema);
         }
+        return resolve(schema, projection.getProjectedColumnNames(), completeContainers);
+    }
 
-        Set<String> projectedNames = projection.getProjectedColumnNames();
-        List<ColumnSchema> originalColumns = schema.getColumns();
-        int originalCount = originalColumns.size();
+    /// Names may repeat or overlap: a column selected by several of them is projected once, and
+    /// takes its [#exposedColumn] position from the first.
+    private static ProjectedSchema resolve(FileSchema schema, List<String> names, boolean completeContainers) {
+        int originalCount = schema.getColumnCount();
+        int fieldCount = schema.getRootNode().children().size();
+        int[] requestByOriginal = new int[originalCount];
+        Arrays.fill(requestByOriginal, -1);
+        int[] requestByField = new int[fieldCount];
+        Arrays.fill(requestByField, -1);
 
-        // Build lists of which columns to include
-        List<Integer> includedOriginalIndices = new ArrayList<>();
-        List<Integer> includedFieldIndices = new ArrayList<>();
-        int[] originalToProjected = new int[originalCount];
-        Arrays.fill(originalToProjected, -1);
-
-        // Process each requested column name
-        for (String name : projectedNames) {
-            if (name.contains(".")) {
-                // Dot notation for nested field
-                resolveNestedColumn(schema, name, includedOriginalIndices, includedFieldIndices, originalToProjected);
+        List<Integer> leaves = new ArrayList<>();
+        List<Integer> requested = new ArrayList<>();
+        for (int request = 0; request < names.size(); request++) {
+            String name = names.get(request);
+            leaves.clear();
+            int field = name.contains(".")
+                    ? resolveNestedColumn(schema, name, leaves)
+                    : resolveSimpleColumn(schema, name, leaves);
+            if (requestByField[field] < 0) {
+                requestByField[field] = request;
             }
-            else {
-                // Simple name - could be a primitive column or a group
-                resolveSimpleColumn(schema, name, includedOriginalIndices, includedFieldIndices, originalToProjected);
+            for (int leaf : leaves) {
+                if (requestByOriginal[leaf] < 0) {
+                    requestByOriginal[leaf] = request;
+                }
             }
+            requested.addAll(leaves);
         }
 
         // Enforce structural invariants on special groups: a MAP cannot be
         // assembled without its key column, and a VARIANT is read atomically.
         // Pull in the required sibling leaves whenever any part of such a group
-        // is projected, then rebuild the leaf list in column order.
-        boolean[] includedLeaf = new boolean[originalCount];
-        for (int idx : includedOriginalIndices) {
-            includedLeaf[idx] = true;
-        }
+        // is projected.
         if (completeContainers) {
-            enforceGroupInvariants(schema.getRootNode(), includedLeaf);
+            enforceGroupInvariants(schema.getRootNode(), requestByOriginal);
         }
 
-        includedOriginalIndices = new ArrayList<>();
+        int projectedCount = 0;
+        for (int request : requestByOriginal) {
+            if (request >= 0) {
+                projectedCount++;
+            }
+        }
+        int[] projectedToOriginal = new int[projectedCount];
+        int next = 0;
         for (int i = 0; i < originalCount; i++) {
-            if (includedLeaf[i]) {
-                includedOriginalIndices.add(i);
+            if (requestByOriginal[i] >= 0) {
+                projectedToOriginal[next++] = i;
             }
         }
 
-        // Sort and de-duplicate field indices
-        includedFieldIndices = new ArrayList<>(includedFieldIndices.stream().sorted().distinct().toList());
-
-        // Build projected arrays
-        int projectedCount = includedOriginalIndices.size();
-        int[] projectedToOriginal = new int[projectedCount];
-        List<ColumnSchema> projectedColumns = new ArrayList<>(projectedCount);
-
-        for (int i = 0; i < projectedCount; i++) {
-            int origIdx = includedOriginalIndices.get(i);
-            projectedToOriginal[i] = origIdx;
-            originalToProjected[origIdx] = i;
-            projectedColumns.add(originalColumns.get(origIdx));
+        int projectedFieldCount = 0;
+        for (int request : requestByField) {
+            if (request >= 0) {
+                projectedFieldCount++;
+            }
+        }
+        long[] fieldKeys = new long[projectedFieldCount];
+        next = 0;
+        for (int i = 0; i < fieldCount; i++) {
+            if (requestByField[i] >= 0) {
+                fieldKeys[next++] = requestOrderKey(requestByField[i], i);
+            }
         }
 
-        int[] projectedFieldIndices = includedFieldIndices.stream().mapToInt(Integer::intValue).toArray();
+        return new ProjectedSchema(schema, projectedToOriginal, sortedByRequest(fieldKeys), requestByOriginal,
+                requested.stream().mapToInt(Integer::intValue).toArray());
+    }
 
-        return new ProjectedSchema(schema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices);
+    /// Packs a request and a tie-breaking position so that sorting the keys orders by request
+    /// first and position second.
+    private static long requestOrderKey(int request, int position) {
+        return ((long) request << 32) | position;
+    }
+
+    /// The positions of `keys` built by [#requestOrderKey], in request order. Sorts `keys`.
+    private static int[] sortedByRequest(long[] keys) {
+        Arrays.sort(keys);
+        int[] positions = new int[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            positions[i] = (int) keys[i];
+        }
+        return positions;
     }
 
     /// Returns `all` reordered so that the columns and top-level fields of `leading` come
@@ -142,19 +208,16 @@ public final class ProjectedSchema {
     static ProjectedSchema leadingThenRest(ProjectedSchema leading, ProjectedSchema all) {
         int[] projectedToOriginal = partition(all.projectedToOriginal,
                 original -> leading.toProjectedIndex(original) >= 0);
-        int[] fieldIndices = partition(all.projectedFieldIndices,
-                field -> contains(leading.projectedFieldIndices, field));
-
-        FileSchema schema = all.originalSchema;
-        int[] originalToProjected = new int[schema.getColumnCount()];
-        Arrays.fill(originalToProjected, -1);
-        List<ColumnSchema> projectedColumns = new ArrayList<>(projectedToOriginal.length);
-        for (int i = 0; i < projectedToOriginal.length; i++) {
-            originalToProjected[projectedToOriginal[i]] = i;
-            projectedColumns.add(schema.getColumns().get(projectedToOriginal[i]));
+        int[] leadingFields = leading.projectedFieldIndices;
+        int[] fieldIndices = Arrays.copyOf(leadingFields, all.projectedFieldIndices.length);
+        int next = leadingFields.length;
+        for (int field : all.projectedFieldIndices) {
+            if (!contains(leadingFields, field)) {
+                fieldIndices[next++] = field;
+            }
         }
-        return new ProjectedSchema(schema, projectedToOriginal, originalToProjected, projectedColumns,
-                fieldIndices);
+        return new ProjectedSchema(all.originalSchema, projectedToOriginal, fieldIndices, all.requestByOriginal,
+                all.requestedOriginals);
     }
 
     /// Returns `values` with every entry `exposed` accepts first, in their original order,
@@ -188,10 +251,8 @@ public final class ProjectedSchema {
     private static ProjectedSchema createAllColumnsProjection(FileSchema schema) {
         int columnCount = schema.getColumnCount();
         int[] projectedToOriginal = new int[columnCount];
-        int[] originalToProjected = new int[columnCount];
         for (int i = 0; i < columnCount; i++) {
             projectedToOriginal[i] = i;
-            originalToProjected[i] = i;
         }
 
         int fieldCount = schema.getRootNode().children().size();
@@ -200,55 +261,32 @@ public final class ProjectedSchema {
             projectedFieldIndices[i] = i;
         }
 
-        return new ProjectedSchema(schema, projectedToOriginal, originalToProjected,
-                new ArrayList<>(schema.getColumns()), projectedFieldIndices);
+        // A single request selects every column.
+        return new ProjectedSchema(schema, projectedToOriginal, projectedFieldIndices, new int[columnCount],
+                projectedToOriginal);
     }
 
-    /// Resolves a simple column name (no dot notation).
-    private static void resolveSimpleColumn(FileSchema schema, String name,
-                                            List<Integer> includedOriginalIndices,
-                                            List<Integer> includedFieldIndices,
-                                            int[] originalToProjected) {
-        // First check if it's a direct column name. The match is on leaf name
-        // (`FieldPath.leafName()`), so this also picks up a nested leaf whose
-        // last path segment equals `name`. Register the leaf's top-level
-        // ancestor as a projected field so the projection is coherent at the
-        // row level — for a flat top-level leaf the ancestor is the leaf
-        // itself; for a nested match it's the containing top-level group.
-        for (ColumnSchema col : schema.getColumns()) {
-            if (col.name().equals(name) && originalToProjected[col.columnIndex()] < 0) {
-                includedOriginalIndices.add(col.columnIndex());
-                String topLevel = col.fieldPath().topLevelName();
-                List<SchemaNode> children = schema.getRootNode().children();
-                for (int i = 0; i < children.size(); i++) {
-                    if (children.get(i).name().equals(topLevel)) {
-                        includedFieldIndices.add(i);
-                        break;
-                    }
-                }
-                return;
-            }
-        }
-
-        // Check top-level fields (could be a group)
+    /// Resolves a simple column name (no dot notation), which names a top-level field, into
+    /// `leaves`. A nested field is reached by its full path only, so a name matching a nested
+    /// leaf's own name does not select it.
+    ///
+    /// @return the index of the top-level field the name selects
+    private static int resolveSimpleColumn(FileSchema schema, String name, List<Integer> leaves) {
         List<SchemaNode> children = schema.getRootNode().children();
         for (int i = 0; i < children.size(); i++) {
             SchemaNode child = children.get(i);
             if (child.name().equals(name)) {
-                includedFieldIndices.add(i);
-                collectColumnsFromNode(child, includedOriginalIndices, originalToProjected);
-                return;
+                collectColumnsFromNode(child, leaves);
+                return i;
             }
         }
-
         throw new IllegalArgumentException("Column not found: " + name);
     }
 
-    /// Resolves a nested column name (dot notation).
-    private static void resolveNestedColumn(FileSchema schema, String name,
-                                            List<Integer> includedOriginalIndices,
-                                            List<Integer> includedFieldIndices,
-                                            int[] originalToProjected) {
+    /// Resolves a nested column name (dot notation) into `leaves`.
+    ///
+    /// @return the index of the top-level field the name selects from
+    private static int resolveNestedColumn(FileSchema schema, String name, List<Integer> leaves) {
         SchemaPathResolver.Resolution resolution = SchemaPathResolver.resolve(schema, name);
         if (resolution.blockedByPrimitive()) {
             throw new IllegalArgumentException("Cannot navigate into primitive column: " + name);
@@ -257,25 +295,18 @@ public final class ProjectedSchema {
             throw new IllegalArgumentException("Column not found: " + name);
         }
 
-        includedFieldIndices.add(resolution.topLevelChildIndex());
-
         // Collect all columns under this node
-        collectColumnsFromNode(resolution.node(), includedOriginalIndices, originalToProjected);
+        collectColumnsFromNode(resolution.node(), leaves);
+        return resolution.topLevelChildIndex();
     }
 
     /// Recursively collects all column indices under a schema node.
-    private static void collectColumnsFromNode(SchemaNode node,
-                                               List<Integer> includedOriginalIndices,
-                                               int[] originalToProjected) {
+    private static void collectColumnsFromNode(SchemaNode node, List<Integer> leaves) {
         switch (node) {
-            case SchemaNode.PrimitiveNode prim -> {
-                if (originalToProjected[prim.columnIndex()] < 0) {
-                    includedOriginalIndices.add(prim.columnIndex());
-                }
-            }
+            case SchemaNode.PrimitiveNode prim -> leaves.add(prim.columnIndex());
             case SchemaNode.GroupNode group -> {
                 for (SchemaNode child : group.children()) {
-                    collectColumnsFromNode(child, includedOriginalIndices, originalToProjected);
+                    collectColumnsFromNode(child, leaves);
                 }
             }
         }
@@ -287,49 +318,58 @@ public final class ProjectedSchema {
     /// reassembled atomically). Without this, a sub-field projection such as
     /// `people.key_value.value.age` or `var.typed_value` would leave the reader
     /// unable to assemble the map or the variant.
-    private static void enforceGroupInvariants(SchemaNode node, boolean[] includedLeaf) {
+    /// Pulled-in leaves take the position of the first request that selects anything in the
+    /// group, so they sit with the rest of it.
+    private static void enforceGroupInvariants(SchemaNode node, int[] requestByOriginal) {
         if (!(node instanceof SchemaNode.GroupNode group)) {
             return;
         }
         for (SchemaNode child : group.children()) {
-            enforceGroupInvariants(child, includedLeaf);
+            enforceGroupInvariants(child, requestByOriginal);
         }
-        if (!hasIncludedLeaf(group, includedLeaf)) {
+        int request = firstRequest(group, requestByOriginal);
+        if (request < 0) {
             return;
         }
         if (group.isVariant()) {
-            addAllLeaves(group, includedLeaf);
+            addAllLeaves(group, request, requestByOriginal);
         }
         else if (group.isMap()) {
             SchemaNode key = group.getMapKey();
             if (key != null) {
-                addAllLeaves(key, includedLeaf);
+                addAllLeaves(key, request, requestByOriginal);
             }
         }
     }
 
-    /// True if `node` is, or transitively contains, an already-included leaf.
-    private static boolean hasIncludedLeaf(SchemaNode node, boolean[] includedLeaf) {
+    /// The first request selecting a leaf under `node`, or -1 if none does.
+    private static int firstRequest(SchemaNode node, int[] requestByOriginal) {
         return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> includedLeaf[prim.columnIndex()];
+            case SchemaNode.PrimitiveNode prim -> requestByOriginal[prim.columnIndex()];
             case SchemaNode.GroupNode group -> {
+                int first = -1;
                 for (SchemaNode child : group.children()) {
-                    if (hasIncludedLeaf(child, includedLeaf)) {
-                        yield true;
+                    int request = firstRequest(child, requestByOriginal);
+                    if (request >= 0 && (first < 0 || request < first)) {
+                        first = request;
                     }
                 }
-                yield false;
+                yield first;
             }
         };
     }
 
-    /// Marks every leaf under `node` as included.
-    private static void addAllLeaves(SchemaNode node, boolean[] includedLeaf) {
+    /// Assigns `request` to every leaf under `node` no request selected yet.
+    private static void addAllLeaves(SchemaNode node, int request, int[] requestByOriginal) {
         switch (node) {
-            case SchemaNode.PrimitiveNode prim -> includedLeaf[prim.columnIndex()] = true;
+            case SchemaNode.PrimitiveNode prim -> {
+                if (requestByOriginal[prim.columnIndex()] < 0) {
+                    requestByOriginal[prim.columnIndex()] = request;
+                }
+            }
             case SchemaNode.GroupNode group -> {
                 for (SchemaNode child : group.children()) {
-                    addAllLeaves(child, includedLeaf);
+                    addAllLeaves(child, request, requestByOriginal);
                 }
             }
         }
@@ -375,10 +415,53 @@ public final class ProjectedSchema {
         return projectedColumns.get(projectedIndex);
     }
 
-    /// Returns the indices of projected top-level fields in the root node's children.
-    /// This is used by NestedBatchDataView to build a sparse record structure.
+    /// Returns the indices of projected top-level fields in the root node's children, in
+    /// request order: the position a row reader exposes each field at.
     public int[] getProjectedFieldIndices() {
         return projectedFieldIndices;
+    }
+
+    /// Returns the projected index of the column a reader exposes at `position`.
+    ///
+    /// @param position the column's position in request order (0-based)
+    /// @return the corresponding index in the projected schema
+    public int exposedColumn(int position) {
+        return exposedToProjected[position];
+    }
+
+    /// Returns the position, in request order, a reader exposes a projected column at.
+    ///
+    /// @param projectedIndex the index in the projected schema (0-based)
+    /// @return the column's position in request order
+    public int exposedPosition(int projectedIndex) {
+        return projectedToExposed[projectedIndex];
+    }
+
+    /// Returns the number of leaf columns the requests select, counting a column once for
+    /// every request that selects it.
+    public int requestedColumnCount() {
+        return requestedToProjected.length;
+    }
+
+    /// Returns the projected index of the leaf column at `position` in the requested list:
+    /// the leaf columns of each request in turn, each request's in schema order.
+    ///
+    /// @param position the position in the requested list (0-based)
+    /// @return the corresponding index in the projected schema
+    public int requestedColumn(int position) {
+        return requestedToProjected[position];
+    }
+
+    /// Returns the children of `group` holding a projected leaf, in request order.
+    public List<SchemaNode> projectedChildren(SchemaNode.GroupNode group) {
+        List<SchemaNode> children = new ArrayList<>(group.children().size());
+        for (SchemaNode child : group.children()) {
+            if (firstRequest(child, requestByOriginal) >= 0) {
+                children.add(child);
+            }
+        }
+        children.sort(Comparator.comparingInt(child -> firstRequest(child, requestByOriginal)));
+        return children;
     }
 
     /// Returns a copy of the projected-to-original index mapping.

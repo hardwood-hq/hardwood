@@ -83,7 +83,7 @@ public class PrintCommand implements Command<CommandInvocation> {
             FileSchema fileSchema = reader.getFileSchema();
             try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
-                List<SchemaNode> fields = projectedFields(fileSchema, projection);
+                List<SchemaNode> fields = RowTable.projectedFields(fileSchema, projection);
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
                 Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, headers.length));
                 if (transpose) {
@@ -170,20 +170,6 @@ public class PrintCommand implements Command<CommandInvocation> {
             names[i] = names[i].trim();
         }
         return ColumnProjection.columns(names);
-    }
-
-    private static List<SchemaNode> projectedFields(FileSchema schema, ColumnProjection projection) {
-        List<SchemaNode> allChildren = schema.getRootNode().children();
-        if (projection.projectsAll()) {
-            return allChildren;
-        }
-        // ColumnProjection.columns("a.b") projects "a" at top level — so we filter root children
-        // by checking which top-level fields have any projected column underneath them.
-        // For simplicity, we match top-level names against the projection prefixes.
-        return allChildren.stream()
-                .filter(child -> projection.getProjectedColumnNames().stream()
-                        .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
-                .toList();
     }
 
     private Object[] toData(RowReader rowReader, int fieldCount) {

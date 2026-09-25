@@ -22,7 +22,7 @@ Parquet and Java type of each and the null- and type-mismatch contracts every ac
 ## Accessor type mapping
 
 All accessors are available in two forms — name-based (`getInt("column_name")`) and index-based
-(`getInt(columnIndex)`); see [Index-based access](../how-to/row-reader.md#index-based-access).
+(`getInt(fieldIndex)`); see [Index-based access](../how-to/row-reader.md#index-based-access).
 
 | Method | Physical type | Logical type | Java type |
 |--------|--------------|-------------|-----------|

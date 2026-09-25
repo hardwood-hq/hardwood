@@ -23,7 +23,6 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -188,7 +187,7 @@ class ConvertCommandTest implements ConvertCommandContract {
         List<String> values = new ArrayList<>();
 
         assertThatThrownBy(() -> ConvertCommand.flattenValues("not a struct", account, "account",
-                ColumnProjection.all(), values, ""))
+                SchemaNode.GroupNode::children, values, ""))
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessage("Field 'account' is a struct in the schema, but the reader returned a "
                                  + "java.lang.String")

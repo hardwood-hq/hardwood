@@ -7,9 +7,7 @@
  */
 package dev.hardwood.schema;
 
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.Set;
+import java.util.List;
 
 /// Specifies which columns to read from a Parquet file.
 ///
@@ -33,9 +31,9 @@ public final class ColumnProjection {
 
     private static final ColumnProjection ALL = new ColumnProjection(null);
 
-    private final Set<String> projectedColumnNames;
+    private final List<String> projectedColumnNames;
 
-    private ColumnProjection(Set<String> projectedColumnNames) {
+    private ColumnProjection(List<String> projectedColumnNames) {
         this.projectedColumnNames = projectedColumnNames;
     }
 
@@ -46,26 +44,29 @@ public final class ColumnProjection {
 
     /// Returns a projection that includes only the specified columns.
     ///
-    /// For flat schemas, use simple column names. For nested schemas:
+    /// Each name is a top-level field or the full dot-separated path to a nested field:
     ///
+    /// - `"id"` - selects a top-level column
     /// - `"address"` - selects the parent group and all its children
     /// - `"address.city"` - selects only a specific nested field
     ///
+    /// A nested field is reached by its full path only; `"city"` does not select `address.city`.
+    /// Names may repeat or overlap, such as `"address"` and `"address.city"`. For the order in
+    /// which readers expose the projected columns by index, see the column projection reference.
+    ///
     /// @param names the column names to project
     /// @return a projection containing only the specified columns
-    /// @throws IllegalArgumentException if no column names are provided
+    /// @throws IllegalArgumentException if no column names are provided, or a name is null or empty
     public static ColumnProjection columns(String... names) {
         if (names == null || names.length == 0) {
             throw new IllegalArgumentException("At least one column name must be specified");
         }
-        Set<String> nameSet = new LinkedHashSet<>();
         for (String name : names) {
             if (name == null || name.isEmpty()) {
                 throw new IllegalArgumentException("Column name cannot be null or empty");
             }
-            nameSet.add(name);
         }
-        return new ColumnProjection(Collections.unmodifiableSet(nameSet));
+        return new ColumnProjection(List.of(names));
     }
 
     /// Returns true if this projection includes all columns.
@@ -73,8 +74,9 @@ public final class ColumnProjection {
         return projectedColumnNames == null;
     }
 
-    /// Returns the set of column names to project, or null if all columns are projected.
-    public Set<String> getProjectedColumnNames() {
+    /// Returns the column names to project, in the order they were requested and including
+    /// repeats, or null if all columns are projected.
+    public List<String> getProjectedColumnNames() {
         return projectedColumnNames;
     }
 }

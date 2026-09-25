@@ -914,6 +914,33 @@ print("\nGenerated address_book_test.parquet:")
 print("  - Schema: AddressBook(owner, ownerPhoneNumbers: list<string>, contacts: list<Contact(name, phoneNumber)>)")
 print("  - Data: Classic Dremel paper example - 2 records with varying nesting")
 
+# hardwood-hq/hardwood#1066: a top-level column sharing its name with a nested leaf.
+# A bare name must resolve to the top-level column, never to r.key.
+shared_leaf_name_schema = pa.schema([
+    ('r', pa.struct([
+        ('key', pa.int64(), False),
+        ('name', pa.string(), False),
+    ]), False),
+    ('key', pa.int64(), False),
+    ('amount', pa.int64(), False),
+])
+shared_leaf_name_table = pa.table({
+    'r': [{'key': 5, 'name': 'a'}, {'key': 6, 'name': 'b'}],
+    'key': [1005, 1006],
+    'amount': [1, 2],
+}, schema=shared_leaf_name_schema)
+pq.write_table(
+    shared_leaf_name_table,
+    'core/src/test/resources/shared_leaf_name_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated shared_leaf_name_test.parquet:")
+print("  - Schema: r struct<key, name>, key, amount")
+print("  - Data: (r={5,a}, key=1005, amount=1), (r={6,b}, key=1006, amount=2)")
+
 # 8. Triple nested list test (list<list<list<int32>>>)
 triple_nested_schema = pa.schema([
     ('id', pa.int32(), False),

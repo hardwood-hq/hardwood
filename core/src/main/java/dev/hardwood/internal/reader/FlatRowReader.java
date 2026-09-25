@@ -69,8 +69,6 @@ public final class FlatRowReader implements FileAwareRowReader {
     private final FlatColumnWorker[] columnWorkers;
     private final int columnCount;
 
-    // Schema info for name lookup and logical type conversion
-    private final FileSchema fileSchema;
     /// The caller's projection (see [ReadProjection#payload()]). Its columns lead the decoded
     /// ones, and the accessor state below spans them alone, so no accessor reaches a column a
     /// predicate added.
@@ -180,7 +178,6 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
-        this.fileSchema = fileSchema;
         this.payload = payload;
         int payloadColumnCount = payload.getProjectedColumnCount();
         this.flatValueArrays = new Object[payloadColumnCount];
@@ -194,14 +191,14 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.columnSchemas = new ColumnSchema[payloadColumnCount];
         this.kinds = new LeafKind[payloadColumnCount];
         this.textColumns = new boolean[payloadColumnCount];
-        for (int i = 0; i < payloadColumnCount; i++) {
-            int originalIndex = payload.toOriginalIndex(i);
+        for (int position = 0; position < payloadColumnCount; position++) {
+            int originalIndex = payload.toOriginalIndex(payload.exposedColumn(position));
             ColumnSchema col = fileSchema.getColumn(originalIndex);
-            nameToIndex.put(col.name(), i);
-            physicalTypes[i] = col.type();
-            columnSchemas[i] = col;
-            kinds[i] = LeafKind.of(col.type(), col.logicalType());
-            textColumns[i] = TextColumns.holdsText(col.type(), col.logicalType());
+            nameToIndex.put(col.name(), position);
+            physicalTypes[position] = col.type();
+            columnSchemas[position] = col;
+            kinds[position] = LeafKind.of(col.type(), col.logicalType());
+            textColumns[position] = TextColumns.holdsText(col.type(), col.logicalType());
         }
     }
 
@@ -910,8 +907,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             throw new IndexOutOfBoundsException(prefix() + "Field index " + index
                     + " is out of bounds for a projection of " + payloadColumnCount + " columns");
         }
-        int originalIndex = payload.toOriginalIndex(index);
-        return fileSchema.getColumn(originalIndex).name();
+        return columnSchemas[index].name();
     }
 
     // ==================== Batch Loading ====================
@@ -1037,10 +1033,12 @@ public final class FlatRowReader implements FileAwareRowReader {
                         + "Batch size mismatch: column " + i + " has " + batch.recordCount
                         + " records while column 0 has " + batchSize);
             }
-            // The payload columns lead the decoded ones and are all the accessors reach.
+            // The payload columns lead the decoded ones and are all the accessors reach,
+            // at the position the projection requested them in.
             if (i < flatValueArrays.length) {
-                flatValueArrays[i] = batch.values;
-                flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
+                int position = payload.exposedPosition(i);
+                flatValueArrays[position] = batch.values;
+                flatValidity[position] = batch.validity != null ? batch.validity : ALL_PRESENT;
             }
             previousBatches[i] = batch;
         }

@@ -121,6 +121,21 @@ interface ConvertCommandContract {
     }
 
     @Test
+    default void csvColumnsFollowRequestOrder() {
+        Cli.Result result = Cli.launch("convert", "-f", deepNestedFile(), "--format", "csv",
+                "--columns", "account.organization.address.zip,name,account.organization.address.city",
+                "--null-string", "\\N");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                account.organization.address.zip,account.organization.address.city,name
+                10001,New York,Alice
+                \\N,\\N,Bob
+                \\N,\\N,Charlie
+                \\N,\\N,Diana""");
+    }
+
+    @Test
     default void nullStringIsRejectedForJson() {
         Cli.Result result = Cli.launch("convert", "-f", fidelityFile(), "--format", "json",
                 "--null-string", "NULL");

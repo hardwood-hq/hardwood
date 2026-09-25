@@ -268,6 +268,27 @@ unit records a `nan_count` of zero. `eq`, `lt` and `ltEq` against a number, and 
 | `ColumnProjection.columns("address")` | Select an entire struct and all its children |
 | `ColumnProjection.columns("address.city")` | Select a specific nested field (dot notation) |
 
+A name is a top-level field or the full path to a nested field. A nested field is not selected by its own name alone: over `id, address STRUCT<city>`, `columns("city")` fails with `Column not found: city`. Names may repeat or overlap.
+
+### Index order
+
+By-index accessors follow the order `columns(...)` names the columns in. The columns one name selects, such as a group's children or every column under `all()`, follow schema order among themselves. The two reader types count positions differently:
+
+- `ColumnReaders.getColumnReader(int)` counts leaf columns name by name: index `i` is the `i`-th leaf column the names select. A column that several names select appears at each of their positions, with a reader of its own at each; `getColumnReader(String)` returns the first. `getColumnCount()` counts every position.
+- `RowReader` and `PqStruct` accessors count the nodes of the row: a `RowReader` its top-level fields, a `PqStruct` its projected children. Each node has one position, at the first name that selects anything under it, so repeated and overlapping names add no position.
+
+Over a schema `id, address STRUCT<street, city, zip>`:
+
+| Projection | `ColumnReaders` indices | `RowReader` fields | `address` children |
+|---|---|---|---|
+| `all()` | `id`, `address.street`, `address.city`, `address.zip` | `id`, `address` | `street`, `city`, `zip` |
+| `columns("address", "id")` | `address.street`, `address.city`, `address.zip`, `id` | `address`, `id` | `street`, `city`, `zip` |
+| `columns("address.zip", "id", "address.city")` | `address.zip`, `id`, `address.city` | `address`, `id` | `zip`, `city` |
+| `columns("address.zip", "address")` | `address.zip`, `address.street`, `address.city`, `address.zip` | `address` | `zip`, `street`, `city` |
+| `columns("id", "id")` | `id`, `id` | `id` | |
+
+A column listed after a group in `columns(...)` sits at a `ColumnReaders` index that counts the group's leaf columns, so it moves when the group gains or loses a field. By-name accessors do not depend on the order.
+
 A `RowReader`'s accessors reach the projected columns only. A filter column outside the projection is decoded where the filter needs its values and is not readable through the row:
 
 | Access | Raises |

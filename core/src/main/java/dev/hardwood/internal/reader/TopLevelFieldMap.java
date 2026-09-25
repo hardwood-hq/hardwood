@@ -176,32 +176,26 @@ final class TopLevelFieldMap {
     static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
                                             FileSchema schema,
                                             ProjectedSchema projectedSchema) {
-        List<SchemaNode> schemaChildren = group.children();
-        int childCount = schemaChildren.size();
-        StringToIntMap nameToIndex = new StringToIntMap(childCount);
-        // Count projected children first
-        int projected = 0;
-        for (int i = 0; i < childCount; i++) {
-            SchemaNode child = schemaChildren.get(i);
-            if (isChildProjected(child, projectedSchema)) {
-                projected++;
-            }
-        }
-        FieldDesc[] children = new FieldDesc[projected];
-        int firstPrimitiveCol = -1;
-        int idx = 0;
-        for (int i = 0; i < childCount; i++) {
-            SchemaNode child = schemaChildren.get(i);
-            FieldDesc childDesc = child.repetitionType() == RepetitionType.REPEATED
+        // Children sit at the position the projection requested them in
+        List<SchemaNode> projectedChildren = projectedSchema.projectedChildren(group);
+        StringToIntMap nameToIndex = new StringToIntMap(projectedChildren.size());
+        FieldDesc[] children = new FieldDesc[projectedChildren.size()];
+        for (int idx = 0; idx < children.length; idx++) {
+            SchemaNode child = projectedChildren.get(idx);
+            children[idx] = child.repetitionType() == RepetitionType.REPEATED
                     ? buildBareRepeatedListDesc(child, schema, projectedSchema)
                     : buildDescForChild(child, schema, projectedSchema);
-            if (childDesc != null) {
-                nameToIndex.put(child.name(), idx);
-                children[idx] = childDesc;
-                if (firstPrimitiveCol < 0 && childDesc instanceof FieldDesc.Primitive p) {
-                    firstPrimitiveCol = p.projectedCol();
+            nameToIndex.put(child.name(), idx);
+        }
+        // The first primitive child in schema order, independent of the request order
+        int firstPrimitiveCol = -1;
+        for (SchemaNode child : group.children()) {
+            if (child instanceof SchemaNode.PrimitiveNode prim && child.repetitionType() != RepetitionType.REPEATED) {
+                int projCol = projectedSchema.toProjectedIndex(prim.columnIndex());
+                if (projCol >= 0) {
+                    firstPrimitiveCol = projCol;
+                    break;
                 }
-                idx++;
             }
         }
         int firstLeafProjCol = firstPrimitiveCol >= 0

@@ -200,6 +200,23 @@ class AvroSchemaConverterTest {
     }
 
     @Test
+    void projectedFieldsFollowRequestOrder() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                primitive("id", PhysicalType.INT32, RepetitionType.REQUIRED),
+                group("address", RepetitionType.OPTIONAL, 2),
+                convertedPrimitive("street", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string()),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, LogicalType.string())));
+
+        Schema projected = AvroSchemaConverter.plan(schema,
+                ColumnProjection.columns("address.city", "id", "address.street")).avro();
+
+        assertThat(projected.getFields()).extracting(Schema.Field::name).containsExactly("address", "id");
+        Schema address = pickRecordBranch(projected.getField("address").schema());
+        assertThat(address.getFields()).extracting(Schema.Field::name).containsExactly("city", "street");
+    }
+
+    @Test
     void projectionDoesNotRenameRetainedNamedTypes() {
         FileSchema schema = duplicateNestedAddressSchema();
         Schema all = convert(schema);
