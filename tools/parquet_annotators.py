@@ -892,8 +892,33 @@ def collapse_list_of_lists_to_legacy_two_level(src: str, dst: str, list_name: st
     _write_parquet_footer(dst, data, md)
 
 
+def _find_schema_element_index(schema, names):
+    """Return the index in the depth-first `schema` list of the element reached
+    by following `names` from the root, or `None` if there is no such element."""
+    def subtree_end(idx):
+        # Index one past the last descendant of schema[idx].
+        end = idx + 1
+        for _ in range(schema[idx].num_children or 0):
+            end = subtree_end(end)
+        return end
+
+    parent = 0
+    for name in names:
+        child = parent + 1
+        found = None
+        for _ in range(schema[parent].num_children or 0):
+            if schema[child].name == name:
+                found = child
+                break
+            child = subtree_end(child)
+        if found is None:
+            return None
+        parent = found
+    return parent
+
+
 def collapse_list_of_structs_to_unannotated_repeated_group(src: str, dst: str,
-                                                           field_name: str) -> None:
+                                                           field_path: str) -> None:
     """Copy `src` to `dst`, rewriting a three-level required `LIST` of required
     struct elements into a bare unannotated `REPEATED` group.
 
@@ -911,21 +936,22 @@ def collapse_list_of_structs_to_unannotated_repeated_group(src: str, dst: str,
     group share the same maximum definition and repetition levels for every leaf
     (the dropped `LIST` outer group and `element` group are both `required` and
     contribute no levels), so the encoded level streams are already correct
-    against the collapsed schema. The three structural nodes — `field_name` (the
-    LIST group), its repeated `list` child, and the `element` group — collapse
-    into a single `REPEATED` group named `field_name` that carries the struct's
-    fields directly.
+    against the collapsed schema. The three structural nodes — the LIST group
+    at `field_path`, its repeated `list` child, and the `element` group —
+    collapse into a single `REPEATED` group of the LIST group's name that
+    carries the struct's fields directly.
+
+    `field_path` is dot-separated, so the LIST group may sit below enclosing
+    groups (e.g. `s.bar`); those groups are left untouched.
     """
     shutil.copy2(src, dst)
     data, md = _read_parquet_footer(dst)
 
-    outer_idx = None
-    for i, el in enumerate(md.schema):
-        if el.name == field_name and el.num_children is not None:
-            outer_idx = i
-            break
-    if outer_idx is None:
-        raise ValueError(f"Top-level group '{field_name}' not found in schema")
+    names = field_path.split('.')
+    outer_idx = _find_schema_element_index(md.schema, names)
+    if outer_idx is None or md.schema[outer_idx].num_children is None:
+        raise ValueError(f"Group '{field_path}' not found in schema")
+    field_name = names[-1]
 
     # Depth-first layout under the outer LIST group:
     #   [outer] [list] [element(group)] [field...]
@@ -946,9 +972,9 @@ def collapse_list_of_structs_to_unannotated_repeated_group(src: str, dst: str,
     for row_group in md.row_groups:
         for column in row_group.columns:
             path = column.meta_data.path_in_schema
-            if path[0] == field_name:
+            if path[:len(names)] == names:
                 # Drop the synthetic 'list' and 'element' path components.
-                column.meta_data.path_in_schema = [field_name] + path[3:]
+                column.meta_data.path_in_schema = names + path[len(names) + 2:]
 
     _write_parquet_footer(dst, data, md)
 

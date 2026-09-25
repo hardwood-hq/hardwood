@@ -332,11 +332,13 @@ public final class NestedLevelComputer {
                     thresholds.add(group.maxDefinitionLevel());
                 }
                 else if (group.repetitionType() == RepetitionType.REPEATED) {
-                    // Top-level repeated outside of a LIST/MAP annotation (legacy /
-                    // unannotated repeated field). Treat as REPEATED layer.
+                    // Unannotated repeated group outside LIST/MAP scaffolding, at
+                    // any depth: a list of its own elements. As for the repeated
+                    // primitive, the threshold is the container's def level, one
+                    // below the group's; the group's own level marks an element.
                     addedKind = LayerKind.REPEATED;
                     kinds.add(addedKind);
-                    thresholds.add(group.maxDefinitionLevel());
+                    thresholds.add(group.maxDefinitionLevel() - 1);
                 }
                 // REQUIRED: no layer
 
