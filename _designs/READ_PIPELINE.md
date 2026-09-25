@@ -15,7 +15,7 @@ Every data reader (`FlatRowReader`, `NestedRowReader`, a `ColumnReaders` group, 
 
 The decoded columns are the projection plus any filter-only predicate columns (`ReadProjection.decoded()`, see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)).
 
-**Ownership.** `ParquetFileReader` reads the first file's footer at `open`/`openAll` and owns the input files and a `FileMetadataCache` of parsed footers. Each data reader it builds gets its own `RowGroupIterator` sharing that cache; the parent tracks the iterator until the child closes it, and closing a child releases the iterator's caches and its tracking entry but leaves the files to the parent. An iterator built outside a `ParquetFileReader` owns its files and closes them.
+**Ownership.** `ParquetFileReader` reads the first file's footer at `open`/`openAll` and owns the input files and a `FileMetadataCache` of parsed footers. When that fails, it closes every input file, and the context when the call created it, before the exception propagates, attaching close failures as suppressed. Each data reader it builds gets its own `RowGroupIterator` sharing that cache; the parent tracks the iterator until the child closes it, and closing a child releases the iterator's caches and its tracking entry but leaves the files to the parent. An iterator built outside a `ParquetFileReader` owns its files and closes them.
 
 Tests: `MultiFileRowReaderTest`, `IteratorTrackingTest`.
 
