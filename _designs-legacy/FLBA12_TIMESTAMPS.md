@@ -115,7 +115,7 @@ physical type where they read the stored value: a `long[]` for `INT64`, packed b
 
 ## Filter predicates
 
-The literal rule is the one `PREDICATE_LITERALS.md` states for every column.
+The literal rule is the one `_designs/PREDICATE_MODEL.md` states for every column.
 
 - **Typed literal.** `Instant` on a UTC column, `LocalDateTime` on a local one, for every operator.
   The literal is measured in the column's unit against the 96-bit range, which every `Instant` fits,

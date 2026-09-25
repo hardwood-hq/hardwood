@@ -2,7 +2,7 @@
 
 **Status: Proposed.** Tracking issue: #548 (1.0 public API hardening). Companion to
 the enforced interaction matrix `core/src/test/java/dev/hardwood/BuilderCombinationTest.java`
-and the model in `_designs-legacy/ROW_SELECTION_SEMANTICS.md`.
+and the model in `_designs/RECORD_FILTERING.md`.
 
 ## Goal
 
@@ -20,7 +20,7 @@ the half the matrix deliberately defers.
 Three pieces:
 
 - **Oracle: DuckDB via JDBC, inside JUnit.** DuckDB's SQL `WHERE` / `LIMIT` / `OFFSET`
-  semantics are exactly the logical model in `ROW_SELECTION_SEMANTICS.md`, so each builder
+  semantics are exactly the logical model in `_designs/RECORD_FILTERING.md`, so each builder
   query maps one-to-one to a SQL statement over `read_parquet('<file>')`. The `duckdb_jdbc`
   jar runs in-process; no external process or Python at test time.
 - **Corpus: pyarrow-generated fixtures.** hardwood is a reader, not a writer, so files are

@@ -1,7 +1,7 @@
 # Predicate rule audit
 
 A tool that measures Hardwood's filter predicates against the rule in
-[`_designs-legacy/PREDICATE_LITERALS.md`](../../_designs-legacy/PREDICATE_LITERALS.md), and compares them with
+[`_designs/PREDICATE_MODEL.md`](../../_designs/PREDICATE_MODEL.md), and compares them with
 parquet-java 1.18.1 and DuckDB 1.4.4. The PR build's `predicate-audit` job runs it for every change to
 `core/src/main`, the tool, `tools/parquet_annotators.py`, `requirements.txt`, the root, `core` or
 `test-bom` POM (the last pins the parquet-java and DuckDB versions) or `.github/workflows/pr-build.yml`,

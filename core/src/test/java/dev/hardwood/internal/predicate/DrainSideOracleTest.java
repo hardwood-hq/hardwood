@@ -57,8 +57,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /// The workload carries one column per supported primitive type — `id: long`, `value: double`,
 /// `tag: int`, `score: float`, `flag: boolean` — plus two byte-array columns: `name` (`BYTE_ARRAY`,
 /// values of differing widths on both sides of eight bytes) and `amount` (`FIXED_LEN_BYTE_ARRAY(4)`, every value padded to the
-/// width). Each has its own scattered-null profile and boundary-heavy values. Tests exercise every
-/// `(type, op)` pair listed in the design doc's eligibility section plus `IntIn` / `LongIn` /
+/// width). Each has its own scattered-null profile and boundary-heavy values. Tests exercise the
+/// comparison operators on every column above plus `IntIn` / `LongIn` /
 /// `IsNull` / `IsNotNull`, both as single leaves and in cross-type `And` compounds.
 ///
 /// The byte-array leaves run under each [Comparison]: `BYTE_STRING` over `name`, `FIXED_DECIMAL`

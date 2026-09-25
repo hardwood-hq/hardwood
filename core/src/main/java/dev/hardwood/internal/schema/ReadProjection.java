@@ -23,7 +23,7 @@ import dev.hardwood.schema.FileSchema;
 /// `decoded`, at the indices they hold in `payload`, so a decoded index below
 /// [#payloadColumnCount()] names the same column in both. A decoded column past it is
 /// **filter-only**: it serves the predicate and nothing else. See
-/// `_designs-legacy/ROW_READER_AUGMENTED_PROJECTION.md` and `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`.
+/// `_designs/RECORD_FILTERING.md`.
 ///
 /// @param payload the columns a reader exposes
 /// @param decoded the columns a reader decodes, `payload`'s first

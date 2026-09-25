@@ -359,18 +359,18 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Lt, LtEq, Gt, GtEq
   - [x] In, over every literal type but `boolean`
   - [x] And, Or, Not
-- [x] One literal rule for every predicate: a column takes the values its accessors return, an equality literal the column cannot hold is rejected, and ordered operators exist on ordered types only (see `_designs-legacy/PREDICATE_LITERALS.md`)
+- [x] One literal rule for every predicate: a column takes the values its accessors return, an equality literal the column cannot hold is rejected, and ordered operators exist on ordered types only (see `_designs/PREDICATE_MODEL.md`)
 - [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`PageDropPredicates` + `SequentialFetchPlan`)
-- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs-legacy/DRAIN_SIDE_RECORD_FILTERING.md`)
-- [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `ColumnScan`; see `_designs-legacy/EXACT_COLUMN_READER_FILTERING.md`)
-- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs-legacy/BLOOM_FILTER_PUSHDOWN.md`)
-- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs-legacy/DICTIONARY_PUSHDOWN.md`)
-- [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group and dropping the filter wholesale when all surviving groups fully match (see `_designs-legacy/ALWAYS_MATCH_STATISTICS.md`)
-- [x] Skip filter-only columns in fully matching row groups: a column the predicate references and the projection does not is neither fetched nor decoded where statistics prove every row matches, on the row and column readers alike; row-reader accessors reach the projection only (see `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`)
-- [x] One statistics abstraction for every pruning unit: `UnitStats` (column chunk, column-index page, inline page header) sources min/max, null counts and definition level histograms once each, and row-group filtering, page filtering and the inline-statistics drop all decide through it (see `_designs-legacy/UNIT_STATISTICS_CONVERGENCE.md`)
+- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/RECORD_FILTERING.md`)
+- [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `ColumnScan`; see `_designs/RECORD_FILTERING.md`)
+- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs/STATISTICS_PRUNING.md`)
+- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/STATISTICS_PRUNING.md`)
+- [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group (see `_designs/STATISTICS_PRUNING.md`)
+- [x] Skip filter-only columns in fully matching row groups: a column the predicate references and the projection does not is neither fetched nor decoded where statistics prove every row matches, on the row and column readers alike; row-reader accessors reach the projection only (see `_designs/RECORD_FILTERING.md`)
+- [x] One statistics abstraction for every pruning unit: `UnitStats` (column chunk, column-index page, inline page header) sources min/max, null counts and definition level histograms once each, and row-group filtering, page filtering and the inline-statistics drop all decide through it (see `_designs/STATISTICS_PRUNING.md`)
 - [x] Reader opt-out of metadata-based filtering: `hardwood.metadata-filtering` `ReaderConfig` option falls back to full-scan per-row predicate evaluation for files with unreliable footer/page-index metadata
 
 ### 9.5 Fixed-size-list read fast path

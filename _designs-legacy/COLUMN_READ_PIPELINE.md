@@ -2,7 +2,7 @@
 
 **Status: Implemented.** Tracking issue: #1281. Describes the plumbing behind the column
 readers, including the exact filtering of
-[EXACT_COLUMN_READER_FILTERING.md](EXACT_COLUMN_READER_FILTERING.md) (#624).
+[RECORD_FILTERING.md](../_designs/RECORD_FILTERING.md) (#624).
 
 ## Scope
 
@@ -47,7 +47,7 @@ through `FlatColumnWorker`.
 `advance()` polls every payload cursor once, in lockstep, then every filter-only cursor unless
 the first cursor's batch reports `filterAlwaysMatches()`: a filter-only column is not read in a
 row group statistics proved, so its cursor has no batch for such a step (see
-[FILTER_ONLY_COLUMN_SKIP.md](FILTER_ONLY_COLUMN_SKIP.md)). It checks that the cursors it polled
+[RECORD_FILTERING.md](../_designs/RECORD_FILTERING.md)). It checks that the cursors it polled
 agree: every cursor produced a batch, or none did, and all batches have the same record count; a
 cursor exhausted before the first, or a differing record count, throws `IllegalStateException`.
 When the first cursor reaches the end of the input, `advance()` drains every other cursor,

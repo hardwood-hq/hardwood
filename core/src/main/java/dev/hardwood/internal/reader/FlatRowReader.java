@@ -293,7 +293,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
             // Allocate matches[] only when this column actually has a filter installed.
-            // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
+            // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
             final boolean allocateMatches =
                     drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
