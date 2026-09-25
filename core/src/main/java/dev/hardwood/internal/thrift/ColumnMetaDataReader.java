@@ -28,6 +28,9 @@ public class ColumnMetaDataReader {
     /// Stand-in for a `ColumnMetaData` that carries no `path_in_schema` at all.
     private static final FieldPath EMPTY_PATH = new FieldPath(List.of());
 
+    /// Ids of the fields the format requires of a `ColumnMetaData`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4, 5, 6, 7, 9 };
+
     public static ColumnMetaData read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.COLUMN_META_DATA);
         try {
@@ -55,6 +58,7 @@ public class ColumnMetaDataReader {
         Integer bloomFilterLength = null;
         List<PageEncodingStats> encodingStats = List.of();
         SizeStatistics sizeStatistics = null;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -62,51 +66,54 @@ public class ColumnMetaDataReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
-                case 1: // type
-                    if (reader.acceptField(header, Codes.I32)) {
-                        type = ThriftEnumLookup.physicalType(reader.readI32());
-                    }
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Fields 1-7 and 9 are required, so a wrong wire type fails here rather than
+                // being reported as a field that never arrived.
+                case 1: // type (required Type)
+                    reader.requireField(header, Codes.I32);
+                    type = ThriftEnumLookup.physicalType(reader.readI32());
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // encodings (required list<Encoding>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        encodings = readEncodings(reader);
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    encodings = readEncodings(reader);
+                    seen |= 1L << fieldId;
                     break;
                 case 3: // path_in_schema (required list<string>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        pathInSchema = reader.pathCache().next(reader);
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    pathInSchema = reader.pathCache().next(reader);
+                    seen |= 1L << fieldId;
                     break;
-                case 4: // codec
-                    if (reader.acceptField(header, Codes.I32)) {
-                        codec = ThriftEnumLookup.compressionCodec(reader.readI32());
-                    }
+                case 4: // codec (required CompressionCodec)
+                    reader.requireField(header, Codes.I32);
+                    codec = ThriftEnumLookup.compressionCodec(reader.readI32());
+                    seen |= 1L << fieldId;
                     break;
-                case 5: // num_values
-                    if (reader.acceptField(header, Codes.I64)) {
-                        numValues = reader.readNonNegativeI64();
-                    }
+                case 5: // num_values (required i64)
+                    reader.requireField(header, Codes.I64);
+                    numValues = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
-                case 6: // total_uncompressed_size
-                    if (reader.acceptField(header, Codes.I64)) {
-                        totalUncompressedSize = reader.readNonNegativeI64();
-                    }
+                case 6: // total_uncompressed_size (required i64)
+                    reader.requireField(header, Codes.I64);
+                    totalUncompressedSize = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
-                case 7: // total_compressed_size
-                    if (reader.acceptField(header, Codes.I64)) {
-                        totalCompressedSize = reader.readNonNegativeI64();
-                    }
+                case 7: // total_compressed_size (required i64)
+                    reader.requireField(header, Codes.I64);
+                    totalCompressedSize = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 case 8: // key_value_metadata (optional list<KeyValue>)
                     if (reader.acceptField(header, Codes.LIST)) {
                         keyValueMetadata = KeyValueMetadataReader.read(reader);
                     }
                     break;
-                case 9: // data_page_offset
-                    if (reader.acceptField(header, Codes.I64)) {
-                        dataPageOffset = reader.readNonNegativeI64();
-                    }
+                case 9: // data_page_offset (required i64)
+                    reader.requireField(header, Codes.I64);
+                    dataPageOffset = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 case 10: // index_page_offset (optional) - skipped for now
                     reader.skipField(ThriftCompactReader.fieldType(header));
@@ -151,6 +158,8 @@ public class ColumnMetaDataReader {
                     break;
             }
         }
+
+        ThriftCompactReader.requireFields(ThriftStruct.COLUMN_META_DATA, seen, REQUIRED_FIELDS);
 
         return new ColumnMetaData(type, encodings, pathInSchema, codec,
                 numValues, totalUncompressedSize, totalCompressedSize, keyValueMetadata, dataPageOffset,

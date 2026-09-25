@@ -32,6 +32,7 @@ public class ColumnChunkReader {
         Integer columnIndexLength = null;
         // Absent means this file, and so does the empty string the spec allows for it.
         String filePath = "";
+        boolean fileOffsetSeen = false;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -45,10 +46,12 @@ public class ColumnChunkReader {
                         filePath = reader.readString();
                     }
                     break;
-                case 2: // file_offset (required i64)
-                    reader.skipField(ThriftCompactReader.fieldType(header));
+                case 2: // file_offset (required i64, deprecated, so its value goes unused)
+                    reader.requireField(header, Codes.I64);
+                    reader.readI64();
+                    fileOffsetSeen = true;
                     break;
-                case 3: // meta_data (required)
+                case 3: // meta_data (optional)
                     if (reader.acceptField(header, Codes.STRUCT)) {
                         metaData = ColumnMetaDataReader.read(reader);
                     }
@@ -77,6 +80,10 @@ public class ColumnChunkReader {
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
+        }
+
+        if (!fileOffsetSeen) {
+            throw ThriftCompactReader.missingFields(ThriftStruct.COLUMN_CHUNK, 2);
         }
 
         return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset,
