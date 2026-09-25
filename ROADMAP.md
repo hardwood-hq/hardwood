@@ -377,8 +377,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Detect fixed-width fixed-*k* `LIST` pages from level streams alone (`FixedSizeListDetector`): O(1) definition-level gate + O(rows) repetition verification
 - [x] SWAR word-at-a-time tiled compare for the small-*k* bit-packed regime
 - [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `NestedColumnWorker`, `ColumnReader`)
-- [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap (see `_designs-legacy/FIXED_SIZE_LIST_FASTPATH.md`)
-- [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs-legacy/READER_CONFIG.md`)
+- [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap; the fast path is described in `_designs/NESTED_DECODE.md#fixed-size-list-fast-path`
+- [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs/READ_PIPELINE.md#configuration-readerconfig`)
 - [ ] Nullable-vector (null-row) support — follow-up
 - [ ] Bulk verification for the RLE-interior (k ≥ 9) high-row-count regime
 

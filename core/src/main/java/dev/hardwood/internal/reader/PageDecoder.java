@@ -34,7 +34,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// Decoder for individual Parquet data pages.
 ///
 /// This class provides page decoding via [#decodePage].
-/// Page scanning and dictionary parsing are handled by [PageScanner].
+/// Page location is handled by the [FetchPlan] implementations, dictionary
+/// parsing by [DictionaryParser].
 public class PageDecoder {
 
     /// Reusable level-decoding buffers owned by one in-flight page slot.
@@ -62,8 +63,8 @@ public class PageDecoder {
     private final DecompressorFactory decompressorFactory;
 
     /// Whether the fixed-size-list read fast path may engage for this column,
-    /// resolved from the reader's [dev.hardwood.HardwoodContext] option (default
-    /// enabled).
+    /// resolved from the reader's [dev.hardwood.reader.ReaderConfig] option
+    /// (default disabled).
     private final boolean fixedListFastPathEnabled;
 
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
@@ -258,10 +259,11 @@ public class PageDecoder {
     /// can target: `maxRep == 1` with either an optional list (`maxDef == 2`) or a
     /// required list of required elements (`maxDef == 1`).
     ///
-    /// The required case is admitted only for an annotated `LIST` group, where the
-    /// leaf sits under a repeated group so its own repetition type is not
-    /// `REPEATED`. A bare unannotated `repeated <primitive>` shares the same
-    /// `maxRep == 1` / `maxDef == 1` levels but is left to the regular path.
+    /// The required case is admitted where the leaf sits under a repeated group, so
+    /// its own repetition type is not `REPEATED`: an annotated `LIST` group, or a
+    /// bare repeated group with a required primitive child. A bare unannotated
+    /// `repeated <primitive>` shares the same `maxRep == 1` / `maxDef == 1` levels
+    /// but is left to the regular path.
     private boolean hasFixedListLevelShape() {
         if (column.maxRepetitionLevel() != 1) {
             return false;

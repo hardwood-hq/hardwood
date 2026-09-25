@@ -346,7 +346,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Tail mode cannot be combined with a filter predicate: the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `skip(long)`.
+Tail mode reads a single file: on a reader opened with `openAll` over several files, `build()` throws `UnsupportedOperationException`. It cannot be combined with `head(long)`, `skip(long)`, a filter predicate or a `RowGroupPredicate`; `build()` throws `IllegalArgumentException` for any of these.
 
 ### Skipping Rows (`skip`)
 

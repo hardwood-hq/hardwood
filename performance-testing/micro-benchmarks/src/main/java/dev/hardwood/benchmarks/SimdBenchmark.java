@@ -82,7 +82,7 @@ public class SimdBenchmark {
 
     @Benchmark
     public int countNonNulls() {
-        return ops.countNonNulls(defLevels, 3);
+        return ops.countNonNulls(defLevels, defLevels.length, 3);
     }
 
     @Benchmark

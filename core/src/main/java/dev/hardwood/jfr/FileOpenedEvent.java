@@ -18,9 +18,9 @@ import jdk.jfr.StackTrace;
 /// JFR event emitted when a Parquet file is opened and its metadata is read.
 ///
 /// This event spans the full open sequence: memory-mapping the file and
-/// parsing the Parquet footer metadata. It is emitted for both single-file
-/// reads (`ParquetFileReader.open()`) and multi-file reads
-/// (`FileManager.mapAndReadMetadata()`).
+/// parsing the Parquet footer metadata. It is emitted for the first file when
+/// the reader is opened (`ParquetFileReader.open()`) and for each further file
+/// of a multi-file read as it is loaded (`FileMetadataCache`).
 @Name("dev.hardwood.FileOpened")
 @Label("File Opened")
 @Category({"Hardwood", "I/O"})

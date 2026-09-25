@@ -182,7 +182,7 @@ The **surviving relation** is the rows of the row groups kept by the `RowGroupPr
 
 - **`byteRange`** keeps a row group when its midpoint (first chunk's start plus half the row group's compressed size) falls in `[start, end)`, so disjoint ranges partition a file's row groups. `ParquetFileReader` applies it before the iterator, so statistics are asked only of the kept row groups.
 - **`head(n)`** with a filter is the matching-row cap above.
-- **`skip(n)`** without a filter is a physical seek to the row group the offset lands in (see [ROW_READER.md](ROW_READER.md)). With a filter, row-group statistics bound values and not match counts, so there is no seek: the reader is built over the whole kept relation with a matching-row cap of `n + head` (none without `head`) and discards the first `n` matches.
+- **`skip(n)`** without a filter is a physical seek to the row group the offset lands in (see [ROW_READER.md](ROW_READER.md#skip)). With a filter, row-group statistics bound values and not match counts, so there is no seek: the reader is built over the whole kept relation with a matching-row cap of `n + head` (none without `head`) and discards the first `n` matches.
 - **`byteRange` with `skip`/`head`** counts within the kept row groups, so a resume point in a filtered split read is a `(byteRange, logical offset)` pair.
 
 `build()` rejects these combinations, with `IllegalArgumentException` unless noted:

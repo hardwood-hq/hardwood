@@ -36,17 +36,17 @@ import dev.hardwood.writer.ColumnEncoding;
 ///
 /// **While records arrive**, the [RecordShredder] streams a record range's entries into this
 /// buffer through [#accept] (as a [RecordShredder.LevelSink]). Nothing is encoded: the levels are
-/// retained a byte per entry, each present value is interned into the dictionary or copied into
-/// the [ValueEncoder]'s store, and a page is *cut* — planned, not produced — each time the values
-/// it holds reach the page target, even part-way through a record. A page therefore carries at
-/// most the target plus the one value that crossed it, and a value larger than the target on its
-/// own occupies a page of its own, a value being indivisible across pages.
+/// retained a byte per entry, and each present value is interned into the dictionary or copied
+/// into the [ValueEncoder]'s store. No page is cut yet.
 ///
-/// **At flush**, the tail page is cut and the plan is encoded: the dictionary page where the
-/// chunk has one, then each planned page's levels and values framed, compressed and written
-/// straight to the output. Retaining the values rather than the encoded pages is what lets a
-/// page's bytes be produced after the whole chunk is known; it costs no copy that streaming did
-/// not already make, since a value is copied out of the caller's array either way.
+/// **At flush**, the chunk is encoded: the dictionary page where the chunk has one, then the data
+/// pages one by one, each *cut* (its extent planned) and its levels and values framed, compressed
+/// and written straight to the output. A page takes as many entries as fit the page target, even
+/// part-way through a record, and at least one, so a value larger than the target on its own
+/// occupies a page of its own, a value being indivisible across pages. Retaining the values rather
+/// than the encoded pages is what lets a page's bytes be produced after the whole chunk is known;
+/// it costs no copy that streaming did not already make, since a value is copied out of the
+/// caller's array either way.
 ///
 /// This buffer owns the **type-agnostic** half of a column chunk — the repetition and
 /// definition level streams, page cutting, compression, CRC, and (in dictionary mode) the

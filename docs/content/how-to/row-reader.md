@@ -170,12 +170,19 @@ full rules, including the split `getTimestamp` / `getLocalTimestamp` pair, are i
 
 #### Index-based access
 
-For hot loops, look up column indices once outside the loop and pass them to the accessors instead of names:
+For hot loops, look up field indices once outside the loop and pass them to the accessors instead of names. A field index is the field's position among the reader's projected top-level fields, in schema order; `getFieldCount()` and `getFieldName(int)` report those positions. It is not the file's leaf-column index (`ColumnSchema.columnIndex()`).
 
 ```java
-// Get column indices once (before the loop)
-int idIndex = fileReader.getFileSchema().getColumn("id").columnIndex();
-int nameIndex = fileReader.getFileSchema().getColumn("name").columnIndex();
+// Resolve field indices once (before the loop)
+int idIndex = -1;
+int nameIndex = -1;
+for (int i = 0; i < rowReader.getFieldCount(); i++) {
+    switch (rowReader.getFieldName(i)) {
+        case "id" -> idIndex = i;
+        case "name" -> nameIndex = i;
+        default -> { }
+    }
+}
 
 while (rowReader.hasNext()) {
     rowReader.next();

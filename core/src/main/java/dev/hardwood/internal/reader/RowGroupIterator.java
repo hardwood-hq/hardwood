@@ -1372,8 +1372,9 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Plans every remaining file. Needed by the questions that are about the
-    /// whole read rather than the next row group — whether statistics satisfied
-    /// the filter outright, and where a physical skip lands.
+    /// whole read rather than the next row group — the full work list
+    /// ([#getWorkItems]) and whether every row group supports per-page masking
+    /// ([#canFastSkipAllRowGroups]).
     private synchronized void ensureFullyPlanned() throws IOException {
         while (planNextFile()) {
             // planNextFile appends

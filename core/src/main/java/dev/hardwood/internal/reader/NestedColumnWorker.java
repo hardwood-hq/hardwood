@@ -68,8 +68,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     /// Elements per row of the batch currently being assembled when it is on the
     /// fixed-size-list fast path, or `0` for a regular batch. A batch stays
-    /// homogeneous: [#assemblePage] flushes the open batch before switching
-    /// between the fast and regular paths (or between different `k`).
+    /// homogeneous: when a fixed-width batch meets a regular page or a different
+    /// `k`, [#assemblePage] converts it to the regular representation in place
+    /// ([#materializeFixedWidthBatchLevels]) and keeps filling the same batch.
     private int batchFixedK;
 
     /// Whether every page that has contributed to the batch currently being
@@ -79,7 +80,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     private boolean currentBatchAllPresent = true;
     private boolean currentPageAllPresent = true;
 
-    /// Creates a new nested column worker.
+    /// Creates a new nested column worker feeding the all-items path with the
+    /// fixed-size-list fast path enabled.
     ///
     /// @param pageSource yields [PageInfo] objects for this column
     /// @param exchange the output exchange for assembled batches
@@ -89,10 +91,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// @param decodeExecutor executor for decode tasks
     /// @param maxRows maximum rows to assemble (0 = unlimited)
     /// @param layers per-layer descriptor (kinds + def thresholds) for the
-    ///        column's schema chain, or `null` for non-repeated columns. The
-    ///        descriptor drives the layer-indexed `multiLevelOffsets` shape.
-    /// Convenience constructor feeding the all-items path with the fixed-size-list
-    /// fast path enabled.
+    ///        column's schema chain, as [NestedLevelComputer#computeLayers]
+    ///        returns it. The descriptor drives the layer-indexed
+    ///        `multiLevelOffsets` shape.
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
@@ -729,8 +730,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     /// Copies `count` consecutive values from `page` starting at `srcStart` into
-    /// the value accumulator at `destStart`. Primitive pages bulk-copy; byte
-    /// arrays fall back to the per-element append.
+    /// the value accumulator at `destStart`, by one `System.arraycopy`. Primitive
+    /// pages only: callers keep byte-array pages on the per-element path, and a
+    /// byte-array page reaching here is a wiring bug.
     private void copyValueRun(Page page, int srcStart, int destStart, int count) {
         switch (page) {
             case Page.IntPage p -> System.arraycopy(p.values(), srcStart, (int[]) nestedValues, destStart, count);
@@ -738,9 +740,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case Page.FloatPage p -> System.arraycopy(p.values(), srcStart, (float[]) nestedValues, destStart, count);
             case Page.DoublePage p -> System.arraycopy(p.values(), srcStart, (double[]) nestedValues, destStart, count);
             case Page.BooleanPage p -> System.arraycopy(p.values(), srcStart, (boolean[]) nestedValues, destStart, count);
-            // The fast path is gated to primitive numeric element types
-            // (PageDecoder#isFixedListElementSupported), so a byte-array page
-            // never reaches fixed-width assembly.
+            // Both callers exclude byte-array pages: the fixed-size-list fast path
+            // is gated to primitive element types
+            // (PageDecoder#isFixedListElementSupported), and the all-present bulk
+            // copy is taken only for a page that is not a ByteArrayPage.
             case Page.ByteArrayPage p -> throw new IllegalStateException(
                     "byte-array element unexpected on the fixed-size-list fast path");
         }

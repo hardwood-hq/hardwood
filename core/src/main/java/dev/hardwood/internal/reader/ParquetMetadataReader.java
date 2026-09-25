@@ -25,8 +25,9 @@ import dev.hardwood.reader.ParquetReadException;
 
 /// Utility class for reading Parquet file metadata from an [InputFile].
 ///
-/// This centralizes the metadata reading logic used by ParquetFileReader,
-/// MultiFileRowReader, and FileManager.
+/// This centralizes the metadata reading logic used by ParquetFileReader
+/// (for the first file) and FileMetadataCache (for the further files of a
+/// multi-file read).
 public final class ParquetMetadataReader {
 
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.UTF_8);

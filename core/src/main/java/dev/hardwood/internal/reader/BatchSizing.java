@@ -164,7 +164,7 @@ public final class BatchSizing {
             case INT64, DOUBLE -> 8;
             case BOOLEAN -> 1;
             case INT96 -> 12;
-            // Rough estimate; UTF8/JSON columns cost a little more per row — they
+            // Rough estimate; UTF8/ENUM/JSON columns cost a little more per row — they
             // also carry a lazily-allocated per-value dictionary-index array for
             // interned-String reuse — but the byte-array estimate is intentionally
             // approximate.

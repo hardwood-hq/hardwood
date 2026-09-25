@@ -11,10 +11,11 @@ import dev.hardwood.Experimental;
 
 /// Classifies a [ColumnReader] layer between root and leaf.
 ///
-/// A layer is contributed by a user-authored `OPTIONAL` group ([#STRUCT]) or
-/// by a `LIST`/`MAP`-annotated group ([#REPEATED]). `REQUIRED` groups and the
-/// synthetic scaffolding inside a `LIST`/`MAP` (the inner `repeated group`)
-/// do not contribute layers.
+/// A layer is contributed by a user-authored `OPTIONAL` group ([#STRUCT]),
+/// by a `LIST`/`MAP`-annotated group ([#REPEATED]), or by an unannotated
+/// `repeated` field, group or primitive leaf, outside a `LIST`/`MAP` scaffold
+/// ([#REPEATED]). `REQUIRED` groups and the synthetic scaffolding inside a
+/// `LIST`/`MAP` (the inner `repeated group`) do not contribute layers.
 ///
 /// Stable for the lifetime of the [ColumnReader] and safe to cache once at
 /// open time.
@@ -23,7 +24,8 @@ public enum LayerKind {
     /// A user-authored `OPTIONAL` group along the schema chain. Contributes a
     /// validity bitmap (`getLayerValidity`) but no offsets.
     STRUCT,
-    /// A `LIST` or `MAP`-annotated group. Contributes both a validity bitmap
+    /// A `LIST` or `MAP`-annotated group, or an unannotated `repeated` field
+    /// outside a `LIST`/`MAP` scaffold. Contributes both a validity bitmap
     /// (for the list-itself-null distinction) and an offsets buffer
     /// (`getLayerOffsets`) that walks into the next inner layer's items.
     REPEATED

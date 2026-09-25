@@ -388,7 +388,7 @@ public class FileSchema {
 
     /// Validate a Variant-annotated group's shape: required `metadata` binary
     /// child, required `value` binary child, and at most one optional `typed_value`
-    /// sibling (reassembled in Phase 2; permitted but not yet consulted).
+    /// sibling (the shredded representation, reassembled at read time).
     private static void validateVariantGroup(SchemaNode.GroupNode group) {
         List<SchemaNode> kids = group.children();
         if (kids.size() < 2 || kids.size() > 3) {

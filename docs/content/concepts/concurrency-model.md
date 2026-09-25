@@ -83,9 +83,13 @@ shared pool matters, since all the files draw on the same workers. See
   threads that decompress and decode pages, which is the bulk of the CPU, so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
   Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages,
-  fetching page bytes and assembling decoded values into batches, run on the JVM's virtual-thread
-  carriers rather than this pool, so `n` does not bound them; for strict CPU isolation on a shared
-  machine, also cap the carriers with `-Djdk.virtualThreadScheduler.parallelism`.
+  fetching page bytes on demand and assembling decoded values into batches, run on the JVM's
+  virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
+  next row group's fetch plans and first chunk, the chunk after the one being read) run on the
+  common `ForkJoinPool`. `n` bounds neither. For strict CPU isolation on a shared machine, also cap
+  the carriers with `-Djdk.virtualThreadScheduler.parallelism` and the common pool with
+  `-Djava.util.concurrent.ForkJoinPool.common.parallelism` at a value of 2 or more. Below 2, each
+  speculative fetch runs on a new thread of its own.
 
 ## Further reading
 

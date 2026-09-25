@@ -23,8 +23,8 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Parses dictionary pages from column chunk data.
 ///
-/// Extracted from [PageScanner] so that both [IndexedFetchPlan] and
-/// [PageScanner] can reuse the same parsing logic.
+/// Shared by [IndexedFetchPlan], [SequentialFetchPlan] and the dictionary
+/// filter's `RowGroupDictionaryFilterSource`.
 public final class DictionaryParser {
 
     private DictionaryParser() {}

@@ -43,11 +43,12 @@ public interface Validity {
     Validity NO_NULLS = NoNullsValidity.INSTANCE;
 
     /// Wraps a packed `long[]` bitmap (set-bit = present storage).
-    /// Returns [#NO_NULLS] when `words` is `null` (the sparse "no nulls"
-    /// representation produced by the internal pipeline); otherwise
-    /// returns a fresh backed instance holding the given bitmap. The
-    /// wrapper does not copy — callers must not mutate the bitmap after
-    /// handing it to a `Validity`.
+    /// Returns [#NO_NULLS] when `words` is `null`; otherwise returns a
+    /// fresh backed instance holding the given bitmap. The caller passes
+    /// `null` when no item is null: this method does not inspect the words,
+    /// so a bitmap with every bit set still yields a backed instance, whose
+    /// [#hasNulls()] answers `true`. The wrapper does not copy — callers
+    /// must not mutate the bitmap after handing it to a `Validity`.
     ///
     /// The caller is responsible for sizing the array to at least
     /// `(count + 63) >>> 6` words for any `count` they later pass to
@@ -86,8 +87,10 @@ public interface Validity {
         return new BackedValidity(words);
     }
 
-    /// `true` iff at least one item at this scope is null in the current
-    /// batch. O(1). May help on hot loops as a per-batch fast-path gate:
+    /// `false` for [#NO_NULLS]; `true` for a backed validity, regardless of
+    /// its bits. A `true` answer therefore means the batch may hold nulls,
+    /// and a `false` answer means it holds none. O(1). May help on hot loops
+    /// as a per-batch fast-path gate:
     /// ```java
     /// if (!validity.hasNulls()) {
     ///     // tight loop, no per-item check

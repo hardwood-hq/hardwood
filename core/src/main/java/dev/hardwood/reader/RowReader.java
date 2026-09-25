@@ -46,8 +46,12 @@ public interface RowReader extends StructAccessor, Closeable {
     boolean hasNext() throws IOException;
 
     /// Advance to the next row. Must be called before accessing row data.
+    /// Call [#hasNext()] before every `next()`: `next()` does not load rows
+    /// itself.
     ///
-    /// @throws java.util.NoSuchElementException if no more rows are available
+    /// @throws java.util.NoSuchElementException if no row is available to `next()`
+    ///         without a preceding [#hasNext()]: at the end of the current batch, or on
+    ///         a filtered read when `hasNext()` has not selected the next matching row
     /// @throws IOException if the bytes could not be read
     /// @throws dev.hardwood.reader.ParquetReadException if the file's bytes are not what a
     ///         Parquet file can say: a footer or a page index that will not parse, a

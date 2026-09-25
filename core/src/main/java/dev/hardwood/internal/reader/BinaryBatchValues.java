@@ -36,7 +36,7 @@ public final class BinaryBatchValues {
     public byte[] bytes;
     public int[] offsets;
 
-    /// Whether this column's values are interned `UTF8` / `JSON` `String`s. Set
+    /// Whether this column's values are interned `UTF8` / `ENUM` / `JSON` `String`s. Set
     /// once at batch allocation ([BatchExchange#allocateArray]); only these
     /// columns record dictionary indices and reuse cached `String`s. When
     /// `false`, [#stringAt] always materialises from [#bytes].

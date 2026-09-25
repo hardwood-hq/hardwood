@@ -109,8 +109,8 @@ public class ParquetFileReader implements Closeable {
         this.ownsInputFiles = ownsInputFiles;
     }
 
-    /// Reader option key: set to `"false"` to disable the fixed-size-list read
-    /// fast path (enabled by default). A transitional escape hatch — string-keyed
+    /// Reader option key: set to `"true"` to enable the fixed-size-list read
+    /// fast path (disabled by default). A transitional opt-in — string-keyed
     /// via [ReaderConfig] so it can be retired without breaking callers.
     private static final String FIXED_LIST_FAST_PATH_OPTION = "hardwood.fixed-list-fast-path";
 
@@ -659,12 +659,6 @@ public class ParquetFileReader implements Closeable {
         return new ColumnReaders(scan, schema, readProjection.payload());
     }
 
-    /// Resolves a requested batch size to a concrete record count. A positive
-    /// `requested` (set explicitly via the builders' `batchSize(int)`) is used
-    /// verbatim; the [#AUTO_BATCH_SIZE] sentinel is turned into a byte-budgeted
-    /// size derived from the projected column widths scaled by their list fan-out
-    /// (from `rowGroups` metadata), the same logic the `RowReader` path uses, so
-    /// both regimes agree.
     /// Iterators still tracked for teardown by [#close()]. Visible for testing.
     int trackedIteratorCount() {
         return rowGroupIterators.size();
@@ -679,6 +673,12 @@ public class ParquetFileReader implements Closeable {
         return iterator;
     }
 
+    /// Resolves a requested batch size to a concrete record count. A positive
+    /// `requested` (set explicitly via the builders' `batchSize(int)`) is used
+    /// verbatim; the [#AUTO_BATCH_SIZE] sentinel is turned into a byte-budgeted
+    /// size derived from the projected column widths scaled by their list fan-out
+    /// (from `rowGroups` metadata), the same logic the `RowReader` path uses, so
+    /// both regimes agree.
     private int resolveBatchSize(int requested, ProjectedSchema projected, List<RowGroup> rowGroups) {
         return requested > 0
                 ? requested
@@ -861,7 +861,8 @@ public class ParquetFileReader implements Closeable {
         /// Limit to the last `tailRows` rows. Row groups that do not overlap
         /// the tail are skipped entirely, so pages for earlier row groups are
         /// never fetched or decoded — useful on remote backends. Mutually
-        /// exclusive with [#head], [#filter], and [#skip]. Single-file only.
+        /// exclusive with [#head], [#filter(FilterPredicate)],
+        /// [#filter(RowGroupPredicate)], and [#skip]. Single-file only.
         public RowReaderBuilder tail(long tailRows) {
             if (tailRows <= 0) {
                 throw new IllegalArgumentException("tail row count must be positive: " + tailRows);

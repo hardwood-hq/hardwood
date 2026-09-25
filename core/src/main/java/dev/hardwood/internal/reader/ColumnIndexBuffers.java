@@ -14,13 +14,13 @@ import java.nio.ByteBuffer;
 /// Parquet stores two complementary page-level indexes per column chunk:
 ///
 /// - **Offset Index** — the *location* of each page: file offset,
-///       compressed size, and first row index. Used by
-///       [PageScanner#scanPagesFromIndex()] to seek directly to pages
-///       without scanning headers sequentially.</li>
+///       compressed size, and first row index. Used to build an
+///       [IndexedFetchPlan], which seeks directly to pages without scanning
+///       headers sequentially.
 /// - **Column Index** — the *statistics* of each page: min/max
-///       values, null counts, and boundary order. Will be used for page-level
+///       values, null counts, and boundary order. Used for page-level
 ///       predicate pushdown (skipping pages whose value range doesn't match
-///       the filter).</li>
+///       the filter).
 ///
 /// Either buffer may be `null` if the file does not contain that index
 /// type. The buffers are slices of a shared region fetched by
