@@ -127,7 +127,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>
-        <version>3.8.1</version>
         <configuration>
           <skip>true</skip>
         </configuration>
@@ -170,7 +169,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-antrun-plugin</artifactId>
-        <version>3.1.0</version>
         <executions>
           <execution>
             <id>upstream-ref-jar</id>
@@ -189,18 +187,19 @@
       <!--
         API compatibility report: compares shim classes against upstream parquet-java / hadoop.
         Run:  mvn package dependency:unpack@unpack-upstream-ref antrun:run@upstream-ref-jar japicmp:cmp -pl parquet-java-compat -DskipTests
-        Reports: target/japicmp/default-cli.{diff,html,md,xml}
+        Reports: target/japicmp/hardwood-parquet-java-compat/default-cli.{diff,html,md,xml} under the repository root
       -->
       <plugin>
         <groupId>com.github.siom79.japicmp</groupId>
         <artifactId>japicmp-maven-plugin</artifactId>
         <configuration>
-          <oldVersion>
+          <!-- Override, not merge: the parent compares Maven coordinates, this module two JARs. -->
+          <oldVersion combine.self="override">
             <file>
               <path>${project.build.directory}/upstream-ref.jar</path>
             </file>
           </oldVersion>
-          <newVersion>
+          <newVersion combine.self="override">
             <file>
               <path>${project.build.directory}/${project.build.finalName}.jar</path>
             </file>
