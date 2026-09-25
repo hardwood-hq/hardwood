@@ -21,7 +21,9 @@ import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -226,9 +228,9 @@ class ColumnWorkerTest {
     void errorPropagatedToConsumer() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             ColumnSchema column = new ColumnSchema(
-                    dev.hardwood.metadata.FieldPath.of("error_col"),
+                    FieldPath.of("error_col"),
                     PhysicalType.INT32,
-                    dev.hardwood.metadata.RepetitionType.REQUIRED,
+                    RepetitionType.REQUIRED,
                     null, 0, 0, 0, null);
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
@@ -244,6 +246,38 @@ class ColumnWorkerTest {
             assertThatThrownBy(exchange::checkError)
                     .isInstanceOf(RuntimeException.class)
                     .hasMessage("Simulated pipeline error");
+        }
+    }
+
+    /// A worker whose decode tasks fail more than once reports the first failure to the consumer.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void firstOfSeveralWorkerErrorsReachesConsumer() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            ColumnSchema column = new ColumnSchema(
+                    FieldPath.of("col"),
+                    PhysicalType.INT32,
+                    RepetitionType.REQUIRED,
+                    null, 0, 0, 0, null);
+            int batchCapacity = 64;
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    null, exchange, column, batchCapacity,
+                    context.decompressorFactory(), context.executor(), 0, null);
+
+            IOException first = new IOException("page 3 is corrupt");
+            worker.signalError(first);
+            worker.signalError(new IOException("page 4 is corrupt"));
+
+            assertThatThrownBy(exchange::checkError)
+                    .isSameAs(first)
+                    .hasMessage("page 3 is corrupt");
         }
     }
 
@@ -563,9 +597,9 @@ class ColumnWorkerTest {
     void flatPublishCurrentBatchMarksDoneAfterTakeReturnsNull() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             ColumnSchema column = new ColumnSchema(
-                    dev.hardwood.metadata.FieldPath.of("col"),
+                    FieldPath.of("col"),
                     PhysicalType.INT32,
-                    dev.hardwood.metadata.RepetitionType.REQUIRED,
+                    RepetitionType.REQUIRED,
                     null, 0, 0, 0, null);
             int batchCapacity = 64;
 
@@ -607,9 +641,9 @@ class ColumnWorkerTest {
     void nestedPublishCurrentBatchMarksDoneAfterTakeReturnsNull() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             ColumnSchema column = new ColumnSchema(
-                    dev.hardwood.metadata.FieldPath.of("col"),
+                    FieldPath.of("col"),
                     PhysicalType.INT32,
-                    dev.hardwood.metadata.RepetitionType.REQUIRED,
+                    RepetitionType.REQUIRED,
                     null, 0, 0, 0, null);
             int batchCapacity = 64;
 

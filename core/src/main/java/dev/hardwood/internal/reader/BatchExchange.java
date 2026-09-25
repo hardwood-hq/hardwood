@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import dev.hardwood.jfr.BatchWaitEvent;
@@ -81,7 +82,7 @@ public class BatchExchange<B> {
     private final Supplier<B> batchFactory;
     private final String columnName;
 
-    private volatile Throwable error;
+    private final AtomicReference<Throwable> error = new AtomicReference<>();
     private volatile boolean finished;
 
     private BatchExchange(String columnName, ArrayBlockingQueue<Object> readyQueue,
@@ -194,8 +195,18 @@ public class BatchExchange<B> {
     /// Ends the stream with a failure. Goes through [#finish()] so that a waiting consumer is
     /// released as promptly as a clean end releases it, and raises the error on its way out
     /// rather than after the next poll expires.
+    ///
+    /// The first error signalled is the one raised, since it is the failure that ended the stream.
+    /// Each later one is attached to it as a suppressed exception rather than dropped, so a
+    /// failure that follows the first, such as an `OutOfMemoryError` in another decode task,
+    /// still reaches the caller.
     public void signalError(Throwable t) {
-        error = t;
+        if (!error.compareAndSet(null, t)) {
+            Throwable first = error.get();
+            if (first != t) {
+                first.addSuppressed(t);
+            }
+        }
         finish();
     }
 
@@ -294,7 +305,7 @@ public class BatchExchange<B> {
     /// any of them would undo that one frame below the reader, and an `OutOfMemoryError`
     /// reported as a `RuntimeException` is catchable by handlers that must never see it.
     public void checkError() throws IOException {
-        Throwable t = error;
+        Throwable t = error.get();
         if (t != null) {
             if (t instanceof IOException io) {
                 throw io;

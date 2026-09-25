@@ -115,4 +115,37 @@ class BatchExchangeTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("decode failed");
     }
+
+    /// Two failures can reach one exchange, for instance when decode tasks for two pages of a
+    /// column both fail. The first one ended the stream, so it is the one the consumer sees.
+    @Test
+    void reportsTheFirstOfSeveralErrors() {
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        IllegalStateException first = new IllegalStateException("page 3 is corrupt");
+        OutOfMemoryError second = new OutOfMemoryError("Java heap space");
+        exchange.signalError(first);
+        exchange.signalError(second);
+
+        assertThatThrownBy(exchange::poll)
+                .isSameAs(first)
+                .hasMessage("page 3 is corrupt");
+        assertThatThrownBy(exchange::checkError)
+                .isSameAs(first)
+                .hasMessage("page 3 is corrupt");
+        assertThat(first.getSuppressed()).containsExactly(second);
+    }
+
+    /// The same throwable signalled twice is raised once, and is not suppressed onto itself.
+    @Test
+    void reportsARepeatedErrorOnce() {
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        IllegalStateException error = new IllegalStateException("page 3 is corrupt");
+        exchange.signalError(error);
+        exchange.signalError(error);
+
+        assertThatThrownBy(exchange::checkError)
+                .isSameAs(error)
+                .hasMessage("page 3 is corrupt");
+        assertThat(error.getSuppressed()).isEmpty();
+    }
 }
