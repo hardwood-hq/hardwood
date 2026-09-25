@@ -23,7 +23,7 @@ A new method on the existing `RowReaderBuilder`:
 /// is a physical absolute row index: earlier row groups are not opened —
 /// their pages are not fetched or decoded — so this is an O(1 RG) seek on
 /// remote backends. **With a filter**, `skip(n)` is a logical offset over
-/// the matched rows (see ROW_SELECTION_SEMANTICS.md / #541), and the O(1)
+/// the matched rows (see _designs/RECORD_FILTERING.md / #541), and the O(1)
 /// seek does not apply — earlier groups are decoded to count matches.
 ///
 /// `skip == 0` is the no-op default. `skip >= totalRows`
@@ -60,7 +60,7 @@ file).
 The physical seek below is the **no-filter** path. When a `FilterPredicate` is
 present, `skip` is instead a logical offset over the matched rows — earlier
 groups must be decoded to count matches — handled separately per
-[ROW_SELECTION_SEMANTICS.md](ROW_SELECTION_SEMANTICS.md) (#541).
+[RECORD_FILTERING.md](../_designs/RECORD_FILTERING.md) (#541).
 
 In `ParquetFileReader.buildRowReader(projection, filter, maxRows, skip)`, with no filter:
 

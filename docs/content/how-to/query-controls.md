@@ -68,7 +68,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
     while (rowReader.hasNext()) {
         rowReader.next();
-        // Only rows from non-skipped row groups are returned
+        // Only rows matching the filter are returned
     }
 }
 ```

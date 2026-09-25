@@ -191,7 +191,7 @@ A design doc states what would need a design discussion to change: contracts, in
 One PR per area. Each PR writes its targets following the method above, deletes its source docs, repoints their links, and lists its divergences in the PR description.
 
 - [x] Rules and `_plans/` split: CLAUDE.md, CONTRIBUTING.md, review checklist; WRITER_SUPPORT and REMOTE_READ_PATH moved to `_plans/`
-- [ ] Filtering (6–8); closes #1110
+- [x] Filtering (6–8); closes #1110
 - [ ] Read path (1–5)
 - [ ] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
 - [ ] Writer (16–19); trims `_plans/WRITER_SUPPORT.md` to the open stages of #1291

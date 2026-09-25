@@ -46,7 +46,7 @@ everything.
 Both are now decided per row group, where the fact belongs. Statistics decide a row group, not a
 read, and that decision already reaches the pipeline per row group as
 `WorkItem.filterAlwaysMatches` → `Batch.filterAlwaysMatches`. See
-[ALWAYS_MATCH_STATISTICS.md](ALWAYS_MATCH_STATISTICS.md) for the three consumers that read it.
+[STATISTICS_PRUNING.md](../_designs/STATISTICS_PRUNING.md) for the three consumers that read it.
 
 The same rule governs where a filter is evaluated: the drain-side/record-matcher choice is made
 from the predicate's shape alone, by `BatchFilterCompiler.tryCompile`, never from what a file

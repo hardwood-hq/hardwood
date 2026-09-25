@@ -26,7 +26,7 @@ import dev.hardwood.row.PqInterval;
 import dev.hardwood.tools.predicateaudit.Columns.Col;
 import dev.hardwood.tools.predicateaudit.Columns.Sem;
 
-/// The predicate literal rule of `_designs-legacy/PREDICATE_LITERALS.md`, written independently of the
+/// The predicate literal rule of `_designs/PREDICATE_MODEL.md`, written independently of the
 /// resolver: which predicates a column refuses, and which stored values the others match.
 ///
 /// Comparisons are exact: stored values and literals are compared as `BigInteger` counts of

@@ -105,8 +105,7 @@ page-index row ranges, no inline page-statistics drops, and no always-match fast
 path — so the predicate is evaluated against every decoded row and the result
 depends only on the data pages. It is the escape hatch for files whose footer or
 page-index statistics are unreliable (see
-[ALWAYS_MATCH_STATISTICS.md](ALWAYS_MATCH_STATISTICS.md) and
-[BLOOM_FILTER_PUSHDOWN.md](BLOOM_FILTER_PUSHDOWN.md) for the mechanisms it
+[STATISTICS_PRUNING.md](../_designs/STATISTICS_PRUNING.md) for the mechanisms it
 disables). Unlike the fixed-size-list flag, this is a **permanent** knob: its
 default never flips and the key is not scheduled for removal, because bad
 writer statistics remain possible on any file.

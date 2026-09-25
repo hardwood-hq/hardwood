@@ -70,7 +70,7 @@ import static dev.hardwood.internal.predicate.FilterDecision.MIGHT_MATCH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
-/// Every predicate of `_designs-legacy/PREDICATE_LITERALS.md`, answered through every read path and
+/// Every predicate of `_designs/PREDICATE_MODEL.md`, answered through every read path and
 /// checked against a Java oracle of the rule.
 ///
 /// The oracle reads the filtered column unfiltered and applies the rule to each value: a
