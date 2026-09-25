@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- **Behaviour change:** by-index accessors on `ColumnReaders`, `RowReader` and `PqStruct`, and the field order of an Avro record, follow the order `ColumnProjection.columns(...)` names the columns in instead of file schema order. `ColumnReaders` exposes a column once for every name that selects it. A nested field is selected by its full path only, no longer by its own name alone, and `ColumnProjection.getProjectedColumnNames()` returns a `List` ([#1066](https://github.com/hardwood-hq/hardwood/issues/1066)).
+
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
 - `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)`, which span the years 0001 to 9999 at nanosecond precision, are read, filtered and written ([#921](https://github.com/hardwood-hq/hardwood/issues/921)).

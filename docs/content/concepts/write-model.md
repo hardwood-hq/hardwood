@@ -80,7 +80,7 @@ The deciding gives up early where it can. A chunk stops interning once repeated 
 
 Both the reader and the writer let a field be addressed by position as well as by name, and the positions do not always mean the same thing:
 
-- On the **reader**, a field index is a position among an accessor's **projected** children, which is what the read materializes, in projected schema order.
+- On the **reader**, a field index is a position among an accessor's **projected** children, which is what the read materializes, in the order the projection requests them.
 - On the **writer**, a field index is a position in the struct as **declared** in the schema being written.
 
 Where a whole file is read into its own schema, the two orders coincide, and copying a record field by field (`getFieldName(i)` on one side, `setString(i, …)` on the other) is well defined. As soon as a projection drops or reorders fields, the reader's index `i` and the writer's index `i` name different fields, silently, because both are valid positions.

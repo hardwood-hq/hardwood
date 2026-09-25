@@ -21,7 +21,8 @@ import java.util.UUID;
 /// Variant objects do not expose these methods — use [PqVariantObject] for
 /// Variant navigation. By-index access lives here rather than on [FieldAccessor]
 /// because the "field index" is meaningful for struct-shaped accessors (the
-/// position in projected schema order) but not for Variant objects (whose field
+/// position among the projected children, in the order the projection requests
+/// them) but not for Variant objects (whose field
 /// order is lexicographic on the metadata key dictionary and rarely matches what
 /// a caller would consider "first" / "second").
 ///
@@ -61,8 +62,8 @@ public interface StructAccessor extends FieldAccessor {
     // Index-based mirrors of the by-name accessors on [FieldAccessor] and the
     // nested-type accessors above. Faster than name-based access in hot loops
     // over a fixed schema since they skip the per-call name lookup. The index
-    // is the field's position within the accessor's projected children, in
-    // projected schema order — the same position [#getFieldName] reports.
+    // is the field's position within the accessor's projected children, in the
+    // order the projection requests them — the same position [#getFieldName] reports.
 
     /// Get an INT32 field value by field index. See [#getInt(String)].
     int getInt(int fieldIndex);

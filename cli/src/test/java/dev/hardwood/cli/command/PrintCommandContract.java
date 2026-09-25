@@ -138,6 +138,36 @@ interface PrintCommandContract {
     }
 
     @Test
+    default void columnsFollowRequestOrder() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--columns", "value,id");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +-------+----+
+                | value | id |
+                +-------+----+
+                | 100   | 1  |
+                | 200   | 2  |
+                | 300   | 3  |
+                +-------+----+""");
+    }
+
+    @Test
+    default void columnsPrintARepeatedColumnOnce() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--columns", "value,id,value");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +-------+----+
+                | value | id |
+                +-------+----+
+                | 100   | 1  |
+                | 200   | 2  |
+                | 300   | 3  |
+                +-------+----+""");
+    }
+
+    @Test
     default void columnsFilterWithNestedStruct() {
         Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-w", "150");
 

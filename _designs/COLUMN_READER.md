@@ -128,6 +128,12 @@ Every column-reader read (one `ColumnReader`, an unfiltered `ColumnReaders` grou
 
 A single `ColumnReader` is the one view of a one-column scan (`ParquetFileReader.buildSingleColumnReader`); a filtered single column's scan also holds the predicate columns' cursors, which have no view. Single-column readers are single-file; `ColumnReaders` spans the files of an `openAll` reader.
 
+### Index order
+
+`ColumnReaders.getColumnReader(int)` follows the projection's names: index `i` is the `i`-th leaf column the names select, each name's leaves in file schema order (`ProjectedSchema#requestedColumn`). A column several names select sits at each of their positions, each position with its own view of the one payload cursor. Each view tracks the batch it last took up, so stepping every position once per turn moves the group once, and a repeat decodes nothing twice; only the per-batch copies a view derives on access (trimmed, compacted or materialised arrays) are made per view. Leaves are addressed by full path, so a name and the result it produces carry the same qualified name; the row readers, which nest, give each node one position instead (see [ROW_READER.md](ROW_READER.md#index-space)).
+
+Tests: `ProjectionOrderTest`.
+
 ### Advancing the scan
 
 `ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records.

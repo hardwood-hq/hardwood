@@ -89,14 +89,13 @@ public final class AvroSchemaConverter {
     }
 
     /// Convert a struct group (or the schema root) to an Avro record, retaining
-    /// only children that contain a projected leaf when a projection is active.
+    /// only children that contain a projected leaf when a projection is active,
+    /// in the order the projection requests them.
     private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String path) {
         List<Schema.Field> fields = new ArrayList<>();
         List<AvroPlanNode> children = new ArrayList<>();
-        for (SchemaNode child : group.children()) {
-            if (projected != null && !hasProjectedLeaf(child, projected)) {
-                continue;
-            }
+        List<SchemaNode> retained = projected != null ? projected.projectedChildren(group) : group.children();
+        for (SchemaNode child : retained) {
             AvroPlanNode childNode = convertNode(child, childPath(path, child.name()));
             Schema.Field field = new Schema.Field(names.fieldName(child), fieldSchema(childNode, child), null, null);
             applyParquetName(field, child);
@@ -127,21 +126,6 @@ public final class AvroSchemaConverter {
             return nullable(schema);
         }
         return schema;
-    }
-
-    /// True if `node` is, or transitively contains, a projected leaf column.
-    private static boolean hasProjectedLeaf(SchemaNode node, ProjectedSchema projected) {
-        return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> projected.toProjectedIndex(prim.columnIndex()) >= 0;
-            case SchemaNode.GroupNode group -> {
-                for (SchemaNode child : group.children()) {
-                    if (hasProjectedLeaf(child, projected)) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-        };
     }
 
     private AvroPlanNode convertNode(SchemaNode node, String path) {

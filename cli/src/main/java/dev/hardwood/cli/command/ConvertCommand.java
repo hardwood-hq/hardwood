@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 import org.aesh.command.Command;
 import org.aesh.command.CommandDefinition;
@@ -24,6 +25,8 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.cli.internal.ValueFormatter;
+import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
@@ -74,13 +77,14 @@ public class ConvertCommand implements Command<CommandInvocation> {
             int rowLimit = RowLimits.parse(n);
             ColumnProjection projection = parseColumnProjection();
             FileSchema fileSchema = reader.getFileSchema();
-            List<SchemaNode> fields = projectedFields(fileSchema, projection);
+            List<SchemaNode> fields = RowTable.projectedFields(fileSchema, projection);
+            Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf = projectedChildren(fileSchema, projection);
 
             PrintWriter out = openOutput();
             String effectiveNullString = nullString == null ? "" : nullString;
             try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
                 switch (format) {
-                    case CSV -> writeCsv(out, fields, rowReader, projection, effectiveNullString);
+                    case CSV -> writeCsv(out, fields, rowReader, childrenOf, effectiveNullString);
                     case JSON -> writeJson(out, fields, rowReader);
                 }
             }
@@ -114,15 +118,13 @@ public class ConvertCommand implements Command<CommandInvocation> {
         return ColumnProjection.columns(names);
     }
 
-    private static List<SchemaNode> projectedFields(FileSchema schema, ColumnProjection projection) {
-        List<SchemaNode> allChildren = schema.getRootNode().children();
+    /// The children of a struct the CSV export flattens, in the order the projection requests them.
+    private static Function<SchemaNode.GroupNode, List<SchemaNode>> projectedChildren(FileSchema schema,
+            ColumnProjection projection) {
         if (projection.projectsAll()) {
-            return allChildren;
+            return SchemaNode.GroupNode::children;
         }
-        return allChildren.stream()
-                .filter(child -> projection.getProjectedColumnNames().stream()
-                        .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
-                .toList();
+        return ProjectedSchema.create(schema, projection, true)::projectedChildren;
     }
 
     private PrintWriter openOutput() throws IOException {
@@ -135,10 +137,11 @@ public class ConvertCommand implements Command<CommandInvocation> {
     // ==================== CSV ====================
 
     private static void writeCsv(PrintWriter out, List<SchemaNode> fields, RowReader rowReader,
-                                 ColumnProjection projection, String nullString) throws IOException {
+                                 Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
+                                 String nullString) throws IOException {
         List<String> flatHeaders = new ArrayList<>();
         for (SchemaNode field : fields) {
-            flattenHeaders(field, field.name(), projection, flatHeaders);
+            flattenHeaders(field, field.name(), childrenOf, flatHeaders);
         }
         out.println(csvRow(flatHeaders.toArray(new String[0])));
 
@@ -147,20 +150,18 @@ public class ConvertCommand implements Command<CommandInvocation> {
             List<String> flatValues = new ArrayList<>();
             for (int i = 0; i < fields.size(); i++) {
                 SchemaNode field = fields.get(i);
-                flattenValues(rowReader.getValue(i), field, field.name(), projection, flatValues, nullString);
+                flattenValues(rowReader.getValue(i), field, field.name(), childrenOf, flatValues, nullString);
             }
             out.println(csvRow(flatValues.toArray(new String[0])));
         }
     }
 
-    private static void flattenHeaders(SchemaNode node, String path, ColumnProjection projection,
+    private static void flattenHeaders(SchemaNode node, String path,
+                                       Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
                                        List<String> headers) {
         if (node instanceof SchemaNode.GroupNode group && isStruct(group)) {
-            for (SchemaNode child : group.children()) {
-                String childPath = path + "." + child.name();
-                if (isProjected(projection, childPath)) {
-                    flattenHeaders(child, childPath, projection, headers);
-                }
+            for (SchemaNode child : childrenOf.apply(group)) {
+                flattenHeaders(child, path + "." + child.name(), childrenOf, headers);
             }
         }
         else {
@@ -169,18 +170,17 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     // package visibility for tests
-    static void flattenValues(Object value, SchemaNode schema, String path, ColumnProjection projection,
+    static void flattenValues(Object value, SchemaNode schema, String path,
+                              Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
                               List<String> values, String nullString) {
         if (schema instanceof SchemaNode.GroupNode group && isStruct(group)) {
             if (value == null) {
-                flattenNulls(group, path, projection, values, nullString);
+                flattenNulls(group, path, childrenOf, values, nullString);
             }
             else if (value instanceof PqStruct struct) {
-                for (SchemaNode child : group.children()) {
-                    String childPath = path + "." + child.name();
-                    if (isProjected(projection, childPath)) {
-                        flattenValues(struct.getValue(child.name()), child, childPath, projection, values, nullString);
-                    }
+                for (SchemaNode child : childrenOf.apply(group)) {
+                    flattenValues(struct.getValue(child.name()), child, path + "." + child.name(), childrenOf,
+                            values, nullString);
                 }
             }
             else {
@@ -196,14 +196,12 @@ public class ConvertCommand implements Command<CommandInvocation> {
         }
     }
 
-    private static void flattenNulls(SchemaNode schema, String path, ColumnProjection projection,
+    private static void flattenNulls(SchemaNode schema, String path,
+                                     Function<SchemaNode.GroupNode, List<SchemaNode>> childrenOf,
                                      List<String> values, String nullString) {
         if (schema instanceof SchemaNode.GroupNode group && isStruct(group)) {
-            for (SchemaNode child : group.children()) {
-                String childPath = path + "." + child.name();
-                if (isProjected(projection, childPath)) {
-                    flattenNulls(child, childPath, projection, values, nullString);
-                }
+            for (SchemaNode child : childrenOf.apply(group)) {
+                flattenNulls(child, path + "." + child.name(), childrenOf, values, nullString);
             }
         }
         else {
@@ -215,20 +213,6 @@ public class ConvertCommand implements Command<CommandInvocation> {
     /// struct; lists, maps and Variants render into a single cell.
     private static boolean isStruct(SchemaNode.GroupNode group) {
         return !group.isList() && !group.isMap() && !group.isVariant();
-    }
-
-    /// A dotted field path is exported when the projection selects it, an ancestor
-    /// of it, or a descendant of it.
-    private static boolean isProjected(ColumnProjection projection, String path) {
-        if (projection.projectsAll()) {
-            return true;
-        }
-        for (String name : projection.getProjectedColumnNames()) {
-            if (name.equals(path) || name.startsWith(path + ".") || path.startsWith(name + ".")) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // ==================== JSON ====================

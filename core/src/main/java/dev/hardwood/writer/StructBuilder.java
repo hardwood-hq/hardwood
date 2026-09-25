@@ -38,9 +38,10 @@ import dev.hardwood.row.PqInterval;
 ///
 /// A loop that walks a row's fields by index can therefore read back and write forward
 /// through the same positions, **provided the write schema mirrors what was read**. The
-/// reader's index is the position in *projected* schema order; this one is the position in
-/// the write schema's declaration order. They are the same position when the whole file is
-/// read into its own schema, and they diverge under a projection: reading three of ten
+/// reader's index is the position among the *projected* fields, in the order the projection
+/// requests them; this one is the position in the write schema's declaration order. They are
+/// the same position when the whole file is read into its own schema, and they diverge under
+/// a projection: reading three of ten
 /// columns and writing into the ten-column schema shifts every position, and where the
 /// columns that land on each other happen to share a type the values are written to the
 /// wrong fields rather than rejected. Comparing [#getFieldName] against the reader's for

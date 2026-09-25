@@ -378,6 +378,10 @@ public class ColumnProjectionTest {
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("people.key_value.value.age")).build()) {
 
+            // The leaf's top-level ancestor is the one field of the row
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+            assertThat(rows.getFieldName(0)).isEqualTo("people");
+
             List<String> keys = new ArrayList<>();
             List<Integer> ages = new ArrayList<>();
             while (rows.hasNext()) {
@@ -459,38 +463,6 @@ public class ColumnProjectionTest {
                 }
                 assertThat(keys).containsExactly("employee1", "employee2", "manager");
             }
-        }
-    }
-
-    @Test
-    void simpleNameMatchingNestedLeafShouldReadMap() throws Exception {
-        // Same map_struct_value_test.parquet fixture, but projecting "age" by
-        // simple name (no dot notation). The bare name matches the nested leaf
-        // people.key_value.value.age via its leaf name. The resolver must (a)
-        // register the leaf's top-level ancestor `people` so the field is
-        // addressable at the row level, and (b) force-include the map's key
-        // column so the map can be assembled.
-        Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
-
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rows = reader.buildRowReader()
-                     .projection(ColumnProjection.columns("age")).build()) {
-
-            assertThat(rows.getFieldCount()).isEqualTo(1);
-            assertThat(rows.getFieldName(0)).isEqualTo("people");
-
-            List<String> keys = new ArrayList<>();
-            List<Integer> ages = new ArrayList<>();
-            while (rows.hasNext()) {
-                rows.next();
-                PqMap people = rows.getMap("people");
-                for (PqMap.Entry entry : people.getEntries()) {
-                    keys.add(entry.getStringKey());
-                    ages.add(entry.getStructValue().getInt("age"));
-                }
-            }
-            assertThat(keys).containsExactly("employee1", "employee2", "manager");
-            assertThat(ages).containsExactly(30, 25, 45);
         }
     }
 

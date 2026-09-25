@@ -7,12 +7,14 @@
  */
 package dev.hardwood.cli.internal.table;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.IntStream;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -27,20 +29,23 @@ public final class RowTable {
     }
 
     public static String[] topLevelFieldNames(FileSchema schema, ColumnProjection projection) {
+        return projectedFields(schema, projection).stream()
+                .map(SchemaNode::name)
+                .toArray(String[]::new);
+    }
+
+    /// The top-level fields a row reader over `projection` exposes, in the order it exposes them.
+    public static List<SchemaNode> projectedFields(FileSchema schema, ColumnProjection projection) {
         List<SchemaNode> children = schema.getRootNode().children();
         if (projection.projectsAll()) {
-            String[] names = new String[children.size()];
-            for (int i = 0; i < children.size(); i++) {
-                names[i] = children.get(i).name();
-            }
-            return names;
+            return children;
         }
-        Set<String> projectedNames = projection.getProjectedColumnNames();
-        return children.stream()
-                .map(SchemaNode::name)
-                .filter(name -> projectedNames.stream()
-                        .anyMatch(p -> p.equals(name) || p.startsWith(name + ".")))
-                .toArray(String[]::new);
+        int[] fieldIndices = ProjectedSchema.create(schema, projection, true).getProjectedFieldIndices();
+        List<SchemaNode> fields = new ArrayList<>(fieldIndices.length);
+        for (int fieldIndex : fieldIndices) {
+            fields.add(children.get(fieldIndex));
+        }
+        return fields;
     }
 
     public static String renderTable(String[] headers, List<String[]> rows) {

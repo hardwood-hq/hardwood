@@ -31,7 +31,13 @@ Every accessor exists by name and by index (`StructAccessor`). Both resolve agai
 
 ### Index space
 
-An index is a position among the projected children of the accessor, in file schema order, whatever order the names were given to `ColumnProjection.columns`. `getFieldCount()` and `getFieldName(int)` report the same space.
+An index is a position among the projected children of the accessor, in request order: children are ordered by the first name in `ColumnProjection.columns` that selects a leaf under them, and children one name selects keep file schema order among themselves. `getFieldCount()` and `getFieldName(int)` report the same space.
+
+Each schema node has one position. The row is a tree addressed by simple names one level at a time, and several names can lead into the same node (`address.zip`, `address.city`, `address`), so repeated and overlapping names merge into it rather than add positions. `ColumnReaders` addresses flat leaf columns by full path and can keep every name's positions instead (see [COLUMN_READER.md](COLUMN_READER.md#index-order)); the two agree for a projection of distinct top-level columns.
+
+The order lives in `ProjectedSchema` and applies to exposure only. Projected column indices, which address workers, exchanges and batches, stay in file schema order, and so does the decoded projection a filter extends (see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)); a reader maps between the two once, when it is built or when a batch is installed, never per value. Views the predicate builds over its own columns resolve indices through the same `ProjectedSchema`, so they agree with the view they index.
+
+A name resolves to exactly one schema node: a simple name to the top-level field of that name, a dotted name to the node at that path. A nested node has no other name, since a leaf's own name can recur in several structs.
 
 | Accessor | Index counts | Name resolves |
 |---|---|---|
@@ -63,7 +69,7 @@ The user-facing contract is in [accessors.md](../docs/content/reference/accessor
 
 The primitive accessors do no type check of their own: on `FlatRowReader` and at the top level of `NestedRowReader` the cast of the batch's value array (or of the field descriptor) is the check, and a mismatch surfaces as `ClassCastException`; a primitive accessor by index on a top-level group of `NestedRowReader` fails with `ArrayIndexOutOfBoundsException`. `PqStructImpl` checks the child's descriptor and raises `IllegalArgumentException`. The user docs leave the exception type unspecified so the hot path carries no branch for a programming error; giving mismatches a specified exception is a design change. The messages `FlatRowReader` and `NestedBatchDataView` compose are prefixed with the current file name through `ExceptionContext`; the name-lookup and shape failures of `TopLevelFieldMap` and the `PqStructImpl`, `PqListImpl` and `PqMapImpl` flyweights carry no file name.
 
-Tests: `ColumnProjectionTest`, `PqStructByIndexTest`, `PqRowApiTest`, `TextAccessorTest`, `TypedAccessorsIssue445Test`.
+Tests: `ColumnProjectionTest`, `ProjectionOrderTest`, `PqStructByIndexTest`, `PqRowApiTest`, `TextAccessorTest`, `TypedAccessorsIssue445Test`.
 
 ## Iterating batches and file boundaries
 

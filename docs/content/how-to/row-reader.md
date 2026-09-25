@@ -135,7 +135,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 All accessor methods are available in two forms:
 
 - **Name-based** (e.g., `getInt("column_name")`): convenient for ad-hoc access
-- **Index-based** (e.g., `getInt(columnIndex)`): faster for performance-critical loops
+- **Index-based** (e.g., `getInt(fieldIndex)`): faster for performance-critical loops
 
 The common scalar and nested types:
 
@@ -170,7 +170,7 @@ full rules, including the split `getTimestamp` / `getLocalTimestamp` pair, are i
 
 #### Index-based access
 
-For hot loops, look up field indices once outside the loop and pass them to the accessors instead of names. A field index is the field's position among the reader's projected top-level fields, in schema order; `getFieldCount()` and `getFieldName(int)` report those positions. It is not the file's leaf-column index (`ColumnSchema.columnIndex()`).
+For hot loops, look up field indices once outside the loop and pass them to the accessors instead of names. A field index is the field's position among the reader's projected top-level fields, in the order the projection requests them (see [Index order](../reference/query-controls.md#index-order)); `getFieldCount()` and `getFieldName(int)` report those positions. It is not the file's leaf-column index (`ColumnSchema.columnIndex()`).
 
 ```java
 // Resolve field indices once (before the loop)
