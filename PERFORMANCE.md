@@ -230,7 +230,7 @@ java --add-modules jdk.incubator.vector \
 | `MemoryMapBenchmark.memoryMapToByteArray` | Memory map a file and copy to byte array |
 | `PageHandlingBenchmark.a_decompressPages` | Scan and decompress all pages |
 | `PageHandlingBenchmark.b_decodePages` | Scan, decompress, and decode all pages |
-| `SimdBenchmark.*` | SIMD operations (countNonNulls, markNulls, dictionary, bit unpacking) |
+| `SimdBenchmark.*` | SIMD operations (countNonNulls, dictionary) |
 | `WideSchemaMetadataBenchmark.decodeFooter` | Thrift footer decode for 10 … 100,000 `FLOAT64` columns, bytes already in memory |
 | `WideSchemaMetadataBenchmark.buildSchema` | `FileSchema` construction from decoded schema elements, same widths |
 | `WideSchemaMetadataBenchmark.openFile` | Full `ParquetFileReader.open()`: mmap, footer read, decode, schema build |

@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.encoding.simd;
 
-import java.util.BitSet;
-
 /// Interface for vectorizable operations used in Parquet decoding.
 ///
 /// Implementations exist for scalar (fallback) and SIMD (Vector API) paths.
@@ -28,39 +26,6 @@ public interface SimdOperations {
     }
 
     int countNonNulls(int[] defLevels, int length, int maxDef);
-
-    /// Mark null positions in a BitSet where `defLevels[srcPos + i] < maxDefLevel`.
-    ///
-    /// @param nulls BitSet to mark (may be null for required fields)
-    /// @param defLevels definition levels array
-    /// @param srcPos starting position in defLevels
-    /// @param destPos starting position in nulls BitSet
-    /// @param count number of elements to process
-    /// @param maxDefLevel maximum definition level
-    void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel);
-
-    // ==================== Bit Unpacking Operations ====================
-
-    /// Unpack bit-width 1 values from packed byte data.
-    ///
-    /// @param data source byte array
-    /// @param dataPos starting position in data
-    /// @param output destination int array
-    /// @param outPos starting position in output
-    /// @param count number of values to unpack (must be multiple of 8 for main loop)
-    /// @return number of bytes consumed from data
-    int unpackBitWidth1(byte[] data, int dataPos, int[] output, int outPos, int count);
-
-    /// Unpack values with bit widths 2-8 from packed byte data.
-    ///
-    /// @param data source byte array
-    /// @param dataPos starting position in data
-    /// @param output destination int array
-    /// @param outPos starting position in output
-    /// @param count number of values to unpack
-    /// @param bitWidth bits per value (2-8)
-    /// @return number of bytes consumed from data
-    int unpackBitWidthN(byte[] data, int dataPos, int[] output, int outPos, int count, int bitWidth);
 
     // ==================== Dictionary Operations ====================
 
