@@ -841,7 +841,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             return null;
         }
         return switch (kinds[columnIndex]) {
-            // Dictionary-encoded UTF8/JSON: return the interned String (one per chunk).
+            // Dictionary-encoded UTF8/ENUM/JSON: return the interned String (one per chunk).
             case STRING -> ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
             case INT96_TIMESTAMP -> LogicalTypeConverter.int96ToInstant((byte[]) rawValueUnchecked(columnIndex));
             case RAW -> rawValueUnchecked(columnIndex);

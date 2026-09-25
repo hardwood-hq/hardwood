@@ -75,8 +75,8 @@ class SimdOperationsTest {
         int[] defLevels = generateDefLevels(size);
         int maxDef = 3;
 
-        int scalarResult = SCALAR.countNonNulls(defLevels, maxDef);
-        int simdResult = SIMD.countNonNulls(defLevels, maxDef);
+        int scalarResult = SCALAR.countNonNulls(defLevels, defLevels.length, maxDef);
+        int simdResult = SIMD.countNonNulls(defLevels, defLevels.length, maxDef);
 
         assertThat(simdResult).isEqualTo(scalarResult);
     }
@@ -85,13 +85,13 @@ class SimdOperationsTest {
     void countNonNullsAllNulls() {
         int[] defLevels = new int[100];
         // All zeros, maxDef = 1 means all are null
-        assertThat(SIMD.countNonNulls(defLevels, 1)).isEqualTo(0);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 1)).isEqualTo(0);
     }
 
     @Test
     void countNonNullsNoNulls() {
         int[] defLevels = IntStream.range(0, 100).map(i -> 3).toArray();
-        assertThat(SIMD.countNonNulls(defLevels, 3)).isEqualTo(100);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(100);
     }
 
     @Test
@@ -100,7 +100,7 @@ class SimdOperationsTest {
         for (int i = 0; i < 100; i++) {
             defLevels[i] = i % 2 == 0 ? 3 : 0;
         }
-        assertThat(SIMD.countNonNulls(defLevels, 3)).isEqualTo(50);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(50);
     }
 
     @Test

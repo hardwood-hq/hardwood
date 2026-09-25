@@ -176,7 +176,7 @@ final class NestedBatchIndex {
     }
 
     /// Decode value `valueIndex` of `projectedCol` to its boxed Java value: an
-    /// interned `String` for a `UTF8` / `JSON` leaf, otherwise the converted raw
+    /// interned `String` for a `UTF8` / `ENUM` / `JSON` leaf, otherwise the converted raw
     /// value. The element must be known non-null.
     Object decodeLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
         return LeafKind.of(schema) == LeafKind.STRING

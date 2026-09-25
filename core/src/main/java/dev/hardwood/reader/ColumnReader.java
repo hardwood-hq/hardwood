@@ -26,11 +26,13 @@ import dev.hardwood.schema.FileSchema;
 /// Batch-oriented column reader for reading a single column across all row groups.
 ///
 /// Exposes a column's batch as typed leaf values plus a layer-model view of
-/// the schema chain between root and leaf. Each non-leaf node along the chain
+/// the schema chain between root and leaf. Each node along the chain
 /// contributes zero or one [LayerKind] layer:
 ///
 /// - `OPTIONAL` group → [LayerKind#STRUCT]
 /// - `LIST` / `MAP`-annotated group → [LayerKind#REPEATED]
+/// - unannotated `repeated` field (group or primitive leaf) outside a
+///   `LIST` / `MAP` scaffold → [LayerKind#REPEATED]
 /// - `REQUIRED` group / synthetic LIST scaffolding → no layer
 ///
 /// Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost. A flat
@@ -38,9 +40,9 @@ import dev.hardwood.schema.FileSchema;
 /// `getLayerCount() == 0` and is queried solely through [#getLeafValidity()]
 /// plus the typed value accessors.
 ///
-/// **Polarity:** validity bitmaps carry **set bit = present** semantics. A
-/// `null` return is the sparse representation of "every item at that scope
-/// is present in the current batch."
+/// **Polarity:** validity bitmaps carry **set bit = present** semantics.
+/// [Validity#NO_NULLS] is the sparse representation of "every item at that
+/// scope is present in the current batch."
 ///
 /// **Real items only.** Layer offsets and the leaf array are sized to
 /// real-items-only counts. Phantom positions for null/empty parents are
@@ -51,7 +53,8 @@ import dev.hardwood.schema.FileSchema;
 /// **Array ownership.** Every array and [Validity] handed back by an
 /// accessor ([#getInts()], [#getLongs()], [#getLayerOffsets(int)],
 /// [#getLeafValidity()], and the rest) belongs to the current batch and is
-/// freshly allocated by the [#nextBatch()] call that produced it. A later
+/// freshly allocated by the [#nextBatch()] call that produced it, except
+/// [Validity#NO_NULLS], a shared immutable singleton. A later
 /// [#nextBatch()] never reuses or overwrites an array returned for an
 /// earlier batch — so a returned array may be kept and read after the reader
 /// has advanced, including handed off to another thread for processing. The
@@ -497,7 +500,6 @@ public class ColumnReader implements Closeable {
     /// batch values when no compaction is needed (no `REPEATED` layer, or an
     /// all-present batch with no phantom positions); otherwise a freshly
     /// compacted typed array (batches derived by record selection).
-
     private Object rawLeafValues() {
         if (!nested) {
             return currentFlatBatch.values;

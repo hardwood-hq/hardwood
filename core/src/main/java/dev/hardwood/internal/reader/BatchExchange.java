@@ -368,7 +368,7 @@ public class BatchExchange<B> {
         };
     }
 
-    /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
+    /// Whether `column` is a `UTF8` / `ENUM` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
     /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves
     /// through [LeafKind] so the recording gate matches the consumer gate exactly.

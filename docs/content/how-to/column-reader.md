@@ -106,7 +106,7 @@ The batch size caps the number of **records** per batch, never the number of lea
 
 ### Retaining and Handing Off Batch Arrays
 
-The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing, including by handing it to another thread:
+The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`, except `Validity.NO_NULLS`, which is a shared immutable instance. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing, including by handing it to another thread:
 
 ```java
 while (columns.nextBatch()) {

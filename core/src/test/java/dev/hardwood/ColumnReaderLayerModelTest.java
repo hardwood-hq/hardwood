@@ -23,8 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// / kind, real-items-only offsets and validity, sentinel suffix, varlength
 /// leaf buffers and the convenience accessors that read them.
 ///
-/// Each test maps onto one of the design-doc requirements for the Phase 2
-/// rework (see _designs-legacy/COLUMN_READER_ARROW_LAYOUT.md).
+/// Each test maps onto a requirement of the layer model (see
+/// _designs/COLUMN_READER.md#batch-model-and-layers).
 class ColumnReaderLayerModelTest {
 
     /// `primitive_lists_test.parquet` row 0 = `[1,2,3]`, row 1 = `[4,5]`,

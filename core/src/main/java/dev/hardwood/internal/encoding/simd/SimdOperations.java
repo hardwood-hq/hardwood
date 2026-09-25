@@ -16,15 +16,14 @@ public interface SimdOperations {
 
     // ==================== Definition Level Operations ====================
 
-    /// Count non-null values by counting entries where `defLevels[i] == maxDef`.
+    /// Count non-null values by counting entries where `defLevels[i] == maxDef`
+    /// among the first `length` entries. The length is explicit because level
+    /// arrays are pooled and may run on past the page with stale entries.
     ///
     /// @param defLevels definition levels array
+    /// @param length number of leading entries to count over
     /// @param maxDef maximum definition level (indicates non-null)
     /// @return count of non-null values
-    default int countNonNulls(int[] defLevels, int maxDef) {
-        return countNonNulls(defLevels, defLevels.length, maxDef);
-    }
-
     int countNonNulls(int[] defLevels, int length, int maxDef);
 
     // ==================== Dictionary Operations ====================

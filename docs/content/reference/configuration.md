@@ -59,7 +59,7 @@ When libdeflate is installed and available on the library path, Hardwood will au
 
 ## SIMD Acceleration with Vector API (Java 22+)
 
-Hardwood can use the Java Vector API (SIMD) to accelerate counting non-null values and dictionary lookups. SIMD requires **Java 22 or newer** and the Vector API incubator module, which is added with this JVM argument:
+Hardwood can use the Java Vector API (SIMD) to accelerate counting the non-null values of a page. SIMD requires **Java 22 or newer** and the Vector API incubator module, which is added with this JVM argument:
 
 ```bash
 --add-modules jdk.incubator.vector
