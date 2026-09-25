@@ -83,7 +83,7 @@ Tests: `MinMaxStatsTest`, `InvertedStatisticsFilterTest`, `UnsignedIntegerFilter
 - `IS NOT NULL`: `CANNOT_MATCH` on `nullCount == rowCount`, `ALWAYS_MATCHES` on `nullCount == 0`.
 - A value predicate: `CANNOT_MATCH` on `nullCount == rowCount`, `NOT_EQ` included, since a null satisfies none of them. This is tested before the bounds, which on a page the column index flags null-only are placeholders.
 
-`nullCount == rowCount` counts rows only because the leaf writes one entry per row and is null exactly where the named node is absent. `FilterPredicateResolver` guarantees that for every leaf predicate that reaches `NullStats`: it refuses a repeated column to a directly named leaf, and it routes a null predicate on a group separated from its leaf by a definition level to the histogram instead (see the gate below).
+`nullCount == rowCount` counts rows only because the leaf writes one entry per row and is null exactly where the named node is absent. `FilterPredicateResolver` guarantees that for every leaf predicate that reaches `NullStats`: it refuses a repeated column to a directly named leaf, and it gives a null predicate on a group separated from its leaf by a definition level the levels that send it to the histogram in `decide` (see the gate below).
 
 `IndexPageStats` reads a set `ColumnIndex.nullPages[i]` as `nullCount == rowCount()`, so the flag and the count are one rule.
 
@@ -160,7 +160,7 @@ Tests: `UnreadableSortOrderTest`, `UnitStatsTest`.
 
 The two orders differ for pruning at `NaN` and at `±0`. Under the type-defined order the spec leaves zeroes interchangeable: a `+0` minimum may hide `-0`, a `-0` maximum may hide `+0`. `StatisticsFilterSupport.canDropFloat`, `canDropDouble` and the `IN` variants widen a zero minimum to `-0.0` and a zero maximum to `+0.0` before comparing, and `MinMaxStats` applies the same widening before its inversion test so that `(+0, -0)` is not read as inverted.
 
-The widening applies under **every** declared order. A predicate is resolved once per read and applied to every file's row groups, and the files of one read may declare different orders; a flag taken from one file would skip the widening on a sibling that needs it. On a total-order column the widening costs at most a unit the record filter then empties, never a matching row.
+The widening applies under **every** declared order. A predicate is resolved once per read and applied to every file's row groups, and the files of one read may declare different orders (PyArrow writes the type-defined order, parquet-java from 1.18.0 the total order for floating-point columns); a flag taken from one file would skip the widening on a sibling that needs it. On a total-order column the widening costs at most a unit the record filter then empties, never a matching row.
 
 Tests: `UnreadableSortOrderTest`, `MixedColumnOrderPruningTest`, `NaNStatisticsFilterTest`, `InvertedStatisticsFilterTest`, `TotalOrderFloatReadTest` (parquet-testing-runner).
 
@@ -183,7 +183,7 @@ Tests: `NaNStatisticsFilterTest`, `PageFilterEvaluatorTest`.
 
 ### INT96 and stored-byte comparisons
 
-`parquet.thrift` leaves the order of `INT96` undefined, and no recorded order follows the instant, since the nanoseconds of the day are not bounded by one day. `INT96` bounds are never read and nothing is reported as discarded. The same holds for a `STORED_BYTES` comparison, which tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [LOGICAL_TYPES.md](LOGICAL_TYPES.md).
+`parquet.thrift` leaves the type-defined order of `INT96` undefined, and the `INT96_TIMESTAMP_ORDER` it adds (day, then nanoseconds) does not follow the instant, since the nanoseconds of the day are not bounded by one day. `INT96` bounds are never read and nothing is reported as discarded. The same holds for a `STORED_BYTES` comparison, which tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md#per-column-type).
 
 Tests: `UnreadableSortOrderTest`.
 
@@ -236,7 +236,7 @@ Tests: `BloomFilterPushDownTest`, `BloomFilterParquetJavaOracleTest`.
 
 A dictionary proves absence only when it enumerates every non-null value of the chunk. `RowGroupDictionaryFilterSource` reads it only for a chunk whose `encoding_stats` record at least one `DICTIONARY_PAGE`, at least one data page, and no data page in an encoding other than `PLAIN_DICTIONARY` or `RLE_DICTIONARY`. `INDEX_PAGE` entries are ignored; an unrecognized page type or absent `encoding_stats` makes the chunk ineligible. A writer that falls back to plain pages leaves a dictionary covering a prefix of the data.
 
-The dictionary page is the chunk's first page, located at `dictionary_page_offset` when the file declares a positive one and at `data_page_offset` otherwise; absence of the former is ordinary. The page length comes from its own header; the gap to `data_page_offset` only sizes the opening read. A first data page preceding the dictionary page, and a header length running past the chunk, are rejected with `ParquetReadException`.
+The dictionary page is the chunk's first page, located at `dictionary_page_offset` when the file declares a positive one and at `data_page_offset` otherwise; absence of the former is ordinary. The page length comes from its own header; the gap to `data_page_offset` only sizes the opening read, since writers have understated `data_page_offset` (DuckDB before duckdb/duckdb#10829 left out the dictionary page's header). A first data page preceding the dictionary page, and a header length running past the chunk, are rejected with `ParquetReadException`.
 
 Membership uses the matchers' comparison, so pruning agrees with the rows a read returns:
 
@@ -263,7 +263,7 @@ Tests: `PageFilterEvaluatorTest`, `RowRangesTest`.
 A column chunk with no offset index is read through `SequentialFetchPlan`, which walks page headers and can drop a page from the `Statistics` in its header. The offset index decides the path: a chunk that has one takes the column-index path, so a chunk with an offset index but no column index is pruned by neither its own column index nor its inline statistics.
 
 - **Leaves.** `PageDropPredicates.byColumn` collects the AND-necessary leaves per column: it recurses into `AND`, skips every `OR` subtree, and keeps leaves. Falsifying such a leaf falsifies the predicate.
-- **Placeholders.** A dropped page is replaced by `PageInfo.nullPlaceholder` with the page's row count, decoded as an all-null page. Sibling columns stay row-aligned and the per-row filter rejects the null rows. Hence only a leaf a null row fails may drop a page: `IS NULL` is never collected.
+- **Placeholders.** A dropped page is replaced by `PageInfo.nullPlaceholder` with the rows the page contributes (the masked count where a row mask applies), decoded as an all-null page. Sibling columns stay row-aligned and the per-row filter rejects the null rows. Hence only a leaf a null row fails may drop a page: `IS NULL` is never collected.
 - **Optional columns only.** A required column (`maxDefinitionLevel == 0`) cannot represent the placeholder's nulls and decodes every page. Untested.
 - **Decision.** `canDropPage` builds an `InlinePageStats` and drops the page if any leaf is `CANNOT_MATCH`, from bounds or from a null count equal to the page's row count. A page header carries no histogram, so group null predicates are never decided here.
 
@@ -283,7 +283,8 @@ Tests: `RowGroupDictionaryFilterEventTest`, `RowGroupFilterEventTest`, `PageFilt
 
 ## Boundaries
 
-- **Page-level `ALWAYS_MATCHES` is not read.** Units compute it and page filtering discards it. Reading it would save only per-row evaluation inside row groups the statistics left undecided; a kept page is fetched and decoded either way. The flag it would set changes value mid-page, since each column's page boundaries are its own, so every column's worker would have to split batches at that row, and `FlatRowReader` and `NestedRowReader` read the flag from one column's batch on the understanding that all columns flush at the same row. The per-row-group always-match decision and a column the predicate references but the projection does not are in [RECORD_FILTERING.md](RECORD_FILTERING.md).
+- **Page-level `ALWAYS_MATCHES` is not read.** Units compute it and page filtering discards it. Reading it would save only per-row evaluation inside row groups the statistics left undecided, and for a range predicate on sorted data only the row group holding the cutoff is undecided; a kept page is fetched and decoded either way. The flag it would set changes value mid-page, since each column's page boundaries are its own, so every column's worker would have to split batches at that row, and `FlatRowReader` and `NestedRowReader` read the flag from one column's batch on the understanding that all columns flush at the same row. The per-row-group always-match decision and a column the predicate references but the projection does not are in [RECORD_FILTERING.md](RECORD_FILTERING.md).
+- **Inline page drops are per column.** A page dropped on its inline statistics saves that column's decompression and decode only; sibling columns fetch and decode the same rows, because the drop is found while walking the column's page headers, after every fetch plan is built.
 - **Absence probes are row-group scoped.** Parquet carries no per-page bloom filter or dictionary, so they stay outside `UnitStats`.
 - **Geospatial `intersects` is row-group only.** `GeospatialStatistics` lives on `ColumnMetaData`; page units report it unknown ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)).
 - **Floating-point full matches and all-`NaN` units** (#898). A recorded `nan_count` of zero rules out a `NaN` row but does not promote a satisfying interval to `ALWAYS_MATCHES`, and a unit whose bounds are `NaN` (an all-`NaN` unit under the total order) is discarded rather than pruned.
