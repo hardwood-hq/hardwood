@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Which encoding a column chunk is written in, and what the chunk then carries.
 ///
 /// The choice is made once per chunk from the values it holds, as
-/// `_designs/WRITER_DICTIONARY_SELECTION.md` describes, so these pin both ends of it — a chunk
+/// `_designs-legacy/WRITER_DICTIONARY_SELECTION.md` describes, so these pin both ends of it — a chunk
 /// that argues for a dictionary and one that argues against — across the repetition shapes and
 /// the nested layouts, plus the analysis cap that abandons a dictionary to bound memory rather
 /// than to decide an encoding.

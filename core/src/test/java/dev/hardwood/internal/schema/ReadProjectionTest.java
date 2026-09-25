@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies [ReadProjection]: the columns a predicate needs are appended to the payload to form
 /// the decoded columns, and every payload column keeps the index it has in the payload.
-/// See `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
+/// See `_designs-legacy/ROW_READER_AUGMENTED_PROJECTION.md`.
 class ReadProjectionTest {
 
     /// Leaves in file order: `id`, `status`, `tags.list.element`, `meta.kind`,

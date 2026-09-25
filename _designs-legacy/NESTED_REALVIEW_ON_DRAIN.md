@@ -39,7 +39,6 @@ never read again. The `RealView` scan is the single largest cost on the read's
 critical path.
 
 Profiling `NestedListReadBenchmark` on the N300
-([NESTED_READ_PERFORMANCE_ANALYSIS.md](NESTED_READ_PERFORMANCE_ANALYSIS.md))
 isolates the cause: the eight decode threads sit **96% parked** while the serial
 consumer is the bottleneck, and **~75% of the consumer's on-CPU time is
 `computeRealView`**. The scan runs on the one busy thread while eight idle threads

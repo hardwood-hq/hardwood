@@ -88,7 +88,7 @@ public final class ParquetModel implements AutoCloseable {
     // chunk in that RG is asked for its index; subsequent column-index /
     // offset-index calls for chunks in the same RG hit this cache instead of
     // issuing their own readRange (one HTTP round-trip per RG on S3 instead of
-    // one per chunk). See `_designs/COALESCED_OFFSET_INDEX_READS.md`.
+    // one per chunk). See `_designs-legacy/COALESCED_OFFSET_INDEX_READS.md`.
     private final Map<Integer, RowGroupIndexBuffers> indexBuffersCache = new HashMap<>();
     private final java.util.LinkedHashMap<ChunkKey, Dictionary> dictionaryCache =
             new java.util.LinkedHashMap<>(DICTIONARY_CACHE_CAPACITY, 0.75f, true) {

@@ -57,7 +57,7 @@ import dev.hardwood.metadata.PhysicalType;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Reads a Parquet file with parquet-java, the strict reader of the write-path interop gate
-/// described in `_designs/WRITER_INTEROP_GATE.md`.
+/// described in `_designs-legacy/WRITER_INTEROP_GATE.md`.
 ///
 /// Rows come back as [Group]s rather than Avro records: the Group model materializes any valid
 /// file with no object model in the way, so annotations Avro cannot represent — `UUID`,
@@ -264,7 +264,7 @@ final class ParquetJavaReader {
     }
 
     /// Records what this file contains into [CoverageRegistry], so that the write-path coverage
-    /// assertion described in `_designs/WRITE_COVERAGE_ASSERTION.md` counts it as produced.
+    /// assertion described in `_designs-legacy/WRITE_COVERAGE_ASSERTION.md` counts it as produced.
     ///
     /// Every entry point of this class calls it, which is what keeps the recording free of any
     /// opt-in: a test contributes by reading its file back, and one added later contributes by

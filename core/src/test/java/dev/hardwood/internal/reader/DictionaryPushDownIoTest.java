@@ -24,7 +24,7 @@ import dev.hardwood.reader.RowReader;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The I/O cost model of dictionary predicate push-down, pinned as request counts rather than
-/// wall-clock (see `_designs/DICTIONARY_PUSHDOWN.md`).
+/// wall-clock (see `_designs-legacy/DICTIONARY_PUSHDOWN.md`).
 ///
 /// Push-down reads a row group's dictionary page before any data page. What that buys, and what it
 /// costs, is a matter of counting requests:
