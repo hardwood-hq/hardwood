@@ -546,7 +546,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// found, or the column chunk is exhausted. Pages are dropped when
         /// either:
         ///
-        /// - the iterator-wide `maxRows` budget is hit (returns `null`); or
+        /// - a flat column's pages cover the row group's `maxRows` budget
+        ///   (returns `null`); or
         /// - per-page row masking determines no row of the page falls inside
         ///   [#matchingRows] — the page body is skipped without being read or
         ///   decompressed, saving the codec invocation and value-decode work
@@ -565,7 +566,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             // then either skip the page (mask null), emit it as a placeholder
             // (inline-stats drop), or emit the body slice.
             while (position < columnChunkLength && valuesRead < metaData.numValues()) {
-                if (maxRows > 0 && valuesRead >= maxRows) {
+                if (reachedMaxRows()) {
                     return null;
                 }
                 // Once `recordsRead` has crossed the last matching row, every
@@ -662,6 +663,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         + " records.");
             }
             return null;
+        }
+
+        /// Whether the pages yielded so far cover `maxRows` records, which this
+        /// plan decides for a flat column only, whose values are its records. A
+        /// nested column has more values than records, and counting them needs the
+        /// repetition levels, which a v1 page holds inside the compressed body; its
+        /// pages are yielded until the column worker's drain has assembled
+        /// `maxRows` records and stops the worker.
+        private boolean reachedMaxRows() {
+            return maxRows > 0 && columnSchema.maxRepetitionLevel() == 0 && valuesRead >= maxRows;
         }
 
         /// Computes the number of top-level records in a data page when masks

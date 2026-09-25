@@ -184,7 +184,7 @@ The always-match decision travels from the retriever to the drain in the per-slo
 | Level | Where | Unfiltered read | Filtered read |
 |---|---|---|---|
 | Planning | `planNextFile` row budget | Stops planning row groups and files once the budget is covered | No effect: every row group stays available |
-| Fetch | Per-row-group remainder of the budget ([FETCH_PLANNING.md](FETCH_PLANNING.md)) | Truncates the last needed row group's pages | No truncation |
+| Fetch | Per-row-group remainder of the budget ([FETCH_PLANNING.md](FETCH_PLANNING.md)) | Truncates the last needed row group's pages where their row counts are known without decompressing: from the OffsetIndex, or from the value count of a flat column. A nested column without an OffsetIndex keeps its pages, and its retriever reads them until the drain reaches the cap | No truncation |
 | Drain | `ColumnWorker.activeMaxRows` | Assembles up to the cap, publishes the partial batch and finishes | Holds the cap while every page reached belongs to an always-match row group; drops it for the rest of the read at the first page of an undecided one |
 | Reader | Match counting | — | Counts matches against the cap |
 

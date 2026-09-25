@@ -175,4 +175,30 @@ class NestedV1NoIndexFallbackTest {
             assertThat(expected).isEqualTo(TOTAL_ROWS);
         }
     }
+
+    /// `head(n)` without a filter caps the sequential plan's pages. The nested
+    /// `tags` column carries two values per row, so its pages must be yielded
+    /// until they cover `n` records, not `n` values (#1318).
+    @Test
+    void testHeadReturnsAlignedRows() throws Exception {
+        int headRows = 30;
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rows = reader.buildRowReader().head(headRows).build()) {
+            int expected = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                int narrow = rows.getInt("narrow");
+                PqList tags = rows.getList("tags");
+                assertThat(narrow).as("row %d narrow", expected).isEqualTo(expected);
+                assertThat(tags).as("row %d tags", expected).isNotNull();
+                assertThat(tags.size()).as("row %d tags size", expected).isEqualTo(2);
+                String firstTag = tags.strings().iterator().next();
+                assertThat(firstTag).as("row %d tag", expected)
+                        .isEqualTo(String.format("row=%05d", expected));
+                expected++;
+            }
+            assertThat(expected).as("head row count").isEqualTo(headRows);
+        }
+    }
 }
