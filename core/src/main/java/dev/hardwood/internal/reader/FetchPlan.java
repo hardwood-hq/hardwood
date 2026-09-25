@@ -10,17 +10,21 @@ package dev.hardwood.internal.reader;
 
 /// Plan for fetching and iterating pages of a single projected column in a row group.
 ///
-/// Two implementations:
+/// Implementations:
 ///
 /// - [IndexedFetchPlan]: pages pre-computed from OffsetIndex, bytes fetched lazily
 ///   via [ChunkHandle]s.
 /// - [SequentialFetchPlan]: pages discovered lazily by scanning headers from
 ///   [ChunkHandle]s.
+/// - [SkippedColumnFetchPlan]: a column not read in the row group; fetches nothing and
+///   yields a single boundary marker.
+/// - [#EMPTY]: a column with no pages to read in the row group.
 ///
 /// [PageSource] is agnostic of the implementation — it just drains `pages()`.
 public interface FetchPlan {
 
-    /// A plan with no pages (filter excluded all pages for this column).
+    /// A plan with no pages: the row group is dropped by its dictionaries, or the
+    /// page index leaves no page of this column to read.
     FetchPlan EMPTY = new FetchPlan() {
         @Override
         public boolean isEmpty() {
@@ -41,7 +45,7 @@ public interface FetchPlan {
     /// on a `PageInfo`, may reach the file through the underlying [ChunkHandle].
     PageIterator pages();
 
-    /// Triggers async pre-fetch of this plan's first chunk.
-    /// No-op for sequential plans or empty plans.
+    /// Triggers async pre-fetch of this plan's first chunk, into the handle its
+    /// [#pages] walk reads. No-op for plans that fetch nothing.
     default void prefetch() {}
 }

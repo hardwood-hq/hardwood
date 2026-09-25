@@ -12,9 +12,11 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -49,11 +51,18 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// - Without `maxRows`: `min(chunkLength, 128 MB)` — full column chunk
 ///   in one fetch for most columns.
-/// - With `maxRows`: sized from the column's average compressed
+/// - With `maxRows`: the full column chunk when it is at most 4 MiB;
+///   otherwise sized from the column's average compressed
 ///   bytes-per-value (`totalCompressedSize / numValues`) multiplied by
-///   `maxRows` and a safety factor, floored at one page size and
-///   capped at the default ceiling.
+///   `maxRows` and a safety factor, floored at 1 MiB and capped at the
+///   default ceiling.
+///
+/// The first chunk's handle belongs to the plan rather than to a walk, so
+/// [#prefetch] fetches the bytes a [#pages] walk then reads.
 public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
+
+    private static final System.Logger LOG =
+            System.getLogger(SequentialFetchPlan.class.getName());
 
     /// Minimum chunk size when `maxRows` is active (1 MB).
     /// Sized to roughly one Parquet data page so header scanning does not
@@ -126,11 +135,10 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
-    /// Optional pre-created first [ChunkHandle], typically a region-backed
-    /// view from cross-column coalescing (#374). When set, the iterator's
-    /// first `advanceChunk(0)` call uses this handle instead of creating
-    /// a fresh standalone one. Subsequent advances (with `chunkSize` <
-    /// columnChunkLength) still create per-column handles lazily.
+    /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
+    /// that a prefetched chunk is the one the walk reads. Region-backed when cross-column
+    /// coalescing (#374) attached a [SharedRegion], created standalone on first use otherwise.
+    /// Later chunks (with `chunkSize` < `columnChunkLength`) are created per walk.
     private ChunkHandle firstChunkHandle;
     /// Page headers the most recent [#pages] walk scanned, final once that walk runs to
     /// exhaustion and zero for one abandoned before it. Counts every header the iterator read,
@@ -180,6 +188,44 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         return new SequentialPageIterator();
     }
 
+    /// Fetches the first chunk asynchronously, into the handle a [#pages] walk reads.
+    @Override
+    public void prefetch() {
+        ChunkHandle first = firstChunk();
+        // FetchReason.bind carries the caller's reason (e.g. "prefetch rg=2") to the worker
+        // thread; otherwise the underlying readRange would log as `unattributed`.
+        CompletableFuture.runAsync(FetchReason.bind(() -> {
+            try {
+                first.ensureFetched();
+            }
+            catch (IOException e) {
+                // Speculative: nothing is waiting on this, and a failed prefetch leaves the
+                // handle unfetched, so the demand path fetches it again and reports the
+                // failure to a caller that is waiting for it. DEBUG rather than WARN so a
+                // sustained backend outage does not emit one line per chunk for failures
+                // that are about to be reported properly.
+                LOG.log(System.Logger.Level.DEBUG,
+                        "Prefetch failed for the first chunk of column {0} in row group {1} of {2}",
+                        columnSchema.name(), rowGroupIndex, fileName, e);
+            }
+        }));
+    }
+
+    /// Returns the handle of the first chunk, creating a standalone one if none is attached.
+    /// Synchronized because [#prefetch] runs on a speculative task while a column's retriever
+    /// may already be walking the plan.
+    private synchronized ChunkHandle firstChunk() {
+        if (firstChunkHandle == null) {
+            firstChunkHandle = new ChunkHandle(inputFile, columnChunkOffset, chunkSize, chunkPurpose(0));
+        }
+        return firstChunkHandle;
+    }
+
+    private String chunkPurpose(int relPos) {
+        return "rg=" + rowGroupIndex + " col='" + columnSchema.name()
+                + "' seqChunk@" + relPos;
+    }
+
     /// Returns how many page headers the most recent [#pages] walk scanned. See [#scannedPages].
     public int scannedPages() {
         return scannedPages;
@@ -224,7 +270,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// view, so the first read slices the shared buffer rather than
     /// issuing a per-column `readRange`.
     @Override
-    public void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
+    public synchronized void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
         String purpose = "rg=" + rowGroupIndex + " col='" + columnSchema.name()
                 + "' seqChunk@0 (region-backed)";
         this.firstChunkHandle = new ChunkHandle(region,
@@ -470,12 +516,18 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// Otherwise a new handle is created at `relPos`. The next
         /// chunk is always chained for one-ahead pre-fetch.
         private void advanceChunk(int relPos) throws IOException {
-            ChunkHandle prefetched = currentHandle != null ? currentHandle.nextChunk() : null;
+            ChunkHandle previous = currentHandle;
+            ChunkHandle prefetched = previous != null ? previous.nextChunk() : null;
+            if (previous != null) {
+                // The plan holds on to the first handle; unlinked, it does not keep every
+                // later chunk of the column reachable through the chain.
+                previous.setNextChunk(null);
+            }
 
-            if (currentHandle == null && relPos == 0 && firstChunkHandle != null) {
-                // First advance, externally-supplied handle (region-backed via
-                // cross-column coalescing in RowGroupIterator).
-                currentHandle = firstChunkHandle;
+            if (currentHandle == null && relPos == 0) {
+                // First advance: the plan's shared first handle, which a prefetch may
+                // already have fetched, or which slices a cross-column region.
+                currentHandle = firstChunk();
                 handleStart = 0;
             }
             else if (prefetched != null && relPos >= handleEnd
@@ -501,11 +553,6 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength,
                                 chunkPurpose(nextStart)));
             }
-        }
-
-        private String chunkPurpose(int relPos) {
-            return "rg=" + rowGroupIndex + " col='" + columnSchema.name()
-                    + "' seqChunk@" + relPos;
         }
 
         /// Scans past the dictionary page (if present) on first access.
