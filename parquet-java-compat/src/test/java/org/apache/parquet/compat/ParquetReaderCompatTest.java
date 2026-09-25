@@ -11,7 +11,9 @@ import java.io.File;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
@@ -40,6 +42,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Tests for parquet-java API compatibility.
 class ParquetReaderCompatTest {
+
+    private static final Path PREDICATE_SINGLE = new Path("../core/src/test/resources/predicate/predicate_single.parquet");
 
     @Test
     void testBasicReading() throws Exception {
@@ -442,6 +446,159 @@ class ParquetReaderCompatTest {
                 .build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'no_such_column' not found in schema");
+    }
+
+    // predicate_single.parquet: one row group of 400 rows, `__row__` = r; every value column is null
+    // where r % 37 == 5, eleven rows.
+
+    @Test
+    void testFilterPushdownInOnIntColumn() throws Exception {
+        // i32 = (r - 200) * 2
+        assertThat(rows(PREDICATE_SINGLE, in(intColumn("i32"), Set.of(0, 10, 20)), "__row__"))
+                .containsExactly(200L, 205L, 210L);
+    }
+
+    @Test
+    void testFilterPushdownInOnLongColumn() throws Exception {
+        // i64 = (r - 200) * 2 * 10^10
+        assertThat(rows(PREDICATE_SINGLE, in(longColumn("i64"), Set.of(0L, 200_000_000_000L)), "__row__"))
+                .containsExactly(200L, 210L);
+    }
+
+    @Test
+    void testFilterPushdownInOnDoubleColumn() throws Exception {
+        // f64 = (r - 200) * 0.5 outside a few rows holding NaN, -0.0 and infinities
+        assertThat(rows(PREDICATE_SINGLE, in(doubleColumn("f64"), Set.of(1.0, 2.5)), "__row__"))
+                .containsExactly(202L, 205L);
+    }
+
+    @Test
+    void testFilterPushdownInOnFloatColumn() throws Exception {
+        // f32 = f64
+        assertThat(rows(PREDICATE_SINGLE, in(floatColumn("f32"), Set.of(1.0f, 2.5f)), "__row__"))
+                .containsExactly(202L, 205L);
+    }
+
+    @Test
+    void testFilterPushdownInOnStringColumn() throws Exception {
+        // str = "k" + r, zero-padded to four digits
+        assertThat(rows(PREDICATE_SINGLE,
+                in(binaryColumn("str"), Set.of(Binary.fromString("k0007"), Binary.fromString("k0300"))), "__row__"))
+                .containsExactly(7L, 300L);
+    }
+
+    /// Each `Binary` in the set converts by the column's type, as a comparison literal does: on a
+    /// `DECIMAL` column it is the number it encodes, whatever its width.
+    @Test
+    void testFilterPushdownInOnDecimalColumn() throws Exception {
+        // dec_flba = (r - 200) * 1.25 as DECIMAL(20, 2) in a FIXED_LEN_BYTE_ARRAY(9).
+        // 62.50 is unscaled 6250, 18 6A; -1.25 is unscaled -125, FF 83.
+        Set<Binary> values = Set.of(
+                Binary.fromConstantByteArray(new byte[] { 0x18, 0x6A }),
+                Binary.fromConstantByteArray(new byte[] { (byte) 0xFF, (byte) 0x83 }));
+
+        assertThat(rows(PREDICATE_SINGLE, in(binaryColumn("dec_flba"), values), "__row__"))
+                .containsExactly(199L, 250L);
+    }
+
+    /// On a `FLOAT16` column a two-byte `Binary` is the half it encodes; a value of another width
+    /// reaches the reader as bytes, which refuses it.
+    @Test
+    void testFilterPushdownInOnFloat16Column() throws Exception {
+        // f16 = (r - 200) * 0.25; 0.5 is the half 0x3800, 6.25 the half 0x4640.
+        Binary half = Binary.fromConstantByteArray(new byte[] { 0x00, 0x38 });
+        Binary sixAndAQuarter = Binary.fromConstantByteArray(new byte[] { 0x40, 0x46 });
+
+        assertThat(rows(PREDICATE_SINGLE, in(binaryColumn("f16"), Set.of(half, sixAndAQuarter)), "__row__"))
+                .containsExactly(202L, 225L);
+
+        FilterPredicate mixed = in(binaryColumn("f16"),
+                Set.of(half, Binary.fromConstantByteArray(new byte[] { 0x40, 0x46, 0x00 })));
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), PREDICATE_SINGLE)
+                .withFilter(FilterCompat.get(mixed))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'f16' is a FLOAT16, whose literal is 2 bytes, not 3");
+    }
+
+    /// A null row is in no set, and is not outside one either: `notIn` returns the non-null rows
+    /// holding none of the values.
+    @Test
+    void testFilterPushdownNotInSkipsNullRows() throws Exception {
+        List<Long> rows = rows(PREDICATE_SINGLE, notIn(intColumn("i32"), Set.of(0, 10)), "__row__");
+
+        assertThat(rows).hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 42L, 200L, 205L);
+    }
+
+    @Test
+    void testFilterPushdownNotInOnDecimalColumn() throws Exception {
+        Set<Binary> values = Set.of(Binary.fromConstantByteArray(new byte[] { 0x18, 0x6A }));
+
+        assertThat(rows(PREDICATE_SINGLE, notIn(binaryColumn("dec_flba"), values), "__row__"))
+                .hasSize(400 - 11 - 1)
+                .doesNotContain(5L, 250L);
+    }
+
+    /// Each `notIn` excludes the null rows and the two rows its values select.
+    @Test
+    void testFilterPushdownNotInOnEachColumnType() throws Exception {
+        assertThat(rows(PREDICATE_SINGLE, notIn(longColumn("i64"), Set.of(0L, 200_000_000_000L)), "__row__"))
+                .hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 200L, 210L);
+        assertThat(rows(PREDICATE_SINGLE, notIn(floatColumn("f32"), Set.of(1.0f, 2.5f)), "__row__"))
+                .hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 202L, 205L);
+        assertThat(rows(PREDICATE_SINGLE, notIn(doubleColumn("f64"), Set.of(1.0, 2.5)), "__row__"))
+                .hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 202L, 205L);
+        assertThat(rows(PREDICATE_SINGLE,
+                notIn(binaryColumn("str"), Set.of(Binary.fromString("k0007"), Binary.fromString("k0300"))), "__row__"))
+                .hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 7L, 300L);
+        Set<Binary> halves = Set.of(Binary.fromConstantByteArray(new byte[] { 0x00, 0x38 }),
+                Binary.fromConstantByteArray(new byte[] { 0x40, 0x46 }));
+        assertThat(rows(PREDICATE_SINGLE, notIn(binaryColumn("f16"), halves), "__row__"))
+                .hasSize(400 - 11 - 2)
+                .doesNotContain(5L, 202L, 225L);
+    }
+
+    /// bool = r >= 250.
+    @Test
+    void testFilterPushdownInOnBooleanColumn() throws Exception {
+        assertThat(rows(PREDICATE_SINGLE, in(booleanColumn("bool"), Set.of(true)), "__row__"))
+                .hasSize(150 - 4)
+                .allMatch(row -> row >= 250);
+        assertThat(rows(PREDICATE_SINGLE, in(booleanColumn("bool"), Set.of(true, false)), "__row__"))
+                .hasSize(400 - 11);
+        assertThat(rows(PREDICATE_SINGLE, notIn(booleanColumn("bool"), Set.of(true)), "__row__"))
+                .hasSize(250 - 7)
+                .allMatch(row -> row < 250);
+        assertThat(rows(PREDICATE_SINGLE, notIn(booleanColumn("bool"), Set.of(true, false)), "__row__"))
+                .isEmpty();
+    }
+
+    @Test
+    void testFilterPushdownNullInSetThrows() {
+        Set<Integer> values = new HashSet<>(Arrays.asList(0, null));
+        FilterPredicate pred = in(intColumn("i32"), values);
+
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), PREDICATE_SINGLE)
+                .withFilter(FilterCompat.get(pred))
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Null filter values are not supported for column: i32");
+    }
+
+    /// As in parquet-java, an empty set is refused where the predicate is built.
+    @Test
+    void testFilterPushdownEmptySetThrows() {
+        assertThatThrownBy(() -> in(intColumn("i32"), Set.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("values in SetColumnFilterPredicate shouldn't be empty!");
+        assertThatThrownBy(() -> notIn(intColumn("i32"), Set.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("values in SetColumnFilterPredicate shouldn't be empty!");
     }
 
     /// The values of `idColumn` in the rows `pred` selects, in file order.

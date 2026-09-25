@@ -7,13 +7,16 @@
  */
 package org.apache.parquet.filter2.predicate;
 
+import java.util.Objects;
+import java.util.Set;
+
 import org.apache.parquet.hadoop.metadata.ColumnPath;
 
 /// Shim for parquet-java's `Operators` class.
 ///
 /// Contains column types, comparison predicates, and logical combinators
 /// that mirror the upstream API. The shim covers the core comparison operators
-/// (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`)
+/// (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`), the set predicates (`in`, `notIn`)
 /// and logical combinators (`and`, `or`, `not`).
 public final class Operators {
 
@@ -193,6 +196,65 @@ public final class Operators {
 
         GtEq(Column<T> column, T value) {
             super(column, value);
+        }
+    }
+
+    // ==================== Set predicates ====================
+
+    /// Base class of [In] and [NotIn], holding the column and the set of values.
+    public abstract static class SetColumnFilterPredicate<T extends Comparable<T>> implements FilterPredicate {
+
+        private final Column<T> column;
+        private final Set<T> values;
+
+        protected SetColumnFilterPredicate(Column<T> column, Set<T> values) {
+            this.column = Objects.requireNonNull(column, "column cannot be null");
+            this.values = Objects.requireNonNull(values, "values cannot be null");
+            if (values.isEmpty()) {
+                throw new IllegalArgumentException("values in SetColumnFilterPredicate shouldn't be empty!");
+            }
+        }
+
+        public Column<T> getColumn() {
+            return column;
+        }
+
+        public Set<T> getValues() {
+            return values;
+        }
+
+        @Override
+        public String toString() {
+            return getClass().getSimpleName() + "(" + column.getColumnPath().toDotString() + ", " + values + ")";
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o)
+                return true;
+            if (o == null || getClass() != o.getClass())
+                return false;
+            SetColumnFilterPredicate<?> that = (SetColumnFilterPredicate<?>) o;
+            return column.equals(that.column) && values.equals(that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + values.hashCode();
+        }
+    }
+
+    public static final class In<T extends Comparable<T>> extends SetColumnFilterPredicate<T> {
+
+        public In(Column<T> column, Set<T> values) {
+            super(column, values);
+        }
+    }
+
+    public static final class NotIn<T extends Comparable<T>> extends SetColumnFilterPredicate<T> {
+
+        NotIn(Column<T> column, Set<T> values) {
+            super(column, values);
         }
     }
 

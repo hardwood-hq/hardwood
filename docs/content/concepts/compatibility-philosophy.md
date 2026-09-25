@@ -15,8 +15,8 @@ Hardwood aims to read every file that Apache parquet-java reads, while in a few 
 applying *stricter* semantics than parquet-java does. Each of those divergences follows from the
 principle described below.
 
-For the drop-in API and its exact behavior, see
-[parquet-java Compatibility](../how-to/compat.md); for the filter semantics, see
+For the drop-in API, see [parquet-java Compatibility](../how-to/compat.md), and for its filters,
+[parquet-java Compat Filters](../reference/parquet-java-compat.md); for the filter semantics, see
 [Filter, Project, Limit, and Split](../how-to/query-controls.md#null-handling).
 
 ## The principle: liberal on input, strict on semantics
