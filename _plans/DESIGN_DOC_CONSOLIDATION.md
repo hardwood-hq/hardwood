@@ -182,19 +182,20 @@ Old docs are the source of intent; the code is the source of fact. Each target d
 |---|---|
 | Doc and code agree | State it |
 | Code differs; a later doc, issue or commit records the change as deliberate | State the current behaviour |
-| Code differs; nothing records the change | Divergence: listed in the PR description for the maintainer to decide (fix the code, or accept the behaviour); not resolved in the doc |
+| Code differs; nothing records the change | Divergence: put to the maintainer in the session, with a concrete example, before the PR is opened. A code fix it calls for gets its own issue and PR, merged first; the doc then states the result |
 
 A design doc states what would need a design discussion to change: contracts, invariants, ownership, the reasoning behind them. Tuning constants and class internals stay out; class names appear only as pointers to where something lives. Tests are named at most once per section, as a line listing the test classes that cover it; an invariant no test enforces is marked untested.
 
 ## Execution
 
-One PR per area. Each PR writes its targets following the method above, deletes its source docs, repoints their links, and lists its divergences in the PR description.
+One area per session, with the `hardwood-design-consolidation` skill (`.claude/skills/hardwood-design-consolidation/`). This checklist is the hand-over point between sessions: an area is ticked in the PR that consolidates it. An area in progress keeps its working notes (divergences, answers, branches) in the local, gitignored `_reviews/1290-<area>.md`. Each PR is opened only once every divergence is resolved, so it carries no open decisions.
 
 - [x] Rules and `_plans/` split: CLAUDE.md, CONTRIBUTING.md, review checklist; WRITER_SUPPORT and REMOTE_READ_PATH moved to `_plans/`
+- [x] `_designs-legacy/` for the unconsolidated docs; test attribution once per section
 - [x] Filtering (6–8); closes #1110
+- [ ] CLI and infrastructure (20–24), `TESTING.md`, `PERFORMANCE.md`; repoints CLAUDE.md's dive and Diátaxis rules
 - [ ] Read path (1–5)
 - [ ] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
 - [ ] Writer (16–19); trims `_plans/WRITER_SUPPORT.md` to the open stages of #1291
 - [ ] Types (14–15)
-- [ ] CLI and infrastructure (20–24), `TESTING.md`, `PERFORMANCE.md`
-- [ ] `ARCHITECTURE.md` pointers; delete this plan
+- [ ] `ARCHITECTURE.md` pointers; delete `_designs-legacy/`, this plan and the skill
