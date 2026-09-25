@@ -26,8 +26,10 @@ import dev.hardwood.internal.reader.MappedInputFile;
 /// An `InputFile` starts in an unopened state. The [#open()] method
 /// must be called before [#readRange] or [#length] can be used.
 /// The framework ([Hardwood], [dev.hardwood.reader.ParquetFileReader])
-/// calls `open()` automatically; callers only need to create instances via
-/// [#of(Path)] and close them when done.
+/// calls `open()` automatically and takes ownership of the files passed to it:
+/// the reader closes them when it is closed or when opening it fails. Callers
+/// create instances via [#of(Path)] and close only files they have not handed
+/// to a reader. [#close()] may be called on a file that was never opened.
 ///
 /// Implementations must be safe for concurrent use from multiple threads once opened.
 /// The returned [ByteBuffer] instances are owned by the caller and may

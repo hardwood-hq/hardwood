@@ -64,6 +64,12 @@ import dev.hardwood.schema.FileSchema;
 /// [#getFileMetaData()] and [#getFileSchema()] are served from state already in
 /// memory and stay usable.
 ///
+/// **Ownership:** `open` and `openAll` take ownership of every input file. The
+/// files are closed when the reader is closed, or before the exception
+/// propagates when opening fails, including files the reader has not opened
+/// yet. A context the call creates is closed with them; a context passed in
+/// stays the caller's.
+///
 /// **Limitation:** When using the default memory-mapped [InputFile], the file
 /// itself may be arbitrarily large, but each individual column chunk must be at
 /// most 2 GB ([Integer#MAX_VALUE] bytes) of compressed data. The in-memory and
@@ -166,17 +172,16 @@ public class ParquetFileReader implements Closeable {
 
     /// Open a single Parquet file with a dedicated context.
     ///
-    /// Calls [InputFile#open()] and takes ownership of the file; it is
-    /// closed when this reader is closed.
+    /// Calls [InputFile#open()] and takes ownership of the file (see
+    /// **Ownership** above).
     public static ParquetFileReader open(InputFile inputFile) throws IOException {
         return openAll(List.of(inputFile));
     }
 
     /// Open a single Parquet file with a shared context.
     ///
-    /// Calls [InputFile#open()] and takes ownership of the file; it is
-    /// closed when this reader is closed. The caller retains ownership of
-    /// the context.
+    /// Calls [InputFile#open()] and takes ownership of the file (see
+    /// **Ownership** above). The caller retains ownership of the context.
     public static ParquetFileReader open(InputFile inputFile, HardwoodContext context) throws IOException {
         return openAll(List.of(inputFile), context);
     }
@@ -184,7 +189,8 @@ public class ParquetFileReader implements Closeable {
     /// Open a single Parquet file with a shared context and an explicit
     /// [ReaderConfig]. The context (shared runtime resources) and the config
     /// (per-read behaviour) are independent, so one context can back reads with
-    /// different configs.
+    /// different configs. Takes ownership of the file (see **Ownership** above);
+    /// the caller retains ownership of the context.
     public static ParquetFileReader open(InputFile inputFile, HardwoodContext context,
                                          ReaderConfig readerConfig) throws IOException {
         return openAll(List.of(inputFile), context, readerConfig);
@@ -199,23 +205,41 @@ public class ParquetFileReader implements Closeable {
     /// disagreement with the reference schema are raised from the reading loop rather
     /// than from the call that built the reader — always before any row of that file is
     /// returned.
+    ///
+    /// Takes ownership of all files (see **Ownership** above).
     public static ParquetFileReader openAll(List<? extends InputFile> inputFiles) throws IOException {
         return openInternal(inputFiles, HardwoodContextImpl.create(), ReaderConfig.defaults(), true);
     }
 
-    /// Open multiple Parquet files with a shared context.
+    /// Open multiple Parquet files with a shared context. Takes ownership of
+    /// all files (see **Ownership** above); the caller retains ownership of the
+    /// context.
     public static ParquetFileReader openAll(List<? extends InputFile> inputFiles, HardwoodContext context) throws IOException {
         return openInternal(inputFiles, (HardwoodContextImpl) context, ReaderConfig.defaults(), false);
     }
 
     /// Open multiple Parquet files with a shared context and an explicit
-    /// [ReaderConfig].
+    /// [ReaderConfig]. Takes ownership of all files (see **Ownership** above);
+    /// the caller retains ownership of the context.
     public static ParquetFileReader openAll(List<? extends InputFile> inputFiles, HardwoodContext context,
                                             ReaderConfig readerConfig) throws IOException {
         return openInternal(inputFiles, (HardwoodContextImpl) context, readerConfig, false);
     }
 
-    private static ParquetFileReader openInternal(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
+    /// Opens the reader, or closes every input file and an owned context before
+    /// the failure propagates. Visible for testing.
+    static ParquetFileReader openInternal(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
+                                          ReaderConfig readerConfig, boolean ownsContext) throws IOException {
+        try {
+            return openFirstFile(inputFiles, context, readerConfig, ownsContext);
+        }
+        catch (Exception e) {
+            closeAfterOpenFailure(inputFiles, context, ownsContext, e);
+            throw e;
+        }
+    }
+
+    private static ParquetFileReader openFirstFile(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
                                                    ReaderConfig readerConfig, boolean ownsContext) throws IOException {
         if (inputFiles == null || inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
@@ -228,36 +252,52 @@ public class ParquetFileReader implements Closeable {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
         first.open();
+        ReadFooter firstFileFooter;
+        FileMetaData firstFileMetaData;
+        FileSchema schema;
         try {
-            ReadFooter firstFileFooter;
-            FileMetaData firstFileMetaData;
-            FileSchema schema;
-            try {
-                firstFileFooter = ParquetMetadataReader.readFooter(first);
-                firstFileMetaData = firstFileFooter.metaData();
-                schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
-            }
-            catch (RuntimeException e) {
-                throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));
-            }
-
-            fileOpenedEvent.file = first.name();
-            fileOpenedEvent.fileSize = first.length();
-            fileOpenedEvent.rowGroupCount = firstFileMetaData.rowGroups().size();
-            fileOpenedEvent.columnCount = schema.getColumnCount();
-            fileOpenedEvent.commit();
-
-            return new ParquetFileReader(files, firstFileFooter, schema, context, fixedListFastPathEnabled,
-                    metadataFilteringEnabled, ownsContext, true);
+            firstFileFooter = ParquetMetadataReader.readFooter(first);
+            firstFileMetaData = firstFileFooter.metaData();
+            schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
         }
-        catch (Exception e) {
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));
+        }
+
+        fileOpenedEvent.file = first.name();
+        fileOpenedEvent.fileSize = first.length();
+        fileOpenedEvent.rowGroupCount = firstFileMetaData.rowGroups().size();
+        fileOpenedEvent.columnCount = schema.getColumnCount();
+        fileOpenedEvent.commit();
+
+        return new ParquetFileReader(files, firstFileFooter, schema, context, fixedListFastPathEnabled,
+                metadataFilteringEnabled, ownsContext, true);
+    }
+
+    /// Closes every input file the failed open took ownership of, and the context
+    /// when the open created it, attaching each close failure to `failure`.
+    private static void closeAfterOpenFailure(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
+                                              boolean ownsContext, Exception failure) {
+        if (inputFiles != null) {
+            for (InputFile file : inputFiles) {
+                if (file == null) {
+                    continue;
+                }
+                try {
+                    file.close();
+                }
+                catch (IOException | RuntimeException closeException) {
+                    failure.addSuppressed(closeException);
+                }
+            }
+        }
+        if (ownsContext) {
             try {
-                first.close();
+                context.close();
             }
-            catch (IOException closeException) {
-                e.addSuppressed(closeException);
+            catch (RuntimeException closeException) {
+                failure.addSuppressed(closeException);
             }
-            throw e;
         }
     }
 
