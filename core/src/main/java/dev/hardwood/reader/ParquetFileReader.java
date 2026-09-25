@@ -225,6 +225,8 @@ public class ParquetFileReader implements Closeable {
         boolean metadataFilteringEnabled = resolveMetadataFiltering(readerConfig);
         List<InputFile> files = List.copyOf(inputFiles);
         InputFile first = files.get(0);
+        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+        fileOpenedEvent.begin();
         first.open();
         try {
             ReadFooter firstFileFooter;
@@ -239,8 +241,6 @@ public class ParquetFileReader implements Closeable {
                 throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));
             }
 
-            FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
-            fileOpenedEvent.begin();
             fileOpenedEvent.file = first.name();
             fileOpenedEvent.fileSize = first.length();
             fileOpenedEvent.rowGroupCount = firstFileMetaData.rowGroups().size();

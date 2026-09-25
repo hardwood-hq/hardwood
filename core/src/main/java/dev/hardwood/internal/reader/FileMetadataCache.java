@@ -151,6 +151,8 @@ public final class FileMetadataCache {
 
     private PreparedFile loadFile(int fileIndex) {
         InputFile inputFile = inputFiles.get(fileIndex);
+        FileOpenedEvent event = new FileOpenedEvent();
+        event.begin();
         try {
             inputFile.open();
         }
@@ -158,9 +160,6 @@ public final class FileMetadataCache {
             throw new UncheckedIOException(
                     ExceptionContext.filePrefix(inputFile.name()) + "Failed to open file", e);
         }
-
-        FileOpenedEvent event = new FileOpenedEvent();
-        event.begin();
 
         try {
             ReadFooter footer = ParquetMetadataReader.readFooter(inputFile);

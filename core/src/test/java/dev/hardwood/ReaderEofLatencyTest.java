@@ -99,10 +99,12 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
 
             awaitEvents();
 
+            // Presence, not a count: the scan events are committed on worker threads, and one
+            // of them can miss this recording's flush (see AbstractJfrRecorderTest).
             assertThat(eventsSince(ROW_GROUP_SCANNED_EVENT, measuredFrom).count())
                     .as("the recording saw the measured pass, so an empty stall total means "
                             + "no stalls rather than no recording")
-                    .isGreaterThanOrEqualTo(COLUMNS);
+                    .isPositive();
 
             long stalledColumns = eventsSince(BATCH_WAIT_EVENT, measuredFrom)
                     .map(RecordedEvent::getDuration)

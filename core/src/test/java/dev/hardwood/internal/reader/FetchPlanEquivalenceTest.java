@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Uses a test file with both OffsetIndex and data pages. Creates both plan types
 /// for each column and verifies that decoded page content matches exactly.
-public class PageScannerTest {
+public class FetchPlanEquivalenceTest {
 
     @Test
     void indexedAndSequentialPlansProduceIdenticalPages() throws Exception {

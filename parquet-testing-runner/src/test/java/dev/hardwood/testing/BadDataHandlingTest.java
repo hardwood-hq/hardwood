@@ -19,6 +19,7 @@ import org.junit.jupiter.api.TestInstance;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -84,9 +85,13 @@ class BadDataHandlingTest {
 
     @Test
     void rejectArrowGH45185() throws IOException {
-        // Repetition levels start with 1 instead of the required 0
-        assertBadDataRejected("ARROW-GH-45185.parquet",
-                "[ARROW-GH-45185.parquet: row group 0, column 'x.list.element', page 0] Invalid"
+        // Repetition levels start with 1 instead of the required 0. The worker that
+        // detects the malformed chunk raises ParquetReadException itself, so the root
+        // cause is a ParquetReadException too.
+        assertThatThrownBy(readAction("ARROW-GH-45185.parquet"))
+                .isInstanceOf(ParquetReadException.class)
+                .hasRootCauseInstanceOf(ParquetReadException.class)
+                .hasMessage("[ARROW-GH-45185.parquet: row group 0, column 'x.list.element', page 0] Invalid"
                         + " column chunk: first repetition level must be 0 but was 1");
     }
 

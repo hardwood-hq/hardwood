@@ -12,6 +12,7 @@ import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles nested batches.
@@ -269,7 +270,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         if (!nestedFirstValueSeen && pageSize > 0) {
             nestedFirstValueSeen = true;
             if (pageRepLevels != null && pageRepLevels[0] != 0) {
-                throw new IllegalStateException(
+                throw new ParquetReadException(
                         "Invalid column chunk: first repetition level must be 0 but was "
                         + pageRepLevels[0]);
             }
