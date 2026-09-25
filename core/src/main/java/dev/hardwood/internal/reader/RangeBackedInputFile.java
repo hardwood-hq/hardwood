@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 
 /// An [InputFile] decorator that caches fetched byte ranges in a
 /// sparse temp file mmapped into the process. See #373 and
@@ -106,10 +107,11 @@ public final class RangeBackedInputFile implements InputFile {
         if (mapping == null) {
             throw new IllegalStateException("File not opened: " + name());
         }
-        if (offset < 0 || length < 0 || offset + length > fileLength) {
-            throw new IllegalArgumentException(
-                    "Range [" + offset + ", " + (offset + length)
-                    + ") falls outside file [0, " + fileLength + ") (" + name() + ")");
+        // Written so that offset + length cannot overflow.
+        if (offset < 0 || length < 0 || offset > fileLength - length) {
+            throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name())
+                    + "readRange(" + offset + ", " + length
+                    + ") out of bounds (" + fileLength + " bytes)");
         }
         long end = offset + length;
         if (!populated.contains(offset, end)) {

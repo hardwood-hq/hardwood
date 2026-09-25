@@ -146,7 +146,9 @@ public final class RowGroupDictionaryFilterSource {
                     + "Malformed Parquet metadata: the dictionary page is at offset " + chunkStart
                     + " but the chunk ends at offset " + chunkEnd);
         }
-        int availableBytes = Math.toIntExact(chunkEnd - chunkStart);
+        // Only a bound on the dictionary page, whose own size is an int; a chunk over 2 GB
+        // bounds it no tighter than that.
+        int availableBytes = Math.toIntExact(Math.min(chunkEnd - chunkStart, Integer.MAX_VALUE));
 
         ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
         ByteBuffer region = readDictionaryPage(metaData, chunkStart,
