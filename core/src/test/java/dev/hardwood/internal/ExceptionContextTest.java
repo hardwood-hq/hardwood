@@ -191,19 +191,58 @@ class ExceptionContextTest {
         assertThat(wrapped.getCause()).isSameAs(original);
     }
 
-    /// A truncation carries the file's name like any other failure and stays a
-    /// [ThriftTruncatedException] doing it. The page-header peek widens its guess on
-    /// this type and gives up on any other, so a restated one that came back as
-    /// something else would turn a header with long statistics into a read error.
+    /// A truncation carries the file's name like any other failure, and leaves as a plain
+    /// [ParquetReadException]: [ThriftTruncatedException] is internal, and a caller must not
+    /// be handed a type it cannot name.
     @Test
-    void preservesThriftTruncatedException() {
+    void restatesThriftTruncatedExceptionAsParquetReadException() {
         RuntimeException original = new ThriftTruncatedException("Unexpected EOF while reading varint");
         RuntimeException wrapped = ExceptionContext.addReadContext("f.parquet", 0, "id", original);
 
-        assertThat(wrapped).isInstanceOf(ThriftTruncatedException.class);
+        assertThat(wrapped).isExactlyInstanceOf(ParquetReadException.class);
         assertThat(wrapped.getMessage())
                 .isEqualTo("[f.parquet: row group 0, column 'id'] Unexpected EOF while reading varint");
         assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    /// A truncation that already names its file is not prefixed again, but is still restated.
+    @Test
+    void restatesAnAlreadyPlacedThriftTruncatedException() {
+        RuntimeException original = new ThriftTruncatedException("[f.parquet] Unexpected EOF while reading varint");
+        RuntimeException wrapped = ExceptionContext.addFileContext("f.parquet", original);
+
+        assertThat(wrapped).isExactlyInstanceOf(ParquetReadException.class);
+        assertThat(wrapped.getMessage()).isEqualTo("[f.parquet] Unexpected EOF while reading varint");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    /// Without a file name to add, the type is restated all the same.
+    @Test
+    void restatesThriftTruncatedExceptionWithoutAFileName() {
+        RuntimeException original = new ThriftTruncatedException("Unexpected EOF while reading varint");
+        RuntimeException wrapped = ExceptionContext.addFileContext(null, original);
+
+        assertThat(wrapped).isExactlyInstanceOf(ParquetReadException.class);
+        assertThat(wrapped.getMessage()).isEqualTo("Unexpected EOF while reading varint");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    @Test
+    void asReadFailureRestatesThriftTruncatedException() {
+        RuntimeException original = new ThriftTruncatedException("Unexpected EOF while reading varint");
+        RuntimeException typed = ExceptionContext.asReadFailure(original);
+
+        assertThat(typed).isExactlyInstanceOf(ParquetReadException.class);
+        assertThat(typed.getMessage()).isEqualTo("Unexpected EOF while reading varint");
+        assertThat(typed.getCause()).isSameAs(original);
+    }
+
+    /// A public subclass says more than its base type and is kept.
+    @Test
+    void asReadFailureKeepsAPublicReadFailureSubclass() {
+        RuntimeException original = new SchemaIncompatibleException("[f.parquet] incompatible");
+
+        assertThat(ExceptionContext.asReadFailure(original)).isSameAs(original);
     }
 
     /// What callers catch is the base type. A subclass that cannot be reconstructed still

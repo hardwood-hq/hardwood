@@ -287,7 +287,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       RowRanges matchingRows, long rowGroupRowCount,
                                       Dictionary preloadedDictionary, long preloadedDictionaryEnd) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
-        int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
+        long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
+        if (totalCompressedSize > Integer.MAX_VALUE) {
+            // The file is correct; this reader will not fetch a region it cannot
+            // address with an int, and a second attempt changes nothing.
+            throw new UnsupportedOperationException(ExceptionContext.readPrefix(fileName, rowGroupIndex,
+                    columnSchema.fieldPath().toString())
+                    + "Column chunk too large (" + totalCompressedSize
+                    + " bytes); the reader supports column chunks of up to " + Integer.MAX_VALUE + " bytes");
+        }
+        int columnChunkLength = Math.toIntExact(totalCompressedSize);
         if (preloadedDictionary != null) {
             // The data pages start where the dictionary page ends.
             Objects.checkFromToIndex(columnChunkOffset, preloadedDictionaryEnd, columnChunkOffset + columnChunkLength);

@@ -12,11 +12,14 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -134,6 +137,23 @@ class SequentialFetchPlanChunkSizeTest {
         finally {
             System.clearProperty(CHUNK_SIZE_PROPERTY);
         }
+    }
+
+    /// A column chunk over 2 GB is a valid file this reader cannot fetch as one region. It
+    /// fails as the limit it is, naming the limit, rather than as a corrupt file.
+    @Test
+    void columnChunkLargerThanTheReaderAddressesIsUnsupported() {
+        long columnLength = Integer.MAX_VALUE + 1L;
+        ColumnSchema columnSchema = new ColumnSchema(FieldPath.of("col"), PhysicalType.INT64,
+                RepetitionType.REQUIRED, null, 0, 0, 0, null);
+        ColumnChunk columnChunk = new ColumnChunk(fakeMetaData(columnLength, 100), null, null, null, null, null);
+
+        assertThatThrownBy(() -> SequentialFetchPlan.build(null, columnSchema, columnChunk, null,
+                3, "f.parquet", 0))
+                .isExactlyInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("[f.parquet: row group 3, column 'col'] Column chunk too large ("
+                        + columnLength + " bytes); the reader supports column chunks of up to "
+                        + Integer.MAX_VALUE + " bytes");
     }
 
     private static int chunkSizeWithoutRowLimit() {

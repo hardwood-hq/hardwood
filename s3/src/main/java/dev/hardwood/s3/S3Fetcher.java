@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.s3.internal.S3Api;
 
@@ -91,6 +92,16 @@ final class S3Fetcher implements InputFile {
 
     @Override
     public ByteBuffer readRange(long offset, int length) throws IOException {
+        if (fileLength < 0) {
+            throw new IllegalStateException("File not opened: " + name());
+        }
+        // Checked before the tail cache and before any request, so a bad range fails the same
+        // way wherever it lands. Written so that offset + length cannot overflow.
+        if (offset < 0 || length < 0 || offset > fileLength - length) {
+            throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name())
+                    + "readRange(" + offset + ", " + length
+                    + ") out of bounds (" + fileLength + " bytes)");
+        }
         // Serve from the tail cache if the requested range falls within it
         if (tailCache != null && offset >= tailCacheOffset
                 && offset + length <= tailCacheOffset + tailCache.capacity()) {

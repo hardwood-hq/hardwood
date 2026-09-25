@@ -109,9 +109,30 @@ class RangeBackedInputFileTest {
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             assertThatThrownBy(() -> cached.readRange(-1, 10))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isExactlyInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("[" + cached.name() + "] readRange(-1, 10) out of bounds (100 bytes)");
             assertThatThrownBy(() -> cached.readRange(50, 100))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isExactlyInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("[" + cached.name() + "] readRange(50, 100) out of bounds (100 bytes)");
+            assertThatThrownBy(() -> cached.readRange(50, -1))
+                    .isExactlyInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("[" + cached.name() + "] readRange(50, -1) out of bounds (100 bytes)");
+            // offset + length wraps to a negative long; the check must not be fooled by it.
+            assertThatThrownBy(() -> cached.readRange(Long.MAX_VALUE, 10))
+                    .isExactlyInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("[" + cached.name() + "] readRange(" + Long.MAX_VALUE
+                            + ", 10) out of bounds (100 bytes)");
+            assertThat(inner.readCount()).isZero();
+        }
+    }
+
+    @Test
+    void readBeforeOpenThrows(@TempDir Path tempDir) throws IOException {
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(makeData(100)));
+        try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
+            assertThatThrownBy(() -> cached.readRange(0, 10))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("File not opened: " + cached.name());
         }
     }
 

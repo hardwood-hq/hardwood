@@ -34,6 +34,8 @@ public final class ExceptionContext {
     /// The chunk's dictionary page, which has no ordinal among the data pages.
     public static final int DICTIONARY_PAGE = -2;
 
+    private static final String INTERNAL_PACKAGE = "dev.hardwood.internal";
+
     private ExceptionContext() {
     }
 
@@ -118,7 +120,11 @@ public final class ExceptionContext {
     /// defect in this library. They become a [ParquetReadException] keeping the
     /// original as their cause.
     ///
-    /// Three kinds pass through unchanged. An [UncheckedIOException] is the
+    /// A [ParquetReadException] subclass under `dev.hardwood.internal` — a truncated Thrift
+    /// structure raises one — is restated as a plain [ParquetReadException] keeping it as the
+    /// cause: callers catch the public type, and must not be handed one they cannot name.
+    ///
+    /// Three kinds otherwise pass through unchanged. An [UncheckedIOException] is the
     /// transport: an [dev.hardwood.InputFile] is implementable from outside, and
     /// one that answers a failed `readRange` with the unchecked form is still
     /// describing the transport, so it must not be relabelled as the file being
@@ -141,6 +147,9 @@ public final class ExceptionContext {
     /// @param e the runtime failure raised while reading file content
     /// @return the failure classified as a read error, or the original pass-through exception
     public static RuntimeException asReadFailure(RuntimeException e) {
+        if (isInternalReadFailure(e)) {
+            return new ParquetReadException(e.getMessage(), e);
+        }
         if (e instanceof UncheckedIOException
                 || e instanceof ParquetReadException
                 || e instanceof UnsupportedOperationException) {
@@ -153,6 +162,10 @@ public final class ExceptionContext {
     /// Amends the exception message with a `[fileName] ` prefix. Preserves the
     /// original exception type and cause chain. Returns the original exception
     /// unchanged when the file name is unavailable or the prefix is already present.
+    ///
+    /// The one type not preserved is an internal [ParquetReadException] subclass, which
+    /// leaves as a plain [ParquetReadException] with the original as its cause, prefixed or
+    /// not; see [#asReadFailure].
     ///
     /// **Cause-chain note for [UncheckedIOException]:** because the type requires
     /// an [IOException] cause, the original [UncheckedIOException] is attached as
@@ -189,21 +202,20 @@ public final class ExceptionContext {
     /// @return the enriched (or original) exception — never `null`
     public static RuntimeException addReadContext(String fileName, int rowGroup, String column,
             int page, RuntimeException e) {
-        if (fileName == null || fileName.isEmpty()) {
-            return e;
-        }
-        String prefix = readPrefix(fileName, rowGroup, column, page);
         String originalMessage = e.getMessage();
-        if (hasFilePrefix(originalMessage)) {
-            return e;
-        }
+        Throwable cause = e.getCause();
         // If the cause already carries file context (e.g. assembly-thread error
         // propagated through CompletionException), don't add a second layer.
-        Throwable cause = e.getCause();
-        if (cause != null && hasFilePrefix(cause.getMessage())) {
-            return e;
+        if (fileName == null || fileName.isEmpty()
+                || hasFilePrefix(originalMessage)
+                || (cause != null && hasFilePrefix(cause.getMessage()))) {
+            return isInternalReadFailure(e) ? new ParquetReadException(originalMessage, e) : e;
         }
+        String prefix = readPrefix(fileName, rowGroup, column, page);
         String newMessage = prefix + (originalMessage != null ? originalMessage : e.getClass().getSimpleName());
+        if (isInternalReadFailure(e)) {
+            return new ParquetReadException(newMessage, e);
+        }
 
         if (e instanceof UncheckedIOException uio) {
             // Not a case the reader produces: every wrap it makes to leave a lambda is
@@ -286,6 +298,16 @@ public final class ExceptionContext {
         return message == null || message.equals(cause.toString())
                 ? cause
                 : new IOException(message, cause);
+    }
+
+    /// Whether `e` is a [ParquetReadException] of a type callers cannot name, one declared
+    /// under `dev.hardwood.internal`.
+    private static boolean isInternalReadFailure(RuntimeException e) {
+        if (!(e instanceof ParquetReadException)) {
+            return false;
+        }
+        String packageName = e.getClass().getPackageName();
+        return packageName.equals(INTERNAL_PACKAGE) || packageName.startsWith(INTERNAL_PACKAGE + ".");
     }
 
     private static boolean hasFilePrefix(String message) {

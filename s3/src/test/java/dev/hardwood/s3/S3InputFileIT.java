@@ -266,6 +266,43 @@ class S3InputFileIT {
     }
 
     @Test
+    void readRangeBeforeOpenIsRejected() {
+        S3InputFile file = source.inputFile("test-bucket", "plain_uncompressed.parquet");
+
+        assertThatThrownBy(() -> file.readRange(0, 10))
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("File not opened: s3://test-bucket/plain_uncompressed.parquet");
+        assertThat(file.networkRequestCount()).isZero();
+    }
+
+    /// A range outside the object is the caller's error and is rejected before any request,
+    /// including a range the tail cache would otherwise have answered.
+    @Test
+    void readRangeOutsideTheFileIsRejectedBeforeAnyRequest() throws Exception {
+        try (S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet")) {
+            file.open();
+            long length = file.length();
+            long openRequests = file.networkRequestCount();
+
+            assertOutOfBounds(file, length - 5, 10);
+            assertOutOfBounds(file, -1, 10);
+            assertOutOfBounds(file, length - 5, -1);
+            // Would land in the tail cache were offset + length not to wrap.
+            assertOutOfBounds(file, Long.MAX_VALUE, 10);
+
+            assertThat(file.networkRequestCount()).isEqualTo(openRequests);
+        }
+    }
+
+    private static void assertOutOfBounds(S3InputFile file, long offset, int length) throws IOException {
+        long fileLength = file.length();
+        assertThatThrownBy(() -> file.readRange(offset, length))
+                .isExactlyInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[s3://test-bucket/column_index_pushdown.parquet] readRange(" + offset + ", "
+                        + length + ") out of bounds (" + fileLength + " bytes)");
+    }
+
+    @Test
     void name() {
         InputFile file = source.inputFile("test-bucket", "data/file.parquet");
         assertThat(file.name()).isEqualTo("s3://test-bucket/data/file.parquet");
