@@ -60,7 +60,7 @@ For each open Decision, use `AskUserQuestion` with:
 
 - **Question:** the `**Q:**` line from the file.
 - **Options:** the A/B/C bullets verbatim.
-- Surface the `**Rec:**` line in the question prose so the user sees it.
+- Surface the `**Example:**` and `**Rec:**` lines in the question prose so the user sees them.
 
 After the user picks:
 
