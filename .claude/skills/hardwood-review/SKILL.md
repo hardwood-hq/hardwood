@@ -47,23 +47,34 @@ For PR diffs, persist large output to a file and read it in chunks rather than l
 
 If the PR touches a new design area, look in `_designs/` for a matching markdown file. Hardwood requires non-trivial changes to land a design doc; if one is expected but missing, that's a finding. If one exists, skim it before reading code so the review can flag drift between intent and implementation.
 
-### 3. Run the checklist
+### 3. Challenge the premise
+
+Before checking whether the change is correct, check whether it should exist in this form. Read the linked issue and the PR description, then answer:
+
+- **Is the requirement correct?** Does the issue describe real behaviour and a real need? Reproduce the claim against the code or the Parquet spec rather than taking the issue's word for it.
+- **Is the change justified?** Could an existing mechanism already do this, or would a narrower change do?
+- **Root cause or symptom?** Does the fix address where the wrong value or state originates, or does it patch one place where it surfaces while other consumers of the same state stay exposed?
+- **One change or several?** Does the PR bundle independent changes that should land, or be reverted, separately?
+
+A premise that does not hold is the most expensive finding a review can make, because every line below it is spent on the wrong change. Report it under `## Premise`.
+
+### 4. Run the checklist
 
 Walk every item in [references/checklist.md](references/checklist.md). Each item has a brief rationale and the failure mode it catches. Skip items that don't apply to the diff (e.g. Dive TUI rules on a core-only change). Do not skip items just because they look unlikely — the checklist exists because each one has been missed at least once.
 
-### 4. Cross-check tests
+### 5. Cross-check tests
 
 For every new behaviour or matcher, check that test coverage is breadth-first across the type/op axes, not just the one the author exercised. Common gap: an oracle test that proves parity for two types when the implementation supports six. List explicitly which `(type, op)` pairs are *not* covered.
 
-### 5. Check doc/code drift
+### 6. Check doc/code drift
 
 When a PR adds a design doc, JavaDoc, or user-facing `docs/content/*.md`, read at least the load-bearing claims (gate descriptions, eligibility rules, supported types) and grep the code to confirm the wording matches. Mismatches between "≥ 2 distinct columns" in the doc and `leaves.size() < 2` in the code are the dominant doc-bug class.
 
-### 6. Prune to signal
+### 7. Prune to signal
 
 Before writing the file, walk every candidate finding and apply the **inclusion bar**:
 
-> A finding describes something that is *wrong*: code that breaks, will regress under a plausible future change, violates a stated CLAUDE.md / design rule, or has a missing safety property the project relies on elsewhere.
+> A finding describes something that is *wrong*: code that breaks, will regress under a plausible future change, violates a stated CLAUDE.md / design rule, has a missing safety property the project relies on elsewhere, or rests on a premise that does not hold (step 3).
 
 Cut anything that fails this bar. Common cuts:
 
@@ -123,7 +134,7 @@ If lifting a finding to Decisions would make the underlying defect disappear (be
 
 Better to ship a short review with 5 real defects than a long one where the maintainer has to filter the signal out.
 
-### 7. Write the findings file
+### 8. Write the findings file
 
 Write to `_reviews/pr-<N>-review.md` (or `_reviews/branch-<name>-review.md` for non-PR runs). The `_reviews/` directory already exists; do not write findings to the repo root.
 
@@ -141,9 +152,12 @@ Session: <session-id>
 
 **What:** <1–2 sentences. The actual change, in your own words. Not a copy of the PR description — what the diff does, structurally.>
 
-**Why:** <1 sentence. The motivator, from the PR description / linked issue / design doc. If you can't tell, say "Motivator not stated in the PR or linked issue." — don't invent one.>
+**Why:** <1–2 sentences. The motivator, from the PR description / linked issue / design doc, and whether it holds up per step 3. If you can't tell, say "Motivator not stated in the PR or linked issue." — don't invent one.>
 
 **Assessment:** <1–2 sentences. Headline verdict: ready to merge / ready with nits / needs work / not ready, and the single most load-bearing reason. The detail lives in the sections below; this is the elevator pitch.>
+
+## Premise
+- [ ] <the requirement, justification, root-cause or scope problem> — one-sentence why
 
 ## Decisions
 - **Q:** <question or fork — one line>
@@ -171,11 +185,11 @@ Session: <session-id>
 - [ ] ...
 ```
 
-**Emit only sections that have at least one entry.** A pyramid tier (or `Decisions` / `Blockers`) with nothing in it gets no section header — silence is the signal. The template above lists all seven possible sections; a real review usually has two or three.
+**Emit only sections that have at least one entry.** A pyramid tier (or `Premise` / `Decisions` / `Blockers`) with nothing in it gets no section header — silence is the signal. The template above lists all eight possible sections; a real review usually has two or three.
 
 Use `[ ]` not `[x]` — the maintainer checks items off as they're addressed (per CLAUDE.md "Code Reviews" section).
 
-### 8. Hand back a short summary
+### 9. Hand back a short summary
 
 After writing the file, give the user a 3–5 sentence summary: what the PR does, the highest-priority finding(s), and the path to the findings file. Do not repeat the whole list inline — they can read the file.
 

@@ -54,6 +54,7 @@ After checkout, confirm you're on the PR branch with `git branch --show-current`
 Read `_reviews/pr-<N>-review.md` and partition the items:
 
 - **Already addressed** (`[x]`) — skip.
+- **Open Premise items** — surface to the user before anything else. A premise that does not hold can make the PR, or part of it, moot; don't start code changes until the user has said how to proceed.
 - **Open Decisions** — surface to the user first (next step).
 - **Open findings** under `Blockers`, `API semantics`, `Implementation semantics`, `Documentation`, `Tests` — work items.
 - **Open Nits** — work items, but ask the user up front whether to batch them all or skip; nits are often left for a follow-up.
