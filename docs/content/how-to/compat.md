@@ -11,20 +11,13 @@
 -->
 # Parquet-Java Compatibility
 
-If you have existing code that uses Apache parquet-java's `ParquetReader<Group>` API and want to switch to Hardwood without rewriting it, the `hardwood-parquet-java-compat` module provides a drop-in replacement. It implements the same `org.apache.parquet.*` interfaces backed by Hardwood's reader.
+The `hardwood-parquet-java-compat` module runs code written against Apache parquet-java's `ParquetReader<Group>` API on Hardwood's reader. It implements the same `org.apache.parquet.*` interfaces and includes Hadoop shims (`Path`, `Configuration`), so no Hadoop dependency is required.
 
 !!! warning "Experimental"
-    The `hardwood-parquet-java-compat` module is experimental; its API surface and behavior may change in future releases without prior deprecation. This module is not yet available from Maven Central; instead, it needs to be built from source.
+    The `hardwood-parquet-java-compat` module is experimental; its API surface and behavior may change in future releases without prior deprecation. This module is not available from Maven Central; build it from source.
 
 !!! warning "Mutually exclusive with parquet-java"
     This module provides its own type shims in the `org.apache.parquet.*` namespace. It **cannot** be used alongside `parquet-java` on the same classpath; pick one or the other.
-
-**Features:**
-
-- Provides `org.apache.parquet.*` namespace classes compatible with parquet-java
-- Includes Hadoop shims (`Path`, `Configuration`), so no Hadoop dependency is required
-- Supports S3 reading via `HadoopInputFile` with the same `fs.s3a.*` configuration properties
-- Supports filter predicate pushdown with the standard `FilterApi` / `FilterCompat` classes
 
 ## Reading Local Files
 
@@ -69,9 +62,11 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 }
 ```
 
-S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection; if it is missing, the error message names the dependency to add.
+`HadoopInputFile` reads the same `fs.s3a.*` configuration properties as parquet-java. S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection; if it is missing, the error message names the dependency to add.
 
 ## Filter Pushdown
+
+Filters use the standard `FilterApi` / `FilterCompat` classes:
 
 ```java
 import static org.apache.parquet.filter2.predicate.FilterApi.*;

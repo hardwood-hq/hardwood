@@ -33,8 +33,7 @@ It is built to be:
 * **Agent-friendly**: Hardwood's CLI comes with a skill which lets your agents inspect and analyse Parquet files
 * **Compatible**: A [drop-in shim module](how-to/compat.md) facilitates migration from `parquet-java`, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`)
 
-Besides the core library, Hardwood provides a ready-to-use CLI for inspecting and analysing Parquet files,
-including an interactive TUI for exploring a file's schema, row groups, pages, and data.
+The [CLI](reference/cli.md) inspects and analyses Parquet files and includes an interactive TUI for exploring a file's schema, row groups, pages, and data.
 
 ## Quick Example
 
@@ -79,9 +78,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), sc
 ```
 
 [Set up Hardwood in your project](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
-Alternatively, [install the Hardwood CLI](reference/cli.md) for working with Parquet files on the command line.
-
-The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples, one per concept, that you can clone and run with a single command.
+Alternatively, [install the Hardwood CLI](getting-started.md#command-line-tool) for working with Parquet files on the command line.
 
 ## Status and Limitations
 
@@ -89,22 +86,20 @@ The read path is stable and suitable for production use; `ColumnReader`, with it
 The write path ships both APIs described under [Choosing a Writer](how-to/index.md#choosing-a-writer); the row-oriented `RowWriter` and its builders, and the `ColumnBatch` setters for nested and nullable columns, are annotated `@Experimental`, so their shape may still change.
 
 Writing targets local files through `OutputFile.of(Path)`.
-Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [2 GB column-chunk limit](concepts/parquet-layout.md#column-chunk).
+Reads have no file-size ceiling, but individual column chunks are capped at 2 GB, and some backends carry their own limits; see [Limits](reference/reader.md#limits).
 
 ## Roadmap
 
-Forward-looking items tracked for post-1.0. None are committed to a specific release.
+Forward-looking items, none committed to a specific release.
 
 - **Finalize `ColumnReader` API** — stabilize the API for columnar access and move it out of "Experimental" state. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
 - **Writer extensions** — object-store output, page-index and Bloom-filter writing, and parallel column encoding, on top of the write path described in [The Write Model](concepts/write-model.md). ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
-- **Bloom filter predicate pushdown** — use per-chunk bloom filters for equality-predicate skipping on high-cardinality columns, where min/max statistics can't help. ([#105](https://github.com/hardwood-hq/hardwood/issues/105))
 - **Parquet Modular Encryption** — read files encrypted under the Parquet [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md): encrypted footer, per-column keys, AES-GCM and AES-GCM-CTR. ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
 - **Apache Arrow interop** — `ColumnReader` output as Arrow `FieldVector` / `VectorSchemaRoot` for zero-copy handoff to DuckDB, DataFusion, Pandas-via-JNI, and other Arrow-native consumers. ([#153](https://github.com/hardwood-hq/hardwood/issues/153))
 
 ## Getting help
 
-- **Questions, ideas, design discussion** — [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions). The best first stop for "how do I…", "is X possible…", or "what's the right way to…".
-- **Bug reports and feature requests** — the [GitHub issue tracker](https://github.com/hardwood-hq/hardwood/issues). Please check whether a similar issue already exists.
+Ask questions on [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions) and file bugs on the [issue tracker](https://github.com/hardwood-hq/hardwood/issues); see [Contributing](contributing.md).
 
 ## Articles, talks & podcasts
 

@@ -42,21 +42,17 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
-Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
+Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched.
 
-The schema of the first file is the reference schema. When a data reader is planned, each
-subsequent file reached by the data-reader plan is validated against it for that reader's
-projection and filter. Merely inspecting a file's metadata does not perform this
-projection-specific validation. Columns are matched by field path, so files may declare them in
-any order. Every projected column, and every column a filter predicate tests, must exist with a
-matching physical type, logical type, repetition type, and fixed byte length, and its enclosing
-groups must match in nullability and repeatedness, otherwise a `SchemaIncompatibleException` is
-thrown. A file is planned as the read arrives at it, so a mismatch in a later file surfaces from
-the reading loop rather than from the call that built the reader, and always before any row of
-that file is returned. Columns that are neither projected nor filtered on are not checked, so
-files may carry additional columns or omit unused ones. With no explicit projection, all columns
-of the first file are projected and therefore required in every subsequent file reached by the
-data-reader plan.
+The schema of the first file is the reference schema. Each later file a data reader reaches is
+validated against it for that reader's projection and filter; inspecting a file's metadata does not
+validate it. Columns are matched by field path, in any order. Every projected or filtered column
+must exist with a matching physical type, logical type, repetition type, and fixed byte length, and
+its enclosing groups must match in nullability and repeatedness, otherwise a
+`SchemaIncompatibleException` is thrown. The check runs as the read reaches a file, so a mismatch
+surfaces from the reading loop, before any row of that file is returned. Other columns are not
+checked, so files may carry extra columns or omit unused ones. With no explicit projection, every
+column of the first file is projected and therefore required.
 
 By default, `Hardwood.create()` sizes the thread pool to the number of available processors. To control the decode parallelism, create a `HardwoodContext` of the desired size and pass it to `Hardwood.create(HardwoodContext)`:
 

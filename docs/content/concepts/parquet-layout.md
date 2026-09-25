@@ -14,8 +14,6 @@
 Most of Hardwood's behavior, such as column projection, predicate pushdown, parallel decode and
 split reading, follows directly from how the Parquet format arranges bytes on disk.
 
-To read this hierarchy programmatically at runtime, see [Inspect File Metadata](../how-to/metadata.md).
-
 ## The hierarchy
 
 A Parquet file is a nested structure of row groups holding column chunks holding pages, and the
@@ -53,63 +51,33 @@ schema and optional page index), followed by the footer length and a closing `PA
 starts at that trailing magic, steps back four bytes to read the footer length, then reads the
 footer to learn where every row group, column chunk, and page lives before touching any values.
 
-### File
-
-The unit you open. Its defining feature is that the schema and the byte offsets of everything in
-the file are in the footer at the *end*. A reader seeks to the tail, reads the
-footer, and from then on knows the exact byte range of every piece of data without scanning. A
-read of three columns out of fifty touches only those three columns' bytes.
-
 ### Row group
 
-A row group holds a contiguous range of rows, but stores them column by column. A 10-million-row
-file might be split into ten row groups of a million rows each. Row groups are the unit of:
-
-- **Parallelism and splitting.** Independent row groups can be decoded concurrently, and a file
-  can be partitioned across parallel readers at row-group boundaries, which is what
-  [split-aware reading](../how-to/query-controls.md#split-aware-reading) assigns by byte range.
-- **Coarse skipping.** Each column chunk carries min/max statistics; if a row group's statistics
-  prove no row can match a predicate, the entire row group is skipped before any data is read.
+A row group holds a contiguous range of rows, stored column by column.
 
 ### Column chunk
 
-The data for one column within one row group, stored contiguously. Because a column's values sit
-together (rather than interleaved with other columns as in a row-oriented format), they
-compress well (similar values adjacent) and can be read in isolation (projection). The footer
-records each chunk's compressed and uncompressed size, codec, and statistics.
-
-!!! info "2 GB column-chunk limit"
-    A column chunk is addressed within Hardwood as a single in-memory region, so each chunk must
-    be at most 2 GB of *compressed* data. The limit is per chunk, not per file. Local
-    memory-mapped files and S3-backed files may be arbitrarily large overall; the in-memory
-    (`ByteBuffer`) backend additionally caps the *whole file* at 2 GB, and the `dive` TUI caps
-    S3 files at 2 GB because its mmap-backed range cache uses `MappedByteBuffer`. For datasets
-    that don't fit a single supported file, split the data into multiple files at write time and
-    read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
+The data for one column within one row group, stored contiguously. Hardwood reads a column chunk
+as a single in-memory region, which bounds its size; see [Limits](../reference/reader.md#limits).
 
 ### Page
 
 A column chunk is divided into pages, and the page is where compression and encoding
-happen. A chunk typically begins with one **dictionary page**, holding the column's distinct values,
-followed by **data pages** whose entries are indices into that dictionary. Each page is
-compressed independently, so the page is the smallest unit Hardwood decompresses and decodes,
-and therefore the smallest unit it can decode in parallel or skip.
+happen. Each page is compressed independently, so the page is the smallest unit Hardwood
+decompresses and decodes, and therefore the smallest unit it can decode in parallel or skip.
 
-When a file carries a **Column Index** and **Offset Index** (per-page min/max statistics and
-byte offsets, stored near the footer), Hardwood can skip individual *pages* within a surviving
-row group. This is the second tier of [predicate pushdown](../how-to/query-controls.md#predicate-pushdown-filter).
-On a remote backend like S3, a skipped page is never even fetched.
+A file may carry a **Column Index** and **Offset Index**: per-page min/max statistics and byte
+offsets, stored near the footer. On a remote backend like S3, a page these let Hardwood skip is
+never fetched.
 
 ## Why the layout matters
-
-Each capability elsewhere in the docs is the layout showing through:
 
 | Capability | What in the layout makes it work |
 |---|---|
 | **Column projection** | Columns are stored in separate chunks; the footer gives each chunk's byte range, so unprojected columns are never read. |
-| **Predicate pushdown** | Statistics at the row-group level, and the Column Index at the page level, let whole row groups and individual pages be skipped before decoding. |
+| **[Predicate pushdown](../how-to/query-controls.md#predicate-pushdown-filter)** | Min/max statistics at the row-group level, and the Column Index at the page level, let whole row groups and individual pages be skipped before decoding. |
 | **Parallel decode** | Pages are independently compressed, so they can be decompressed and decoded concurrently across a thread pool. |
-| **Split reading** | Row groups are self-contained, so a file partitions cleanly across parallel readers at row-group boundaries. |
+| **[Split reading](../how-to/query-controls.md#split-aware-reading)** | Row groups are self-contained, so a file partitions cleanly across parallel readers at row-group boundaries. |
 | **Seek / head / tail** | The footer records each row group's row count, so the reader can jump to the row group containing an absolute row without scanning earlier ones. |
 
 ## Logical structure: the schema

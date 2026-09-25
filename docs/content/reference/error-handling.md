@@ -11,14 +11,13 @@
 -->
 # Error Handling
 
-A failed read leaves you one decision, to try again or to stop, and the exception type answers
-it. **Trying again may help for `IOException`, and will not for anything else.**
+Retrying a failed read may succeed after an `IOException`, and will not after any other exception.
 
 ## The read failed
 
 | Exception | When |
 |-----------|------|
-| `IOException` | The bytes did not arrive: a local-disk read error, an S3 transport failure (after retry exhaustion; see [Read from S3](../how-to/s3.md)), a file that cannot be opened. Checked, and declared by every method that reaches the file: `ParquetFileReader.open`/`openAll`; the reader factories `rowReader`, `columnReader` and `columnReaders` and their builders' `build()`; `RowReader.hasNext`/`next`/`close`; `ColumnReader.nextBatch`/`close`; `ColumnReaders.nextBatch`/`close` |
+| `IOException` | The bytes did not arrive: a local-disk read error, an S3 transport failure (after retry exhaustion; see [`maxRetries`](s3.md#s3source-builder-options)), a file that cannot be opened. Checked, and declared by every method that reaches the file |
 | `ParquetReadException` | They arrived and are not valid Parquet: a bad magic number, a corrupt footer, a malformed page index, a dictionary page the metadata places outside its column chunk, a page whose checksum fails, a page that will not decompress, values that do not decode. Unchecked |
 | `SchemaIncompatibleException` | A `ParquetReadException`. In a multi-file read, a file whose schema cannot be reconciled with the first file's; or one file's footer disagreeing with itself about which leaf a column chunk holds |
 | `UnsupportedOperationException` | The file is correct and Hardwood cannot read it: Parquet Modular Encryption, an encoding not implemented, a compression codec whose library is absent (the message names the dependency to add), a column chunk stored in a separate file (the legacy split-file layout), a row group whose page-index region exceeds 2 GB, or a file over 2 GB opened with the mmap-backed range cache |

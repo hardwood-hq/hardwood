@@ -11,7 +11,7 @@
 -->
 # Row-Oriented Reading
 
-The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
+The `RowReader` reads a Parquet file row by row, with typed accessor methods for each field.
 
 !!! example "Try it yourself"
     Want to run it or explore the capabilities yourself? [**Nested Data**](https://github.com/hardwood-hq/hardwood-examples/tree/main/nested-data) walks structs, lists, and maps with the Row API, and [**Hello Hardwood**](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood) covers the basics.
@@ -132,41 +132,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 ### Typed Accessor Methods
 
-All accessor methods are available in two forms:
-
-- **Name-based** (e.g., `getInt("column_name")`): convenient for ad-hoc access
-- **Index-based** (e.g., `getInt(columnIndex)`): faster for performance-critical loops
-
-The common scalar and nested types:
-
-| Method | Java Type |
-|--------|-----------|
-| `getBoolean` | `boolean` |
-| `getInt` | `int` |
-| `getLong` | `long` |
-| `getFloat` | `float` |
-| `getDouble` | `double` |
-| `getString` | `String` |
-| `getDate` | `LocalDate` |
-| `getTime` | `LocalTime` |
-| `getTimestamp` | `Instant` |
-| `getLocalTimestamp` | `LocalDateTime` |
-| `getDecimal` | `BigDecimal` |
-| `getUuid` | `UUID` |
-| `getStruct` / `getList` / `getMap` | `PqStruct` / `PqList` / `PqMap` |
-
-For the complete correspondence (physical and logical types, the `getBinary` / `getInterval` /
-`getVariant` accessors, FLOAT16, BSON, INT96, and the legacy `converted_type` columns) and the
-null- and type-mismatch contracts, see [Typed Accessors](../reference/accessors.md).
-
-#### Null and type-mismatch handling
-
-Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw
-`NullPointerException` on a null field, so check `isNull()` first; object accessors return
-`null`. Requesting the wrong type for a column fails at runtime with an unchecked exception. The
-full rules, including the split `getTimestamp` / `getLocalTimestamp` pair, are in
-[Typed Accessors](../reference/accessors.md); the reasoning behind the timestamp split is in
-[Timestamp Semantics](../concepts/timestamps.md).
+Every accessor takes either a column name (`getInt("column_name")`) or a column index (`getInt(columnIndex)`). The accessor for each Parquet type and the null- and type-mismatch contracts are listed in [Typed Accessors](../reference/accessors.md). Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` on a null field, so check `isNull()` first.
 
 #### Index-based access
 
@@ -186,26 +152,6 @@ while (rowReader.hasNext()) {
 }
 ```
 
-#### INTERVAL columns
-
-`PqInterval` is a plain record with three `long` properties: `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. `INTERVAL` is one of the legacy `converted_type` annotations handled transparently; see [Legacy converted-type annotations](../reference/accessors.md#legacy-converted-type-annotations).
-
-#### NULL columns
-
-A column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()`) holds a null value at every row. `column.logicalType()` returns `LogicalType.NullType`; `isNull(name)` is always `true` and the typed/generic accessors return `null` accordingly. No separate accessor is needed.
-
-#### Bare `BYTE_ARRAY` columns
-
-`BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them, which would replace invalid byte sequences with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
-
-#### Typed accessors on `PqList` and `PqMap.Entry`
-
-Both interfaces mirror the RowReader's typed accessor surface: `strings()` / `dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` / `intervals()` / `floats()` / `booleans()` on `PqList` (each returning `List<T>`); the matching `getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc. on `PqMap.Entry`. Use these in preference to the generic `getValue()` when iterating over a list / map of a known logical type to avoid the boxed `Object` return.
-
-`PqMap.Entry`'s typed *key* accessor surface is intentionally narrower: `getStringKey()` / `getIntKey()` / `getLongKey()` / `getBinaryKey()` cover the four high-frequency map key types. Long-tail key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) fall through to `getKey()` (decoded) and `getRawKey()` (raw).
-
-`PqList.ints()` / `longs()` / `doubles()` return the specialized `PqIntList` / `PqLongList` / `PqDoubleList` types instead. These expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()` so primitive list iteration allocates no boxed wrappers. For nested `list<list<int>>` (or `<long>` / `<double>`), iterate the outer list via `lists()` and call `ints()` / `longs()` / `doubles()` on each inner `PqList`; primitive element access stays unboxed at any nesting depth.
-
 #### Reading the physical value
 
 When you want the raw physical value rather than the decoded logical-type representation (e.g. the INT64 micros backing a `TIMESTAMP`, the INT32 days backing a `DATE`, or the unscaled INT32 / INT64 / `byte[]` backing a `DECIMAL`), call the **typed primitive accessor that matches the column's physical type**:
@@ -221,18 +167,8 @@ int daysSinceEpoch = rowReader.getInt("birth_date");
 long unscaled = rowReader.getLong("amount");
 ```
 
-`getInt` / `getLong` / `getFloat` / `getDouble` / `getBoolean` / `getBinary` accept any column whose physical type matches, regardless of the logical-type annotation, and read the underlying value directly. Use this whenever you already know the column's physical encoding and want to skip logical-type decoding.
+The columns each physical accessor reads are listed under [Physical accessors](../reference/accessors.md#physical-accessors).
 
 #### Decoded generic access
 
-When the column type isn't known ahead of time (e.g. generic projection-driven readers, dump tools, schema-introspecting frameworks), the generic fallback accessors return values decoded to their logical-type representation:
-
-- `RowReader.getValue(name)` / `getValue(index)`: `Integer` / `Long` / `String` / `LocalDate` / `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
-- `PqStruct.getValue(name)`: same decoded mapping for nested struct fields.
-- `PqMap.Entry.getKey()` / `getValue()`: same decoded mapping for map keys and values.
-- `PqList.get(index)` / `PqList.values()`: same decoded mapping for list elements.
-
-A parallel `getRawValue` family (`RowReader.getRawValue`, `PqStruct.getRawValue`, `PqMap.Entry.getRawKey` / `getRawValue`, `PqList.getRaw` / `rawValues`) returns the boxed physical value when even the physical type isn't known statically. In hot loops, prefer the typed primitive accessor described above, which avoids the boxing and the dispatch overhead.
-
-Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
-
+When the column type is not known ahead of time, `getValue` returns the value decoded to its logical-type representation and `getRawValue` the boxed physical value; see [Generic accessors](../reference/accessors.md#generic-accessors). In hot loops, prefer the typed accessors.

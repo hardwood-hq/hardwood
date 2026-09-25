@@ -11,9 +11,8 @@
 -->
 # Typed Accessors
 
-`RowReader` — and the nested `PqStruct` / `PqList` / `PqMap` flyweights — decode each column to its
-logical-type Java representation through typed accessor methods, listed below with the
-Parquet and Java type of each and the null- and type-mismatch contracts every accessor obeys. For the task-oriented walkthrough, see
+`RowReader` and the nested `PqStruct` / `PqList` / `PqMap` flyweights decode each column to its
+logical-type Java representation through typed accessor methods. For the task-oriented walkthrough, see
 [Read Row by Row](../how-to/row-reader.md).
 
 !!! example "Try it yourself"
@@ -46,7 +45,9 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getVariant` | group of two `BYTE_ARRAY` | `VARIANT` | `PqVariant` |
 | `isNull` | any | any | `boolean` |
 
-All methods are available as both `method(name)` and `method(index)`.
+`PqInterval` is a record with three `long` components, `months()`, `days()` and `milliseconds()`,
+each an unsigned 32-bit value in the range `[0, 4_294_967_295]`. The components are independent and
+not normalized.
 
 ## Physical accessors
 
@@ -64,6 +65,44 @@ store a value outside the range its annotation states: `getValue` keeps the low 
 such a value, so a stored `1000` reads as the `Byte` `-24`, while `getInt` returns it as stored.
 On an unsigned `INT(8)` or `INT(16)` column `getValue` returns the stored `Integer`. Filter
 predicates compare the value `getInt` returns.
+
+## Generic accessors
+
+When the column type is not known ahead of time, the generic accessors return values decoded to
+their logical-type representation:
+
+- `RowReader.getValue(name)` / `getValue(index)`: `Integer` / `Long` / `String` / `LocalDate` /
+  `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` /
+  `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
+- `PqStruct.getValue(name)`: same decoded mapping for nested struct fields.
+- `PqMap.Entry.getKey()` / `getValue()`: same decoded mapping for map keys and values.
+- `PqList.get(index)` / `PqList.values()`: same decoded mapping for list elements.
+
+The generic accessors, `PqList.iterator` included, return an un-annotated `BYTE_ARRAY` as
+`byte[]`, since it may hold arbitrary binary payloads (Protobuf, WKB, custom encodings); call
+`getString` when the column is known to hold UTF-8 text from an older writer that omitted the
+`STRING` annotation.
+
+A parallel `getRawValue` family (`RowReader.getRawValue`, `PqStruct.getRawValue`,
+`PqMap.Entry.getRawKey` / `getRawValue`, `PqList.getRaw` / `rawValues`) returns the boxed physical
+value. Nested groups (struct / list / map / variant) have no distinct raw form and are returned
+through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
+
+## Typed accessors on PqList and PqMap.Entry
+
+`PqList` has `strings()` / `dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` /
+`intervals()` / `floats()` / `booleans()`, each returning `List<T>`, and `PqMap.Entry` the matching
+`getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc., which avoid the boxed `Object`
+return of `getValue()`.
+
+`PqMap.Entry`'s typed key accessors are `getStringKey()` / `getIntKey()` / `getLongKey()` /
+`getBinaryKey()`. Other key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) are read through
+`getKey()` (decoded) and `getRawKey()` (raw).
+
+`PqList.ints()` / `longs()` / `doubles()` return `PqIntList` / `PqLongList` / `PqDoubleList`, which
+expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()`
+without boxing. For nested `list<list<int>>` (or `<long>` / `<double>`), iterate the outer list via
+`lists()` and call `ints()` / `longs()` / `doubles()` on each inner `PqList`.
 
 ## Text columns
 
@@ -93,6 +132,10 @@ Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`)
 (`getString`, `getDate`, `getTimestamp`, `getLocalTimestamp`, `getDecimal`, `getUuid`,
 `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
+A column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()`) holds a null value at
+every row: `column.logicalType()` returns `LogicalType.NullType`, `isNull(name)` is always `true`,
+and the object accessors return `null`.
+
 ## Type mismatches
 
 Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING`
@@ -108,8 +151,8 @@ A column whose annotation its physical type cannot carry is not an error. `FLOAT
 a two-byte payload, so a `FLOAT16` column that declares three bytes is invalid. So are a
 `TIME(MILLIS)` or an `INT(8)` on an `INT64`, and a `DECIMAL(12, 2)` on an `INT32`, which holds at
 most nine digits. The format tells readers to ignore such an annotation rather than reject the
-file, so Hardwood drops it — and drops one it does not recognize at all — logging a warning in each
-case. The column is then reported and read as its physical type.
+file, so Hardwood drops it, and drops one it does not recognize at all. The column is then
+reported and read as its physical type.
 
 `getFileSchema()` reports no logical type for it, `getValue` returns the physical value, and the
 physical accessors work. A logical accessor fails as it would on any unannotated column of that
@@ -137,15 +180,7 @@ your application.
 type) and decodes the 2-byte IEEE 754 half-precision payload to a single-precision `float`. The
 widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the
 original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use
-`Float.isNaN(value)` for NaN checks rather than equality. As with all primitive accessors,
-`isNull()` must be checked before `getFloat()` since FLOAT16 columns can be optional.
-
-## ENUM columns
-
-`getString` accepts ENUM columns (`BYTE_ARRAY` annotated with the `ENUM` logical type) and decodes
-the UTF-8 payload to the symbol name, exactly as for a STRING column. The generic `getValue`
-accessor and the `PqList` / `PqStruct` / `PqMap` flyweights return the same `String`, at the top
-level and in every nested position. `getBinary` still yields the undecoded bytes.
+`Float.isNaN(value)` for NaN checks rather than equality.
 
 ## Timestamps over FIXED_LEN_BYTE_ARRAY(12)
 
@@ -163,8 +198,8 @@ side of the epoch, throws `DateTimeException` naming the stored bytes; `getBinar
 ## Legacy INT96 timestamps
 
 Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated
-INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96
-automatically and decodes it to an `Instant`; no caller-side handling is required. The generic
+INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` decodes INT96
+to an `Instant`. The generic
 `getValue` accessor and the `PqList` / `PqStruct` / `PqMap` flyweights return the same `Instant`, at
 the top level and in every nested position.
 

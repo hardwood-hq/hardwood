@@ -52,13 +52,13 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 }
 ```
 
-The writer creates the `StructBuilder`, hands it to the filler, and stages the record when the filler returns — there is no separate build or submit step. `RowWriter` is not closeable: the `ParquetFileWriter` owns the file, and closing it writes the records still staged along with the footer.
+The writer creates the `StructBuilder`, hands it to the filler, and stages the record when the filler returns — there is no separate build or submit step. `RowWriter` is not closeable: the `ParquetFileWriter` owns the file, and closing it writes the staged records along with the footer. A file is written through one API: calling both `rowWriter()` and [`columnWriter()`](write-column-by-column.md) on the same `ParquetFileWriter` is rejected.
 
-The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination. After a failure, see [Handle Write Failures](write-failures.md).
+The footer is written last, so **the file is valid only once `close()` returns**. After a failure, see [Handle Write Failures](write-failures.md).
 
 ## Typed Setters
 
-Each setter names the type of the field it writes, and a field's declared type decides which setter fits. `setBoolean`, `setInt`, `setLong`, `setFloat`, `setDouble` and `setBinary` write physical values; `setString`, `setDate`, `setTime`, `setTimestamp`, `setLocalTimestamp`, `setDecimal`, `setUuid` and `setInterval` write logical-type values, which the writer converts to the column's physical representation.
+Each setter names the type of the field it writes, and a field's declared type decides which setter fits. Logical-type setters such as `setDate` and `setDecimal` convert the value to the column's physical representation. The full setter map is under [Logical Types and Row Setters](../reference/writer.md#logical-types-and-row-setters).
 
 Given a schema that also declares a `DECIMAL` `salary`, a `TIMESTAMP` `created_at` and a `UUID` `external_id`:
 
@@ -71,7 +71,7 @@ rows.writeRow(row -> row
         .setUuid("external_id", UUID.randomUUID()));
 ```
 
-A setter that does not fit the field's declared type is rejected, as is a value outside the range the field's annotation declares — an `INT(8)` column takes `[-128, 128)`, a `DECIMAL(9, 2)` column an unscaled value of at most nine digits. See [Writer Reference](../reference/writer.md) for the full setter map and the ranges.
+A setter that does not fit the field's declared type is rejected, as is a value outside the range the field's annotation declares; see [Value Ranges](../reference/writer.md#value-ranges).
 
 A value carrying more precision than its column can hold — an `Instant` with microseconds written to a `TIMESTAMP(MILLIS)` column — is rejected by default. Configure `precisionLossPolicy(PrecisionLossPolicy.TRUNCATE)` to drop the digits that do not fit instead.
 
@@ -91,7 +91,7 @@ rows.writeRow(row -> row
         .setString("name", "Katherine"));
 ```
 
-A `REQUIRED` field left unset fails the record. A record that fails, because a value is rejected or the filler throws, fails the writer: `writeRow` accepts no more records, and `close()` discards the output rather than publishing the records written before it. See [Handle Write Failures](write-failures.md).
+A `REQUIRED` field left unset fails the record, and a failed record fails the writer; see [Handle Write Failures](write-failures.md).
 
 ## Structs, Lists, and Maps
 
@@ -145,7 +145,7 @@ rows.writeRow(row -> row
                 .addList(inner -> inner.addInt(3))));
 ```
 
-Two shapes the columnar API writes are out of reach here: the legacy two-level lists, `LIST { repeated element }` and `LIST { repeated group element { … } }`. The builders reach a list's values through an element node below the entry, and in both of those the entry is the element. `rowWriter()` rejects them, naming the group; [Column by Column](write-column-by-column.md) writes them.
+`rowWriter()` rejects the legacy two-level lists, naming the group; [Column by Column](write-column-by-column.md) writes them. See [Schema Shapes](../reference/writer.md#schema-shapes).
 
 A builder is valid only inside the filler it was handed to. Retaining one and using it after its scope has ended is rejected rather than writing into a later record.
 
@@ -166,23 +166,20 @@ rows.writeRow(row -> {
 });
 ```
 
-Every rule of the by-name form holds unchanged — same type check, same range check, same rejection of a field set twice, same scope lifetime. Only the way the field is named differs, so an index outside `[0, getFieldCount())` takes the place of an unknown name.
+Every rule of the by-name form applies unchanged, and an index outside `[0, getFieldCount())` takes the place of an unknown name.
 
 !!! warning "The reader's index and the writer's index are not always the same position"
-    On the reader, a field index is a position among an accessor's **projected** children. On the writer, it is a position in the struct as **declared** in the schema being written. The two agree when a whole file is read into its own schema — copying a record field by field then works — and diverge as soon as a projection drops or reorders fields. Resolve the name with `getFieldName(int)` on both sides when the two schemas are not identical. See [The Write Model](../concepts/write-model.md#index-addressing-on-the-two-sides).
+    On the reader, a field index is a position among an accessor's **projected** children. On the writer, it is a position in the struct as **declared** in the schema being written. The two agree when a whole file is read into its own schema — copying a record field by field then works — and diverge as soon as a projection drops or reorders fields. Resolve the name with `getFieldName(int)` on both sides when the two schemas are not identical.
 
 ## Configuring the Writer
 
-`WriterConfig` carries the page and row-group targets, the compression codec, the encoding policy and the precision-loss policy. Pass one to `create`:
+Pass a `WriterConfig` to `create`:
 
 ```java
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.writer.PrecisionLossPolicy;
 import dev.hardwood.writer.WriterConfig;
 
 WriterConfig config = WriterConfig.builder()
-        .codec(CompressionCodec.ZSTD)
-        .rowGroupBufferTargetBytes(64L << 20)
         .precisionLossPolicy(PrecisionLossPolicy.TRUNCATE)
         .build();
 
@@ -191,12 +188,4 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
 }
 ```
 
-Every option, its default and what it rejects: [Writer Reference](../reference/writer.md).
-
-## Stamping Metadata on the File
-
-The footer's key-value metadata and its `created_by` identifier are set on the `ParquetFileWriter`, at any point until `close()`. See [File Metadata](../reference/writer.md#file-metadata).
-
-## One API per File
-
-`RowWriter` stages records into batches and submits them through the columnar core, so the file it produces is laid out exactly like one written through [`ColumnWriter`](write-column-by-column.md) — same paging, same row-group cadence, same encoding decisions and statistics. A file is written through one API or the other, though: calling both on the same `ParquetFileWriter` is rejected.
+Every option, its default and what it rejects is under [Writer Options](../reference/writer.md#writer-options). The footer's key-value metadata and `created_by` identifier are set on the `ParquetFileWriter` until `close()`; see [File Metadata](../reference/writer.md#file-metadata).

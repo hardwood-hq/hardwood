@@ -11,17 +11,7 @@
 -->
 # CLI
 
-The `hardwood` CLI inspects and converts Parquet files from the command line. Its commands run non-interactively, for use in scripts and by [AI coding agents](#use-with-ai-coding-agents), and [`hardwood dive`](#interactive-exploration-dive) opens an interactive terminal UI for exploring a file by hand. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
-
-Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). You can also
-run the CLI via Docker without installing it locally; see the [Docker section below](#docker).
-
-!!! note "macOS"
-    The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:
-
-    ```shell
-    xattr -r -d com.apple.quarantine hardwood-cli-*/
-    ```
+The `hardwood` CLI inspects and converts Parquet files from the command line. Its commands run non-interactively, for use in scripts and by [AI coding agents](../getting-started.md#use-with-ai-coding-agents), and [`hardwood dive`](#interactive-exploration-dive) opens an interactive terminal UI for exploring a file by hand. It reads local files and S3 URIs. [Getting Started](../getting-started.md#command-line-tool) covers installation.
 
 ## Available Commands
 
@@ -29,8 +19,8 @@ run the CLI via Docker without installing it locally; see the [Docker section be
 |---------|-------------|
 | `hardwood info` | Display high-level file information, including key-value metadata |
 | `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
-| `hardwood print` | Print rows as an ASCII table (head, tail, or all); nested and Variant columns decode into a one-line display grammar |
-| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); JSON output writes numbers and booleans as JSON scalars and a null as `null`; nested and Variant columns are emitted as JSON text in a single CSV cell and as native JSON in JSON |
+| `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
+| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all) |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
@@ -52,17 +42,11 @@ hardwood schema -f data.parquet
 # Print the schema as Avro or Protobuf
 hardwood schema -F AVRO -f data.parquet
 
-# Print the full value of one key-value metadata entry
-hardwood info -f data.parquet --kv-key ARROW:schema
-
 # Show first 20 rows
 hardwood print -n 20 -f data.parquet
 
 # Show last 5 rows
 hardwood print -n -5 -f data.parquet
-
-# Show all rows
-hardwood print -f data.parquet
 
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
@@ -84,9 +68,6 @@ hardwood inspect dictionary -f data.parquet -c category --limit 0
 
 # Convert first 100 rows to JSON
 hardwood convert -n 100 --format json -f data.parquet
-
-# Convert last 50 rows to CSV
-hardwood convert -n -50 --format csv -f data.parquet
 
 # Convert to CSV, writing \N for null values
 hardwood convert --format csv --null-string '\N' -f data.parquet
@@ -144,12 +125,11 @@ Every command spells a value of a given logical type the same way:
 
 `print` and `dive` render nested and Variant values in one unquoted display
 grammar: structs and maps as `{ a : 1 }`, lists as `[1, 2]`, Variant objects
-and arrays in the same shape. `convert` writes nested and Variant values as
-JSON: native in JSON output, JSON text in a CSV cell.
+and arrays in the same shape. `convert` follows [Convert output](#convert-output).
 
 In `print`, `dive`, `inspect` and `info`, a control character in a string
-value renders as `·`, and a value made entirely of control characters as
-`0x`-prefixed hex of its UTF-8 bytes. `convert` writes string values verbatim.
+value or a key-value metadata key renders as `·`, and a value or key made
+entirely of control characters as `0x`-prefixed hex of its UTF-8 bytes.
 
 A min/max statistic or dictionary entry that does not decode as its type
 renders in its stored form: bytes whose length does not match the type as
@@ -162,12 +142,9 @@ renders in its stored form: bytes whose length does not match the type as
 `-F AVRO` and `-F PROTO` render it as an Avro schema or a Protobuf message
 definition instead.
 
-Avro names and Protobuf identifiers are both restricted to
-`[A-Za-z_][A-Za-z0-9_]*`, while Parquet permits any name. Names outside that
-grammar are rewritten in both formats: each character outside `[A-Za-z0-9_]`
-becomes `_`, a leading `_` is prepended to a name starting with a digit, and
-names that collide within one record or message after rewriting get a `_2`,
-`_3`, … suffix.
+Names outside `[A-Za-z_][A-Za-z0-9_]*` are rewritten in both formats by the
+rules in [Avro names](../how-to/avro.md#avro-names), including the `_2`, `_3`, …
+suffix for names that collide within one record or message.
 
 A rewritten name keeps its Parquet name in the output, as a `doc` attribute
 in Avro:
@@ -215,12 +192,7 @@ synthesized wrapper messages.
 
 `hardwood info` prints a file's key-value metadata below the size summary, one
 line per entry: the key, its value's byte length, and the value itself. Values
-wider than 60 columns are truncated with a trailing `…`, since these routinely
-carry kilobytes of embedded JSON (e.g.
-`org.apache.spark.sql.parquet.row.metadata`) or a base64-encoded Arrow IPC
-schema (`ARROW:schema`). Control characters in a key or a value print as `·`,
-and a key or value made entirely of control characters prints as `0x`-prefixed
-hex of its UTF-8 bytes:
+wider than 60 columns are truncated with a trailing `…`:
 
 ```
 Key/Value Metadata (3):
@@ -228,11 +200,6 @@ Key/Value Metadata (3):
   org.apache.spark.sql.parquet.row.metadata  1.8 KiB  {"type":"struct","fields":[{"name":"order_i…
   writer.build                                     —
 ```
-
-An entry may carry a key with no value at all, which is distinct from a key
-whose value is empty. The size column tells the two apart: `—` for a value that
-is absent, `0 B` for one that is present and empty. See
-[Absent values](#absent-values).
 
 Pass `--kv-key <name>` to print one entry's value in full, untruncated and with
 no substitutions, and no other output, so it is safe to pipe into another tool:
@@ -255,14 +222,10 @@ as `—`. A column's `# Pages` without a page index, a page's `Min` and `Max`
 without statistics, a `Compression` with no uncompressed size to divide by, a
 key/value entry with no value: all read the same way, on both surfaces.
 
-Absent is not the same as empty. `0 B`, `0`, and `""` are values the writer
-recorded; `—` says it recorded none.
-
-Absent is not the same as inapplicable either. `—` marks a quantity that could
-have been written and was not; rewriting the file with statistics or a page
-index fills it in. A quantity that cannot exist for the
-row at hand reads `N/A` instead: an index page has no data encoding, whatever the
-writer does. Only `—` says something is missing.
+`0 B`, `0`, and `""` are values the writer recorded; `—` says it recorded none.
+A `—` quantity could have been written and was not; rewriting the file with
+statistics or a page index fills it in. A quantity that cannot exist for the
+row at hand reads `N/A` instead: an index page has no data encoding.
 
 A script reading these tables should match `—` (U+2014 EM DASH) to detect an
 absent cell:
@@ -315,50 +278,6 @@ hardwood dive -f data.parquet
 
 <script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
 
-### What you can do with it
-
-`dive` composes the slices that the batch subcommands (`info`, `schema`,
-`footer`, `inspect`, `print`) each surface separately into a single
-navigable session. Typical things to reach for it for:
-
-- **Find a column quickly** in a wide schema — Schema screen, `/` to
-  filter the tree to leaves matching a substring.
-- **Spot the heavy column chunks** in a row group — Row groups → Column
-  chunks ranks by compressed size with the codec and dictionary flag
-  alongside. Schema → a leaf column → the row-group table does the same
-  across row groups for one column, and adds its unencoded size.
-- **Check page-level statistics and indexes** — drill from a chunk into
-  Pages, Column index, or Offset index; `Enter` on a page opens the
-  full thrift header, including inline statistics when no Column Index
-  is present.
-- **See where a column's size and nulls come from** — Column chunk
-  detail groups its facts into Identity, Storage, Content and Layout.
-  Storage carries the unencoded size, what it expands to from disk, and
-  the encoding the data pages use with its dictionary's cardinality;
-  Content the record and present-value counts. `l` adds the repetition
-  and definition level histograms with each level named after the schema
-  node it belongs to, so an absent field reads differently from an empty
-  list. When the pane has focus, `↑↓`, `PgDn`/`PgUp` and `g`/`G` move a
-  cursor through its facts, passing over the group headings; its title
-  shows a line range whenever anything is below the fold.
-- **Inspect dictionary entries** for a column — Dictionary screen with
-  `/` substring filter; `Enter` reveals the full untruncated value of
-  the highlighted entry.
-- **Preview a few rows** without exporting — Data preview paginates with
-  `PgDn`/`PgUp` (`g`/`G` for first/last); `Enter` opens a per-row modal.
-  In the modal the cursor stops on every line and moves with `↑`/`↓`,
-  `PgDn`/`PgUp` and `g`/`G`; `Enter` expands the field under the cursor
-  inline when its full value isn't already on screen.
-- **Decode key/value metadata** — Spark JSON schemas pretty-print, Arrow
-  IPC schemas decode to a hex dump.
-- **Compare a column across row groups** — from Schema, `Enter` on a
-  leaf jumps to a one-row-per-RG view of that column's sizes,
-  encodings, and stats.
-- **Read raw file layout** — Footer & indexes shows file size, footer
-  offset, encoding/codec histograms, page-index coverage, and aggregate
-  byte breakdowns; from there you can drill into a file-wide list of
-  every chunk's column index, offset index, or dictionary region.
-
 ### Keys
 
 | Key | Action |
@@ -380,21 +299,61 @@ navigable session. Typical things to reach for it for:
 The keybar at the bottom of every screen lists the keys that
 apply in the current context; the menus above list every key.
 
-Available screens:
+### Screens
 
-- **Overview**
-- **Schema** — expandable tree of groups and leaves
+**Overview** drills into **Row groups** → **Row group detail** → **Column chunks** →
+**Column chunk detail**, whose drill menu opens **Pages**, **Column index**, **Offset index**
+and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open from Overview too.
+
+- **Overview** — file summary and key/value metadata, with Spark JSON schemas pretty-printed and
+  Arrow IPC schemas decoded to a hex dump
+- **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`
 - **Row groups**
 - **Row group detail**
-- **Column chunks**
-- **Column chunk detail** — facts pane plus drill menu
-- **Pages** — with a page-header modal on Enter
+- **Column chunks** — the chunks of one row group, ranked by compressed size, with codec and
+  dictionary flag
+- **Column chunk detail** — facts pane grouped into Identity, Storage, Content and Layout, whose
+  cursor passes over the group headings, plus drill menu; `l` adds the repetition and definition level histograms, each level named after
+  the schema node it belongs to
+- **Pages** — `Enter` opens the full page header, including inline statistics when the chunk
+  has no column index
 - **Column index**
 - **Offset index**
-- **Footer & indexes** — also drills into a file-wide list of every chunk's column index, offset index, or dictionary region
-- **Column-across-row-groups** — from the Schema screen
-- **Dictionary** — full-value modal on Enter and `/` inline search
-- **Data preview** — row values via `RowReader`; `←/→` scrolls the visible column window, `PgDn/PgUp` flips pages
+- **Footer & indexes** — file size, footer offset, encoding and codec histograms, page-index
+  coverage and aggregate byte breakdowns; drills into a file-wide list of every chunk's column
+  index, offset index, or dictionary region
+- **Column-across-row-groups** — `Enter` on a Schema leaf: one row per row group with that
+  column's sizes (including unencoded size), encodings and stats; drills into the chunk detail
+- **Dictionary** — `Enter` shows the full value of an entry; `/` inline search
+- **Data preview** — row values via `RowReader`; `←/→` scrolls the visible column window,
+  `PgDn/PgUp` flips pages; `Enter` opens a per-row modal, where the cursor stops on every line and
+  `Enter` expands the field under it when its full value is not on screen
+
+Screenshots (click any shot to open it full size):
+
+<figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
+
+<figure markdown="span">[![Schema screen](../assets/cli/02-schema-tree.svg){ width="720" }](../assets/cli/02-schema-tree.svg)<figcaption>Schema</figcaption></figure>
+
+<figure markdown="span">[![Row groups screen](../assets/cli/03-1-rg.svg){ width="720" }](../assets/cli/03-1-rg.svg)<figcaption>Row groups</figcaption></figure>
+
+<figure markdown="span">[![Row group detail screen](../assets/cli/03-2-rg-detail.svg){ width="720" }](../assets/cli/03-2-rg-detail.svg)<figcaption>Row group detail</figcaption></figure>
+
+<figure markdown="span">[![Column chunks screen](../assets/cli/03-3-rg-column-chunks.svg){ width="720" }](../assets/cli/03-3-rg-column-chunks.svg)<figcaption>Column chunks</figcaption></figure>
+
+<figure markdown="span">[![Column chunk detail screen](../assets/cli/03-4-rg-column-chunk-detail.svg){ width="720" }](../assets/cli/03-4-rg-column-chunk-detail.svg)<figcaption>Column chunk detail</figcaption></figure>
+
+<figure markdown="span">[![Column chunk level histograms](../assets/cli/03-5-rg-column-chunk-levels.svg){ width="720" }](../assets/cli/03-5-rg-column-chunk-levels.svg)<figcaption>Column chunk detail with <code>l</code></figcaption></figure>
+
+<figure markdown="span">[![Pages screen with page-header modal](../assets/cli/04-pages-header-modal.svg){ width="720" }](../assets/cli/04-pages-header-modal.svg)<figcaption>Pages with the page-header modal</figcaption></figure>
+
+<figure markdown="span">[![Dictionary screen with inline search](../assets/cli/05-dict-search.svg){ width="720" }](../assets/cli/05-dict-search.svg)<figcaption>Dictionary with <code>/</code> inline search</figcaption></figure>
+
+<figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview scrolled right</figcaption></figure>
+
+Every screen shares a four-region layout: a top bar with file identity, a
+breadcrumb showing the navigation stack, the active screen body, and a keybar
+(all four visible in the Overview screenshot above).
 
 ### When a file will not read
 
@@ -420,49 +379,6 @@ group and the column the screen was reading:
 ╰──────────────────────────────────────────────────────────╯
 ```
 
-A tour through the main screens (click any shot to open it full size):
-
-<figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
-
-<figure markdown="span">[![Schema screen](../assets/cli/02-schema-tree.svg){ width="720" }](../assets/cli/02-schema-tree.svg)<figcaption>Schema — expandable tree of groups and leaves</figcaption></figure>
-
-<figure markdown="span">[![Row groups screen](../assets/cli/03-1-rg.svg){ width="720" }](../assets/cli/03-1-rg.svg)<figcaption>Row groups</figcaption></figure>
-
-<figure markdown="span">[![Row group detail screen](../assets/cli/03-2-rg-detail.svg){ width="720" }](../assets/cli/03-2-rg-detail.svg)<figcaption>Row group detail</figcaption></figure>
-
-<figure markdown="span">[![Column chunks screen](../assets/cli/03-3-rg-column-chunks.svg){ width="720" }](../assets/cli/03-3-rg-column-chunks.svg)<figcaption>Column chunks</figcaption></figure>
-
-<figure markdown="span">[![Column chunk detail screen](../assets/cli/03-4-rg-column-chunk-detail.svg){ width="720" }](../assets/cli/03-4-rg-column-chunk-detail.svg)<figcaption>Column chunk detail — facts pane plus drill menu</figcaption></figure>
-
-<figure markdown="span">[![Column chunk level histograms](../assets/cli/03-5-rg-column-chunk-levels.svg){ width="720" }](../assets/cli/03-5-rg-column-chunk-levels.svg)<figcaption>Column chunk detail with <code>l</code> — repetition and definition level histograms</figcaption></figure>
-
-<figure markdown="span">[![Pages screen with page-header modal](../assets/cli/04-pages-header-modal.svg){ width="720" }](../assets/cli/04-pages-header-modal.svg)<figcaption>Pages — page-header modal on Enter</figcaption></figure>
-
-<figure markdown="span">[![Dictionary screen with inline search](../assets/cli/05-dict-search.svg){ width="720" }](../assets/cli/05-dict-search.svg)<figcaption>Dictionary — <code>/</code> inline search</figcaption></figure>
-
-<figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview — scrolled right across the column window</figcaption></figure>
-
-Every screen shares a four-region layout: a top bar with file identity, a
-breadcrumb showing the navigation stack, the active screen body, and a keybar
-(all four visible in the Overview screenshot above).
-
-### Typical drill path
-
-1. **Overview** → pick *Row groups* from the drill menu.
-2. **Row groups** → select a row, *Enter* to open that row group's detail.
-3. **Row group detail** → *Enter* to open its column chunks.
-4. **Column chunks** → select a column, *Enter* to open the chunk detail.
-5. **Column chunk detail** (facts pane + drill menu) → pick *Pages*, *Column
-   index*, *Offset index*, or *Dictionary*.
-6. Drill sub-screens (*Pages*, *Column index*, etc.) support *Esc* back up to
-   the previous level; in *Pages* and *Dictionary*, *Enter* opens a modal with
-   the full header / value.
-
-Alternative entry: from **Overview → Schema**, navigate the tree of group and
-primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
-*Column-across-row-groups* view (one row per row group showing that column's
-sizes, encoding, stats), and from there into the chunk detail.
-
 ### Inline search
 
 The **Schema**, **Column index**, and **Dictionary** screens support inline
@@ -476,7 +392,7 @@ search. Press `/` to enter search-edit mode:
 
 In all three cases: typed characters extend the filter; *Backspace* trims;
 *Esc* clears the filter and exits edit mode; *Enter* commits (keeps the
-filter applied but exits edit mode). The table re-filters live as you type.
+filter applied but exits edit mode).
 
 ## Reading Files from S3
 
@@ -487,7 +403,7 @@ hardwood schema -f s3://my-bucket/data.parquet
 hardwood print -n 10 -f s3://my-bucket/data.parquet
 ```
 
-The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, SSO, EC2/ECS instance profiles, web identity), which decides the order in which those sources are tried. See [Read from S3](../how-to/s3.md#credentials) for the credential options available to the library.
+The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, and the other sources listed in [Read from S3](../how-to/s3.md#credentials)).
 
 The CLI additionally reads these environment variables:
 
@@ -510,78 +426,4 @@ A directory is used only if neither group nor others can write to it; a missing 
 
 To load the libraries from a directory of your own instead, set `HARDWOOD_LIB_PATH` to that directory. A codec whose library is not in it falls back to the one contained in the binary.
 
-The [Docker image](#docker) sets `HARDWOOD_LIB_PATH` to libraries stored in the image, so it writes nothing at startup and runs with `--read-only`.
-
-## Shell Completion
-
-The distribution includes completion scripts for Bash, Zsh, and Fish under `bin/`:
-
-| Shell | Script |
-|-------|--------|
-| Bash | `bin/hardwood_completion` |
-| Zsh | `bin/hardwood_completion.zsh` |
-| Fish | `bin/hardwood_completion.fish` |
-
-Source the one for your shell to enable tab completion for commands, options, and arguments:
-
-```shell
-source hardwood_completion
-```
-
-To make it permanent, add the line above to your shell's startup file (e.g. `~/.bashrc`, `~/.zshrc`).
-
-## Use with AI coding agents
-
-The repository ships an [Agent Skill](https://agentskills.io) at `skills/hardwood-cli/` that teaches an AI coding agent when and how to reach for the CLI while debugging Parquet read/write code (checking schema and physical/logical types, diagnosing why predicate pushdown or page skipping isn't happening, reading dictionary entries, and so on).
-
-For [Claude Code](https://claude.com/claude-code), it is packaged as the `hardwood` plugin, distributed from the [`hardwood-skills`](https://github.com/hardwood-hq/hardwood-skills) marketplace. Install it once by running, inside Claude Code:
-
-```text
-/plugin marketplace add hardwood-hq/hardwood-skills
-/plugin install hardwood@hardwood-skills
-```
-
-After installing, the skill loads automatically in future sessions whenever a task involves a Parquet file. It drives the `hardwood` binary, so ensure `hardwood` is on your `PATH` (from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}) or the Docker image below).
-
-For other agent harnesses, or a Claude Code setup without the plugin, copy `skills/hardwood-cli/SKILL.md` into that tool's skills directory (for Claude Code that is `~/.claude/skills/hardwood-cli/`).
-
-## Docker
-
-A minimal Fedora-based Docker image is published to the GitHub Container Registry for Linux amd64 and arm64:
-
-```shell
-docker pull ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}}
-```
-
-Run any command by passing it after the image name:
-
-```shell
-docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} --help
-docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} info -f /data/data.parquet
-```
-
-Mount a local directory to access files on the host:
-
-```shell
-docker run --rm \
-  -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
-  schema -f /data/data.parquet
-```
-
-The `dive` TUI needs an interactive terminal, so pass `-it`:
-
-```shell
-docker run --rm -it \
-  -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
-  dive -f /data/data.parquet
-```
-
-Start an interactive shell with tab completion pre-loaded:
-
-```shell
-docker run --rm -it \
-  -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}}
-```
+The [Docker image](../getting-started.md#docker) sets `HARDWOOD_LIB_PATH` to libraries stored in the image, so it writes nothing at startup and runs with `--read-only`.
