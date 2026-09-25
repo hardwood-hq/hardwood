@@ -226,6 +226,15 @@ class RowGroupDictionaryFilterSourceTest {
         });
     }
 
+    /// A column chunk may exceed 2 GB; its dictionary page cannot, so the chunk's size only
+    /// bounds the read and must not have to fit an `int` itself.
+    @Test
+    void aChunkLargerThanTwoGigabytesStillReadsItsDictionary() throws Exception {
+        withFixture(SMALL_DICTIONARY, fixture ->
+                assertThat(entryCount(fixture.sourceWithChunkSize(Integer.MAX_VALUE + 1L)
+                        .forColumn(DICTIONARY_COLUMN))).isEqualTo(10));
+    }
+
     private static int entryCount(Dictionary dictionary) {
         assertThat(dictionary).isInstanceOf(Dictionary.ByteArrayDictionary.class);
         return ((Dictionary.ByteArrayDictionary) dictionary).values().length;

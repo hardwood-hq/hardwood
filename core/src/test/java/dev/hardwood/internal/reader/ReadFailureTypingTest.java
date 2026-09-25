@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +32,19 @@ class ReadFailureTypingTest {
 
         assertThat(ColumnWorker.asReadFailure(io)).isSameAs(io);
         assertThat(ColumnWorker.asReadFailure(unchecked)).isSameAs(unchecked);
+    }
+
+    /// A truncation is a read failure like any other, but its type is internal; it leaves
+    /// the worker as the public type a caller can name.
+    @Test
+    void anInternalReadFailureLeavesAsAParquetReadException() {
+        ThriftTruncatedException truncated = new ThriftTruncatedException("Unexpected EOF while reading varint");
+
+        Exception typed = ColumnWorker.asReadFailure(truncated);
+
+        assertThat(typed).isExactlyInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading varint")
+                .hasCause(truncated);
     }
 
     /// An `Error` is not the file's fault and nothing here can act on it, so it is neither

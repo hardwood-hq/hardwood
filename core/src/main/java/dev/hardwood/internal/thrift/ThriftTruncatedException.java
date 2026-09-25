@@ -26,23 +26,14 @@ import dev.hardwood.reader.ParquetReadException;
 /// try again, and give up only once the peek has grown past what the chunk can
 /// hold.
 ///
-/// Anywhere else it is left to propagate, and reads as the truncation it is.
+/// Anywhere else it is left to propagate, and reads as the truncation it is. It reaches
+/// callers as a plain [ParquetReadException]: the boundaries that name the file restate it
+/// ([dev.hardwood.internal.ExceptionContext#asReadFailure]), since this type is internal.
 public class ThriftTruncatedException extends ParquetReadException {
 
     private static final long serialVersionUID = 1L;
 
     public ThriftTruncatedException(String message) {
         super(message);
-    }
-
-    /// The same, keeping `cause`.
-    ///
-    /// Needed by [dev.hardwood.internal.ExceptionContext#addReadContext], which restates a
-    /// failure with the file and chunk in front of its message and reconstructs it through
-    /// this constructor. Without one the type it hands back is a plain [RuntimeException],
-    /// and a caller that catches [ParquetReadException] to report a broken file cleanly
-    /// stops seeing it.
-    public ThriftTruncatedException(String message, Throwable cause) {
-        super(message, cause);
     }
 }
