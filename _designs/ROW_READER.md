@@ -108,7 +108,7 @@ Tests: `PqRowApiTest`, `NoColumnsFileReadTest`, `IteratorTrackingTest`, `MultiFi
 
 ### head
 
-`head(n)` is `maxRows`, passed to the `RowGroupIterator` and to every column worker. The iterator stops planning row groups once their rows cover the budget, and truncates each column's pages to the rows each row group must supply; each worker stops assembling at `n` rows and publishes its partial batch. The planning and fetch mechanics are in [READ_PIPELINE.md](READ_PIPELINE.md) and [FETCH_PLANNING.md](FETCH_PLANNING.md).
+`head(n)` is `maxRows`, passed to the `RowGroupIterator` and to every column worker. The iterator stops planning row groups once their rows cover the budget, and truncates the pages of each flat column, and of each column with an OffsetIndex, to the rows each row group must supply; each worker stops assembling at `n` rows and publishes its partial batch. The planning and fetch mechanics are in [READ_PIPELINE.md](READ_PIPELINE.md) and [FETCH_PLANNING.md](FETCH_PLANNING.md).
 
 ### skip
 
