@@ -108,7 +108,7 @@ public final class Theme {
         return Style.EMPTY.bold().fg(truecolor() ? SOLARIZED_YELLOW : Color.YELLOW);
     }
 
-    /// Whether the accent tones render as truecolor RGB: either the
+    /// Whether the coloured tones render as truecolor RGB: either the
     /// terminal advertises truecolor via `$COLORTERM`, or
     /// [#FORCE_TRUECOLOR_PROPERTY] is set.
     private static boolean truecolor() {
@@ -124,7 +124,7 @@ public final class Theme {
     /// Solarized red (`#dc322f`) on truecolor terminals, named
     /// `Color.RED` otherwise.
     public static Style error() {
-        return Style.EMPTY.fg(supportsTruecolor(System.getenv("COLORTERM")) ? SOLARIZED_RED : Color.RED);
+        return Style.EMPTY.fg(truecolor() ? SOLARIZED_RED : Color.RED);
     }
 
     /// Whether the given `$COLORTERM` value advertises 24-bit

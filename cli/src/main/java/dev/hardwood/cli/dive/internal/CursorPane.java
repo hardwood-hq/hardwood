@@ -17,7 +17,7 @@ import dev.tamboui.tui.event.KeyEvent;
 /// The cursor stops on every row, including rows `Enter` cannot act on. A
 /// row that is not actionable is still worth reading, and skipping it puts
 /// content out of reach of the only keys that reach content — which is what
-/// the marker is for: see [Rows#marker(boolean)].
+/// the marker is for: see [#marker(boolean,boolean,boolean)].
 ///
 /// Screens hold the selection in their [dev.hardwood.cli.dive.ScreenState]
 /// and pass it back on every keypress; nothing is retained between calls.

@@ -89,6 +89,7 @@ class ThemeTest {
         try {
             assertThat(Theme.accent().fg().orElseThrow()).isEqualTo(Color.rgb(38, 139, 210));
             assertThat(Theme.selection().fg().orElseThrow()).isEqualTo(Color.rgb(181, 137, 0));
+            assertThat(Theme.error().fg().orElseThrow()).isEqualTo(Color.rgb(220, 50, 47));
         }
         finally {
             System.clearProperty(Theme.FORCE_TRUECOLOR_PROPERTY);

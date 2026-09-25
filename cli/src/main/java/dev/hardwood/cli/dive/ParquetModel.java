@@ -13,9 +13,11 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Encodings;
@@ -77,8 +79,8 @@ public final class ParquetModel implements AutoCloseable {
     /// Bounded LRU: page headers are decoded once per chunk-visit and a wide
     /// table can have hundreds of chunks. Capping prevents the cache from
     /// growing unboundedly across a long dive session.
-    private final java.util.LinkedHashMap<ChunkKey, List<PageHeader>> pageHeaderCache =
-            new java.util.LinkedHashMap<>(PAGE_HEADER_CACHE_CAPACITY, 0.75f, true) {
+    private final LinkedHashMap<ChunkKey, List<PageHeader>> pageHeaderCache =
+            new LinkedHashMap<>(PAGE_HEADER_CACHE_CAPACITY, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<ChunkKey, List<PageHeader>> eldest) {
                     return size() > PAGE_HEADER_CACHE_CAPACITY;
@@ -90,8 +92,8 @@ public final class ParquetModel implements AutoCloseable {
     // issuing their own readRange (one HTTP round-trip per RG on S3 instead of
     // one per chunk). See `_designs-legacy/COALESCED_OFFSET_INDEX_READS.md`.
     private final Map<Integer, RowGroupIndexBuffers> indexBuffersCache = new HashMap<>();
-    private final java.util.LinkedHashMap<ChunkKey, Dictionary> dictionaryCache =
-            new java.util.LinkedHashMap<>(DICTIONARY_CACHE_CAPACITY, 0.75f, true) {
+    private final LinkedHashMap<ChunkKey, Dictionary> dictionaryCache =
+            new LinkedHashMap<>(DICTIONARY_CACHE_CAPACITY, 0.75f, true) {
                 @Override
                 protected boolean removeEldestEntry(Map.Entry<ChunkKey, Dictionary> eldest) {
                     return size() > DICTIONARY_CACHE_CAPACITY;
@@ -413,7 +415,7 @@ public final class ParquetModel implements AutoCloseable {
     /// before the next call (the dive viewport window absorbs all
     /// within-buffer navigation, so cursor reuse across calls would buy
     /// nothing).
-    public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
+    public void readPreviewPage(long firstRow, int pageSize, Consumer<RowReader> consumer)
             throws IOException {
         try (RowReader cursor = reader.buildRowReader()
                 .skip(firstRow)

@@ -39,9 +39,9 @@ import dev.tamboui.widgets.table.TableState;
 
 /// Projected-row preview. `firstRow` / `pageSize` define which rows are currently
 /// loaded; `←/→` scrolls the visible column window for wide schemas; `PgDn`/`PgUp`
-/// (or `Shift+↓/↑`) flip pages. [ParquetModel#readPreviewPage] maintains a
-/// forward-only cursor across calls, so stepping forward never re-iterates from
-/// row 0 — only backward moves (`PgUp`, `g` jump-to-top) recreate the reader.
+/// (or `Shift+↓/↑`) flip pages. Pages are served from a [PreviewWindow] of
+/// pre-formatted rows around the viewport; a page outside it refills the
+/// window with one [ParquetModel#readPreviewPage] call.
 public final class DataPreviewScreen {
 
     private static final int COLUMN_SPACING = 1;
@@ -71,7 +71,7 @@ public final class DataPreviewScreen {
         return loadPage(model, 0, pageSize, 0, true);
     }
 
-    public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
+    public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
         long total = model.facts().totalRows();
         if (state.modalRow() >= 0) {
@@ -483,7 +483,7 @@ public final class DataPreviewScreen {
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
-                                       dev.hardwood.cli.dive.NavigationStack stack,
+                                       NavigationStack stack,
                                        ParquetModel model) {
         // The cursor walks every line, so a long expanded value is crossed
         // with PgDn rather than a field at a time. Enter toggles the field
