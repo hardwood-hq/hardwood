@@ -16,6 +16,7 @@ from datetime import datetime, date, time, timezone, timedelta
 from decimal import Decimal
 import uuid
 
+import os
 import shutil
 from pathlib import Path
 
@@ -574,6 +575,53 @@ collapse_list_of_structs_to_unannotated_repeated_group(
 
 print("\nGenerated unannotated_repeated_group_annotated_list_test.parquet + unannotated_repeated_group_test.parquet:")
 print("  - Data: foo=[{a:1,b:x},{a:2,b:y}]; annotated three-level LIST and the collapsed unannotated REPEATED group form")
+
+# ---------------------------------------------------------------------------
+# Unannotated repeated GROUP holding an empty list (hardwood-hq/hardwood#1307).
+#
+# A bare repeated group's list is empty at the group's max definition level
+# minus one. `foo` sits at the top level; `s.bar` sits below an optional struct,
+# so its empty list and its null parent occupy distinct definition levels.
+# Derived by collapsing required LIST-of-required-struct scaffolding as above.
+#   row 0: foo=[{a:1}]         s={bar:[{a:4}]}
+#   row 1: foo=[]              s=null
+#   row 2: foo=[{a:2},{a:3}]   s={bar:[]}
+empty_repeated_group_element = pa.struct([pa.field('a', pa.int32(), nullable=False)])
+empty_repeated_group_list = pa.list_(
+    pa.field('element', empty_repeated_group_element, nullable=False))
+empty_repeated_group_outer = pa.struct([pa.field('bar', empty_repeated_group_list, nullable=False)])
+empty_repeated_group_table = pa.table(
+    {
+        'foo': pa.array([[{'a': 1}], [], [{'a': 2}, {'a': 3}]], type=empty_repeated_group_list),
+        's': pa.array([{'bar': [{'a': 4}]}, None, {'bar': []}], type=empty_repeated_group_outer),
+    },
+    schema=pa.schema([
+        pa.field('foo', empty_repeated_group_list, nullable=False),
+        pa.field('s', empty_repeated_group_outer, nullable=True),
+    ])
+)
+pq.write_table(
+    empty_repeated_group_table,
+    'core/src/test/resources/unannotated_repeated_group_empty_annotated_list_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    store_schema=False
+)
+collapse_list_of_structs_to_unannotated_repeated_group(
+    'core/src/test/resources/unannotated_repeated_group_empty_annotated_list_test.parquet',
+    'core/src/test/resources/unannotated_repeated_group_empty_intermediate.parquet',
+    'foo'
+)
+collapse_list_of_structs_to_unannotated_repeated_group(
+    'core/src/test/resources/unannotated_repeated_group_empty_intermediate.parquet',
+    'core/src/test/resources/unannotated_repeated_group_empty_test.parquet',
+    's.bar'
+)
+os.remove('core/src/test/resources/unannotated_repeated_group_empty_intermediate.parquet')
+
+print("\nGenerated unannotated_repeated_group_empty_annotated_list_test.parquet + unannotated_repeated_group_empty_test.parquet:")
+print("  - Data: foo=[{a:1}],[],[{a:2},{a:3}]; s={bar:[{a:4}]},null,{bar:[]}; bare REPEATED groups at top level and below an optional struct")
 
 # 3. List of structs test
 list_struct_schema = pa.schema([
