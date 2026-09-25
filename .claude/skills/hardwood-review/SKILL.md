@@ -45,7 +45,7 @@ For PR diffs, persist large output to a file and read it in chunks rather than l
 
 ### 2. Read the design context
 
-If the PR touches a new design area, look in `_designs/` for a matching markdown file. Hardwood requires non-trivial changes to land a design doc; if one is expected but missing, that's a finding. If one exists, skim it before reading code so the review can flag drift between intent and implementation.
+Look in `_designs/` for the design doc covering the subsystems the PR touches, and in `_plans/` for a plan the PR belongs to. Skim both before reading code so the review can flag drift between the documented design and the implementation, and a behaviour change that leaves its design doc stale (C2a). Hardwood requires multi-PR or design-changing work to have a plan; if one is expected but missing, that's a finding.
 
 ### 3. Run the checklist
 

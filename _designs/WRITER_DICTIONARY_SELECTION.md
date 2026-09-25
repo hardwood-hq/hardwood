@@ -1,7 +1,7 @@
 # Row-group-global dictionary selection (#9, stage 18)
 
 **Status: Complete.** Tracking issue: #975. Delivery stage 18
-(Optimization) of [WRITER_SUPPORT.md](WRITER_SUPPORT.md).
+(Optimization) of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md).
 
 **Superseded in part by stage 19** ([WRITER_CODECS_AND_ENCODINGS.md](WRITER_CODECS_AND_ENCODINGS.md),
 complete): `WriterConfig.enableDictionary` is replaced by a per-leaf-column encoding policy,

@@ -1,7 +1,7 @@
 # Codec and encoding breadth (#9, stage 19)
 
 **Status: Completed** (19a codecs, 19b encodings). Tracking issue: #976. Delivery stage 19
-(Breadth) of [WRITER_SUPPORT.md](WRITER_SUPPORT.md).
+(Breadth) of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md).
 
 ## Context
 

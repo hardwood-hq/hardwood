@@ -1,7 +1,7 @@
 # Row-oriented write API (#9, stage 16)
 
 **Status: Complete.** Tracking issue: #9. Delivery stage 16 (Layer) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md).
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md).
 
 ## Context
 

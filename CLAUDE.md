@@ -29,10 +29,11 @@ All plugin versions must be declared in the parent `pom.xml`'s `<pluginManagemen
 
 # Design
 
-Write plans which affect the system design, e.g. large new features or refactorings, as a Markdown file under _designs_ before implementing.
-Mark designs as completed once done.
+`_designs/` holds the design of the system as it is: one document per subsystem, describing its structure, contracts and invariants, and the reasoning a maintainer needs to keep those invariants intact. A design document has no status field; it is current by definition. A PR that changes behaviour a design document describes updates that document in the same PR.
+`_plans/` holds implementation plans for changes that span several PRs or alter the system design: stages, sequencing, open work, tracking issues. Write the plan before implementing. In the PR that completes the work, fold its end state into the relevant design documents and delete the plan; git history keeps it.
+A design document states what would need a design discussion to change. Tuning constants and class internals stay out; class names appear as pointers to where something lives. An invariant names the test that enforces it, or is marked untested.
+Design documents describe the current state. Do not include references to the development process, alternative approaches that were considered and rejected, benchmark results, or commentary on how the design evolved. Write as if the reader has no context on the conversation that produced the document.
 Update the status in the roadmap after implementing a feature.
-Design documents describe the intended end state. Do not include references to the development process, alternative approaches that were considered and rejected, or commentary on how the design evolved. Write as if the reader has no context on the conversation that produced the document.
 
 # Public API
 
@@ -102,7 +103,7 @@ When changing visual styling in the `hardwood dive` TUI (any code under `cli/src
 
 Navigation keys and the `▶` marker follow the two rules in [_designs/DIVE_NAVIGATION_MODEL.md](_designs/DIVE_NAVIGATION_MODEL.md): every key moves the cursor, stopping on every row, and `▶` marks what `Enter` can act on while colour marks the cursor. Route a row-shaped pane through `CursorPane` and a document-shaped one through `ScrollPane` rather than handling the keys in the screen — every pane that deviated from the rules had hand-rolled them.
 
-List-shaped screens must build `Row` objects only for the visible viewport, never for the whole collection. Use `RowWindow.bottomPinned(selection, total, viewport)` to derive the slice and pass `window.selectionInWindow()` to `TableState.select(...)`. Building rows for the entire list is invisible on small inputs but turns navigation O(N) on dictionaries with hundreds of thousands of entries, page lists with thousands of pages, or wide-schema files. See [_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md](_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md).
+List-shaped screens must build `Row` objects only for the visible viewport, never for the whole collection. Use `RowWindow.from(scrollTop, selection, total, viewport)` to derive the slice, keep `scrollTop` in the screen state via `RowWindow.adjustTop(...)`, and pass `window.selectionInWindow()` to `TableState.select(...)`. Building rows for the entire list is invisible on small inputs but turns navigation O(N) on dictionaries with hundreds of thousands of entries, page lists with thousands of pages, or wide-schema files. See [_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md](_designs/DIVE_LIST_VIEWPORT_VIRTUALIZATION.md).
 
 # Code Reviews
 

@@ -1,7 +1,7 @@
 # Write-path coverage assertion (#9, stage 31)
 
 **Status: Complete.** Tracking issue: #990. Delivery stage 31 (Gate) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md). Extends the gate established in
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). Extends the gate established in
 [WRITER_INTEROP_GATE.md](WRITER_INTEROP_GATE.md).
 
 ## Context

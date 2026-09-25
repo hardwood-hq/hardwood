@@ -1,7 +1,7 @@
 # Nested write support (#9, stage 5)
 
 **Status: Settled (stage 5 complete); implemented in stages 6–8 (complete).** Tracking issue: #9. Delivery stage 5 (Spike) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md). This document is the reference the
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). This document is the reference the
 shredding increments (stages 6–8: structs, lists, maps) implement against.
 
 ## Context
@@ -375,7 +375,7 @@ columns.writeBatch(b -> b
 ## Component architecture
 
 Nested support extends the writer packages already laid out in
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md); it introduces one new orchestration type and
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md); it introduces one new orchestration type and
 extends two public ones.
 
 | Layer | Package | Change |
@@ -417,7 +417,7 @@ depth edge cases beyond the hand-written records.
 
 ## Delivery
 
-This design is stage 5 of [WRITER_SUPPORT.md](WRITER_SUPPORT.md). The shredding
+This design is stage 5 of [WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). The shredding
 increments implement against it in order: **stage 6** struct shredding (definition
 depth > 1, per-layer validity, no repetition), **stage 7** list shredding (the
 repetition-level stream and offset-driven input), **stage 8** map shredding (key/value

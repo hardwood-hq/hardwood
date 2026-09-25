@@ -43,7 +43,7 @@ after the per-column plans are built:
 ## Constants
 
 The gap and span limits are those of `CoalescingPolicy`, which every merge
-on the read path applies (see `REMOTE_READ_PATH.md`): a gap of at most
+on the read path applies (see `_plans/REMOTE_READ_PATH.md`): a gap of at most
 1 MiB is bridged, and a region spans at most 128 MiB. Adjacent chunks are
 typically back-to-back; a gap up to 1 MiB — padding, checksums, or an
 unprojected column between two projected ones — costs less to fetch than

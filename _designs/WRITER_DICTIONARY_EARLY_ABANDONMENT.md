@@ -1,7 +1,7 @@
 # Early abandonment of a losing dictionary (#9, stage 26a)
 
 **Status: Completed.** Tracking issue: #992. Delivery stage 26a (Optimization) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md), delivered ahead of its place in the sequence because
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md), delivered ahead of its place in the sequence because
 stage 21a's measurement is what justifies it. What it delivered is in
 [Result](#result).
 

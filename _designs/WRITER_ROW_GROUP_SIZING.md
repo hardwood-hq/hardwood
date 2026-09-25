@@ -1,7 +1,7 @@
 # Row-group and page sizing (#9, stage 27)
 
 **Status: Complete.** Tracking issue: #981 (pages). Delivery stages 27 and 28 (Layer) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md).
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md).
 
 #980 asks for row groups of about N MB *on disk*, which this does not provide and argues against
 providing the way it was asked for — see *Why a byte target cannot mean bytes on disk* below, and

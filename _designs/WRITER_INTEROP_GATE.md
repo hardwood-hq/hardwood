@@ -1,7 +1,7 @@
 # Write-path interop gate (#9, stage 14)
 
 **Status: Complete.** Tracking issues: #9, #907. Delivery stage 14 (Gate) of
-[WRITER_SUPPORT.md](WRITER_SUPPORT.md). This document is the reference the gate is
+[WRITER_SUPPORT.md](../_plans/WRITER_SUPPORT.md). This document is the reference the gate is
 implemented against and the contract every later writer increment extends.
 
 ## Context

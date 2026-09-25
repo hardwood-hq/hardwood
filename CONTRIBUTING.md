@@ -67,9 +67,11 @@ Hardwood can write the encoding, and a `parquet-testing` fixture where it can on
 Finally, update `docs/content/` for the public enums, and `ROADMAP.md` and `FORMAT_COVERAGE.md` for
 the capability itself. Nothing in the build checks those.
 
-## Design docs for larger changes
+## Design docs and plans
 
-Larger changes — new features, refactorings that affect the system design — should start with a short Markdown document under `_designs_/` describing the intended end state. Open the design as a PR so it can be reviewed before implementation starts. Mark it complete once the work lands.
+`_designs/` describes how each subsystem works today: its structure, contracts and invariants. A change to behaviour a design document describes updates that document in the same PR.
+
+Larger changes (new features, refactorings that affect the system design) start with a plan under `_plans/`: the intended end state, and the stages that get there. Open the plan as a PR so it can be reviewed before implementation starts. The PR that completes the work folds the end state into `_designs/` and deletes the plan.
 
 ## Agent skills
 
