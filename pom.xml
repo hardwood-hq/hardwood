@@ -93,6 +93,11 @@
           <version>5.0.0</version>
         </plugin>
         <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>license-maven-plugin</artifactId>
+          <version>2.4.0</version>
+        </plugin>
+        <plugin>
           <groupId>net.revelc.code.formatter</groupId>
           <artifactId>formatter-maven-plugin</artifactId>
           <version>2.29.0</version>
@@ -237,6 +242,11 @@
             <excludePackageNames>*.internal:*.internal.*</excludePackageNames>
             <bottom>Licensed under the &lt;a href="https://www.apache.org/licenses/LICENSE-2.0"&gt;Apache License 2.0&lt;/a&gt;. Copyright &amp;copy; {currentYear}. All rights reserved.</bottom>
           </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-release-plugin</artifactId>
+          <version>3.3.1</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -701,7 +711,6 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-release-plugin</artifactId>
-            <version>3.3.1</version>
             <configuration>
               <tagNameFormat>v@{project.version}</tagNameFormat>
               <goals>deploy</goals>
