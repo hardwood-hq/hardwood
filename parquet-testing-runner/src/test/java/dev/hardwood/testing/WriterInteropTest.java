@@ -45,7 +45,7 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// The flat half of the write-path interop gate (`_designs/WRITER_INTEROP_GATE.md`): Hardwood
+/// The flat half of the write-path interop gate (`_designs-legacy/WRITER_INTEROP_GATE.md`): Hardwood
 /// writes a single-column file, parquet-java reads it back through its Group record model, and
 /// the values, the null counts and the column-chunk statistics are asserted against the data
 /// that was written.

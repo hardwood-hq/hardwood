@@ -41,7 +41,7 @@ import dev.hardwood.schema.SchemaNode;
 /// Readers expose their payload columns through accessors of their own, which never reach a
 /// predicate column outside the projection. The matcher reaches the predicate columns through
 /// this view instead, so the one accessor surface a caller sees is bounded by the projection.
-/// See `_designs/FILTER_ONLY_COLUMN_SKIP.md`.
+/// See `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`.
 ///
 /// Flat predicate columns are served from their typed arrays, nested ones through a
 /// [NestedBatchDataView] over a projection of the predicate paths. Only the accessors the

@@ -2,7 +2,7 @@
 
 **Status: Proposed.** Tracking issue: #548 (1.0 public API hardening). Companion to
 the enforced interaction matrix `core/src/test/java/dev/hardwood/BuilderCombinationTest.java`
-and the model in `_designs/ROW_SELECTION_SEMANTICS.md`.
+and the model in `_designs-legacy/ROW_SELECTION_SEMANTICS.md`.
 
 ## Goal
 

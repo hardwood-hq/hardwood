@@ -1,7 +1,7 @@
 # Design: row-reader augmented projection
 
 **Status: Implemented.** Tracking issue: #1242. The column-reader counterpart is
-`_designs/EXACT_COLUMN_READER_FILTERING.md`, whose "augmented projection" model this
+`_designs-legacy/EXACT_COLUMN_READER_FILTERING.md`, whose "augmented projection" model this
 extends to the row readers.
 
 ## Scope

@@ -43,7 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A column the predicate references and the projection does not is not read in a row group
 /// statistics proved to match the filter in full, and it is not reachable through a reader's
-/// accessors in any row group. See `_designs/FILTER_ONLY_COLUMN_SKIP.md`.
+/// accessors in any row group. See `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`.
 ///
 /// Both fixtures hold three row groups of 1000 rows, `id` running `0..2999`. The filter
 /// `id < 1500` decides the first row group `ALWAYS_MATCHES`, leaves the second to the record

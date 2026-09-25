@@ -228,7 +228,7 @@ class PredicatePushDownTest {
                         .hasMessage("[filter_pushdown_int.parquet] Field index 1 is out of bounds"
                                 + " for a projection of 1 columns");
                 // 'id' is decoded for the filter and is not reachable through the row, by name
-                // or by index. See `_designs/FILTER_ONLY_COLUMN_SKIP.md`.
+                // or by index. See `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`.
                 assertThatThrownBy(() -> rows.getLong("id"))
                         .isInstanceOf(IllegalArgumentException.class)
                         .hasMessage("[filter_pushdown_int.parquet] Column not in projection: id");

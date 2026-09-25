@@ -92,6 +92,6 @@ The solution differs by codec:
 
 ## Testing the native binary
 
-Automated coverage of the native binary is provided by Failsafe integration tests that spawn the compiled executable as a subprocess; see [_designs/INTEGRATION_TESTS.md](_designs/INTEGRATION_TESTS.md). They run during `./mvnw -Dnative -pl cli verify`.
+Automated coverage of the native binary is provided by Failsafe integration tests that spawn the compiled executable as a subprocess; see [_designs-legacy/INTEGRATION_TESTS.md](_designs-legacy/INTEGRATION_TESTS.md). They run during `./mvnw -Dnative -pl cli verify`.
 
 For ad-hoc manual testing of the native binary against S3, see the [Manual S3 testing](TESTING.md#manual-s3-testing) recipe in [TESTING.md](TESTING.md).

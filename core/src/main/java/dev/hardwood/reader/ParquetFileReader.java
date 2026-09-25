@@ -518,7 +518,7 @@ public class ParquetFileReader implements Closeable {
 
         // The predicate's columns are decoded whether or not the caller projected them, so a
         // filter reaches a column the read does not expose. See
-        // `_designs/ROW_READER_AUGMENTED_PROJECTION.md`.
+        // `_designs-legacy/ROW_READER_AUGMENTED_PROJECTION.md`.
         ReadProjection readProjection = resolved == null
                 ? ReadProjection.of(ProjectedSchema.create(schema, projection, true))
                 : ReadProjection.withPredicateColumns(schema, projection,

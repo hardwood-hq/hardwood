@@ -1,6 +1,6 @@
 # Design doc consolidation
 
-**Status: In progress.** Tracking issue: #1290. Splits `_designs/` into permanent design docs, which are kept current with the code, and implementation plans under `_plans/`, which are deleted when their work lands. Reduces 93 docs to 24 design docs.
+**Status: In progress.** Tracking issue: #1290. Replaces the 93 historical design docs with 24 design docs kept current with the code; implementation plans live under `_plans/` and are deleted when their work lands. The docs not yet consolidated sit in `_designs-legacy/`, and each area's PR moves its sources out of there.
 
 ## Target design docs
 
@@ -184,7 +184,7 @@ Old docs are the source of intent; the code is the source of fact. Each target d
 | Code differs; a later doc, issue or commit records the change as deliberate | State the current behaviour |
 | Code differs; nothing records the change | Divergence: listed in the PR description for the maintainer to decide (fix the code, or accept the behaviour); not resolved in the doc |
 
-A design doc states what would need a design discussion to change: contracts, invariants, ownership, the reasoning behind them. Tuning constants and class internals stay out; class names appear only as pointers to where something lives. An invariant names the test that enforces it where one exists, and is marked untested where none does.
+A design doc states what would need a design discussion to change: contracts, invariants, ownership, the reasoning behind them. Tuning constants and class internals stay out; class names appear only as pointers to where something lives. Tests are named at most once per section, as a line listing the test classes that cover it; an invariant no test enforces is marked untested.
 
 ## Execution
 

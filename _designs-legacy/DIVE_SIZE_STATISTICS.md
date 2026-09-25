@@ -523,7 +523,7 @@ screenshots show.
 - `skills/hardwood-cli/SKILL.md` — the `inspect columns` entries, its
   derived-metric glossary, and the option table, per the agent-skills
   rule in [CONTRIBUTING.md](../CONTRIBUTING.md).
-- `_designs/DIVE_THEME.md` — the `error()` tier.
+- `_designs-legacy/DIVE_THEME.md` — the `error()` tier.
 - The `dive` screenshots regenerated via the `screenshots` profile: the
   chunk detail and a new capture for the levels view, plus the overview,
   row-group and chunk-list captures that carried the `×` factor.

@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
 /// The verdict of the write-path coverage assertion described in
-/// `_designs/WRITE_COVERAGE_ASSERTION.md`: every cell the writer can produce was produced by some
+/// `_designs-legacy/WRITE_COVERAGE_ASSERTION.md`: every cell the writer can produce was produced by some
 /// test, or is waived with a reason.
 ///
 /// This runs in a Surefire execution of its own, after the one that produces the files, because

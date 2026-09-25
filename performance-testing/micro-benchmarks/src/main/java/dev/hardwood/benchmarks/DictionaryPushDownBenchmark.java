@@ -30,7 +30,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 
 /// Filtered reads over a dictionary-encoded low-cardinality column, measuring both sides of
-/// dictionary predicate push-down (see `_designs/DICTIONARY_PUSHDOWN.md`): the saving when the
+/// dictionary predicate push-down (see `_designs-legacy/DICTIONARY_PUSHDOWN.md`): the saving when the
 /// dictionary proves a value absent and the row group is skipped, and the cost when it does not.
 ///
 /// Fixtures: `dict_pushdown.parquet` (10M rows, 10 row groups, 512 distinct `cat_<even>` values)

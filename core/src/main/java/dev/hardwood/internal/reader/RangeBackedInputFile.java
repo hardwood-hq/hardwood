@@ -19,7 +19,7 @@ import dev.hardwood.InputFile;
 
 /// An [InputFile] decorator that caches fetched byte ranges in a
 /// sparse temp file mmapped into the process. See #373 and
-/// `_designs/REMOTE_RANGE_BACKING.md`.
+/// `_designs-legacy/REMOTE_RANGE_BACKING.md`.
 ///
 /// The first call to [#readRange] for a given range delegates to the
 /// wrapped file, writes the bytes into the mapping at their absolute

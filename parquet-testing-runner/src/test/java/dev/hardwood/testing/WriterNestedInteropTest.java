@@ -36,7 +36,7 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The nested half of the write-path interop gate (`_designs/WRITER_INTEROP_GATE.md`): Hardwood
+/// The nested half of the write-path interop gate (`_designs-legacy/WRITER_INTEROP_GATE.md`): Hardwood
 /// writes the `struct`, `LIST` and `MAP` shapes, and parquet-java reads them back.
 ///
 /// These are the shapes that carry repetition and definition level streams, which a flat column

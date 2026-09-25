@@ -477,7 +477,7 @@ public final class ColumnChunkDetailScreen {
         return qualifier(Fmt.fmt("%,d entries for %,d values", entries, values));
     }
 
-    /// A section caption. Tier 2 of the [DIVE_THEME](../../../../../../../_designs/DIVE_THEME.md)
+    /// A section caption. Tier 2 of the [DIVE_THEME](../../../../../../../_designs-legacy/DIVE_THEME.md)
     /// hierarchy: structural, so the eye can find the group holding the fact
     /// it wants instead of reading twenty-five uniform rows.
     private static Line group(String name) {

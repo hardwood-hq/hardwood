@@ -180,7 +180,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 6.1 Writer Architecture
 - [x] Implement `RowWriter` — the row-oriented layer over the columnar core, obtained from
-  `ParquetFileWriter.rowWriter()` (see `_designs/WRITER_ROW_API.md`)
+  `ParquetFileWriter.rowWriter()` (see `_designs-legacy/WRITER_ROW_API.md`)
 - [x] Implement `WriterConfig` (row-group row and buffer targets, page target, per-column encoding policy,
   codec, statistics truncation, precision-loss policy)
 - [x] Implement `ColumnWriter` — the columnar entry point, obtained from
@@ -189,7 +189,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Row-group and page assembly (`internal.writer.RowGroupBuffer`, `ColumnChunkBuffer`), the
   internal counterparts of the `RowGroupWriter` / `PageWriter` this inventory first sketched
 - [x] User documentation for the writer public API (`docs/content/`, see
-  [`_designs/WRITER_DOCS.md`](_designs/WRITER_DOCS.md))
+  [`_designs-legacy/WRITER_DOCS.md`](_designs-legacy/WRITER_DOCS.md))
 
 ### 6.2 Write Flow
 - [x] Record buffering
@@ -242,7 +242,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Data page reading and decoding
 - [x] Page decompression
 - [x] Parallel column batch fetching
-- [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/PER_FILE_METADATA.md`](_designs/PER_FILE_METADATA.md))
+- [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs-legacy/PER_FILE_METADATA.md`](_designs-legacy/PER_FILE_METADATA.md))
 
 ### 7.3 Record Assembly (Inverse Dremel)
 - [x] Column reader synchronization (via RowReader)
@@ -286,7 +286,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Maps (map<string, int>, map<string, struct>, etc.)
   - [x] Nested maps (map<string, map<string, int>>)
   - [x] List of maps (list<map<string, int>>)
-- [x] VARIANT (self-describing semi-structured values; see [`_designs/VARIANT_LOGICAL_TYPE.md`](_designs/VARIANT_LOGICAL_TYPE.md))
+- [x] VARIANT (self-describing semi-structured values; see [`_designs-legacy/VARIANT_LOGICAL_TYPE.md`](_designs-legacy/VARIANT_LOGICAL_TYPE.md))
   - [x] `VARIANT` logical-type recognition on group nodes (Phase 1, #74)
   - [x] Variant binary decoder (metadata dictionary + value navigation)
   - [x] `PqVariant` / `PqVariantObject` / `PqVariantArray` row-API
@@ -359,26 +359,26 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Lt, LtEq, Gt, GtEq
   - [x] In, over every literal type but `boolean`
   - [x] And, Or, Not
-- [x] One literal rule for every predicate: a column takes the values its accessors return, an equality literal the column cannot hold is rejected, and ordered operators exist on ordered types only (see `_designs/PREDICATE_LITERALS.md`)
+- [x] One literal rule for every predicate: a column takes the values its accessors return, an equality literal the column cannot hold is rejected, and ordered operators exist on ordered types only (see `_designs-legacy/PREDICATE_LITERALS.md`)
 - [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`PageDropPredicates` + `SequentialFetchPlan`)
-- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/DRAIN_SIDE_RECORD_FILTERING.md`)
-- [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `ColumnScan`; see `_designs/EXACT_COLUMN_READER_FILTERING.md`)
-- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs/BLOOM_FILTER_PUSHDOWN.md`)
-- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/DICTIONARY_PUSHDOWN.md`)
-- [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group and dropping the filter wholesale when all surviving groups fully match (see `_designs/ALWAYS_MATCH_STATISTICS.md`)
-- [x] Skip filter-only columns in fully matching row groups: a column the predicate references and the projection does not is neither fetched nor decoded where statistics prove every row matches, on the row and column readers alike; row-reader accessors reach the projection only (see `_designs/FILTER_ONLY_COLUMN_SKIP.md`)
-- [x] One statistics abstraction for every pruning unit: `UnitStats` (column chunk, column-index page, inline page header) sources min/max, null counts and definition level histograms once each, and row-group filtering, page filtering and the inline-statistics drop all decide through it (see `_designs/UNIT_STATISTICS_CONVERGENCE.md`)
+- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs-legacy/DRAIN_SIDE_RECORD_FILTERING.md`)
+- [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `ColumnScan`; see `_designs-legacy/EXACT_COLUMN_READER_FILTERING.md`)
+- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs-legacy/BLOOM_FILTER_PUSHDOWN.md`)
+- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs-legacy/DICTIONARY_PUSHDOWN.md`)
+- [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group and dropping the filter wholesale when all surviving groups fully match (see `_designs-legacy/ALWAYS_MATCH_STATISTICS.md`)
+- [x] Skip filter-only columns in fully matching row groups: a column the predicate references and the projection does not is neither fetched nor decoded where statistics prove every row matches, on the row and column readers alike; row-reader accessors reach the projection only (see `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`)
+- [x] One statistics abstraction for every pruning unit: `UnitStats` (column chunk, column-index page, inline page header) sources min/max, null counts and definition level histograms once each, and row-group filtering, page filtering and the inline-statistics drop all decide through it (see `_designs-legacy/UNIT_STATISTICS_CONVERGENCE.md`)
 - [x] Reader opt-out of metadata-based filtering: `hardwood.metadata-filtering` `ReaderConfig` option falls back to full-scan per-row predicate evaluation for files with unreliable footer/page-index metadata
 
 ### 9.5 Fixed-size-list read fast path
 - [x] Detect fixed-width fixed-*k* `LIST` pages from level streams alone (`FixedSizeListDetector`): O(1) definition-level gate + O(rows) repetition verification
 - [x] SWAR word-at-a-time tiled compare for the small-*k* bit-packed regime
 - [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `NestedColumnWorker`, `ColumnReader`)
-- [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap (see `_designs/FIXED_SIZE_LIST_FASTPATH.md`)
-- [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs/READER_CONFIG.md`)
+- [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap (see `_designs-legacy/FIXED_SIZE_LIST_FASTPATH.md`)
+- [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs-legacy/READER_CONFIG.md`)
 - [ ] Nullable-vector (null-row) support — follow-up
 - [ ] Bulk verification for the RLE-interior (k ≥ 9) high-row-count regime
 
@@ -519,13 +519,13 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
 
 ### Interactive CLI (`hardwood dive`)
-TUI for exploring Parquet file structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
+TUI for exploring Parquet file structure. See `_designs-legacy/INTERACTIVE_DIVE_TUI.md`.
 - [x] Phase 1: skeleton + Overview / Schema (flat) / Row groups / Column chunks / Column chunk detail / Help overlay (#324)
 - [x] Phase 2: Pages + page-header modal / Column index / Offset index / Footer / Column-across-row-groups / Chunk-detail drill menu (#324)
 - [x] Phase 3: Dictionary / Data preview (#324)
 - [x] Phase 4: Schema tree expansion, Dictionary inline search, docs expanded (#324)
 - [x] Phase 5: a read failure anywhere becomes an error overlay rather than ending the session,
-      reporting the file, row group and column (#1092). See `_designs/DIVE_READ_FAILURE_HANDLING.md`
+      reporting the file, row group and column (#1092). See `_designs-legacy/DIVE_READ_FAILURE_HANDLING.md`
 - [ ] Follow-ups: async I/O (profiling-dependent); "jump to chunk" from Footer; screenshots in docs
 
 ## Testing
@@ -589,7 +589,7 @@ Remaining Failures by Category (7 total):
 - [ ] Edge cases (empty files, single values, max nesting)
 - [x] Performance benchmarks vs parquet-java (JMH micro-benchmarks + end-to-end performance tests)
 - [x] Write-path performance benchmark vs parquet-java (`FlatWriteBenchmark` — the columnar and
-  row-oriented APIs against `ExampleParquetWriter`; see `_designs/FLAT_WRITE_BENCHMARK.md`)
+  row-oriented APIs against `ExampleParquetWriter`; see `_designs-legacy/FLAT_WRITE_BENCHMARK.md`)
 - [x] Predicate pushdown tests (`PredicatePushDownTest` — 28 test methods)
 - [x] Column projection tests (`ColumnProjectionTest` — 21 test methods)
 - [x] Multi-file reader tests (`MultiFileRowReaderTest` — 16 test methods)

@@ -16,7 +16,7 @@ import java.util.NoSuchElementException;
 ///
 /// Planned for a column the predicate references and the projection does not, in a row
 /// group statistics proved to match the filter in full, whose batches no consumer takes
-/// from that column. See `_designs/FILTER_ONLY_COLUMN_SKIP.md`.
+/// from that column. See `_designs-legacy/FILTER_ONLY_COLUMN_SKIP.md`.
 final class SkippedColumnFetchPlan implements FetchPlan {
 
     static final SkippedColumnFetchPlan INSTANCE = new SkippedColumnFetchPlan();

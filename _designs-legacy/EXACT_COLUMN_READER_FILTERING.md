@@ -1,8 +1,8 @@
 # Design: exact column-reader filtering
 
 **Status: Implemented.** Tracking issue: #624 (milestone 1.0.0.CR2). Builds on the
-drain-side machinery (`_designs/DRAIN_SIDE_RECORD_FILTERING.md`) and the
-record-filter compiler (`_designs/RECORD_FILTER_COMPILATION.md`). Related
+drain-side machinery (`_designs-legacy/DRAIN_SIDE_RECORD_FILTERING.md`) and the
+record-filter compiler (`_designs-legacy/RECORD_FILTER_COMPILATION.md`). Related
 architecture: #500 (late-materialization fork — out of scope here), #74 / #70
 (shared predicate cache — a follow-up optimization).
 

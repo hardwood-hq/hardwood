@@ -173,7 +173,7 @@ class NestedLogicalAccessorsTest {
     }
 
     /// Every other typed accessor already fails on a cast the decode makes, so none
-    /// checks the annotation ahead of it — `_designs/EXCEPTION_MODEL.md` puts that
+    /// checks the annotation ahead of it — `_designs-legacy/EXCEPTION_MODEL.md` puts that
     /// validation above its cost bar, and #971 is the sweep that gives these failures
     /// a message. The type is pinned rather than the text, which the JDK writes.
     @Test

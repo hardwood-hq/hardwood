@@ -35,13 +35,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// **same** Parquet file, and the two results are required to agree.
 ///
 /// DuckDB is the oracle because its SQL `WHERE` / `LIMIT` / `OFFSET` semantics are exactly the
-/// logical model in `_designs/ROW_SELECTION_SEMANTICS.md`. The corpus
+/// logical model in `_designs-legacy/ROW_SELECTION_SEMANTICS.md`. The corpus
 /// (`src/test/resources/differential/`) carries a synthetic `__row__` column equal to the
 /// physical row position, so file order — which hardwood's `head`/`tail`/`skip` operate in —
 /// is recoverable as `ORDER BY __row__`, and the comparison reduces to checking that both
 /// sides return the same ordered list of `__row__` values.
 ///
-/// This is P1 (design: `_designs/DIFFERENTIAL_TESTING.md`, tracked by #548): row-identity only,
+/// This is P1 (design: `_designs-legacy/DIFFERENTIAL_TESTING.md`, tracked by #548): row-identity only,
 /// filters on a required column. Per-column value comparison and `byteRange` translation are P2.
 /// Combinations that are known-wrong today are marked `pending(<issue>)` and skipped via
 /// [Assumptions]; clearing the marker once the bug is fixed turns this into the fix's verifier.

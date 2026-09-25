@@ -6006,7 +6006,7 @@ print("  - Childless root schema: no columns, no rows")
 # Predicate-literal corpus (hardwood-hq/hardwood#1198)
 # ============================================================================
 
-# One column per row of the per-column table in `_designs/PREDICATE_LITERALS.md`, so that a
+# One column per row of the per-column table in `_designs-legacy/PREDICATE_LITERALS.md`, so that a
 # predicate can be put to every literal type, operator and read path over the same 400 rows.
 # Every value column but `i32_req` is optional and shares one null mask, which lets a filter's answer
 # be compared against a rule that never matches a null.
