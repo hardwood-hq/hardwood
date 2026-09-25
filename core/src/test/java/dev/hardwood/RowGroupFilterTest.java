@@ -271,6 +271,34 @@ class RowGroupFilterTest {
         }
     }
 
+    // ==================== Multi-file readers ====================
+
+    @Test
+    void rowReaderRejectsRowGroupPredicateOnMultiFileReader() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.openAll(
+                List.of(InputFile.of(FIXTURE), InputFile.of(FIXTURE)))) {
+            assertThatThrownBy(() -> reader.buildRowReader()
+                    .filter(RowGroupPredicate.byteRange(0, rg1Mid))
+                    .build())
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("filter(RowGroupPredicate) is single-file only: "
+                            + "a byte range names positions in one file");
+        }
+    }
+
+    @Test
+    void columnReadersRejectRowGroupPredicateOnMultiFileReader() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.openAll(
+                List.of(InputFile.of(FIXTURE), InputFile.of(FIXTURE)))) {
+            assertThatThrownBy(() -> reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .filter(RowGroupPredicate.byteRange(0, rg1Mid))
+                    .build())
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("filter(RowGroupPredicate) is single-file only: "
+                            + "a byte range names positions in one file");
+        }
+    }
+
     // ==================== Helpers ====================
 
     private static long countRows(ColumnReader col) throws IOException {

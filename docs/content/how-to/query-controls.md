@@ -324,6 +324,8 @@ ColumnReader col = fileReader.buildColumnReader("price")
 
 The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `skip(N)` and `head(N)` index over the *row-group-filtered* sequence: `skip(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
 
+A byte range names positions in one file, so `RowGroupPredicate` applies to a reader opened on a single file. On a reader opened with `openAll` over several files, `build()` throws `UnsupportedOperationException`; open one reader per split's file instead.
+
 ### Empty ranges
 
 `byteRange(start, end)` where `end < start` is a documented empty range, for which the reader yields zero rows. This matches callers that pass `splitStart + splitLength` and tolerate long overflow on tail splits (a tail split with `length = Long.MAX_VALUE` overflows to a negative end, which your reader will then treat as empty if no preceding split has already covered the rest of the file).
