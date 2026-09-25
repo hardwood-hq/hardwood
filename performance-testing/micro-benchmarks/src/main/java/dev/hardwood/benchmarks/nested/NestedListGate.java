@@ -34,14 +34,15 @@ public final class NestedListGate {
 
     public static void main(String[] args) throws IOException {
         Path dir = Path.of(args.length > 0 ? args[0] : BenchmarkData.dir());
-        NestedListFileGenerator.generateAll(dir, BenchmarkData.totalValues());
+        long totalValues = BenchmarkData.totalValues();
+        NestedListFileGenerator.generateAll(dir, totalValues);
 
         System.out.println("Nested-list correctness gate:");
         try (HardwoodContext context = HardwoodContext.create()) {
             for (Elem elem : Elem.values()) {
                 for (NullDensity density : NullDensity.values()) {
-                    Path listPath = NestedListFileGenerator.listFile(dir, elem, density);
-                    Path flatPath = NestedListFileGenerator.listFlatFile(dir, elem, density);
+                    Path listPath = NestedListFileGenerator.listFile(dir, elem, density, totalValues);
+                    Path flatPath = NestedListFileGenerator.listFlatFile(dir, elem, density, totalValues);
                     double column = NestedReads.sumColumn(listPath, NestedListFileGenerator.LIST_LEAF, elem, context);
                     double structural = NestedReads.sumColumnStructural(listPath, NestedListFileGenerator.LIST_LEAF, elem, context);
                     double row = NestedReads.sumRowsList(listPath, "vec", elem, context);

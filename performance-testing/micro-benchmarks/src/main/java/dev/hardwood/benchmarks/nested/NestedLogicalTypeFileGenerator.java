@@ -29,7 +29,9 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 
 /// Generates the `LIST<annotated>` corpus for [NestedLogicalTypeReadBenchmark]: a list
 /// column per logical type and null density, holding a fixed total leaf count so scan
-/// times are comparable across type and density. Each file is skipped when present.
+/// times are comparable across type and density. Each file is skipped when present;
+/// its name carries the page version and leaf count
+/// (`list_logical_date_none_v2_8000000.parquet`), see [BenchmarkWriter#corpusFile].
 ///
 /// The three types span the representations a leaf decode starts from — a 4-byte
 /// int32, an 8-byte int64, and a fixed-width byte array — so the corpus covers each
@@ -70,14 +72,14 @@ public final class NestedLogicalTypeFileGenerator {
         }
     }
 
-    public static Path listFile(Path dir, LogicalElem elem, NullDensity density) {
-        return dir.resolve("list_logical_" + elem.token() + "_" + density.token() + ".parquet");
+    public static Path listFile(Path dir, LogicalElem elem, NullDensity density, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "list_logical_" + elem.token() + "_" + density.token(), totalValues);
     }
 
     /// Writes the list file for `elem` / `density` if it is not already present.
     public static void ensureList(Path dir, LogicalElem elem, NullDensity density, long totalValues)
             throws IOException {
-        Path path = listFile(dir, elem, density);
+        Path path = listFile(dir, elem, density, totalValues);
         if (BenchmarkWriter.present(path)) {
             return;
         }

@@ -35,8 +35,8 @@ import dev.hardwood.reader.ParquetFileReader;
 ///
 /// - `columnScalarsMixed` vs `columnScalarsFlat` — scan the same 12 non-repeated
 ///   scalar columns out of a file that also holds two `LIST` columns
-///   (`mixed.parquet`, routed onto the nested reader today) versus a file with only
-///   the scalars (`flat_scalars.parquet`, routed onto the flat reader). The delta is
+///   (`mixed_*.parquet`, routed onto the nested reader today) versus a file with only
+///   the scalars (`flat_scalars_*.parquet`, routed onto the flat reader). The delta is
 ///   the per-scalar-column tax #732 removes.
 /// - `columnStruct` vs `columnStructFlat` — a non-repeated `STRUCT` of primitives
 ///   versus the same leaves as top-level columns (the flat-struct path #732 subsumes).
@@ -46,7 +46,10 @@ import dev.hardwood.reader.ParquetFileReader;
 ///   columns with more than one repetition layer, where #751's single-repeated-layer
 ///   fast path deliberately does not fire; these must not regress.
 ///
-/// All leaves are numeric. Fixtures are generated on demand from `@Setup`.
+/// All leaves are numeric. Fixtures are generated on demand from `@Setup`; their names
+/// carry the page version and the row or leaf count (e.g. `mixed_v2_2000000.parquet`),
+/// so changing `-Dperf.pageVersion`, `-Dperf.rows` or `-Dperf.totalValues` generates
+/// new files.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
@@ -76,13 +79,13 @@ public class MixedSchemaReadBenchmark {
         MixedSchemaFileGenerator.ensureRepeatedHeavy(dir, totalValues);
         MixedSchemaFileGenerator.ensureListOfList(dir, totalValues);
         MixedSchemaFileGenerator.ensureListOfStruct(dir, totalValues);
-        mixedPath = MixedSchemaFileGenerator.mixedFile(dir);
-        flatScalarsPath = MixedSchemaFileGenerator.flatScalarsFile(dir);
-        structPath = MixedSchemaFileGenerator.structFile(dir);
-        structFlatPath = MixedSchemaFileGenerator.structFlatFile(dir);
-        repeatedHeavyPath = MixedSchemaFileGenerator.repeatedHeavyFile(dir);
-        listOfListPath = MixedSchemaFileGenerator.listOfListFile(dir);
-        listOfStructPath = MixedSchemaFileGenerator.listOfStructFile(dir);
+        mixedPath = MixedSchemaFileGenerator.mixedFile(dir, rows);
+        flatScalarsPath = MixedSchemaFileGenerator.flatScalarsFile(dir, rows);
+        structPath = MixedSchemaFileGenerator.structFile(dir, rows);
+        structFlatPath = MixedSchemaFileGenerator.structFlatFile(dir, rows);
+        repeatedHeavyPath = MixedSchemaFileGenerator.repeatedHeavyFile(dir, totalValues);
+        listOfListPath = MixedSchemaFileGenerator.listOfListFile(dir, totalValues);
+        listOfStructPath = MixedSchemaFileGenerator.listOfStructFile(dir, totalValues);
         context = HardwoodContext.create();
     }
 

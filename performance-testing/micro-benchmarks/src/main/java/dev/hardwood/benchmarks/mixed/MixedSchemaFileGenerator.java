@@ -26,7 +26,9 @@ import dev.hardwood.benchmarks.BenchmarkWriter;
 /// Generates the fixed-shape numeric corpus for [MixedSchemaReadBenchmark]: the mixed
 /// scalar+list schema and its flat-scalar twin (#732), a non-repeated struct and its
 /// flat twin, a repeated-heavy file, and the two `> 1` repetition-layer depth files.
-/// Each file is skipped when already present.
+/// Each file is skipped when already present. File names carry the page version and
+/// the row count (mixed, struct) or leaf count (repeated-heavy, depth), e.g.
+/// `mixed_v2_2000000.parquet`, see [BenchmarkWriter#corpusFile].
 public final class MixedSchemaFileGenerator {
 
     private static final long SCALAR_SEED = 99L;
@@ -37,39 +39,39 @@ public final class MixedSchemaFileGenerator {
 
     // ==================== File name resolution ====================
 
-    public static Path mixedFile(Path dir) {
-        return dir.resolve("mixed.parquet");
+    public static Path mixedFile(Path dir, long rows) {
+        return BenchmarkWriter.corpusFile(dir, "mixed", rows);
     }
 
-    public static Path flatScalarsFile(Path dir) {
-        return dir.resolve("flat_scalars.parquet");
+    public static Path flatScalarsFile(Path dir, long rows) {
+        return BenchmarkWriter.corpusFile(dir, "flat_scalars", rows);
     }
 
-    public static Path structFile(Path dir) {
-        return dir.resolve("struct.parquet");
+    public static Path structFile(Path dir, long rows) {
+        return BenchmarkWriter.corpusFile(dir, "struct", rows);
     }
 
-    public static Path structFlatFile(Path dir) {
-        return dir.resolve("struct_flat.parquet");
+    public static Path structFlatFile(Path dir, long rows) {
+        return BenchmarkWriter.corpusFile(dir, "struct_flat", rows);
     }
 
-    public static Path repeatedHeavyFile(Path dir) {
-        return dir.resolve("repeated_heavy.parquet");
+    public static Path repeatedHeavyFile(Path dir, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "repeated_heavy", totalValues);
     }
 
-    public static Path listOfListFile(Path dir) {
-        return dir.resolve("list_of_list.parquet");
+    public static Path listOfListFile(Path dir, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "list_of_list", totalValues);
     }
 
-    public static Path listOfStructFile(Path dir) {
-        return dir.resolve("list_of_struct.parquet");
+    public static Path listOfStructFile(Path dir, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "list_of_struct", totalValues);
     }
 
     // ==================== Ensure entry points ====================
 
     public static void ensureMixed(Path dir, long rows) throws IOException {
-        Path mixedPath = mixedFile(dir);
-        Path flatPath = flatScalarsFile(dir);
+        Path mixedPath = mixedFile(dir, rows);
+        Path flatPath = flatScalarsFile(dir, rows);
         if (BenchmarkWriter.present(mixedPath) && BenchmarkWriter.present(flatPath)) {
             return;
         }
@@ -81,8 +83,8 @@ public final class MixedSchemaFileGenerator {
     }
 
     public static void ensureStruct(Path dir, long rows) throws IOException {
-        Path structPath = structFile(dir);
-        Path flatPath = structFlatFile(dir);
+        Path structPath = structFile(dir, rows);
+        Path flatPath = structFlatFile(dir, rows);
         if (BenchmarkWriter.present(structPath) && BenchmarkWriter.present(flatPath)) {
             return;
         }
@@ -94,7 +96,7 @@ public final class MixedSchemaFileGenerator {
     }
 
     public static void ensureRepeatedHeavy(Path dir, long totalValues) throws IOException {
-        Path path = repeatedHeavyFile(dir);
+        Path path = repeatedHeavyFile(dir, totalValues);
         if (BenchmarkWriter.present(path)) {
             return;
         }
@@ -104,7 +106,7 @@ public final class MixedSchemaFileGenerator {
     }
 
     public static void ensureListOfList(Path dir, long totalValues) throws IOException {
-        Path path = listOfListFile(dir);
+        Path path = listOfListFile(dir, totalValues);
         if (BenchmarkWriter.present(path)) {
             return;
         }
@@ -114,7 +116,7 @@ public final class MixedSchemaFileGenerator {
     }
 
     public static void ensureListOfStruct(Path dir, long totalValues) throws IOException {
-        Path path = listOfStructFile(dir);
+        Path path = listOfStructFile(dir, totalValues);
         if (BenchmarkWriter.present(path)) {
             return;
         }

@@ -28,7 +28,9 @@ import dev.hardwood.benchmarks.Elem;
 /// element type and null density, a list file and a flat twin carrying the identical
 /// leaf stream (same values, same null positions) — the decode floor. Files hold a
 /// fixed total leaf count so scan times are comparable across type and density, and
-/// each is skipped when already present.
+/// each is skipped when already present. File names carry the page version and leaf
+/// count (`list_int64_none_v2_8000000.parquet`, `list_int64_none_flat_v2_8000000.parquet`),
+/// see [BenchmarkWriter#corpusFile].
 public final class NestedListFileGenerator {
 
     /// Fixed 3-level list leaf path for a `LIST<primitive>` written by parquet-avro
@@ -80,12 +82,12 @@ public final class NestedListFileGenerator {
         }
     }
 
-    public static Path listFile(Path dir, Elem elem, NullDensity density) {
-        return dir.resolve("list_" + elem.token() + "_" + density.token() + ".parquet");
+    public static Path listFile(Path dir, Elem elem, NullDensity density, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "list_" + elem.token() + "_" + density.token(), totalValues);
     }
 
-    public static Path listFlatFile(Path dir, Elem elem, NullDensity density) {
-        return dir.resolve("list_" + elem.token() + "_" + density.token() + "_flat.parquet");
+    public static Path listFlatFile(Path dir, Elem elem, NullDensity density, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "list_" + elem.token() + "_" + density.token() + "_flat", totalValues);
     }
 
     /// Writes the list fixture and its flat twin for `(elem, density)` if either is
@@ -93,8 +95,8 @@ public final class NestedListFileGenerator {
     /// floor for the list column.
     public static void ensureList(Path dir, Elem elem, NullDensity density, long totalValues)
             throws IOException {
-        Path listPath = listFile(dir, elem, density);
-        Path flatPath = listFlatFile(dir, elem, density);
+        Path listPath = listFile(dir, elem, density, totalValues);
+        Path flatPath = listFlatFile(dir, elem, density, totalValues);
         if (BenchmarkWriter.present(listPath) && BenchmarkWriter.present(flatPath)) {
             return;
         }
@@ -225,12 +227,12 @@ public final class NestedListFileGenerator {
         return columns;
     }
 
-    public static Path multiListFile(Path dir, Elem elem, NullDensity density) {
-        return dir.resolve("multilist_" + elem.token() + "_" + density.token() + ".parquet");
+    public static Path multiListFile(Path dir, Elem elem, NullDensity density, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "multilist_" + elem.token() + "_" + density.token(), totalValues);
     }
 
-    public static Path multiListFlatFile(Path dir, Elem elem, NullDensity density) {
-        return dir.resolve("multilist_" + elem.token() + "_" + density.token() + "_flat.parquet");
+    public static Path multiListFlatFile(Path dir, Elem elem, NullDensity density, long totalValues) {
+        return BenchmarkWriter.corpusFile(dir, "multilist_" + elem.token() + "_" + density.token() + "_flat", totalValues);
     }
 
     /// Writes the multi-column fixture and its flat twin for `(elem, density)` if
@@ -240,8 +242,8 @@ public final class NestedListFileGenerator {
     /// the same number of primitive columns carrying the identical leaf streams.
     public static void ensureMultiList(Path dir, Elem elem, NullDensity density, long totalValues)
             throws IOException {
-        Path listPath = multiListFile(dir, elem, density);
-        Path flatPath = multiListFlatFile(dir, elem, density);
+        Path listPath = multiListFile(dir, elem, density, totalValues);
+        Path flatPath = multiListFlatFile(dir, elem, density, totalValues);
         if (BenchmarkWriter.present(listPath) && BenchmarkWriter.present(flatPath)) {
             return;
         }

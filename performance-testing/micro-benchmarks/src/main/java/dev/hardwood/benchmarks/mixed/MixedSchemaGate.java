@@ -34,36 +34,38 @@ public final class MixedSchemaGate {
 
     public static void main(String[] args) throws IOException {
         Path dir = Path.of(args.length > 0 ? args[0] : BenchmarkData.dir());
-        MixedSchemaFileGenerator.generateAll(dir, BenchmarkData.rows(), BenchmarkData.totalValues());
+        long rows = BenchmarkData.rows();
+        long totalValues = BenchmarkData.totalValues();
+        MixedSchemaFileGenerator.generateAll(dir, rows, totalValues);
 
         System.out.println("Mixed-schema correctness gate:");
         try (HardwoodContext context = HardwoodContext.create()) {
-            gateMixed(dir, context);
-            gateStruct(dir, context);
-            gateDepth(dir, context);
+            gateMixed(dir, rows, context);
+            gateStruct(dir, rows, context);
+            gateDepth(dir, totalValues, context);
         }
         System.out.println("Gate passed — every path agrees on the values it reads.");
     }
 
     /// The 12 scalar columns must fold identically whether or not the file also holds
     /// list columns.
-    private static void gateMixed(Path dir, HardwoodContext context) throws IOException {
-        double mixed = sumScalars(MixedSchemaFileGenerator.mixedFile(dir), context);
-        double flat = sumScalars(MixedSchemaFileGenerator.flatScalarsFile(dir), context);
+    private static void gateMixed(Path dir, long rows, HardwoodContext context) throws IOException {
+        double mixed = sumScalars(MixedSchemaFileGenerator.mixedFile(dir, rows), context);
+        double flat = sumScalars(MixedSchemaFileGenerator.flatScalarsFile(dir, rows), context);
         requireClose("mixed scalars vs flat scalars", mixed, flat);
         System.out.printf("  OK  mixed scalars sum=%s%n", mixed);
     }
 
-    private static void gateStruct(Path dir, HardwoodContext context) throws IOException {
-        double nested = sumStruct(MixedSchemaFileGenerator.structFile(dir), "s.a", "s.b", "s.c", context);
-        double flat = sumStruct(MixedSchemaFileGenerator.structFlatFile(dir), "a", "b", "c", context);
+    private static void gateStruct(Path dir, long rows, HardwoodContext context) throws IOException {
+        double nested = sumStruct(MixedSchemaFileGenerator.structFile(dir, rows), "s.a", "s.b", "s.c", context);
+        double flat = sumStruct(MixedSchemaFileGenerator.structFlatFile(dir, rows), "a", "b", "c", context);
         requireClose("struct vs struct flat", nested, flat);
         System.out.printf("  OK  struct sum=%s%n", nested);
     }
 
     /// The multi-repetition-layer files: the column and row paths must agree.
-    private static void gateDepth(Path dir, HardwoodContext context) throws IOException {
-        Path listOfList = MixedSchemaFileGenerator.listOfListFile(dir);
+    private static void gateDepth(Path dir, long totalValues, HardwoodContext context) throws IOException {
+        Path listOfList = MixedSchemaFileGenerator.listOfListFile(dir, totalValues);
         double lolColumn;
         try (ParquetFileReader reader = NestedReads.open(listOfList, context)) {
             lolColumn = NestedReads.sumDoubleColumn(reader, 0);
@@ -72,7 +74,7 @@ public final class MixedSchemaGate {
         requireClose("list-of-list row vs column", lolRow, lolColumn);
         System.out.printf("  OK  list-of-list sum=%s%n", lolColumn);
 
-        Path listOfStruct = MixedSchemaFileGenerator.listOfStructFile(dir);
+        Path listOfStruct = MixedSchemaFileGenerator.listOfStructFile(dir, totalValues);
         double losColumn;
         try (ParquetFileReader reader = NestedReads.open(listOfStruct, context)) {
             losColumn = NestedReads.sumLongColumn(reader, 0) + NestedReads.sumDoubleColumn(reader, 1);

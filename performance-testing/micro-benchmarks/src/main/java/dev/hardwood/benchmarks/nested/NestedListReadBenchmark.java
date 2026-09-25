@@ -52,12 +52,16 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 /// cost; an improvement moves the nested numbers toward the floor while the floor
 /// itself stays put. `nullDensity` sweeps the run structure the bulk copy depends on
 /// — nulls and null/empty lists break the contiguous present runs #750 copies in one
-/// shot. Element type spans a 4-byte and an 8-byte leaf.
+/// shot. Element type spans an 8-byte integer and an 8-byte floating-point leaf.
 ///
 /// Generate the corpus first (also done on demand from `@Setup`):
 /// ```
 /// java ... dev.hardwood.benchmarks.nested.NestedListFileGenerator <dataDir>
 /// ```
+///
+/// File names carry the page version and leaf count (`list_int64_none_v2_8000000.parquet`),
+/// so pass the generator the same `-Dperf.pageVersion` and `-Dperf.totalValues` as the
+/// benchmark.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
@@ -87,8 +91,8 @@ public class NestedListReadBenchmark {
         Path dir = Path.of(BenchmarkData.dir());
         long totalValues = BenchmarkData.totalValues();
         NestedListFileGenerator.ensureList(dir, elemKind, density, totalValues);
-        listPath = NestedListFileGenerator.listFile(dir, elemKind, density);
-        flatPath = NestedListFileGenerator.listFlatFile(dir, elemKind, density);
+        listPath = NestedListFileGenerator.listFile(dir, elemKind, density, totalValues);
+        flatPath = NestedListFileGenerator.listFlatFile(dir, elemKind, density, totalValues);
         context = HardwoodContext.create();
     }
 
