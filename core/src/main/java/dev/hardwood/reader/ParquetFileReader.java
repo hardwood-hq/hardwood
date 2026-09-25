@@ -731,6 +731,10 @@ public class ParquetFileReader implements Closeable {
         if (rowGroupFilter == null) {
             return all;
         }
+        if (isMultiFile()) {
+            throw new UnsupportedOperationException("filter(RowGroupPredicate) is single-file only: "
+                    + "a byte range names positions in one file");
+        }
         List<RowGroup> kept = all.stream()
                 .filter(rg -> matches(rg, rowGroupFilter))
                 .toList();
@@ -830,6 +834,8 @@ public class ParquetFileReader implements Closeable {
         /// Apply a row-group selection predicate (e.g. byte-range, for split-aware reading).
         /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
         /// intersection: a row group is read if and only if it passes both.
+        /// Single-file only: on a reader over several files, `build()` throws
+        /// [UnsupportedOperationException], since a byte range names positions in one file.
         ///
         /// Composes with [#head(long)] and [#skip(long)] over the *filtered* row-group
         /// sequence — `skip(N)` skips `N` rows of the kept set, `head(N)` caps at `N`
@@ -1039,6 +1045,8 @@ public class ParquetFileReader implements Closeable {
         /// Apply a row-group selection predicate (e.g. byte-range, for split-aware reading).
         /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
         /// intersection: a row group is read if and only if it passes both.
+        /// Single-file only: on a reader over several files, `build()` throws
+        /// [UnsupportedOperationException], since a byte range names positions in one file.
         public ColumnReadersBuilder filter(RowGroupPredicate rowGroupFilter) {
             this.rowGroupFilter = rowGroupFilter;
             return this;

@@ -46,10 +46,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// - **REJECTED** — the combination is rejected at `build()`; the message is asserted.
 ///
 /// Per-combination *correctness* — that a legal combination returns the **right rows**, not
-/// merely a clean build — is deferred to the differential oracle (session task #1) and to
-/// the dedicated tests in [ParquetReaderTest] / [RowGroupFilterTest]. Cells whose correctness
-/// is not yet pinned carry an `oracleNote`; a non-`null` note flags a combination that needs
-/// follow-up (a known bug in flight, or a legal-but-unverified interaction).
+/// merely a clean build — is covered by [DifferentialReadTest] and by the dedicated tests in
+/// [ParquetReaderTest] / [RowGroupFilterTest].
 ///
 /// The matrix is the live contract: adding a builder option means adding its rows here, and a
 /// behavior change makes the corresponding row fail until it is updated.
@@ -90,18 +88,14 @@ class BuilderCombinationTest {
     enum Disposition { BUILDS, REJECTED }
 
     record Combo(String name, Consumer<RowReaderBuilder> apply, Disposition expect,
-                 String rejectMessage, String oracleNote) {
+                 String rejectMessage) {
 
         static Combo builds(String name, Consumer<RowReaderBuilder> apply) {
-            return new Combo(name, apply, Disposition.BUILDS, null, null);
-        }
-
-        static Combo buildsPending(String name, Consumer<RowReaderBuilder> apply, String oracleNote) {
-            return new Combo(name, apply, Disposition.BUILDS, null, oracleNote);
+            return new Combo(name, apply, Disposition.BUILDS, null);
         }
 
         static Combo rejected(String name, Consumer<RowReaderBuilder> apply, String rejectMessage) {
-            return new Combo(name, apply, Disposition.REJECTED, rejectMessage, null);
+            return new Combo(name, apply, Disposition.REJECTED, rejectMessage);
         }
 
         @Override
@@ -145,9 +139,8 @@ class BuilderCombinationTest {
                         b -> b.filter(FilterPredicate.gt("id", 150L)).skip(50)),
 
                 // ---- filter(RowGroupPredicate) × {…} ----
-                Combo.buildsPending("filterRGP + head",
-                        b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).head(50),
-                        "head must cap the byte-range-kept set, not the whole file — oracle-pending"),
+                Combo.builds("filterRGP + head",
+                        b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).head(50)),
                 Combo.rejected("filterRGP + tail",
                         b -> b.filter(RowGroupPredicate.byteRange(rg1Mid, fileLen)).tail(50),
                         "tail cannot be combined with a row-group filter: tail mode requires"
@@ -193,14 +186,14 @@ class BuilderCombinationTest {
                     count++;
                 }
             }
-            String label = c.oracleNote() == null ? c.name() : c.name() + " [" + c.oracleNote() + "]";
-            assertThat(count).as(label).isBetween(0L, TOTAL_ROWS);
+            assertThat(count).as(c.name()).isBetween(0L, TOTAL_ROWS);
         }
     }
 
     /// Multi-file boundary cells (#577, #672) — physical `skip` (no filter) is a
     /// global offset across all files, logical `skip` (with a filter) counts matches
-    /// across *all* files in order, and `tail` is single-file-only (throws).
+    /// across *all* files in order, and `tail` and `filter(RowGroupPredicate)` are
+    /// single-file-only (throw).
     /// `id` is the global row position: file 0 holds 0..149, file 1 holds 150..249.
     @Test
     void multiFileBoundaries() throws Exception {
@@ -216,7 +209,13 @@ class BuilderCombinationTest {
             assertThat(ids(reader.buildRowReader().skip(300)))
                     .isEmpty();
             assertThatThrownBy(reader.buildRowReader().tail(50)::build)
-                    .isInstanceOf(UnsupportedOperationException.class);
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("Tail reading is not yet supported for multi-file readers");
+            assertThatThrownBy(reader.buildRowReader()
+                    .filter(RowGroupPredicate.byteRange(0, Long.MAX_VALUE))::build)
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("filter(RowGroupPredicate) is single-file only: "
+                            + "a byte range names positions in one file");
         }
     }
 
