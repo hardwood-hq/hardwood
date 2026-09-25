@@ -17,6 +17,9 @@ import dev.hardwood.metadata.RowGroup;
 /// Reader for RowGroup from Thrift Compact Protocol.
 public class RowGroupReader {
 
+    /// Ids of the fields the format requires of a `RowGroup`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3 };
+
     public static RowGroup read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.ROW_GROUP);
         try {
@@ -31,6 +34,7 @@ public class RowGroupReader {
         List<ColumnChunk> columns = Collections.emptyList();
         long totalByteSize = 0;
         long numRows = 0;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -38,30 +42,35 @@ public class RowGroupReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Every field read here is required, so a wrong wire type fails here rather
+                // than being reported as a field that never arrived.
                 case 1: // columns (required list<ColumnChunk>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        // Chunks come in schema order, so each column's path repeats the one the
-                        // previous row group held at the same position.
-                        reader.pathCache().startRowGroup();
-                        columns = reader.readStructList(ColumnChunkReader::read);
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    // Chunks come in schema order, so each column's path repeats the one the
+                    // previous row group held at the same position.
+                    reader.pathCache().startRowGroup();
+                    columns = reader.readStructList(ColumnChunkReader::read);
+                    seen |= 1L << fieldId;
                     break;
-                case 2: // total_byte_size
-                    if (reader.acceptField(header, Codes.I64)) {
-                        totalByteSize = reader.readNonNegativeI64();
-                    }
+                case 2: // total_byte_size (required i64)
+                    reader.requireField(header, Codes.I64);
+                    totalByteSize = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
-                case 3: // num_rows
-                    if (reader.acceptField(header, Codes.I64)) {
-                        numRows = reader.readNonNegativeI64();
-                    }
+                case 3: // num_rows (required i64)
+                    reader.requireField(header, Codes.I64);
+                    numRows = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
         }
+
+        ThriftCompactReader.requireFields(ThriftStruct.ROW_GROUP, seen, REQUIRED_FIELDS);
 
         return new RowGroup(columns, totalByteSize, numRows);
     }

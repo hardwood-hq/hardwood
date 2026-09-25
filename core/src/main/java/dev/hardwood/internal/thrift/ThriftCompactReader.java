@@ -442,6 +442,33 @@ public class ThriftCompactReader {
         return new ParquetReadException(sb.toString());
     }
 
+    /// Checks at a struct's STOP that it carried every field the format requires of it, and
+    /// names all that it did not ([#missingFields]).
+    ///
+    /// @param struct the struct that ended
+    /// @param seen bit `1L << id` set for each required field id the struct carried
+    /// @param requiredIds ids of the struct's required fields, in the format's order
+    /// @throws ParquetReadException if any of them is absent
+    static void requireFields(ThriftStruct struct, long seen, int... requiredIds) {
+        int absent = 0;
+        for (int id : requiredIds) {
+            if ((seen & (1L << id)) == 0) {
+                absent++;
+            }
+        }
+        if (absent == 0) {
+            return;
+        }
+        int[] missing = new int[absent];
+        int i = 0;
+        for (int id : requiredIds) {
+            if ((seen & (1L << id)) == 0) {
+                missing[i++] = id;
+            }
+        }
+        throw missingFields(struct, missing);
+    }
+
     /// What a disagreeing type is, in the words both the log and the message use.
     private static String wrongType(String kind, byte actual, byte expected) {
         return wrongType(kind, actual, hex(expected));

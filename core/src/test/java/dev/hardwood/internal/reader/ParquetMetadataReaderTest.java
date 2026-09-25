@@ -15,9 +15,11 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Reading a file's footer.
 class ParquetMetadataReaderTest {
@@ -47,6 +49,21 @@ class ParquetMetadataReaderTest {
         bytes[3] = 'X';
 
         assertThat(countRows(InputFile.of(ByteBuffer.wrap(bytes)))).isEqualTo(countRows(InputFile.of(FILE)));
+    }
+
+    @Test
+    void aNegativeFooterLengthIsRejected() throws Exception {
+        // FF FF FF FF is -1 as a signed int: subtracted from the file size, it moves the
+        // footer start past the end of the file rather than before its beginning.
+        byte[] bytes = Files.readAllBytes(FILE);
+        int lengthPos = bytes.length - 8;
+        for (int i = 0; i < 4; i++) {
+            bytes[lengthPos + i] = (byte) 0xFF;
+        }
+
+        assertThatThrownBy(() -> ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes))))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>] Invalid footer length: -1");
     }
 
     private static long countRows(InputFile inputFile) throws Exception {

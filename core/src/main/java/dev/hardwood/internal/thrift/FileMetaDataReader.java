@@ -46,6 +46,9 @@ public class FileMetaDataReader {
         }
     }
 
+    /// Ids of the fields the format requires of a `FileMetaData`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
+
     public static FileMetaData read(ThriftCompactReader reader) {
         return readFooter(reader).metaData();
     }
@@ -69,6 +72,7 @@ public class FileMetaDataReader {
         Map<String, String> keyValueMetadata = Collections.emptyMap();
         String createdBy = null;
         List<ColumnOrder> columnOrders = Collections.emptyList();
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -76,29 +80,33 @@ public class FileMetaDataReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
-                case 1: // version
-                    if (reader.acceptField(header, Codes.I32)) {
-                        version = reader.readI32();
-                    }
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Fields 1-4 are required, so a wrong wire type fails here rather than being
+                // reported as a field that never arrived.
+                case 1: // version (required i32)
+                    reader.requireField(header, Codes.I32);
+                    version = reader.readI32();
+                    seen |= 1L << fieldId;
                     break;
-                case 2: // schema (required list<SchemaElement>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        List<SchemaElementReader.ReadElement> elements =
-                                reader.readStructList(SchemaElementReader::readElement);
-                        schema = elements(elements);
-                        logicalTypeUnread = logicalTypeUnread(elements);
-                    }
+                case 2: { // schema (required list<SchemaElement>)
+                    reader.requireField(header, Codes.LIST);
+                    List<SchemaElementReader.ReadElement> elements =
+                            reader.readStructList(SchemaElementReader::readElement);
+                    schema = elements(elements);
+                    logicalTypeUnread = logicalTypeUnread(elements);
+                    seen |= 1L << fieldId;
                     break;
-                case 3: // num_rows
-                    if (reader.acceptField(header, Codes.I64)) {
-                        numRows = reader.readNonNegativeI64();
-                    }
+                }
+                case 3: // num_rows (required i64)
+                    reader.requireField(header, Codes.I64);
+                    numRows = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 case 4: // row_groups (required list<RowGroup>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        rowGroups = reader.readStructList(RowGroupReader::read);
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    rowGroups = reader.readStructList(RowGroupReader::read);
+                    seen |= 1L << fieldId;
                     break;
                 case 5: // key_value_metadata (optional list<KeyValue>)
                     if (reader.acceptField(header, Codes.LIST)) {
@@ -125,6 +133,8 @@ public class FileMetaDataReader {
                     break;
             }
         }
+
+        ThriftCompactReader.requireFields(ThriftStruct.FILE_META_DATA, seen, REQUIRED_FIELDS);
 
         return new ReadFooter(new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata,
                 createdBy, columnOrders), logicalTypeUnread);
