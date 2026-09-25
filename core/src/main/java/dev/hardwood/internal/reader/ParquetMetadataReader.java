@@ -91,9 +91,10 @@ public final class ParquetMetadataReader {
                     + "Not a Parquet file (invalid magic number at end)");
         }
 
-        // Validate footer length
+        // Validate footer length. A negative one would move the footer start past the end of
+        // the file rather than before its beginning, so it is rejected on its own.
         long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
-        if (footerStart < MAGIC_SIZE) {
+        if (footerLength < 0 || footerStart < MAGIC_SIZE) {
             throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
                     + "Invalid footer length: " + footerLength);
         }

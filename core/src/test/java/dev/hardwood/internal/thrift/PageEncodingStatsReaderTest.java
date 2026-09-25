@@ -46,11 +46,32 @@ class PageEncodingStatsReaderTest {
     /// `encoding_stats` into `bloom_filter_offset`.
     private static final byte NEXT_I64 = fieldHeader(1, FieldType.I64);
 
+    /// The fields a `ColumnMetaData` requires, each with a long-form header that carries its id
+    /// outright: `type`, `encodings` (empty), `path_in_schema` (empty), `codec`, `num_values`,
+    /// `total_uncompressed_size`, `total_compressed_size` and `data_page_offset`, all zero.
+    /// Being independent of the previous field's id, they can follow whatever a test wrote.
+    private static final int[] REQUIRED_FIELDS = {
+            0x05, 0x02, 0x00,
+            0x09, 0x04, 0x05,
+            0x09, 0x06, 0x08,
+            0x05, 0x08, 0x00,
+            0x06, 0x0A, 0x00,
+            0x06, 0x0C, 0x00,
+            0x06, 0x0E, 0x00,
+            0x06, 0x12, 0x00 };
+
+    /// A reader over the given `ColumnMetaData` bytes, with [#REQUIRED_FIELDS] spliced in before
+    /// the struct's closing STOP, which is the last byte.
     private static ThriftCompactReader reader(int... bytes) {
-        byte[] b = new byte[bytes.length];
-        for (int i = 0; i < bytes.length; i++) {
+        byte[] b = new byte[bytes.length + REQUIRED_FIELDS.length];
+        int last = bytes.length - 1;
+        for (int i = 0; i < last; i++) {
             b[i] = (byte) bytes[i];
         }
+        for (int i = 0; i < REQUIRED_FIELDS.length; i++) {
+            b[last + i] = (byte) REQUIRED_FIELDS[i];
+        }
+        b[b.length - 1] = (byte) bytes[last];
         return new ThriftCompactReader(ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN));
     }
 
@@ -121,7 +142,7 @@ class PageEncodingStatsReaderTest {
                 STOP)))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Malformed Parquet metadata: collection declares 2147483648 elements but only "
-                         + "1 bytes remain");
+                         + "25 bytes remain");
     }
 
     @Test

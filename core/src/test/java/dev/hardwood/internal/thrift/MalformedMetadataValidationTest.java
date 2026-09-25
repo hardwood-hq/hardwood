@@ -141,6 +141,7 @@ class MalformedMetadataValidationTest {
         // would be read.
         byte[] chunk = new ThriftStructBuilder()
                 .field(1, FieldType.BINARY).binary("data-2.parquet".getBytes(UTF_8))
+                .field(2, FieldType.I64).i64(0)
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
         assertThat(columnChunk.filePath()).isEqualTo("data-2.parquet");
@@ -156,6 +157,7 @@ class MalformedMetadataValidationTest {
         // An empty file_path is the writer naming the file it is writing, not a split layout.
         byte[] chunk = new ThriftStructBuilder()
                 .field(1, FieldType.BINARY).binary(new byte[0])
+                .field(2, FieldType.I64).i64(0)
                 .field(5, FieldType.I32).i32(64)
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
@@ -167,6 +169,7 @@ class MalformedMetadataValidationTest {
     void absentFilePathIsThisFile() {
         // The field is optional; a chunk that omits it makes no claim about another file.
         byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(0)
                 .field(5, FieldType.I32).i32(64)
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
