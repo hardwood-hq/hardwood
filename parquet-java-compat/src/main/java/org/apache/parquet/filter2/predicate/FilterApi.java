@@ -7,6 +7,8 @@
  */
 package org.apache.parquet.filter2.predicate;
 
+import java.util.Set;
+
 import org.apache.parquet.hadoop.metadata.ColumnPath;
 
 /// Shim for parquet-java's `FilterApi`.
@@ -83,6 +85,25 @@ public final class FilterApi {
     public static <T extends Comparable<T>,
             C extends Operators.Column<T> & Operators.SupportsLtGt> Operators.GtEq<T> gtEq(C column, T value) {
         return new Operators.GtEq<>(column, value);
+    }
+
+    // ==================== Set predicates ====================
+
+    /// Keeps the rows whose value is any of `values`.
+    ///
+    /// @throws IllegalArgumentException if `values` is empty
+    public static <T extends Comparable<T>,
+            C extends Operators.Column<T> & Operators.SupportsEqNotEq> Operators.In<T> in(C column, Set<T> values) {
+        return new Operators.In<>(column, values);
+    }
+
+    /// Keeps the rows whose value is none of `values`.
+    ///
+    /// @throws IllegalArgumentException if `values` is empty
+    public static <T extends Comparable<T>,
+            C extends Operators.Column<T> & Operators.SupportsEqNotEq> Operators.NotIn<T> notIn(C column,
+            Set<T> values) {
+        return new Operators.NotIn<>(column, values);
     }
 
     // ==================== Logical combinators ====================

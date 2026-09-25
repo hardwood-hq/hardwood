@@ -51,6 +51,7 @@ nav:
     - Typed Accessors: reference/accessors.md
     - Query Controls: reference/query-controls.md
     - S3: reference/s3.md
+    - parquet-java Compat Filters: reference/parquet-java-compat.md
     - Error Handling: reference/error-handling.md
     - SchemaElement: reference/schema-element.md
     - CLI: reference/cli.md

@@ -85,6 +85,14 @@ FilterPredicate pred = and(
 try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
         .withFilter(FilterCompat.get(pred))
         .build()) {
-    // only rows from matching row groups are returned
+    // only matching rows are returned
 }
 ```
+
+`in` and `notIn` take a `Set` of values:
+
+```java
+FilterPredicate pred = in(binaryColumn("country"), Set.of(Binary.fromString("DE"), Binary.fromString("FR")));
+```
+
+[parquet-java Compat Filters](../reference/parquet-java-compat.md) lists the supported predicates, how a `Binary` literal converts on each column type, and how nulls are handled.
