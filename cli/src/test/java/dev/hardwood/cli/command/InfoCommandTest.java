@@ -43,6 +43,26 @@ class InfoCommandTest implements InfoCommandContract {
     }
 
     @Test
+    void groupsTheTotalRowCount() {
+        Cli.Result result = Cli.launch("info", "-f",
+                getClass().getResource("/misaligned_pages.parquet").getPath());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).contains("Total Rows:        10,000\n");
+    }
+
+    /// A key is writer-supplied bytes just as a value is, so its control
+    /// characters are replaced the same way.
+    @Test
+    void replacesControlCharactersInKeys() {
+        Cli.Result result = Cli.launch("info", "-f",
+                getClass().getResource("/cli_wide_value_test.parquet").getPath());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).contains("  ctl·[31m.key").doesNotContain("\u001b");
+    }
+
+    @Test
     void rejectsRemoteUri() {
         Cli.Result result = Cli.launch("info", "-f", "gs://bucket/data.parquet");
 

@@ -21,6 +21,7 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
@@ -216,7 +217,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                             p.encoding(),
                             idx.firstRow(),
                             Sizes.format(p.compressedSize()),
-                            String.valueOf(p.numValues()),
+                            Fmt.fmt("%,d", p.numValues()),
                             idx.min(),
                             idx.max(),
                             idx.nulls()
@@ -233,7 +234,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                             p.type(),
                             p.encoding(),
                             Sizes.format(p.compressedSize()),
-                            String.valueOf(p.numValues())
+                            Fmt.fmt("%,d", p.numValues())
                     });
                 }
 
@@ -254,10 +255,10 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                     "",
                     "",
                     Sizes.format(totalCompressed),
-                    String.valueOf(totalDataValues),
+                    Fmt.fmt("%,d", totalDataValues),
                     "",
                     "",
-                    anyNullCount ? String.valueOf(totalNulls) : Strings.ABSENT_VALUE
+                    anyNullCount ? Fmt.fmt("%,d", totalNulls) : Strings.ABSENT_VALUE
             });
         }
         else {
@@ -267,7 +268,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                     "",
                     "",
                     Sizes.format(totalCompressed),
-                    String.valueOf(totalDataValues)
+                    Fmt.fmt("%,d", totalDataValues)
             });
         }
 
@@ -337,7 +338,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
 
     private static IndexCells fromColumnIndex(PageInfo p, int dataPageCounter,
             ColumnIndex ci, OffsetIndex oi, ColumnSchema col, int budget) {
-        String firstRow = String.valueOf(oi.pageLocations().get(dataPageCounter).firstRowIndex());
+        String firstRow = Fmt.fmt("%,d", oi.pageLocations().get(dataPageCounter).firstRowIndex());
         String min;
         String max;
         if (ci.nullPages()[dataPageCounter]) {
@@ -352,14 +353,14 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         String nulls = Strings.ABSENT_VALUE;
         if (ci.nullCounts() != null && dataPageCounter < ci.nullCounts().length) {
             nullCount = ci.nullCounts()[dataPageCounter];
-            nulls = String.valueOf(nullCount);
+            nulls = Fmt.fmt("%,d", nullCount);
         }
         return new IndexCells(firstRow, min, max, nulls, nullCount);
     }
 
     private static IndexCells fromInlineStats(PageInfo p, ColumnSchema col, int budget) {
         Statistics stats = p.inlineStats();
-        String firstRow = p.firstRowIndex() != null ? String.valueOf(p.firstRowIndex()) : Strings.ABSENT_VALUE;
+        String firstRow = p.firstRowIndex() != null ? Fmt.fmt("%,d", p.firstRowIndex()) : Strings.ABSENT_VALUE;
         if (stats == null) {
             return new IndexCells(firstRow, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, -1);
         }
@@ -374,7 +375,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             max = stats.maxValue() != null ? statCell(stats.maxValue(), col, budget) : Strings.ABSENT_VALUE;
         }
         long nullCount = stats.nullCount() != null ? stats.nullCount() : -1;
-        String nulls = nullCount >= 0 ? String.valueOf(nullCount) : Strings.ABSENT_VALUE;
+        String nulls = nullCount >= 0 ? Fmt.fmt("%,d", nullCount) : Strings.ABSENT_VALUE;
         return new IndexCells(firstRow, min, max, nulls, nullCount);
     }
 

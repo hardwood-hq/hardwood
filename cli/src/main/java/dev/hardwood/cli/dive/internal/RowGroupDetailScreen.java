@@ -189,7 +189,7 @@ public final class RowGroupDetailScreen {
         Document.Builder lines = Document.builder();
         lines.row(fact("Row group index", String.valueOf(state.rowGroupIndex())));
         lines.row(fact("Rows", Fmt.fmt("%,d", rg.numRows())));
-        lines.row(fact("Column chunks", String.valueOf(chunkCount)));
+        lines.row(fact("Column chunks", Fmt.fmt("%,d", chunkCount)));
         lines.row(fact("Total byte size", Sizes.dualFormat(rg.totalByteSize())));
         lines.blank();
         // "Storage" rather than "Compression": the group holds a `Compression`

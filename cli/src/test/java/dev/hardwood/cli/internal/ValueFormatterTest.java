@@ -714,9 +714,9 @@ class ValueFormatterTest {
     }
 
     @Test
-    void statsAbsentBytesRenderDash() {
-        assertThat(ValueFormatter.formatBytes(null, stringColumn(), true)).isEqualTo("-");
-        assertThat(ValueFormatter.formatBytes(null, stringColumn(), false)).isEqualTo("-");
+    void statsAbsentBytesRenderAbsentMarker() {
+        assertThat(ValueFormatter.formatBytes(null, stringColumn(), true)).isEqualTo(Strings.ABSENT_VALUE);
+        assertThat(ValueFormatter.formatBytes(null, stringColumn(), false)).isEqualTo(Strings.ABSENT_VALUE);
     }
 
     @Test

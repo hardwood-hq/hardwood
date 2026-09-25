@@ -10,6 +10,7 @@ package dev.hardwood.cli.dive.internal;
 import java.util.Base64;
 
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.Strings;
 
 /// Best-effort pretty-printing of key/value metadata values on the Overview
 /// modal. Most Parquet writers shove structured content into these strings:
@@ -24,7 +25,7 @@ public final class KvMetadataFormatter {
 
     public static String format(String key, String value) {
         if (value == null) {
-            return "null";
+            return Strings.ABSENT_VALUE;
         }
         // The display path must never crash the dive session for any input,
         // so the formatters wrap a final RuntimeException catch. Each

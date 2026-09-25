@@ -50,8 +50,8 @@ public final class ColumnAcrossRowGroupsScreen {
         COMP("Comp", 11),
         COMPRESSION("Compression", 11),
         UNENCODED("Unencoded", 11),
-        DICT("Dict", 5),
-        CI("CI", 5),
+        DICT("Dict", 7),
+        CI("CI", 7),
         NULLS("Nulls", 9);
 
         private final String label;
@@ -142,8 +142,8 @@ public final class ColumnAcrossRowGroupsScreen {
                     Sizes.format(cmd.totalCompressedSize()),
                     Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize()),
                     summary.hasUnencoded() ? Sizes.format(summary.unencodedBytes()) : Strings.ABSENT_VALUE,
-                    cmd.dictionaryPageOffset() != null ? "yes" : "no",
-                    cc.columnIndexOffset() != null ? "yes" : "no",
+                    ColumnChunkDetailScreen.presence(cmd.dictionaryPageOffset() != null),
+                    ColumnChunkDetailScreen.presence(cc.columnIndexOffset() != null),
                     nulls,
                     min,
                     max));

@@ -403,11 +403,7 @@ public final class DictionaryScreen {
 
     private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max,
                                       boolean useLogicalType) {
-        String full = entryValue(dict, index, col, useLogicalType, max);
-        if (full.length() <= max) {
-            return full;
-        }
-        return full.substring(0, max - 1) + "…";
+        return Strings.truncateRight(entryValue(dict, index, col, useLogicalType, max), max);
     }
 
     private static String fullValue(Dictionary dict, int index, ColumnSchema col,
