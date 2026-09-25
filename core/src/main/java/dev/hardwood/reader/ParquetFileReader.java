@@ -451,8 +451,8 @@ public class ParquetFileReader implements Closeable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        // Build the iterator first (with tailSkip=0); its
-        // SharedRowGroupMetadata cache is what surfaces the gate decision.
+        // Build the iterator first (with tailSkip=0); the mask capability
+        // cached on its SharedRowGroupMetadata is what surfaces the gate decision.
         // Probing through the iterator avoids the prior duplicate probe
         // where canFastSkipTail and computeFetchPlans both ran the same
         // page-format check per row group.
