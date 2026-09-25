@@ -30,6 +30,7 @@ import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -96,7 +97,8 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     /// Prints one row per row group for a single column, then the level
     /// histograms. Level histograms combine by addition, so the default block
     /// covers the whole file exactly; `--row-group` narrows both.
-    private CommandResult printColumnDetail(FileMetaData metadata, FileSchema schema, InputFile inputFile) {
+    private CommandResult printColumnDetail(FileMetaData metadata, FileSchema schema, InputFile inputFile)
+            throws IOException {
         ColumnSchema columnSchema = findColumn(schema);
         if (columnSchema == null) {
             System.err.println("No such column: " + column);
@@ -164,7 +166,8 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         }
     }
 
-    private String[] detailRow(int rg, ColumnChunk chunk, LevelSummary summary, InputFile inputFile) {
+    private String[] detailRow(int rg, ColumnChunk chunk, LevelSummary summary, InputFile inputFile)
+            throws IOException {
         ColumnMetaData cmd = chunk.metaData();
         long nulls = summary.nullCount(cmd.statistics());
         return new String[]{
@@ -183,7 +186,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                 Sizes.format(cmd.totalCompressedSize()),
                 Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize()),
                 Encodings.label(Encodings.dataPages(cmd),
-                        Encodings.dictionaryEntries(chunk, inputFile),
+                        dictionaryEntries(chunk, inputFile, rg),
                         dictionaryDenominator(summary, cmd)),
                 summary.hasUnencoded()
                         ? Sizes.format(summary.unencodedBytes())
@@ -191,18 +194,56 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         };
     }
 
-    /// How much of the chunk the file describes: the chunk-level statistics
-    /// always, and the per-page copies when the page index carries them. Both
-    /// indexes count — the histograms live in the column index and the
-    /// unencoded sizes in the offset index.
-    ///
-    private static OffsetIndex readOffsetIndex(ColumnChunk chunk, InputFile inputFile) throws IOException {
+    /// The chunk's dictionary cardinality. A dictionary page header that
+    /// cannot be read fails the command, placed at the chunk.
+    private static long dictionaryEntries(ColumnChunk chunk, InputFile inputFile, int rowGroupIndex)
+            throws IOException {
+        try {
+            return Encodings.dictionaryEntries(chunk, inputFile);
+        }
+        catch (IOException e) {
+            throw placed(e, chunk, inputFile, rowGroupIndex);
+        }
+        catch (RuntimeException e) {
+            throw placed(e, chunk, inputFile, rowGroupIndex);
+        }
+    }
+
+    /// The number of pages the chunk's offset index lists, or -1 when the file
+    /// records no offset index. An offset index that cannot be read fails the
+    /// command, placed at the chunk, rather than reading as an absent one.
+    private static int countPages(ColumnChunk chunk, InputFile inputFile, int rowGroupIndex)
+            throws IOException {
         Long offset = chunk.offsetIndexOffset();
         Integer length = chunk.offsetIndexLength();
         if (offset == null || length == null || length <= 0) {
-            return null;
+            return -1;
         }
-        return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
+        try {
+            OffsetIndex oi = OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
+            return oi.pageLocations().size();
+        }
+        catch (IOException e) {
+            throw placed(e, chunk, inputFile, rowGroupIndex);
+        }
+        catch (RuntimeException e) {
+            throw placed(e, chunk, inputFile, rowGroupIndex);
+        }
+    }
+
+    /// Names the file, row group and column on a failure of a read this
+    /// command makes at the bytes directly, where no read pipeline would say
+    /// which chunk the damaged structure belongs to.
+    private static RuntimeException placed(RuntimeException e, ColumnChunk chunk, InputFile inputFile,
+                                           int rowGroupIndex) {
+        return ExceptionContext.addReadContext(
+                inputFile.name(), rowGroupIndex, Sizes.columnPath(chunk.metaData()), e);
+    }
+
+    private static IOException placed(IOException e, ColumnChunk chunk, InputFile inputFile,
+                                      int rowGroupIndex) {
+        return new IOException(ExceptionContext.readPrefix(
+                inputFile.name(), rowGroupIndex, Sizes.columnPath(chunk.metaData())) + e.getMessage(), e);
     }
 
     private String header(ColumnSchema columnSchema) {
@@ -235,21 +276,21 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     }
 
     private static List<ColumnSize> aggregateSizes(FileMetaData metadata, FileSchema schema,
-                                                   InputFile inputFile) {
+                                                   InputFile inputFile) throws IOException {
         Map<String, ColumnSize> byColumn = new LinkedHashMap<>();
 
-        for (RowGroup rg : metadata.rowGroups()) {
-            for (ColumnChunk cc : rg.columns()) {
+        for (int rg = 0; rg < metadata.rowGroups().size(); rg++) {
+            for (ColumnChunk cc : metadata.rowGroups().get(rg).columns()) {
                 ColumnMetaData cmd = cc.metaData();
                 String path = Sizes.columnPath(cmd);
-                int pageCount = countPages(cc, inputFile);
+                int pageCount = countPages(cc, inputFile, rg);
                 // One summary per chunk serves both the unencoded size and the
                 // dictionary's denominator. A column is reported as a whole
                 // only if every one of its chunks yields a figure: a partial
                 // sum reads as a real total and understates it.
                 LevelSummary summary = LevelSummary.of(schema, schema.getColumn(cmd.pathInSchema()), cmd);
                 long unencoded = summary.hasUnencoded() ? summary.unencodedBytes() : -1;
-                long entries = Encodings.dictionaryEntries(cc, inputFile);
+                long entries = dictionaryEntries(cc, inputFile, rg);
                 long denominator = dictionaryDenominator(summary, cmd);
                 ColumnSize existing = byColumn.get(path);
                 if (existing == null) {
@@ -298,16 +339,6 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     /// copy of every value it holds.
     private static long dictionaryDenominator(LevelSummary summary, ColumnMetaData cmd) {
         return summary.hasPresentValues() ? summary.presentValues() : cmd.numValues();
-    }
-
-    private static int countPages(ColumnChunk cc, InputFile inputFile) {
-        try {
-            OffsetIndex oi = readOffsetIndex(cc, inputFile);
-            return oi != null ? oi.pageLocations().size() : -1;
-        }
-        catch (IOException e) {
-            return -1;
-        }
     }
 
     /// The ranked table answers "which column is this file, and what is the

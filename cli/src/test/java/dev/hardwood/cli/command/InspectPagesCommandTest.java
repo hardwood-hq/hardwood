@@ -7,7 +7,16 @@
  */
 package dev.hardwood.cli.command;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.function.ToLongFunction;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import dev.hardwood.InputFile;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.reader.ParquetFileReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +61,40 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).contains(" 10,000 ").doesNotContain(" 10000 ");
+    }
+
+    /// An offset index the parser rejects is a damaged file, not a chunk without
+    /// a page index: the command reports it, naming the chunk, rather than
+    /// falling back to inline statistics.
+    @Test
+    void aDamagedOffsetIndexIsReported(@TempDir Path tempDir) throws IOException {
+        Path damaged = damageFirstChunk(ColumnChunk::offsetIndexOffset, tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error reading pages: [damaged.parquet: row group 0, column 'id'] OffsetIndex field 15 — Unknown field type: 15");
+    }
+
+    @Test
+    void aDamagedColumnIndexIsReported(@TempDir Path tempDir) throws IOException {
+        Path damaged = damageFirstChunk(ColumnChunk::columnIndexOffset, tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", damaged.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error reading pages: [damaged.parquet: row group 0, column 'id'] ColumnIndex field 15 — Unknown field type: 15");
+    }
+
+    private Path damageFirstChunk(ToLongFunction<ColumnChunk> region, Path tempDir) throws IOException {
+        Path source = Path.of(pageIndexFile());
+        long offset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            offset = region.applyAsLong(reader.getFileMetaData().rowGroups().get(0).columns().get(0));
+        }
+        return DamagedFiles.damage(source, offset, tempDir);
     }
 
     @Test

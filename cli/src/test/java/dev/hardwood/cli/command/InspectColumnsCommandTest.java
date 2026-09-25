@@ -7,12 +7,19 @@
  */
 package dev.hardwood.cli.command;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import dev.hardwood.InputFile;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.reader.ParquetFileReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -53,6 +60,53 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
         // Computed: 3 present DOUBLEs and 3 present INT32s.
         assertThat(rankedCellOf(result.output(), "score", "Unencoded")).isEqualTo("24 B");
         assertThat(rankedCellOf(result.output(), "tags.list.element", "Unencoded")).isEqualTo("12 B");
+    }
+
+    /// A dictionary page header the parser rejects is a damaged file, not a
+    /// column without a dictionary: both tables report it, naming the chunk,
+    /// rather than dropping the cardinality from the Encoding cell.
+    @Test
+    void aDamagedDictionaryPageHeaderIsReported(@TempDir Path tempDir) throws IOException {
+        Path damaged = damageFirstDictionaryPageHeader(tempDir);
+        String expected = "Error reading file: [damaged.parquet: row group 0, column 'category'] "
+                + "PageHeader field 15 — Unknown field type: 15";
+
+        Cli.Result ranked = Cli.launch("inspect", "columns", "-f", damaged.toString());
+        Cli.Result detail = Cli.launch("inspect", "columns", "-f", damaged.toString(), "--column", "category");
+
+        assertThat(ranked.exitCode()).isNotZero();
+        assertThat(ranked.errorOutput()).isEqualTo(expected);
+        assertThat(detail.exitCode()).isNotZero();
+        assertThat(detail.errorOutput()).isEqualTo(expected);
+    }
+
+    /// An offset index the parser rejects is a damaged file, not a column
+    /// without a page index: the ranked table reports it, naming the chunk,
+    /// rather than showing `—` for its page count.
+    @Test
+    void aDamagedOffsetIndexIsReported(@TempDir Path tempDir) throws IOException {
+        Path source = Path.of(getClass().getResource("/column_index_pushdown.parquet").getPath());
+        long offset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            offset = reader.getFileMetaData().rowGroups().get(0).columns().get(0).offsetIndexOffset();
+        }
+        Path damaged = DamagedFiles.damage(source, offset, tempDir);
+
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", damaged.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo(
+                "Error reading file: [damaged.parquet: row group 0, column 'id'] OffsetIndex field 15 — Unknown field type: 15");
+    }
+
+    private Path damageFirstDictionaryPageHeader(Path tempDir) throws IOException {
+        Path source = Path.of(getClass().getResource("/dictionary_uncompressed.parquet").getPath());
+        long offset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            ColumnChunk chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(1);
+            offset = chunk.metaData().dictionaryPageOffset();
+        }
+        return DamagedFiles.damage(source, offset, tempDir);
     }
 
     /// The ranked table is where a reader decides which column to look at more
