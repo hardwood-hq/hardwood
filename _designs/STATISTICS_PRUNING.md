@@ -254,7 +254,7 @@ Page pruning reads `CANNOT_MATCH` only; see Boundaries for why the always-match 
 
 `PageFilterEvaluator.computeMatchingRows` runs once per surviving row group when the read reaches it, and yields the `RowRanges` that might match. A leaf is decided page by page over `IndexPageStats`, and a page is kept unless it is `CANNOT_MATCH`; kept pages become row ranges through `RowRanges.fromPages`. Columns have independent page boundaries, so composition works in row space: `AND` intersects its children's ranges, `OR` unions them. A leaf whose column has no column index or offset index, a `GeospatialPredicate`, and an empty `OR` yield `RowRanges.all`.
 
-`IS NULL` drops column-index pages like any other leaf here, since a page this path skips is masked out of every projected column rather than replaced. Each projected column then fetches the pages overlapping the ranges, and a row group whose projected columns cannot apply row masks falls back to all rows; both are [FETCH_PLANNING.md](FETCH_PLANNING.md).
+`IS NULL` drops column-index pages like any other leaf here, since a page this path skips is masked out of every decoded column rather than replaced. Each decoded column (the projected columns and any filter-only column) then fetches the pages overlapping the ranges, and a row group where any decoded column cannot apply row masks falls back to all rows; both are [FETCH_PLANNING.md](FETCH_PLANNING.md).
 
 Tests: `PageFilterEvaluatorTest`, `RowRangesTest`.
 
