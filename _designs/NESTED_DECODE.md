@@ -79,7 +79,7 @@ Invariants every path keeps:
 - **Records are never split across batches.** A record opens at each `repLevel == 0`; a full batch is published at the next record boundary. Batch boundaries therefore depend only on record counts and the flush rules every column shares, which is what keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
 - **Masks apply per record.** A page row mask drops whole records; the per-element path skips the positions of a dropped record, and the fixed-width path copies each kept interval.
 - **A published batch owns its arrays.** The accumulators are reused for the next batch, so publish copies the value, level and offset arrays out (`trimValues`, including the bytes prefix of a variable-length leaf). The one exception hands the accumulator itself to the batch and allocates a fresh one ([Fixed-size-list fast path](#fixed-size-list-fast-path)).
-- **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with an `IllegalStateException`. Later chunks are not checked.
+- **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with a `ParquetReadException`. Later chunks are not checked.
 
 `NestedBatch.allPresent` records whether every page contributing to the batch passed the all-present gate. A page that spans a publish passes its status on to the next batch.
 

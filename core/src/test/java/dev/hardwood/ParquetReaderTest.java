@@ -380,7 +380,7 @@ class ParquetReaderTest {
     }
 
     @Test
-    void negativeMaxRowsReturnsTailAndSkipsEarlierRowGroups() throws Exception {
+    void tailReturnsLastRowsAndSkipsEarlierRowGroups() throws Exception {
         // filter_pushdown_int.parquet has three row groups of 100 rows each:
         // RG0: id 1-100, RG1: id 101-200, RG2: id 201-300.
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
@@ -407,7 +407,7 @@ class ParquetReaderTest {
     }
 
     @Test
-    void negativeMaxRowsSpansMultipleRowGroupsWhenNeeded() throws Exception {
+    void tailSpansMultipleRowGroupsWhenNeeded() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
@@ -432,7 +432,7 @@ class ParquetReaderTest {
     }
 
     @Test
-    void negativeMaxRowsLargerThanFileReadsAllRows() throws Exception {
+    void tailLargerThanFileReadsAllRows() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
@@ -448,22 +448,36 @@ class ParquetReaderTest {
     }
 
     @Test
-    void zeroMaxRowsIsRejected() throws Exception {
+    void zeroHeadIsRejected() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).head(0L).build())
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("head row count must be positive: 0");
         }
     }
 
     @Test
-    void negativeMaxRowsWithFilterIsRejected() throws Exception {
+    void zeroTailIsRejected() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).tail(0L).build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("tail row count must be positive: 0");
+        }
+    }
+
+    @Test
+    void tailWithFilterIsRejected() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).filter(FilterPredicate.gt("id", 0L)).tail(10L).build())
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("tail cannot be combined with a filter: "
+                            + "the set of matching rows is not known from row-group statistics alone");
         }
     }
 
