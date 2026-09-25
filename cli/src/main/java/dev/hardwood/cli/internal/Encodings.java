@@ -67,34 +67,29 @@ public final class Encodings {
     private static final int HEADER_PROBE_BYTES = 256;
 
     /// How many distinct values the chunk's dictionary holds, or -1 when the
-    /// chunk has none or the header cannot be read.
+    /// chunk has none, or keeps its data in another file under the split-file
+    /// layout, where the offsets address that file and not this one.
     ///
     /// Only the dictionary page's *header* is read, so the cost is one short
     /// seek and no decode however large the dictionary is — the entry count is
     /// `num_values` on that header, and nothing here touches the entries.
-    public static long dictionaryEntries(ColumnChunk chunk, InputFile inputFile) {
+    ///
+    /// A header that cannot be read is a damaged file rather than an unknown
+    /// count, so the failure propagates for the caller to place and report.
+    ///
+    /// @throws IOException if the header bytes cannot be read
+    public static long dictionaryEntries(ColumnChunk chunk, InputFile inputFile) throws IOException {
         Long offset = chunk.metaData().dictionaryPageOffset();
-        if (offset == null || offset <= 0) {
+        if (offset == null || offset <= 0 || !chunk.filePath().isEmpty()) {
             return -1;
         }
-        try {
-            // The offsets address the file named by file_path, not this one; a
-            // header decoded from whatever sits here would be fiction.
-            chunk.requireSameFile();
-            int length = Math.toIntExact(
-                    Math.min(HEADER_PROBE_BYTES, chunk.metaData().totalCompressedSize()));
-            PageHeader header = PageHeaderReader.read(
-                    new ThriftCompactReader(inputFile.readRange(offset, length)));
-            return header.dictionaryPageHeader() != null
-                    ? header.dictionaryPageHeader().numValues()
-                    : -1;
-        }
-        catch (IOException | RuntimeException e) {
-            // Unknown, not zero: the surfaces drop the annotation rather than
-            // claim a cardinality, the same way `# Pages` renders the
-            // shared absent-value marker.
-            return -1;
-        }
+        int length = Math.toIntExact(
+                Math.min(HEADER_PROBE_BYTES, chunk.metaData().totalCompressedSize()));
+        PageHeader header = PageHeaderReader.read(
+                new ThriftCompactReader(inputFile.readRange(offset, length)));
+        return header.dictionaryPageHeader() != null
+                ? header.dictionaryPageHeader().numValues()
+                : -1;
     }
 
     /// Abbreviated, `+`-joined label for a set of encodings. Ordered by the

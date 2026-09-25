@@ -157,8 +157,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             ColumnIndex columnIndex = null;
             OffsetIndex offsetIndex = null;
             if (!noStats) {
-                columnIndex = tryLoadColumnIndex(chunk, inputFile);
-                offsetIndex = tryLoadOffsetIndex(chunk, inputFile);
+                columnIndex = loadColumnIndex(chunk, inputFile, rgIdx, col.fieldPath().toString());
+                offsetIndex = loadOffsetIndex(chunk, inputFile, rgIdx, col.fieldPath().toString());
             }
 
             boolean trackRowIndex = chunk.metaData().numValues() == rg.numRows();
@@ -379,34 +379,51 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         return new IndexCells(firstRow, min, max, nulls, nullCount);
     }
 
-    private static ColumnIndex tryLoadColumnIndex(ColumnChunk chunk, InputFile inputFile) {
+    /// The chunk's column index, or `null` when the file records none. A
+    /// column index that cannot be read fails the command, placed at the
+    /// chunk, rather than reading as an absent one.
+    private static ColumnIndex loadColumnIndex(ColumnChunk chunk, InputFile inputFile,
+            int rowGroupIndex, String columnPath) throws IOException {
         Long offset = chunk.columnIndexOffset();
         Integer length = chunk.columnIndexLength();
         if (offset == null || length == null || length <= 0) {
             return null;
         }
         try {
-            ByteBuffer buffer = inputFile.readRange(offset, length);
-            return ColumnIndexReader.read(new ThriftCompactReader(buffer));
+            return ColumnIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
         }
         catch (IOException e) {
-            return null;
+            throw placed(e, inputFile, rowGroupIndex, columnPath);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
         }
     }
 
-    private static OffsetIndex tryLoadOffsetIndex(ColumnChunk chunk, InputFile inputFile) {
+    /// The chunk's offset index, or `null` when the file records none. An
+    /// offset index that cannot be read fails the command, placed at the
+    /// chunk, rather than reading as an absent one.
+    private static OffsetIndex loadOffsetIndex(ColumnChunk chunk, InputFile inputFile,
+            int rowGroupIndex, String columnPath) throws IOException {
         Long offset = chunk.offsetIndexOffset();
         Integer length = chunk.offsetIndexLength();
         if (offset == null || length == null || length <= 0) {
             return null;
         }
         try {
-            ByteBuffer buffer = inputFile.readRange(offset, length);
-            return OffsetIndexReader.read(new ThriftCompactReader(buffer));
+            return OffsetIndexReader.read(new ThriftCompactReader(inputFile.readRange(offset, length)));
         }
         catch (IOException e) {
-            return null;
+            throw placed(e, inputFile, rowGroupIndex, columnPath);
         }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
+        }
+    }
+
+    private static IOException placed(IOException e, InputFile inputFile, int rowGroupIndex, String columnPath) {
+        return new IOException(ExceptionContext.readPrefix(inputFile.name(), rowGroupIndex, columnPath)
+                + e.getMessage(), e);
     }
 
     private record RowGroupData(int rgIdx, List<PageInfo> pages, ColumnIndex columnIndex, OffsetIndex offsetIndex) {

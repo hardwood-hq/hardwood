@@ -55,7 +55,11 @@ class DiveReadFailureTest {
     /// only for the fixture it was read off, and stops being checked the moment
     /// either changes.
     private void damage(ToLongFunction<ParquetModel> region, int count) throws Exception {
-        Path source = Path.of(getClass().getResource("/column_index_pushdown.parquet").getPath());
+        damage("/column_index_pushdown.parquet", region, count);
+    }
+
+    private void damage(String fixture, ToLongFunction<ParquetModel> region, int count) throws Exception {
+        Path source = Path.of(getClass().getResource(fixture).getPath());
         byte[] bytes = Files.readAllBytes(source);
 
         long at;
@@ -148,6 +152,20 @@ class DiveReadFailureTest {
 
         assertThatCode(() -> app.renderOnce(buffer())).doesNotThrowAnyException();
         assertThat(frameText()).contains("Read failed", "damaged.parquet", "ColumnIndex");
+    }
+
+    /// Column chunk detail reads the dictionary page header for the cardinality
+    /// figure. A header it cannot parse is a damaged file, not a chunk without a
+    /// dictionary, so it reaches the overlay rather than dropping the figure.
+    @Test
+    void aDamagedDictionaryPageHeaderIsReportedOnColumnChunkDetail() throws Exception {
+        damage("/dictionary_uncompressed.parquet",
+                m -> m.chunk(0, 1).metaData().dictionaryPageOffset(), 24);
+        app.stack().push(new ScreenState.ColumnChunkDetail(0, 1,
+                ScreenState.ColumnChunkDetail.Pane.MENU, 0, true, false));
+
+        assertThatCode(() -> app.renderOnce(buffer())).doesNotThrowAnyException();
+        assertThat(frameText()).contains("Read failed", "damaged.parquet", "PageHeader");
     }
 
     /// The screen that reads a column's offset index once per row group, so the

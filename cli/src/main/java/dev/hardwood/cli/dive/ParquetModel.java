@@ -241,7 +241,9 @@ public final class ParquetModel implements AutoCloseable {
 
     /// How many distinct values a chunk's dictionary holds, or -1 when it has
     /// none. Cached for the session: the facts pane re-renders on every
-    /// keystroke, and the figure costs a read the footer cannot serve.
+    /// keystroke, and the figure costs a read the footer cannot serve. A
+    /// dictionary page header that cannot be read fails the call, placed at
+    /// the chunk, rather than reading as a chunk without a dictionary.
     ///
     /// Only the column chunk detail screen asks. The list screens deliberately
     /// do not — one short read per visible row would turn a screen that is
@@ -249,7 +251,19 @@ public final class ParquetModel implements AutoCloseable {
     /// paid again for every row that scrolls into view.
     public long dictionaryEntries(int rowGroupIndex, int columnIndex) {
         return dictionaryEntriesCache.computeIfAbsent(new ChunkKey(rowGroupIndex, columnIndex),
-                key -> Encodings.dictionaryEntries(chunk(key.rowGroupIndex(), key.columnIndex()), inputFile));
+                key -> readDictionaryEntries(key.rowGroupIndex(), key.columnIndex()));
+    }
+
+    private long readDictionaryEntries(int rowGroupIndex, int columnIndex) {
+        try {
+            return Encodings.dictionaryEntries(chunk(rowGroupIndex, columnIndex), inputFile);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        catch (RuntimeException e) {
+            throw placed(e, rowGroupIndex, columnIndex);
+        }
     }
 
     /// Walks a column chunk's byte range and returns its page headers (dictionary
