@@ -203,7 +203,7 @@ Explanation, no step-by-step.
 
 - New pages under `docs/content/` carry the CC-BY-SA header block; the license check in
   `./mvnw verify` fails without it.
-- Diátaxis purity as in [DOCS_DIATAXIS_STRUCTURE.md](DOCS_DIATAXIS_STRUCTURE.md): the
+- Diátaxis purity as in [DOCUMENTATION.md](../_designs/DOCUMENTATION.md): the
   how-to guides give no rationale, the reference page does not narrate, the concepts page
   gives no instructions.
 - Pages describe the present. No "now supports", "new in 1.1", or comparisons to what the

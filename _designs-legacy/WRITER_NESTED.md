@@ -398,7 +398,7 @@ stages 1–4 already produce.
 ## Validation strategy
 
 The nested increments run the same two-tier check the flat increments use, inverted
-from [DIFFERENTIAL_TESTING.md](DIFFERENTIAL_TESTING.md):
+from [TESTING.md](../TESTING.md#differential-testing):
 
 1. **DuckDB differential (primary)** — hardwood writes a nested file; DuckDB reads it
    through `read_parquet` and the assembled structs / lists / maps are asserted to

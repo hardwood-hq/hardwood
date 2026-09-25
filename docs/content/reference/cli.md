@@ -338,16 +338,17 @@ navigable session. Typical things to reach for it for:
   Content the record and present-value counts. `l` adds the repetition
   and definition level histograms with each level named after the schema
   node it belongs to, so an absent field reads differently from an empty
-  list. The pane scrolls with `↑↓` when it has focus; its title shows a
-  line range whenever anything is below the fold.
+  list. When the pane has focus, `↑↓`, `PgDn`/`PgUp` and `g`/`G` move a
+  cursor through its facts, passing over the group headings; its title
+  shows a line range whenever anything is below the fold.
 - **Inspect dictionary entries** for a column — Dictionary screen with
   `/` substring filter; `Enter` reveals the full untruncated value of
   the highlighted entry.
 - **Preview a few rows** without exporting — Data preview paginates with
   `PgDn`/`PgUp` (`g`/`G` for first/last); `Enter` opens a per-row modal.
-  In the modal `↑`/`↓` step between the fields whose full value isn't
-  already on screen, `Enter` expands the focused one inline, and
-  `PgDn`/`PgUp` scroll the body.
+  In the modal the cursor stops on every line and moves with `↑`/`↓`,
+  `PgDn`/`PgUp` and `g`/`G`; `Enter` expands the field under the cursor
+  inline when its full value isn't already on screen.
 - **Decode key/value metadata** — Spark JSON schemas pretty-print, Arrow
   IPC schemas decode to a hex dump.
 - **Compare a column across row groups** — from Schema, `Enter` on a
@@ -362,16 +363,15 @@ navigable session. Typical things to reach for it for:
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Move selection |
-| `PgDn` / `PgUp` (or `Shift-↓` / `Shift-↑`) | Page down / up; scroll the body of the Data preview row modal |
-| `g` / `G` | Jump to first / last row |
+| `↑` / `↓` | Move the cursor one row in the focused pane (lists, menus, facts panes, the Data preview row modal) |
+| `PgDn` / `PgUp` (or `Shift-↓` / `Shift-↑`) | Move the cursor one page down / up |
+| `g` / `G` | Move the cursor to the first / last row |
 | `Enter` | Drill into the selected item |
 | `Esc` / `Backspace` | Go back one level |
 | `Tab` / `Shift-Tab` | Switch focused pane |
 | `/` | Inline search (Schema, Column index, Dictionary) |
 | `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
-| `↑` / `↓` | Scroll the facts pane when it has focus (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |

@@ -148,7 +148,7 @@ Pass the `-Dquick` option to skip all non-essential plug-ins and create the outp
 ./mvnw clean verify -Dquick
 ```
 
-Run the following command to format the source code and organize the imports as per the project's conventions:
+Every build without `-Dquick` sorts the imports as per the project's conventions. Run the following command to sort them without building:
 
 ```shell
 ./mvnw process-sources

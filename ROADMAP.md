@@ -519,14 +519,15 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
 
 ### Interactive CLI (`hardwood dive`)
-TUI for exploring Parquet file structure. See `_designs-legacy/INTERACTIVE_DIVE_TUI.md`.
+TUI for exploring Parquet file structure. See `_designs/DIVE_ARCHITECTURE.md`.
 - [x] Phase 1: skeleton + Overview / Schema (flat) / Row groups / Column chunks / Column chunk detail / Help overlay (#324)
 - [x] Phase 2: Pages + page-header modal / Column index / Offset index / Footer / Column-across-row-groups / Chunk-detail drill menu (#324)
 - [x] Phase 3: Dictionary / Data preview (#324)
 - [x] Phase 4: Schema tree expansion, Dictionary inline search, docs expanded (#324)
 - [x] Phase 5: a read failure anywhere becomes an error overlay rather than ending the session,
-      reporting the file, row group and column (#1092). See `_designs-legacy/DIVE_READ_FAILURE_HANDLING.md`
-- [ ] Follow-ups: async I/O (profiling-dependent); "jump to chunk" from Footer; screenshots in docs
+      reporting the file, row group and column (#1092). See `_designs/DIVE_ARCHITECTURE.md`
+- [x] Screenshots in the CLI docs (#333)
+- [ ] Follow-ups: async I/O (profiling-dependent); "jump to chunk" from Footer
 
 ## Testing
 
@@ -589,7 +590,7 @@ Remaining Failures by Category (7 total):
 - [ ] Edge cases (empty files, single values, max nesting)
 - [x] Performance benchmarks vs parquet-java (JMH micro-benchmarks + end-to-end performance tests)
 - [x] Write-path performance benchmark vs parquet-java (`FlatWriteBenchmark` — the columnar and
-  row-oriented APIs against `ExampleParquetWriter`; see `_designs-legacy/FLAT_WRITE_BENCHMARK.md`)
+  row-oriented APIs against `ExampleParquetWriter`; see `PERFORMANCE.md#flat-write-benchmark`)
 - [x] Predicate pushdown tests (`PredicatePushDownTest` — 28 test methods)
 - [x] Column projection tests (`ColumnProjectionTest` — 21 test methods)
 - [x] Multi-file reader tests (`MultiFileRowReaderTest` — 16 test methods)

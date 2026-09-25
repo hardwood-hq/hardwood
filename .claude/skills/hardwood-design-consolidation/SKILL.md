@@ -77,7 +77,7 @@ Read the review commit (`git show HEAD`) and the review file. For each change, c
 
 Fold the review commit into the area commit: `git reset --soft HEAD~2` and recommit with the area message (the fact that a review happened is not history worth keeping). Then push and `gh pr create --label documentation` with a body listing the target documents with a one-line scope each, the method sentence ("written from the intent of its sources and checked against the code; divergences were resolved before this PR"), the adjacent fixes, and "Merge after #…" if code PRs came out of step 4. No decisions section.
 
-Comment once on #1290: `<Area>: #<PR>`. Delete `_reviews/1290-<area>.md` and `_reviews/1290-<area>-review.md`, remove the worktree, and tell the user the area is ready for review. Suggest a fresh `claude` session for the next area.
+Comment once on #1290: `<Area>: #<PR>`, and enter the PR (plus any code PRs it must merge after) in the area's "PR" cell of the "Status" table in #1290's body. Once the PR is merged, set the area's row to ✅ (`gh issue view 1290 --json body`, edit, `gh issue edit 1290 --body-file`). Delete `_reviews/1290-<area>.md` and `_reviews/1290-<area>-review.md`, remove the worktree, and tell the user the area is ready for review. Suggest a fresh `claude` session for the next area.
 
 ## Last area
 

@@ -25,12 +25,12 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Differential **value** comparison (P2): reads every row of the typed corpus through hardwood
+/// Differential **value** comparison: reads every row of the typed corpus through hardwood
 /// and through DuckDB and asserts the decoded values agree, column by column, across the
 /// physical and logical types (`INT32`/`INT64`/`FLOAT`/`DOUBLE`/`BOOLEAN`/`STRING`, plus the
 /// `DATE`/`TIMESTAMP`/`DECIMAL` logical types and raw `BYTE_ARRAY`).
 ///
-/// Where P1 ([DifferentialReadTest]) checks that the *right rows* are selected, this checks that
+/// Where [DifferentialReadTest] checks that the *right rows* are selected, this checks that
 /// each row *decodes* to the right value — the conformance layer that catches decode bugs of the
 /// #537 class. Float/double are compared exactly (a reader must reproduce stored bits); decimals
 /// by numeric value; dates/timestamps as `LocalDate`/`Instant`.

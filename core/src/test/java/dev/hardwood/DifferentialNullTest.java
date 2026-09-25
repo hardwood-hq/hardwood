@@ -27,7 +27,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Differential **null-semantics** check (P2): pins that a comparison filter on a *nullable*
+/// Differential **null-semantics** check: pins that a comparison filter on a *nullable*
 /// column drops the null rows, matching SQL three-valued logic.
 ///
 /// The corpus `diff_nulls.parquet` has `val` null on every third row. DuckDB's `WHERE val <op> x`

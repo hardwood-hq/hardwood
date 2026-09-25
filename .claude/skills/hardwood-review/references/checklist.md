@@ -294,11 +294,11 @@ Items G3–G12 cluster under one shared question: *would this give an external c
 ## H. Dive TUI (only for cli/dive changes)
 
 ### H1. Theme usage
-- **Rule:** Style spans only via `Theme.primary()` / `Theme.accent()` / `Theme.selection()` / `Theme.dim()`, or `Style.EMPTY`. No raw `Color.*` constants or literal `Style.EMPTY.bold()` outside `Theme.java`.
+- **Rule:** Style spans only via `Theme.primary()` / `Theme.accent()` / `Theme.selection()` / `Theme.dim()` / `Theme.error()`, or `Style.EMPTY` (see `_designs/DIVE_UI_RULES.md#visual-hierarchy`). No raw `Color.*` constants or literal `Style.EMPTY.bold()` outside `Theme.java`.
 - **How:** `grep -n 'Color\.\|Style\.EMPTY\.\(bold\|fg\|bg\)' cli/src/main/java/dev/hardwood/cli/dive/` in the diff. Any hit outside `Theme.java` is a smell.
 
 ### H2. List viewport virtualization
-- **Rule:** List-shaped screens must build `Row` objects only for the visible viewport. Use `RowWindow.bottomPinned`.
+- **Rule:** List-shaped screens must build `Row` objects only for the visible viewport. Use `RowWindow.from(scrollTop, selection, total, viewport)` for the slice and `RowWindow.adjustTop` for `scrollTop`.
 - **Why:** O(N) navigation on dictionaries with 100k+ entries or wide schemas.
 - **How:** Grep new TUI list code for full-collection iteration where rows are constructed.
 

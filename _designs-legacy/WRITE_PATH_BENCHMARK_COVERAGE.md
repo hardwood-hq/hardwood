@@ -7,7 +7,7 @@ built yet.
 
 ## Context
 
-`FlatWriteBenchmark` ([FLAT_WRITE_BENCHMARK.md](FLAT_WRITE_BENCHMARK.md)) is the write path's
+`FlatWriteBenchmark` ([PERFORMANCE.md](../PERFORMANCE.md#flat-write-benchmark)) is the write path's
 only benchmark. It measures one flat, taxi-shaped fixture — six columns, four physical types,
 1 M rows in 1024-row batches — through three contenders, across the five codecs both writers
 produce, and reports each produced file's size next to its time.
