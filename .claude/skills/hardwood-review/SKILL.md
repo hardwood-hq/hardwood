@@ -96,11 +96,14 @@ Decisions should be **selectable** — the maintainer can tick the option they p
 
 ```markdown
 - **Q:** <question, one line>
+  - **Example:** <a concrete input, caller or scenario where the options behave differently>
   - [ ] **A.** <option, one clause — say what *changes* if this is picked>
   - [ ] **B.** <option>
   - [ ] **C.** <"keep as-is" — include this when the question implies a change, so disagreement has an explicit checkbox>
   - **Rec:** <A/B/C> — <one-line justification>
 ```
+
+Always include an `Example:` line. The question and options name the fork in the code's own vocabulary, and a maintainer who has not just read the diff cannot choose from that alone: show one case, such as a file, a call or a row, and what each option does with it. If no case separates the options, it is not a decision.
 
 Always include a `Rec:` line, even if it's "no strong opinion — A reads cleaner". Posing a decision without doing the analysis homework just defers the work. Two options are typical; three when "keep as-is" is plausible; rarely more.
 
@@ -108,6 +111,7 @@ Worked example:
 
 ```markdown
 - **Q:** The `split("\n", -1)` branch in `wrapValue` is unreachable — no description contains a newline. Drop it or move the helper somewhere multi-line is exercised?
+  - **Example:** `DataPreviewScreen` wraps a cell value `"line one\nline two"` with its own copy of the loop; under A that copy stays, under B both screens wrap it through the one helper.
   - [ ] **A.** Drop the branch; `wrapValue` stays in `HelpOverlay`.
   - [ ] **B.** Move `wrapValue` to a shared `Strings` helper and exercise the multi-line path there (also resolves the duplication with `DataPreviewScreen`).
   - [ ] **C.** Keep as-is.
@@ -161,6 +165,7 @@ Session: <session-id>
 
 ## Decisions
 - **Q:** <question or fork — one line>
+  - **Example:** <the case where the options differ>
   - [ ] **A.** <option 1 — what changes if you pick this>
   - [ ] **B.** <option 2>
   - [ ] **C.** <option 3 — typically "keep as-is" if a change is on the table>
