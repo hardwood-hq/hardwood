@@ -107,10 +107,14 @@ final class S3Fetcher implements InputFile {
         String range = "bytes=" + offset + "-" + (offset + length - 1);
         HttpResponse<InputStream> response = api.getStream(bucket, key, range);
         int status = response.statusCode();
-        if (status != 206 && status != 200) {
+        if (status != 206) {
+            // A 200 carries the whole object from byte 0: the endpoint ignored the Range header
             try (InputStream body = response.body()) {
+                String detail = status == 200
+                        ? ", expected 206; the endpoint ignored the Range header"
+                        : " " + new String(body.readAllBytes());
                 throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
-                        + ") from " + name() + ": HTTP " + status + " " + new String(body.readAllBytes()));
+                        + ") from " + name() + ": HTTP " + status + detail);
             }
         }
         try (InputStream stream = response.body()) {
