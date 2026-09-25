@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,6 +63,18 @@ class PageRecordCounterTest {
     void testZeroNumValuesReturnsZeroWithoutDecoding() {
         int records = PageRecordCounter.countTopLevelRecords(new byte[0], 0, 0, 0, 1);
         assertThat(records).isEqualTo(0);
+    }
+
+    /// A repetition-level stream that ends before the page's value count is a malformed file:
+    /// a bit-packed run of 13 groups (104 levels at one bit each) of which only the first group's
+    /// byte is present.
+    @Test
+    void testStreamEndingBeforeTheValueCountFails() {
+        byte[] levels = { (13 << 1) | 1, 0b0101_0101 };
+
+        assertThatThrownBy(() -> PageRecordCounter.countTopLevelRecords(levels, 0, levels.length, 100, 1))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Insufficient RLE/Bit-Packing data: walked 8 of 100 requested values");
     }
 
     /// Flat columns must not reach the rep-level walk — caller is responsible

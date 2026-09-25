@@ -13,6 +13,7 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.simd.SimdOperations;
 import dev.hardwood.internal.encoding.simd.VectorSupport;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Decoder for RLE/Bit-Packing Hybrid encoding.
 /// Used primarily for definition/repetition levels and dictionary indices.
@@ -60,8 +61,11 @@ public class RleBitPackingHybridDecoder {
         this.bitMask = (bitWidth == 0) ? 0 : (bitWidth == 32) ? -1 : (1 << bitWidth) - 1;
     }
 
+    /// Decodes the next `count` values into `buffer` from `offset`.
+    ///
+    /// @throws ParquetReadException if the stream ends before `count` values
     public void readInts(int[] buffer, int offset, int count) {
-        if (bitWidth == 0 || pos >= dataEnd) {
+        if (bitWidth == 0) {
             return;
         }
 
@@ -77,21 +81,25 @@ public class RleBitPackingHybridDecoder {
             }
 
             int toRead = Math.min(remaining, remainingInRun);
-
+            int decoded;
             if (isRleRun) {
                 Arrays.fill(buffer, outPos, outPos + toRead, currentValue);
+                decoded = toRead;
             }
             else {
-                decodeBitPacked(buffer, outPos, toRead);
+                decoded = decodeBitPacked(buffer, outPos, toRead);
             }
 
-            outPos += toRead;
-            remainingInRun -= toRead;
-            remaining -= toRead;
+            outPos += decoded;
+            remainingInRun -= decoded;
+            remaining -= decoded;
+            if (decoded < toRead) {
+                break;
+            }
         }
 
         if (remaining > 0) {
-            throw new IllegalStateException("Insufficient RLE/Bit-Packing data: decoded "
+            throw new ParquetReadException("Insufficient RLE/Bit-Packing data: decoded "
                     + (count - remaining) + " of " + count + " requested values");
         }
     }
@@ -272,15 +280,22 @@ public class RleBitPackingHybridDecoder {
 
     private int readRleValue() {
         int bytesNeeded = (bitWidth + 7) / 8;
+        if (bytesNeeded > dataEnd - pos) {
+            throw new ParquetReadException("Unexpected EOF reading RLE run value: expected " + bytesNeeded
+                    + " bytes, got " + (dataEnd - pos));
+        }
         int value = 0;
-        for (int i = 0; i < bytesNeeded && pos < dataEnd; i++) {
+        for (int i = 0; i < bytesNeeded; i++) {
             value |= (data[pos++] & 0xFF) << (i * 8);
         }
         return value & bitMask;
     }
 
     /// Batch decode bit-packed values. Optimized paths for common bit widths.
-    private void decodeBitPacked(int[] output, int outPos, int count) {
+    ///
+    /// @return the number of values decoded, fewer than `count` only where the stream ends first
+    private int decodeBitPacked(int[] output, int outPos, int count) {
+        final int requested = count;
         final int width = bitWidth;
         final int mask = bitMask;
 
@@ -381,6 +396,7 @@ public class RleBitPackingHybridDecoder {
             bitsInBuffer -= width;
             count--;
         }
+        return requested - count;
     }
 
     /// Returns `true` if the first `count` values of this stream are all equal

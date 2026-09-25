@@ -29,6 +29,7 @@ import dev.hardwood.reader.ParquetReadException;
 public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
     private final byte[] data;
+    private final int limit;
     private int pos;
 
     // All lengths read from the delta-encoded header
@@ -36,8 +37,13 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
     private int currentIndex;
     private int totalValues;
 
-    public DeltaLengthByteArrayDecoder(byte[] data, int offset) {
+    /// @param data the page bytes to decode from
+    /// @param offset the position in `data` to start at
+    /// @param limit the position in `data` the page's bytes end at, exclusive; a buffer reused
+    ///        across pages runs on past it with bytes of an earlier page
+    public DeltaLengthByteArrayDecoder(byte[] data, int offset, int limit) {
         this.data = data;
+        this.limit = limit;
         this.pos = offset;
         this.currentIndex = 0;
         this.lengths = null;
@@ -54,7 +60,7 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
         // Read all lengths using DELTA_BINARY_PACKED
         // Lengths are always encoded as INT32 per the spec
-        DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(data, pos);
+        DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(data, pos, limit);
         lengthDecoder.readInts(lengths, null, 0);
         pos = lengthDecoder.getPos();
     }
@@ -77,9 +83,9 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
             return EMPTY_BUFFER.duplicate();
         }
 
-        if (pos + length > data.length) {
+        if (length > limit - pos) {
             throw new ParquetReadException("Unexpected EOF reading byte array: expected " + length
-                    + ", got " + (data.length - pos));
+                    + ", got " + (limit - pos));
         }
         ByteBuffer result = ByteBuffer.wrap(data, pos, length);
         pos += length;

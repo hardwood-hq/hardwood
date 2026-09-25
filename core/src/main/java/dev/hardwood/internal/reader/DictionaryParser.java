@@ -190,9 +190,11 @@ public final class DictionaryParser {
         // add, which is the only actionable thing about it, and it is not the file
         // being wrong — so it must not be caught and re-typed as one.
         Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
+        // Taken ahead of the decompressor, which consumes the buffer.
+        int compressedSize = compressedData.remaining();
         try {
             byte[] data = decompressor.decompress(compressedData, uncompressedSize);
-            return Dictionary.parse(data, numValues, column.type(), column.typeLength());
+            return Dictionary.parse(data, uncompressedSize, numValues, column.type(), column.typeLength());
         }
         catch (UnsupportedOperationException e) {
             // A decompressor that exists but will not run here — libdeflate below Java 22 —
@@ -203,7 +205,7 @@ public final class DictionaryParser {
             throw new ParquetReadException("Failed to parse dictionary (type=" + column.type()
                     + ", numValues=" + numValues
                     + ", uncompressedSize=" + uncompressedSize
-                    + ", compressedSize=" + compressedData.remaining()
+                    + ", compressedSize=" + compressedSize
                     + ", codec=" + codec + ")", e);
         }
     }

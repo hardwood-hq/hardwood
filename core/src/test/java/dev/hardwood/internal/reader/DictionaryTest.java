@@ -23,7 +23,7 @@ class DictionaryTest {
             2, 0, 0, 0, 'A', 'B',       // len=2, "AB"
             3, 0, 0, 0, 'X', 'Y', 'Z'   // len=3, "XYZ"
         };
-        Dictionary dict = Dictionary.parse(data, 2, PhysicalType.BYTE_ARRAY, null);
+        Dictionary dict = Dictionary.parse(data, data.length, 2, PhysicalType.BYTE_ARRAY, null);
         assertThat(dict.size()).isEqualTo(2);
     }
 
@@ -38,7 +38,7 @@ class DictionaryTest {
             2, 0, 0, 0, 'G', 'O',     // len=2, "GO"
             0, 0, 0, 0                  // len=0, ""
         };
-        Dictionary dict = Dictionary.parse(data, 3, PhysicalType.BYTE_ARRAY, null);
+        Dictionary dict = Dictionary.parse(data, data.length, 3, PhysicalType.BYTE_ARRAY, null);
         assertThat(dict.size()).isEqualTo(3);
     }
 
@@ -49,7 +49,7 @@ class DictionaryTest {
             20, 0, 0, 0,
             30, 0, 0, 0
         };
-        Dictionary dict = Dictionary.parse(data, 3, PhysicalType.INT32, null);
+        Dictionary dict = Dictionary.parse(data, data.length, 3, PhysicalType.INT32, null);
         assertThat(dict.size()).isEqualTo(3);
     }
 }

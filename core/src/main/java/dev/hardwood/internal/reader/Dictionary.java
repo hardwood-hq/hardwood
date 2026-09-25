@@ -28,12 +28,14 @@ public sealed interface Dictionary {
     /// Parse dictionary values from decompressed data.
     ///
     /// @param data decompressed dictionary page data
+    /// @param length the number of bytes of `data` the page holds, which a buffer reused across
+    ///        pages exceeds
     /// @param numValues number of dictionary entries
     /// @param type physical type of the column
     /// @param typeLength type length for fixed-length types (may be null for variable-length types)
     /// @return typed dictionary
-    static Dictionary parse(byte[] data, int numValues, PhysicalType type, Integer typeLength) {
-        PlainDecoder decoder = new PlainDecoder(data, 0, type, typeLength);
+    static Dictionary parse(byte[] data, int length, int numValues, PhysicalType type, Integer typeLength) {
+        PlainDecoder decoder = new PlainDecoder(data, 0, length, type, typeLength);
 
         return switch (type) {
             case INT32 -> {

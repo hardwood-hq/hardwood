@@ -196,13 +196,13 @@ class DeltaBinaryPackedEncoderTest {
 
     private static int[] decodeInts(byte[] encoded, int count) throws IOException {
         int[] output = new int[count];
-        new DeltaBinaryPackedDecoder(encoded, 0).readInts(output, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(output, null, 0);
         return output;
     }
 
     private static long[] decodeLongs(byte[] encoded, int count) throws IOException {
         long[] output = new long[count];
-        new DeltaBinaryPackedDecoder(encoded, 0).readLongs(output, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readLongs(output, null, 0);
         return output;
     }
 }

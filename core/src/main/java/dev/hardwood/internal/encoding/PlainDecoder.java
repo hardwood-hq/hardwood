@@ -23,6 +23,7 @@ import dev.hardwood.reader.ParquetReadException;
 public class PlainDecoder implements ValueDecoder {
 
     private final byte[] data;
+    private final int limit;
     private final PhysicalType type;
     private final Integer typeLength;
     private int pos;
@@ -35,16 +36,19 @@ public class PlainDecoder implements ValueDecoder {
     ///
     /// @param data the page bytes to decode from
     /// @param offset the position in `data` to start at
+    /// @param limit the position in `data` the page's bytes end at, exclusive; a buffer reused
+    ///        across pages runs on past it with bytes of an earlier page
     /// @param type the physical type of the values to decode
     /// @param typeLength the value width for `FIXED_LEN_BYTE_ARRAY`, `null` for every
     ///        other type
     /// @throws IllegalArgumentException if `type` is `FIXED_LEN_BYTE_ARRAY` and
     ///         `typeLength` is `null`, which leaves the value boundaries undefined
-    public PlainDecoder(byte[] data, int offset, PhysicalType type, Integer typeLength) {
+    public PlainDecoder(byte[] data, int offset, int limit, PhysicalType type, Integer typeLength) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength == null) {
             throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
         }
         this.data = data;
+        this.limit = limit;
         this.pos = offset;
         this.type = type;
         this.typeLength = typeLength;
@@ -52,7 +56,7 @@ public class PlainDecoder implements ValueDecoder {
 
     /// Read a fixed-length byte array value.
     public byte[] readFixedLenByteArray(int length) {
-        if (pos + length > data.length) {
+        if (length > limit - pos) {
             throw new ParquetReadException("Unexpected EOF while reading fixed-length byte array");
         }
         byte[] result = Arrays.copyOfRange(data, pos, pos + length);
@@ -65,7 +69,7 @@ public class PlainDecoder implements ValueDecoder {
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) {
         if (definitionLevels == null) {
             int numBytes = output.length * 8;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading INT64 values");
             }
             ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().get(output);
@@ -79,7 +83,7 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 8;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading INT64 values");
             }
             LongBuffer longBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
@@ -97,7 +101,7 @@ public class PlainDecoder implements ValueDecoder {
     public void readDoubles(double[] output, int[] definitionLevels, int maxDefLevel) {
         if (definitionLevels == null) {
             int numBytes = output.length * 8;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading DOUBLE values");
             }
             ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().get(output);
@@ -111,7 +115,7 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 8;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading DOUBLE values");
             }
             DoubleBuffer doubleBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
@@ -129,7 +133,7 @@ public class PlainDecoder implements ValueDecoder {
     public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) {
         if (definitionLevels == null) {
             int numBytes = output.length * 4;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading INT32 values");
             }
             ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(output);
@@ -143,7 +147,7 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 4;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading INT32 values");
             }
             IntBuffer intBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
@@ -161,7 +165,7 @@ public class PlainDecoder implements ValueDecoder {
     public void readFloats(float[] output, int[] definitionLevels, int maxDefLevel) {
         if (definitionLevels == null) {
             int numBytes = output.length * 4;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading FLOAT values");
             }
             ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(output);
@@ -175,7 +179,7 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 4;
-            if (pos + numBytes > data.length) {
+            if (numBytes > limit - pos) {
                 throw new ParquetReadException("Unexpected EOF while reading FLOAT values");
             }
             FloatBuffer floatBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
@@ -236,7 +240,7 @@ public class PlainDecoder implements ValueDecoder {
         // Booleans are bit-packed in PLAIN encoding (8 values per byte, LSB first)
         if (bitPosition == 8) {
             // Need to read a new byte
-            if (pos >= data.length) {
+            if (pos >= limit) {
                 throw new ParquetReadException("Unexpected EOF while reading boolean");
             }
             currentByte = data[pos++] & 0xFF;
@@ -250,7 +254,7 @@ public class PlainDecoder implements ValueDecoder {
     }
 
     private byte[] readInt96() {
-        if (pos + 12 > data.length) {
+        if (pos + 12 > limit) {
             throw new ParquetReadException("Unexpected EOF while reading INT96");
         }
         byte[] result = Arrays.copyOfRange(data, pos, pos + 12);
@@ -260,7 +264,7 @@ public class PlainDecoder implements ValueDecoder {
 
     private byte[] readByteArray() {
         // Read length (4 bytes, little-endian)
-        if (pos + 4 > data.length) {
+        if (pos + 4 > limit) {
             throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY length");
         }
         int length = ByteBuffer.wrap(data, pos, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
@@ -275,7 +279,7 @@ public class PlainDecoder implements ValueDecoder {
         }
 
         // Read data
-        if (pos + length > data.length) {
+        if (length > limit - pos) {
             throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY data");
         }
         byte[] result = Arrays.copyOfRange(data, pos, pos + length);

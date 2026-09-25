@@ -113,7 +113,7 @@ class DeltaBinaryPackedDecoderHeaderTest {
         assertThatThrownBy(() -> decode(page, 1))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("No more values to read");
-        assertThatThrownBy(() -> new DeltaBinaryPackedDecoder(page, 0).readInt())
+        assertThatThrownBy(() -> new DeltaBinaryPackedDecoder(page, 0, page.length).readInt())
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("No more values to read");
     }
@@ -129,7 +129,7 @@ class DeltaBinaryPackedDecoderHeaderTest {
 
     private static int[] decode(byte[] page, int count) throws IOException {
         int[] output = new int[count];
-        new DeltaBinaryPackedDecoder(page, 0).readInts(output, null, 0);
+        new DeltaBinaryPackedDecoder(page, 0, page.length).readInts(output, null, 0);
         return output;
     }
 
