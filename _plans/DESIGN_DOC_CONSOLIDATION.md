@@ -6,9 +6,9 @@
 
 | # | Target | Scope | Fed by |
 |---|---|---|---|
-| 1 | `READ_PIPELINE.md` | Row group to published batch: `RowGroupIterator` → `PageSource` → `ColumnWorker` → `BatchExchange`, threading, back-pressure, batch sizing, multi-file planning, `ReaderConfig` | PARSING_PIPELINE_V2, COLUMN_READER_ADAPTIVE_BATCH_SIZING, MULTI_FILE_INCREMENTAL_PLANNING, READER_CONFIG, invariant from LAZY_ROW_GROUP_INITIALIZATION |
+| 1 | `READ_PIPELINE.md` | Row group to published batch: `RowGroupIterator` → `PageSource` → `ColumnWorker` → `BatchExchange`, threading, back-pressure, batch sizing, multi-file planning, `ReaderConfig` | PARSING_PIPELINE_V2, COLUMN_READER_ADAPTIVE_BATCH_SIZING, MULTI_FILE_INCREMENTAL_PLANNING, READER_CONFIG, invariant from LAZY_ROW_GROUP_INITIALIZATION, [facts from deleted sources](#facts-from-deleted-sources) |
 | 2 | `COLUMN_READER.md` | `ColumnReader` data model: layers, offsets, `Validity`, varlength leaves, real view, cursor/scan | COLUMN_READER_ARROW_LAYOUT, VALIDITY_WORD_BITMAP, COLUMN_READ_PIPELINE |
-| 3 | `ROW_READER.md` | Flat vs nested row reader, accessor addressing, `head`/`tail`/`skip` | ROW_BASED_SEEK, reader section of PARSING_PIPELINE_V2 |
+| 3 | `ROW_READER.md` | Flat vs nested row reader, accessor addressing, `head`/`tail`/`skip` | ROW_BASED_SEEK, reader section of PARSING_PIPELINE_V2, [facts from deleted sources](#facts-from-deleted-sources) |
 | 4 | `NESTED_DECODE.md` | Levels to nested batches: schema→layers, `IndexMode`, real view on drain, bulk copy, fixed-size-list fast path, level scratch | NESTED_REALVIEW_ON_DRAIN, NESTED_ALL_PRESENT_PAGE_BULK_COPY, FIXED_SIZE_LIST_FASTPATH, POOLED_LEVEL_DECODE_SCRATCH, UNANNOTATED_REPEATED_LISTS |
 | 5 | `VALUE_DECODE.md` | Page values to Java values: decoders, SIMD, dictionary string interning, `LeafKind` | DICTIONARY_STRING_REUSE, NESTED_PRIMITIVE_LEAF_DECODE, ~5 lines of SIMD_VECTOR_API_PLAN |
 | 6 | `PREDICATE_MODEL.md` | `FilterPredicate` semantics, literal rules, resolution, parquet-java compat translation | PREDICATE_LITERALS, PREDICATE_PUSHDOWN (API), COMPAT_FILTER_SUPPORT |
@@ -17,7 +17,7 @@
 | 9 | `INPUT_FILES.md` | `InputFile` contract, ownership, mapped and in-memory backends, size limits | INPUT_FILE_ABSTRACTION (contract only), LARGE_FILE_PER_REGION_MAPPING |
 | 10 | `S3_STORAGE.md` | `hardwood-s3`: zero-SDK client, SigV4, credentials, `S3Source`, range backing | S3_ZERO_SDK, REMOTE_RANGE_BACKING, one note from S3_OBJECT_STORAGE |
 | 11 | `FETCH_PLANNING.md` | Which bytes a read requests: fetch sequence, `CoalescingPolicy`, fetch plans, `SharedRegion`, page masking | REMOTE_READ_PATH (design part), CROSS_COLUMN_COALESCING, SEQUENTIAL_FETCH_PLAN_PAGE_MASKING, facts from COALESCED_OFFSET_INDEX_READS and OFFSET_INDEX_SUPPORT, I/O section of PARSING_PIPELINE_V2 |
-| 12 | `FILE_METADATA.md` | Footer read, Thrift parse policy, page-index consistency, per-file metadata cache | THRIFT_METADATA_PARSER_HARDENING, PER_FILE_METADATA (later: PARSED_METADATA_REUSE end state) |
+| 12 | `FILE_METADATA.md` | Footer read, Thrift parse policy, page-index consistency, per-file metadata cache | THRIFT_METADATA_PARSER_HARDENING, PER_FILE_METADATA (later: PARSED_METADATA_REUSE end state), [facts from deleted sources](#facts-from-deleted-sources) |
 | 13 | `EXCEPTION_MODEL.md` | Kept; #1093 sentence rewritten as end state | EXCEPTION_MODEL |
 | 14 | `LOGICAL_TYPES.md` | Annotation model, timestamps (incl. FLBA12), Variant, geospatial, read and write | VARIANT_LOGICAL_TYPE, GEOSPATIAL_SUPPORT, FLBA12_TIMESTAMPS, LOCAL_TIMESTAMP_ACCESSOR |
 | 15 | `AVRO_BINDING.md` | `hardwood-avro`: type mapping, decode plan, name resolution | AVRO_DECODE_PLAN, AVRO_NAME_RESOLUTION, mapping table from AVRO_GENERICRECORD_SUPPORT (refreshed) |
@@ -36,6 +36,19 @@ Root files extended instead of new design docs:
 - `TESTING.md` ← INTEGRATION_TESTS, DIFFERENTIAL_TESTING (oracle, `__row__`, comparison layers).
 - `PERFORMANCE.md` ← micro-benchmark conventions from NESTED_READ_BENCHMARK and FLAT_WRITE_BENCHMARK.
 - `ARCHITECTURE.md` gets a pointer paragraph per area (it has nothing on filtering, the writer, Avro or Variant today).
+
+### Facts from deleted sources
+
+The filtering area (#1293) deleted its sources outright. These facts from them belong to targets not yet written and have no other copy; the source is readable at `6e7155c5:_designs/<NAME>.md`. Each still holds in the code.
+
+| Target | Fact | Source |
+|---|---|---|
+| `READ_PIPELINE.md` | The row-group always-match flag travels retriever → drain in a per-slot buffer beside the file name, under the same happens-before chain (`ColumnWorker.filterAlwaysMatchesBuffer`) | ALWAYS_MATCH_STATISTICS |
+| `READ_PIPELINE.md` | A skipped column's boundary marker goes straight into the retriever's reorder slot with no decode task, the next row group's prefetch passes over a skip plan, and the marker takes part in the change-of-file flush; batches never straddle files, which `RecordFilterTally` and both row readers rely on | FILTER_ONLY_COLUMN_SKIP |
+| `ROW_READER.md` | `skip(n)` without a filter is a physical seek that drops whole row groups, across files over the concatenated relation (`_designs-legacy/ROW_BASED_SEEK.md` still says cross-file is out of scope) | ROW_SELECTION_SEMANTICS |
+| `FILE_METADATA.md` | The Statistics parser prefers `min_value`/`max_value` (fields 5/6) over the deprecated `min`/`max` (1/2) and marks bounds deprecated when only the latter are present (PARQUET-1025) | PREDICATE_PUSHDOWN |
+| `FILE_METADATA.md` | A bloom filter body is validated where parsed: `numBytes` a positive multiple of 32, a truncated bitset or missing header field raises | BLOOM_FILTER_SUPPORT |
+| `FILE_METADATA.md` | `SizeStatistics`, `ColumnIndex` and `OffsetIndex` are public records with nullable fields and no public reader entry point for the page index; whole-chunk histogram accessors hand out the parsed array, `definitionLevelHistogram(int)` a copied slice | SIZE_STATISTICS_AND_NAN_COUNTS |
 
 ## Plans (`_plans/`)
 

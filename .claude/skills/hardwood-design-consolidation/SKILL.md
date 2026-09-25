@@ -13,7 +13,7 @@ Keep this session's context small: subagents read the legacy documents and the c
 
 ## 1. Pick the area
 
-Take the first unticked area of the Execution checklist, unless the user named one. From the plan, collect: the target rows for that area (file, scope, "Fed by"), the disposition rows of its sources, the root files it extends, and the open items of "Code/doc drift found" that fall in the area.
+Take the first unticked area of the Execution checklist, unless the user named one. From the plan, collect: the target rows for that area (file, scope, "Fed by"), the disposition rows of its sources, the rows of "Facts from deleted sources" whose target is in the area, the root files it extends, and the open items of "Code/doc drift found" that fall in the area.
 
 Create `_reviews/1290-<area>.md` with those, a `## Divergences` section and a `## State` line. Create the worktree: `git fetch -q origin && git worktree add -b 1290-<area>-design-docs .claude/worktrees/1290-<area>-design-docs origin/main`.
 
@@ -21,7 +21,7 @@ Create `_reviews/1290-<area>.md` with those, a `## Divergences` section and a `#
 
 Launch one `general-purpose` agent per target document, in parallel. Each prompt is [references/writer-brief.md](references/writer-brief.md) (tell the agent to read it, with the worktree path substituted) plus:
 - the target's file name, scope and suggested outline (derive the outline from the scope and the sources; 5–9 sections);
-- its source documents under `_designs-legacy/`;
+- its source documents under `_designs-legacy/`, plus its rows of "Facts from deleted sources" (each fact must land in the target; the full source text is at the commit that table names);
 - the sibling targets of the area and the already-consolidated documents in `_designs/`, to link rather than duplicate;
 - user-facing pages under `docs/content/` that cover the same ground, to link rather than duplicate;
 - facts the plan's disposition rows record as stale ("verify, don't trust").
