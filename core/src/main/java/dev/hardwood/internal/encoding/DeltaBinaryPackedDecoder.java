@@ -88,6 +88,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     }
 
     private final byte[] data;
+    private final int limit;
     private int pos;
 
     private final Header header;
@@ -113,8 +114,14 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     /// Reads the stream header at construction. It is what the buffer's size and every bound come
     /// from, so nothing this class does is meaningful before it: deferring it only buys a flag to
     /// test on every entry point, and every caller already reports an [IOException].
-    public DeltaBinaryPackedDecoder(byte[] data, int offset) {
+    ///
+    /// @param data the page bytes to decode from
+    /// @param offset the position in `data` to start at
+    /// @param limit the position in `data` the page's bytes end at, exclusive; a buffer reused
+    ///        across pages runs on past it with bytes of an earlier page
+    public DeltaBinaryPackedDecoder(byte[] data, int offset, int limit) {
         this.data = data;
+        this.limit = limit;
         this.pos = offset;
         this.header = readHeader();
         this.bitWidths = new int[header.miniblockCount()];
@@ -318,7 +325,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
 
         // Read bit widths for all miniblocks in this block
         for (int i = 0; i < header.miniblockCount(); i++) {
-            if (pos >= data.length) {
+            if (pos >= limit) {
                 throw new ParquetReadException("Unexpected EOF reading bitwidths");
             }
             int bw = data[pos++] & 0xFF;
@@ -372,9 +379,9 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     /// byte count would pass the bounds check rather than fail it.
     private int miniblockBytes(int bitWidth) {
         long bytes = ((long) header.valuesPerMiniblock() * bitWidth + 7) / 8;
-        if (bytes > data.length - pos) {
+        if (bytes > limit - pos) {
             throw new ParquetReadException("Unexpected EOF reading miniblock data: expected " + bytes
-                    + " bytes, got " + (data.length - pos));
+                    + " bytes, got " + (limit - pos));
         }
         return (int) bytes;
     }
@@ -439,11 +446,11 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     /// bounds test that would otherwise run per value.
     private byte[] sourceFor(int bitWidth, int count) {
         long bytes = ((long) (count - 1) * bitWidth) / 8 + Long.BYTES + 1;
-        if (pos + bytes <= data.length) {
+        if (pos + bytes <= limit) {
             return data;
         }
         int needed = Math.toIntExact(bytes);
-        int available = Math.min(data.length - pos, needed);
+        int available = Math.min(limit - pos, needed);
         if (tailBytes == null || tailBytes.length < needed) {
             tailBytes = new byte[needed];
         }
@@ -457,7 +464,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         int shift = 0;
         int b;
         do {
-            if (pos >= data.length) {
+            if (pos >= limit) {
                 throw new ParquetReadException("Unexpected EOF in ULEB128");
             }
             b = data[pos++] & 0xFF;
@@ -472,7 +479,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         int shift = 0;
         int b;
         do {
-            if (pos >= data.length) {
+            if (pos >= limit) {
                 throw new ParquetReadException("Unexpected EOF in ULEB128");
             }
             b = data[pos++] & 0xFF;

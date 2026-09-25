@@ -183,7 +183,7 @@ class ByteArrayEncodingsTest {
     }
 
     private static List<byte[]> decodeDeltaLength(byte[] encoded, int count) throws IOException {
-        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(encoded, 0);
+        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(encoded, 0, encoded.length);
         decoder.initialize(count);
         byte[][] output = new byte[count][];
         decoder.readByteArrays(output, null, 0);
@@ -191,7 +191,7 @@ class ByteArrayEncodingsTest {
     }
 
     private static List<byte[]> decodeDeltaByteArray(byte[] encoded, int count) throws IOException {
-        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(encoded, 0);
+        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(encoded, 0, encoded.length);
         decoder.initialize(count);
         byte[][] output = new byte[count][];
         decoder.readByteArrays(output, null, 0);

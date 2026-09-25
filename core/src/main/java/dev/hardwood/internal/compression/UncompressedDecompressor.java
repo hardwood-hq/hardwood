@@ -9,6 +9,8 @@ package dev.hardwood.internal.compression;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.reader.ParquetReadException;
+
 /// Decompressor for uncompressed data (passthrough).
 public class UncompressedDecompressor implements Decompressor {
 
@@ -16,8 +18,13 @@ public class UncompressedDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        byte[] data = borrowOutputBuffer(compressed.remaining());
-        compressed.get(data, 0, compressed.remaining());
+        int storedSize = compressed.remaining();
+        if (storedSize != uncompressedSize) {
+            throw new ParquetReadException(
+                    "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
+        }
+        byte[] data = borrowOutputBuffer(storedSize);
+        compressed.get(data, 0, storedSize);
         return data;
     }
 

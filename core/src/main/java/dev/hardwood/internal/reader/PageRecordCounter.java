@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.reader.ParquetReadException;
+
 /// Counts top-level records inside a single Parquet data page without invoking
 /// the value decoder.
 ///
@@ -204,7 +206,7 @@ final class PageRecordCounter {
         }
 
         if (remaining > 0) {
-            throw new IllegalStateException("Insufficient RLE/Bit-Packing data: walked "
+            throw new ParquetReadException("Insufficient RLE/Bit-Packing data: walked "
                     + (numValues - remaining) + " of " + numValues + " requested values");
         }
         return records;

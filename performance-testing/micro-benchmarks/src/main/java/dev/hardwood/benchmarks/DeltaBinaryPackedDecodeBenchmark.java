@@ -120,14 +120,14 @@ public class DeltaBinaryPackedDecodeBenchmark {
 
     @Benchmark
     public int[] deltaInts() throws IOException {
-        DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(deltaInt32Data, 0);
+        DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(deltaInt32Data, 0, deltaInt32Data.length);
         decoder.readInts(intOutput, null, 0);
         return intOutput;
     }
 
     @Benchmark
     public long[] deltaLongs() throws IOException {
-        DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(deltaInt64Data, 0);
+        DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(deltaInt64Data, 0, deltaInt64Data.length);
         decoder.readLongs(longOutput, null, 0);
         return longOutput;
     }

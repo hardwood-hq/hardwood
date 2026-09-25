@@ -77,7 +77,7 @@ class ByteStreamSplitEncoderTest {
         byte[] intPlain = PlainEncoder.encodeInts(ints, 0, ints.length);
         byte[] intSplit = ByteStreamSplitEncoder.encode(intPlain, 0, ints.length, Integer.BYTES);
         int[] readInts = new int[ints.length];
-        new ByteStreamSplitDecoder(intSplit, 0, ints.length, PhysicalType.INT32, null)
+        new ByteStreamSplitDecoder(intSplit, 0, intSplit.length, ints.length, PhysicalType.INT32, null)
                 .readInts(readInts, null, 0);
         assertThat(readInts).containsExactly(ints);
 
@@ -85,7 +85,7 @@ class ByteStreamSplitEncoderTest {
         byte[] longPlain = PlainEncoder.encodeLongs(longs, 0, longs.length);
         byte[] longSplit = ByteStreamSplitEncoder.encode(longPlain, 0, longs.length, Long.BYTES);
         long[] readLongs = new long[longs.length];
-        new ByteStreamSplitDecoder(longSplit, 0, longs.length, PhysicalType.INT64, null)
+        new ByteStreamSplitDecoder(longSplit, 0, longSplit.length, longs.length, PhysicalType.INT64, null)
                 .readLongs(readLongs, null, 0);
         assertThat(readLongs).containsExactly(longs);
     }
@@ -104,7 +104,7 @@ class ByteStreamSplitEncoderTest {
         byte[] split = ByteStreamSplitEncoder.encode(packed, 0, values.length, width);
 
         byte[][] read = new byte[values.length][];
-        new ByteStreamSplitDecoder(split, 0, values.length, PhysicalType.FIXED_LEN_BYTE_ARRAY, width)
+        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.FIXED_LEN_BYTE_ARRAY, width)
                 .readByteArrays(read, null, 0);
         assertThat(read).isEqualTo(values);
     }
@@ -119,7 +119,7 @@ class ByteStreamSplitEncoderTest {
         byte[] split = ByteStreamSplitEncoder.encode(plain, 2 * Double.BYTES, 3, Double.BYTES);
 
         double[] read = new double[3];
-        new ByteStreamSplitDecoder(split, 0, 3, PhysicalType.DOUBLE, null).readDoubles(read, null, 0);
+        new ByteStreamSplitDecoder(split, 0, split.length, 3, PhysicalType.DOUBLE, null).readDoubles(read, null, 0);
         assertThat(read).containsExactly(10.0, 20.0, 30.0);
     }
 
@@ -157,7 +157,7 @@ class ByteStreamSplitEncoderTest {
         byte[] plain = PlainEncoder.encodeFloats(values, 0, values.length);
         byte[] split = ByteStreamSplitEncoder.encode(plain, 0, values.length, Float.BYTES);
         float[] read = new float[values.length];
-        new ByteStreamSplitDecoder(split, 0, values.length, PhysicalType.FLOAT, null)
+        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.FLOAT, null)
                 .readFloats(read, null, 0);
         return read;
     }
@@ -166,7 +166,7 @@ class ByteStreamSplitEncoderTest {
         byte[] plain = PlainEncoder.encodeDoubles(values, 0, values.length);
         byte[] split = ByteStreamSplitEncoder.encode(plain, 0, values.length, Double.BYTES);
         double[] read = new double[values.length];
-        new ByteStreamSplitDecoder(split, 0, values.length, PhysicalType.DOUBLE, null)
+        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.DOUBLE, null)
                 .readDoubles(read, null, 0);
         return read;
     }

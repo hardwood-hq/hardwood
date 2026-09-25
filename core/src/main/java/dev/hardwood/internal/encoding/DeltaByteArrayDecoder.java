@@ -36,6 +36,7 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
 
     private final byte[] data;
     private final int offset;
+    private final int limit;
 
     // All prefix lengths read from the delta-encoded header
     private int[] prefixLengths;
@@ -49,9 +50,14 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
     // Previous value for prefix reconstruction
     private byte[] previousValue;
 
-    public DeltaByteArrayDecoder(byte[] data, int offset) {
+    /// @param data the page bytes to decode from
+    /// @param offset the position in `data` to start at
+    /// @param limit the position in `data` the page's bytes end at, exclusive; a buffer reused
+    ///        across pages runs on past it with bytes of an earlier page
+    public DeltaByteArrayDecoder(byte[] data, int offset, int limit) {
         this.data = data;
         this.offset = offset;
+        this.limit = limit;
         this.currentIndex = 0;
         this.prefixLengths = null;
         this.initialized = false;
@@ -72,12 +78,12 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
 
         // Read all prefix lengths using DELTA_BINARY_PACKED
         // Prefix lengths are always encoded as INT32 per the spec
-        DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset);
+        DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset, limit);
         prefixDecoder.readInts(prefixLengths, null, 0);
 
         // Create the suffix decoder (uses DELTA_LENGTH_BYTE_ARRAY)
         // Continue reading from where the prefix decoder stopped
-        suffixDecoder = new DeltaLengthByteArrayDecoder(data, prefixDecoder.getPos());
+        suffixDecoder = new DeltaLengthByteArrayDecoder(data, prefixDecoder.getPos(), limit);
         suffixDecoder.initialize(numNonNullValues);
 
         initialized = true;

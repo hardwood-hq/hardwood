@@ -32,17 +32,25 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
     private final int byteWidth;
     private int currentIndex = 0;
 
-    public ByteStreamSplitDecoder(byte[] data, int offset, int numValues, PhysicalType type, Integer typeLength) {
+    /// @param data the page bytes to decode from
+    /// @param offset the position in `data` the streams start at
+    /// @param limit the position in `data` the page's bytes end at, exclusive; a buffer reused
+    ///        across pages runs on past it with bytes of an earlier page
+    /// @param numValues the number of values each stream holds
+    /// @param type the physical type of the values
+    /// @param typeLength the value width for `FIXED_LEN_BYTE_ARRAY`, `null` for every other type
+    public ByteStreamSplitDecoder(byte[] data, int offset, int limit, int numValues, PhysicalType type,
+            Integer typeLength) {
         this.data = data;
         this.baseOffset = offset;
         this.numValues = numValues;
         this.byteWidth = getByteWidth(type, typeLength);
 
         // Validate that the data buffer has enough room for the expected values
-        int expectedLength = numValues * byteWidth;
-        int availableLength = data.length - offset;
+        long expectedLength = (long) numValues * byteWidth;
+        int availableLength = limit - offset;
         if (availableLength < expectedLength) {
-            throw new IllegalArgumentException(
+            throw new ParquetReadException(
                     "Insufficient data: expected at least " + expectedLength + " bytes for " +
                             numValues + " values of " + byteWidth + " bytes, got " + availableLength);
         }

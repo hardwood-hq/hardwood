@@ -167,8 +167,10 @@ public class PageDecoder {
         Page result = switch (pageHeader.type()) {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-                byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
-                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary, scratch);
+                int uncompressedSize = pageHeader.uncompressedPageSize();
+                byte[] uncompressedData = decompressor.decompress(pageData, uncompressedSize);
+                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, uncompressedSize, dictionary,
+                        scratch);
             }
             case DATA_PAGE_V2 -> {
                 yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData,
@@ -271,14 +273,18 @@ public class PageDecoder {
         };
     }
 
-    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary, LevelScratch scratch) {
+    /// @param data the decompressed page body, valid up to `limit`; the buffer may run on past it
+    ///        with bytes of an earlier page
+    /// @param limit the length of the page body
+    private Page parseDataPage(DataPageHeader header, byte[] data, int limit, Dictionary dictionary,
+            LevelScratch scratch) {
         int numValues = header.numValues();
         int offset = 0;
 
         int repLevelLength = 0;
         int repLevelOffset = 0;
         if (column.maxRepetitionLevel() > 0) {
-            repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            repLevelLength = readSectionLength(data, offset, limit, "repetition level");
             offset += 4;
             repLevelOffset = offset;
             offset += repLevelLength;
@@ -287,7 +293,7 @@ public class PageDecoder {
         int defLevelLength = 0;
         int defLevelOffset = 0;
         if (column.maxDefinitionLevel() > 0) {
-            defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            defLevelLength = readSectionLength(data, offset, limit, "definition level");
             offset += 4;
             defLevelOffset = offset;
             offset += defLevelLength;
@@ -311,7 +317,7 @@ public class PageDecoder {
             if (shape instanceof FixedSizeListShape.FixedWidth(int k)) {
                 Page page = decodeTypedValues(
                         header.encoding(), header.encodingValue(),
-                        data, valuesOffset, numValues, null, null, dictionary);
+                        data, valuesOffset, limit, numValues, null, null, dictionary);
                 return Page.withFixedListK(page, k);
             }
         }
@@ -325,8 +331,23 @@ public class PageDecoder {
                 : null;
 
         return decodeTypedValues(
-                header.encoding(), header.encodingValue(), data, valuesOffset, numValues,
+                header.encoding(), header.encodingValue(), data, valuesOffset, limit, numValues,
                 definitionLevels, repetitionLevels, dictionary);
+    }
+
+    /// Reads the 4-byte little-endian length prefix of a section of `data` at `offset`, and checks
+    /// that the section it announces ends within the page.
+    private static int readSectionLength(byte[] data, int offset, int limit, String section) {
+        if (Integer.BYTES > limit - offset) {
+            throw new ParquetReadException("Unexpected EOF reading the " + section + " length");
+        }
+        int length = ByteBuffer.wrap(data, offset, Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        int remaining = limit - offset - Integer.BYTES;
+        if (length < 0 || length > remaining) {
+            throw new ParquetReadException("Invalid " + section + " length " + length + ": "
+                    + remaining + " bytes remain in the page");
+        }
+        return length;
     }
 
     private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
@@ -336,6 +357,9 @@ public class PageDecoder {
         int valuesOffset = repLevelLen + defLevelLen;
         int compressedValuesLen = pageData.remaining() - valuesOffset;
         int numValues = header.numValues();
+        int valuesLimit = isValueRegionCompressed(header, compressedValuesLen)
+                ? uncompressedPageSize - repLevelLen - defLevelLen
+                : compressedValuesLen;
 
         byte[] repLevelData = null;
         if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
@@ -366,7 +390,7 @@ public class PageDecoder {
                         repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
                 Page page = decodeTypedValues(
                         header.encoding(), header.encodingValue(),
-                        valuesData, 0, numValues, null, null, dictionary);
+                        valuesData, 0, valuesLimit, numValues, null, null, dictionary);
                 return Page.withFixedListK(page, k);
             }
         }
@@ -382,16 +406,25 @@ public class PageDecoder {
         byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
                 repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
         return decodeTypedValues(
-                header.encoding(), header.encodingValue(), valuesData, 0, numValues,
+                header.encoding(), header.encodingValue(), valuesData, 0, valuesLimit, numValues,
                 definitionLevels, repetitionLevels, dictionary);
+    }
+
+    /// Whether the value region of a `DataPageV2` body is stored compressed.
+    private static boolean isValueRegionCompressed(DataPageHeaderV2 header, int compressedValuesLen) {
+        return header.isCompressed() && compressedValuesLen > 0;
     }
 
     /// Extracts the value region of a `DataPageV2` body, decompressing it when
     /// the page marks its values compressed. The level regions precede the
     /// values and are never compressed.
+    ///
+    /// A decompressed region is valid up to `uncompressedPageSize - repLevelLen - defLevelLen`
+    /// only, the buffer it comes in running on past that with bytes of an earlier page; a stored
+    /// one is exactly as long as the region.
     private byte[] readValueRegion(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
             int repLevelLen, int defLevelLen, int valuesOffset, int compressedValuesLen) {
-        if (header.isCompressed() && compressedValuesLen > 0) {
+        if (isValueRegionCompressed(header, compressedValuesLen)) {
             ByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
             int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
@@ -403,7 +436,12 @@ public class PageDecoder {
     }
 
     /// Decode values into Page using primitive arrays where possible.
-    private Page decodeTypedValues(Encoding encoding, int encodingValue, byte[] data, int offset,
+    ///
+    /// @param data the bytes holding the values, which may run on past `limit` with bytes of an
+    ///        earlier page
+    /// @param offset the position in `data` the values start at
+    /// @param limit the position in `data` the values end at, exclusive
+    private Page decodeTypedValues(Encoding encoding, int encodingValue, byte[] data, int offset, int limit,
                                    int numValues,
                                    int[] definitionLevels, int[] repetitionLevels,
                                    Dictionary dictionary) {
@@ -413,7 +451,7 @@ public class PageDecoder {
         // Try to decode into primitive arrays for supported type/encoding combinations
         return switch (encoding) {
             case PLAIN -> {
-                PlainDecoder decoder = new PlainDecoder(data, offset, type, column.typeLength());
+                PlainDecoder decoder = new PlainDecoder(data, offset, limit, type, column.typeLength());
                 yield switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -448,7 +486,7 @@ public class PageDecoder {
                 };
             }
             case DELTA_BINARY_PACKED -> {
-                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(data, offset);
+                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(data, offset, limit);
                 yield switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -474,7 +512,7 @@ public class PageDecoder {
                 }
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
                 ByteStreamSplitDecoder decoder = new ByteStreamSplitDecoder(
-                        data, offset, numNonNullValues, type, column.typeLength());
+                        data, offset, limit, numNonNullValues, type, column.typeLength());
                 yield switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -508,12 +546,15 @@ public class PageDecoder {
                 if (dictionary == null) {
                     throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
                 }
+                if (offset >= limit) {
+                    throw new ParquetReadException("Unexpected EOF reading the dictionary index bit width");
+                }
                 int bitWidth = data[offset++] & 0xFF;
                 if (bitWidth > 32) {
                     throw new ParquetReadException("Invalid dictionary index bit width: " + bitWidth
                             + ". Must be between 0 and 32");
                 }
-                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, data.length - offset, bitWidth);
+                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, limit - offset, bitWidth);
 
                 yield dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
             }
@@ -528,7 +569,7 @@ public class PageDecoder {
                 }
 
                 // Read 4-byte length prefix (little-endian)
-                int rleLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                int rleLength = readSectionLength(data, offset, limit, "RLE boolean values");
                 offset += 4;
 
                 RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(data, offset, rleLength, 1);
@@ -545,7 +586,7 @@ public class PageDecoder {
                             PhysicalType.BYTE_ARRAY);
                 }
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(data, offset);
+                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(data, offset, limit);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);
@@ -557,7 +598,7 @@ public class PageDecoder {
                             PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
                 }
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(data, offset);
+                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(data, offset, limit);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);
