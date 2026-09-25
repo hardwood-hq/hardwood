@@ -7,11 +7,16 @@
  */
 package dev.hardwood.cli.dive;
 
+import java.util.List;
+import java.util.Set;
+
 /// State of one screen in the `hardwood dive` navigation stack.
 ///
 /// Each variant is an immutable record carrying only the state specific to that screen
 /// (cursor position, parent-screen context). Display strings and tamboui widgets are
-/// derived from these records and the [ParquetModel], not stored here.
+/// derived from these records and the [ParquetModel], not stored here. The one
+/// exception is [DataPreview], which carries the formatted rows of its page, since
+/// they come from a row read rather than from the footer.
 public sealed interface ScreenState {
 
     /// Landing screen. Two panes: file-facts (left) and drill-into menu (right).
@@ -43,21 +48,21 @@ public sealed interface ScreenState {
     /// inline filter-edit mode via `/`.
     record Schema(
             int selection,
-            java.util.Set<String> expanded,
+            Set<String> expanded,
             String filter,
             boolean searching,
             int scrollTop) implements ScreenState {
         public Schema {
-            expanded = java.util.Set.copyOf(expanded);
+            expanded = Set.copyOf(expanded);
         }
 
-        public Schema(int selection, java.util.Set<String> expanded, String filter,
+        public Schema(int selection, Set<String> expanded, String filter,
                       boolean searching) {
             this(selection, expanded, filter, searching, 0);
         }
 
         public static Schema initial() {
-            return new Schema(0, java.util.Set.of(), "", false, 0);
+            return new Schema(0, Set.of(), "", false, 0);
         }
     }
 
@@ -283,29 +288,29 @@ public sealed interface ScreenState {
     record DataPreview(
             long firstRow,
             int pageSize,
-            java.util.List<String> columnNames,
-            java.util.List<java.util.List<String>> rows,
-            java.util.List<java.util.List<String>> expandedRows,
+            List<String> columnNames,
+            List<List<String>> rows,
+            List<List<String>> expandedRows,
             int columnScroll,
             int selectedRow,
             int modalRow,
             boolean logicalTypes,
-            java.util.Set<Integer> expandedColumns,
+            Set<Integer> expandedColumns,
             int modalCursorLine,
             int modalScroll)
             implements ScreenState {
         public DataPreview {
-            columnNames = java.util.List.copyOf(columnNames);
-            rows = java.util.List.copyOf(rows);
-            expandedRows = java.util.List.copyOf(expandedRows);
-            expandedColumns = java.util.Set.copyOf(expandedColumns);
+            columnNames = List.copyOf(columnNames);
+            rows = List.copyOf(rows);
+            expandedRows = List.copyOf(expandedRows);
+            expandedColumns = Set.copyOf(expandedColumns);
         }
 
-        public DataPreview(long firstRow, int pageSize, java.util.List<String> columnNames,
-                           java.util.List<java.util.List<String>> rows,
-                           java.util.List<java.util.List<String>> expandedRows,
+        public DataPreview(long firstRow, int pageSize, List<String> columnNames,
+                           List<List<String>> rows,
+                           List<List<String>> expandedRows,
                            int columnScroll, int selectedRow, int modalRow, boolean logicalTypes,
-                           java.util.Set<Integer> expandedColumns, int modalCursorLine) {
+                           Set<Integer> expandedColumns, int modalCursorLine) {
             this(firstRow, pageSize, columnNames, rows, expandedRows, columnScroll, selectedRow,
                     modalRow, logicalTypes, expandedColumns, modalCursorLine, 0);
         }

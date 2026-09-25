@@ -23,9 +23,10 @@ import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.paragraph.Paragraph;
 
 /// Navigation for a pane whose content is a document rather than a list of
-/// rows: the facts panes and every modal. There is no cursor, so the three
-/// strides all move the viewport itself — `↑`/`↓` by a line, `PgUp`/`PgDn`
-/// by a viewport, `g`/`G` to the ends.
+/// rows: the value modals and the help and read-failure overlays. A facts
+/// pane has a cursor and goes through [Document] instead. There is no cursor
+/// here, so the three strides all move the viewport itself — `↑`/`↓` by a
+/// line, `PgUp`/`PgDn` by a viewport, `g`/`G` to the ends.
 ///
 /// Screens hold the scroll offset in their [ScreenState] and pass it back
 /// here on every keypress; nothing is retained between calls. The offset is

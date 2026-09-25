@@ -187,9 +187,13 @@ public final class FooterScreen {
             return;
         }
         String text = renderLine(all.get(absoluteLine));
-        // The body indents its rows by one cell, which the marker takes over.
-        String marker = enabled ? "▶" : " ";
-        String shown = text.startsWith(" ") ? marker + text.substring(1) : marker + text;
+        // The body indents its rows, and the marker takes over the first cells
+        // of that indent. The pane mixes anchors with facts `Enter` cannot act
+        // on, so every enabled anchor is marked, not only the cursor's.
+        String marker = CursorPane.marker(enabled, cursor, true);
+        String shown = text.startsWith(CursorPane.NO_MARKER)
+                ? marker + text.substring(CursorPane.NO_MARKER.length())
+                : marker + text;
         visible.set(offset, Line.from(new Span(shown, cursor ? Theme.selection() : Theme.primary())));
     }
 
