@@ -218,9 +218,9 @@ line per entry: the key, its value's byte length, and the value itself. Values
 wider than 60 columns are truncated with a trailing `…`, since these routinely
 carry kilobytes of embedded JSON (e.g.
 `org.apache.spark.sql.parquet.row.metadata`) or a base64-encoded Arrow IPC
-schema (`ARROW:schema`). Control characters in a value print as `·`, and a
-value made entirely of control characters prints as `0x`-prefixed hex of its
-UTF-8 bytes:
+schema (`ARROW:schema`). Control characters in a key or a value print as `·`,
+and a key or value made entirely of control characters prints as `0x`-prefixed
+hex of its UTF-8 bytes:
 
 ```
 Key/Value Metadata (3):
@@ -243,6 +243,10 @@ hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
 
 `--kv-key` exits non-zero if the file has no entry under that name, or if the
 entry has no value.
+
+## Counts
+
+Every command and every `dive` screen groups the digits of a count or a row index in threes with a comma: `1,048,576`. The `rowIndex` column of `hardwood print --row-index` is data rather than a figure about the file, and prints plain digits like the values beside it. A script that parses a count removes the commas first.
 
 ## Absent values
 

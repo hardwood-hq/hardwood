@@ -9,6 +9,8 @@ package dev.hardwood.cli.dive.internal;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.cli.internal.Strings;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class KvMetadataFormatterTest {
@@ -86,7 +88,7 @@ class KvMetadataFormatterTest {
     }
 
     @Test
-    void nullValueRendersNull() {
-        assertThat(KvMetadataFormatter.format("k", null)).isEqualTo("null");
+    void absentValueRendersTheAbsentMarker() {
+        assertThat(KvMetadataFormatter.format("k", null)).isEqualTo(Strings.ABSENT_VALUE);
     }
 }

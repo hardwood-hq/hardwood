@@ -219,7 +219,7 @@ public final class DataPreviewScreen {
         // A clipped trailing column is only partly on screen — mark the range
         // with the same ellipsis the cells use rather than claiming it whole.
         String clipMark = window.clipped() ? "…" : "";
-        String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %d–%d%s of %d%s) ",
+        String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %,d–%,d%s of %,d%s) ",
                 state.firstRow() + 1, lastRow, total,
                 state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
 

@@ -43,6 +43,17 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
         return "nonexistent.parquet";
     }
 
+    /// Values, nulls and first-row indexes are counts, so they group in threes
+    /// like every other count the CLI prints.
+    @Test
+    void groupsCountsWithThousandsSeparators() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f",
+                getClass().getResource("/misaligned_pages.parquet").getPath(), "-c", "narrow");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).contains(" 10,000 ").doesNotContain(" 10000 ");
+    }
+
     @Test
     void rejectsRemoteUri() {
         Cli.Result result = Cli.launch("inspect", "pages", "-f", "gs://bucket/data.parquet");

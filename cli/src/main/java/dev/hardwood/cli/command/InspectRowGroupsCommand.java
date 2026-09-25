@@ -18,6 +18,7 @@ import org.aesh.command.invocation.CommandInvocation;
 import org.aesh.command.option.Mixin;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.metadata.ColumnChunk;
@@ -60,8 +61,8 @@ public class InspectRowGroupsCommand implements Command<CommandInvocation> {
     }
 
     private void printRowGroup(int index, RowGroup rg) {
-        System.out.printf("Row Group %d  (%d rows, %s uncompressed)%n",
-                index, rg.numRows(), Sizes.format(rg.totalByteSize()));
+        System.out.println(Fmt.fmt("Row Group %d  (%,d rows, %s uncompressed)",
+                index, rg.numRows(), Sizes.format(rg.totalByteSize())));
 
         String[] headers = {"Column", "Type", "Codec", "Compressed", "Uncompressed"};
         List<String[]> rows = new ArrayList<>();

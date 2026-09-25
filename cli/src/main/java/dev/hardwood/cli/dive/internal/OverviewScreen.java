@@ -14,6 +14,7 @@ import java.util.Map;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.tamboui.buffer.Buffer;
@@ -25,6 +26,7 @@ import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.widgets.Clear;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
@@ -54,6 +56,9 @@ public final class OverviewScreen {
     /// The heading and the blank above it are decoration, so they do not
     /// count — an entry's row is this plus its index.
     private static final int FACTS_HEADER_ROWS = 5;
+
+    /// Cells the facts pane gives a key/value entry's value.
+    private static final int KV_VALUE_WIDTH = 32;
 
     /// Rows in the facts pane, which is what the cursor moves over.
     private static int factsRowCount(ParquetModel model) {
@@ -172,12 +177,12 @@ public final class OverviewScreen {
     }
 
     private static int kvModalLineCount(ParquetModel model, ScreenState.Overview state) {
-        java.util.List<java.util.Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
+        List<Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
         if (kv.isEmpty()) {
             return 0;
         }
         int idx = Math.max(0, Math.min(kvIndexForRow(state.kvSelection()), kv.size() - 1));
-        java.util.Map.Entry<String, String> entry = kv.get(idx);
+        Map.Entry<String, String> entry = kv.get(idx);
         return KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1).length;
     }
 
@@ -228,7 +233,7 @@ public final class OverviewScreen {
                 Sizes.compression(f.compressedBytes(), f.uncompressedBytes()), cursorRow == 4));
         if (!kv.isEmpty()) {
             doc.blank();
-            doc.decoration(Line.from(new Span("  key/value meta (" + kv.size() + ")",
+            doc.decoration(Line.from(new Span(Fmt.fmt("  key/value meta (%,d)", kv.size()),
                     Theme.accent().bold())));
             for (int i = 0; i < kv.size(); i++) {
                 Map.Entry<String, String> entry = kv.get(i);
@@ -242,8 +247,8 @@ public final class OverviewScreen {
                 Style valueStyle = rowStyle != null ? rowStyle : Style.EMPTY;
                 doc.row(Line.from(
                         new Span(marker, keyStyle),
-                        new Span(padRight(entry.getKey(), 16), keyStyle),
-                        new Span(trim(entry.getValue(), 32), valueStyle)));
+                        new Span(padRight(Strings.sanitizeControls(entry.getKey()), 16), keyStyle),
+                        new Span(kvValueCell(entry.getValue()), valueStyle)));
             }
         }
         return doc.build();
@@ -277,7 +282,7 @@ public final class OverviewScreen {
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
-        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
+        Clear.INSTANCE.render(area, buffer);
 
         String[] all = KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1);
         // Reserve 2 rows for borders + 2 rows for the close hint and a blank
@@ -292,7 +297,7 @@ public final class OverviewScreen {
 
         List<Line> lines = new ArrayList<>();
         for (int i = scroll; i < end; i++) {
-            lines.add(Line.from(Span.raw(" " + all[i])));
+            lines.add(Line.from(Span.raw(" " + Strings.sanitizeControls(all[i]))));
         }
         lines.add(Line.empty());
         String hint = scroll + viewport < all.length
@@ -304,7 +309,7 @@ public final class OverviewScreen {
                         : " Press Esc or Enter to close");
         lines.add(Line.from(new Span(hint, Theme.dim())));
         Block block = Block.builder()
-                .title(" " + entry.getKey() + " ")
+                .title(" " + Strings.sanitizeControls(entry.getKey()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .build();
@@ -393,13 +398,13 @@ public final class OverviewScreen {
         return Strings.padRight(s, width);
     }
 
-    private static String trim(String s, int max) {
-        if (s == null) {
-            return "";
+    /// A key/value entry's value as the facts pane shows it: control
+    /// characters replaced as `info` replaces them, cut to the value column by
+    /// display cell, and [Strings#ABSENT_VALUE] for an entry with no value.
+    private static String kvValueCell(String value) {
+        if (value == null) {
+            return Strings.ABSENT_VALUE;
         }
-        if (s.length() <= max) {
-            return s;
-        }
-        return s.substring(0, max - 1) + "…";
+        return Strings.truncateRight(Strings.sanitizeControls(value), KV_VALUE_WIDTH);
     }
 }

@@ -89,13 +89,13 @@ spot these:
 - **`inspect columns` → `Share`** is the column's percentage of the file's
   compressed bytes: the row at the top (Rank 1) is the dominant scan cost.
   **`Compression`** is compressed ÷ uncompressed for the named `Codec`;
-  `100.0%` means the codec achieved nothing. A `# Pages` count (vs `-`)
+  `100.0%` means the codec achieved nothing. A `# Pages` count (vs `—`)
   confirms a page index exists for that column.
 - **`inspect columns` → `Unencoded`** is what the values occupy with no
   encoding, which predicts read-side memory — a dictionary-encoded column can be
   small on disk and large once materialised. The file records it for
   `BYTE_ARRAY`; for a fixed-width type it is the present-value count times the
-  width. It is `-` only where the present-value count is unknown.
+  width. It is `—` only where the present-value count is unknown.
 - **`inspect columns` → `Encoding`** names what the *data* pages use, read from
   `encoding_stats`: `DICT`, `PLAIN`, `DELTA`, and so on. The ranked table shows
   the union across row groups; `--column PATH` breaks it out per row group, and
@@ -228,7 +228,7 @@ what the values occupy with no encoding at all:
 | Rank | Column  | Type       | Codec | Compressed | Share | Compression | Encoding       | Unencoded | # Pages |
 +------+---------+------------+-------+------------+-------+-------------+----------------+-----------+---------+
 |    1 | payload | BYTE_ARRAY |  ZSTD |   78.4 KiB | 78.9% |       65.3% | PLAIN+DICT 92% | 410.0 KiB |      10 |
-|    2 |      id |      INT64 |  ZSTD |    2.1 KiB |  2.1% |      100.0% |          PLAIN | 390.6 KiB |       - |
+|    2 |      id |      INT64 |  ZSTD |    2.1 KiB |  2.1% |      100.0% |          PLAIN | 390.6 KiB |       — |
 +------+---------+------------+-------+------------+-------+-------------+----------------+-----------+---------+
 ```
 
@@ -247,11 +247,11 @@ hardwood inspect columns -f FILE --column order.tags.list.element
 ```
 order.tags.list.element  BYTE_ARRAY / STRING  max def 3  max rep 1
 
-+----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
-| RG | Values    | Nulls   | Records   | Present   | Fan-out | Codec | Compressed | Compression | Encoding   | Unencoded |
-+----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
-|  0 | 6,488,062 | 196,606 | 1,048,576 | 6,291,456 |    6.19 |  ZSTD |   61.7 MiB |       33.5% | PLAIN+DICT |  66.0 MiB |
-+----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+------------+-----------+
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+---------------+-----------+
+| RG | Values    | Nulls   | Records   | Present   | Fan-out | Codec | Compressed | Compression | Encoding      | Unencoded |
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+---------------+-----------+
+|  0 | 6,488,062 | 196,606 | 1,048,576 | 6,291,456 |    6.19 |  ZSTD |   61.7 MiB |       33.5% | PLAIN+DICT 2% |  66.0 MiB |
++----+-----------+---------+-----------+-----------+---------+-------+------------+-------------+---------------+-----------+
 
 Definition levels (all row groups, max 3)
   0  tags null                52,428    0.8% ▏

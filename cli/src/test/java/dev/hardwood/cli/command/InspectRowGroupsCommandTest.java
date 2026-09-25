@@ -24,6 +24,15 @@ class InspectRowGroupsCommandTest implements InspectRowGroupsCommandContract {
     }
 
     @Test
+    void groupsTheRowCount() {
+        Cli.Result result = Cli.launch("inspect", "rowgroups", "-f",
+                getClass().getResource("/misaligned_pages.parquet").getPath());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).startsWith("Row Group 0  (10,000 rows, ");
+    }
+
+    @Test
     void rejectsRemoteUri() {
         Cli.Result result = Cli.launch("inspect", "rowgroups", "-f", "hdfs://namenode/data.parquet");
 

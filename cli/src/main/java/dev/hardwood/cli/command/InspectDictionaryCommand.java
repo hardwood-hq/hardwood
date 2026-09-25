@@ -21,6 +21,7 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
@@ -152,8 +153,8 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                 }
                 int displayed = displayedEntryCount(dictionary);
                 if (displayed < dictionary.size()) {
-                    messages.add("Row Group " + rgIdx + " - dictionary has " + dictionary.size()
-                            + " entries (showing first " + displayed + ")");
+                    messages.add(Fmt.fmt("Row Group %d - dictionary has %,d entries (showing first %,d)",
+                            rgIdx, dictionary.size(), displayed));
                 }
                 addDictionaryRows(rows, rgIdx, dictionary, columnSchema, displayed, includeLength, cellBudget());
             }

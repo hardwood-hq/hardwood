@@ -578,7 +578,9 @@ public final class ColumnChunkDetailScreen {
         };
     }
 
-    private static String presence(boolean present) {
+    /// The one spelling of whether a chunk carries an index or a dictionary,
+    /// shared by every screen that shows it.
+    static String presence(boolean present) {
         return present ? "present" : "absent";
     }
 

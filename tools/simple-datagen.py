@@ -1746,6 +1746,30 @@ pq.write_table(
 )
 print("  - Two distinct values with an emoji at the truncation boundary")
 
+# Wide glyphs occupy two terminal cells per char, so a preview cut by char count
+# overflows its cell, and a cut through an emoji splits its surrogate pair. The
+# CJK value is 40 chars / 80 cells; the emoji value puts the emoji's two chars
+# across the dive Dictionary screen's 60-cell preview boundary. The key/value
+# entry does the same against the Overview facts pane's 32-cell value column;
+# the second entry carries an escape sequence in its key.
+cli_wide_value_table = pa.table(
+    {'s': ['\u6f22' * 40, 'a' * 58 + '\U0001F600' + 'bbbbb']},
+    schema=cli_long_value_schema.with_metadata({
+        b'wide.key': ('\u6f22' * 20).encode('utf-8'),
+        b'ctl\x1b[31m.key': b'v',
+    }),
+)
+pq.write_table(
+    cli_wide_value_table,
+    'core/src/test/resources/cli_wide_value_test.parquet',
+    use_dictionary=True,
+    compression=None,
+    data_page_version='1.0',
+)
+print("\nGenerated cli_wide_value_test.parquet:")
+print("  - Dictionary-encoded STRING column s: 40 CJK chars, and an emoji across the 60-cell boundary")
+print("  - Key/value entries wide.key (20 CJK chars) and one whose key holds an ANSI escape")
+
 # ============================================================================
 # CRC Checksum Test Files
 # ============================================================================

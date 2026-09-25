@@ -52,6 +52,10 @@ class DiveRenderTest {
 
     private static final Rect AREA = new Rect(0, 0, 120, 40);
 
+    /// One CJK glyph as the harness captures it: the glyph's cell, then the
+    /// continuation cell it covers, read back as a space.
+    private static final String WIDE_GLYPH_CELLS = "\u6f22 ";
+
     private static final Pattern RANGE_MARKER = Pattern.compile("─ \\d+-\\d+/\\d+ ");
 
     private ParquetModel model;
@@ -968,6 +972,16 @@ class DiveRenderTest {
         assertThat(frame.contains("Ratio")).isFalse();
     }
 
+    /// Column across row groups spells an index's presence the way Column
+    /// chunk detail does.
+    @Test
+    void columnAcrossRowGroupsSpellsIndexPresenceAsPresentOrAbsent() {
+        RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                new ScreenState.ColumnAcrossRowGroups(0, 0, true, 0), model);
+
+        assertThat(frame.text()).contains(" present ").doesNotContain(" yes ").doesNotContain(" no ");
+    }
+
     /// Every surface renders compression as a percentage of the uncompressed
     /// size. A `×` factor on one screen and a `%` on the next describes the
     /// same quantity two ways, which is the reading error this pins shut.
@@ -1093,6 +1107,63 @@ class DiveRenderTest {
         assertThat(RenderHarness.render(body, fitted, model).contains(String.valueOf(viewport)))
                 .as("the last row of the viewport is painted, not blank")
                 .isTrue();
+    }
+
+    /// A dictionary preview is cut by display cell: the 80-cell CJK entry stops
+    /// with its marker inside the 60-cell preview, and the emoji straddling the
+    /// boundary is dropped whole rather than split mid-surrogate.
+    @Test
+    void dictionaryPreviewTruncatesByDisplayCell() throws Exception {
+        Path file = Path.of(getClass().getResource("/cli_wide_value_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.DictionaryView(0, 0, 0, false, "", false, true, true), m);
+
+            assertThat(frame.text())
+                    .contains(WIDE_GLYPH_CELLS.repeat(29) + "…")
+                    .doesNotContain(WIDE_GLYPH_CELLS.repeat(30))
+                    .contains("a".repeat(58) + "…")
+                    .doesNotContain("?");
+        }
+    }
+
+    /// The Overview key/value pane cuts a value by display cell, so a CJK
+    /// value ends with its marker inside the 32-cell value column.
+    @Test
+    void overviewKeyValueValueTruncatesByDisplayCell() throws Exception {
+        Path file = Path.of(getClass().getResource("/cli_wide_value_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA, ScreenState.Overview.initial(), m);
+
+            assertThat(frame.text())
+                    .contains(WIDE_GLYPH_CELLS.repeat(15) + "…")
+                    .doesNotContain(WIDE_GLYPH_CELLS.repeat(16));
+        }
+    }
+
+    /// The Overview key/value pane follows `info`: control characters in a
+    /// value render as `·`, so an escape sequence cannot reach the terminal,
+    /// and an entry with no value renders the absent marker.
+    @Test
+    void overviewKeyValueValueIsSanitisedAndAbsentIsMarked() throws Exception {
+        Path file = Path.of(getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA, ScreenState.Overview.initial(), m);
+
+            assertThat(frame.firstLineContaining("control.key")).contains("line1·line2·[31m");
+            assertThat(frame.text()).doesNotContain("\u001b");
+            assertThat(frame.firstLineContaining("absent.key")).contains("absent.key      " + Strings.ABSENT_VALUE);
+        }
+    }
+
+    @Test
+    void overviewKeyValueKeyIsSanitised() throws Exception {
+        Path file = Path.of(getClass().getResource("/cli_wide_value_test.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA, ScreenState.Overview.initial(), m);
+
+            assertThat(frame.text()).contains("ctl·[31m.key").doesNotContain("\u001b");
+        }
     }
 
     @Test

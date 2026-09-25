@@ -72,15 +72,15 @@ public class InfoCommand implements Command<CommandInvocation> {
 
         System.out.println("Format Version:    " + metadata.version());
         System.out.println("Created By:        " + (metadata.createdBy() != null ? metadata.createdBy() : "unknown"));
-        System.out.println("Row Groups:        " + metadata.rowGroups().size());
-        System.out.println("Total Rows:        " + metadata.numRows());
+        System.out.println("Row Groups:        " + Fmt.fmt("%,d", metadata.rowGroups().size()));
+        System.out.println("Total Rows:        " + Fmt.fmt("%,d", metadata.numRows()));
         System.out.println("Uncompressed Size: " + Sizes.format(totalUncompressed));
         System.out.println("Compressed Size:   " + Sizes.format(totalCompressed));
 
         Map<String, String> keyValueMetadata = metadata.keyValueMetadata();
         if (!keyValueMetadata.isEmpty()) {
             System.out.println();
-            System.out.println("Key/Value Metadata (" + keyValueMetadata.size() + "):");
+            System.out.println(Fmt.fmt("Key/Value Metadata (%,d):", keyValueMetadata.size()));
             printKeyValueMetadata(keyValueMetadata);
         }
         return CommandResult.SUCCESS;
@@ -118,12 +118,12 @@ public class InfoCommand implements Command<CommandInvocation> {
         int keyWidth = 0;
         int sizeWidth = 0;
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            keyWidth = Math.max(keyWidth, Strings.width(entry.getKey()));
+            keyWidth = Math.max(keyWidth, Strings.width(Strings.sanitizeControls(entry.getKey())));
             sizeWidth = Math.max(sizeWidth, size(entry.getValue()).length());
         }
 
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            String line = "  " + Strings.padRight(entry.getKey(), keyWidth)
+            String line = "  " + Strings.padRight(Strings.sanitizeControls(entry.getKey()), keyWidth)
                     + "  " + Fmt.fmt("%" + sizeWidth + "s", size(entry.getValue()));
             String rendered = render(entry.getValue());
             System.out.println(rendered.isEmpty() ? line : line + "  " + rendered);

@@ -104,7 +104,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         }
         if (rowGroup != null && (rowGroup < 0 || rowGroup >= metadata.rowGroups().size())) {
             System.err.println("No such row group: " + rowGroup
-                    + " (file has " + metadata.rowGroups().size() + ")");
+                    + Fmt.fmt(" (file has %,d)", metadata.rowGroups().size()));
             return CommandResult.FAILURE;
         }
 
@@ -340,7 +340,7 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                             s.dictionaryEntriesAvailable() ? s.dictionaryEntries() : -1,
                             s.dictionaryDenominator()),
                     s.unencodedAvailable() ? Sizes.format(s.unencoded()) : Strings.ABSENT_VALUE,
-                    s.pageCountAvailable() ? String.valueOf(s.pageCount()) : Strings.ABSENT_VALUE
+                    s.pageCountAvailable() ? Fmt.fmt("%,d", s.pageCount()) : Strings.ABSENT_VALUE
             });
         }
         System.out.println(RowTable.renderTable(headers, rows));

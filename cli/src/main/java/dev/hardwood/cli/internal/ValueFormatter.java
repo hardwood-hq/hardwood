@@ -772,7 +772,7 @@ public final class ValueFormatter {
     /// page index — for a caller that fills a cell. The hex of a large payload is
     /// built only as far as `budget`, running just past it when the payload is
     /// longer so the caller sees there is more and marks what it cut. Absent
-    /// statistics (`null` bytes) render as `-`; empty ones render as `""` on a
+    /// statistics (`null` bytes) render as [Strings#ABSENT_VALUE]; empty ones render as `""` on a
     /// byte-array column. `useLogicalType=false` dispatches on the physical type
     /// only, so TIMESTAMP / DATE / TIME / DECIMAL / UUID columns render in their
     /// stored int, long or hex form. A fixed-width payload of the wrong length
@@ -782,7 +782,7 @@ public final class ValueFormatter {
         requireBudget(budget);
         Objects.requireNonNull(col, "col");
         if (bytes == null) {
-            return "-";
+            return Strings.ABSENT_VALUE;
         }
         if (bytes.length == 0) {
             return isByteBacked(col.type()) ? "\"\"" : "";
