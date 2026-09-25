@@ -58,6 +58,10 @@ import dev.hardwood.row.PqList;
 /// ```
 /// java ... dev.hardwood.benchmarks.nested.NestedLogicalTypeFileGenerator <dataDir>
 /// ```
+///
+/// File names carry the page version and leaf count
+/// (`list_logical_date_none_v2_8000000.parquet`), so pass the generator the same
+/// `-Dperf.pageVersion` and `-Dperf.totalValues` as the benchmark.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
@@ -83,8 +87,9 @@ public class NestedLogicalTypeReadBenchmark {
         elemKind = LogicalElem.valueOf(elem.toUpperCase());
         NullDensity density = NullDensity.valueOf(nullDensity.toUpperCase());
         Path dir = Path.of(BenchmarkData.dir());
-        NestedLogicalTypeFileGenerator.ensureList(dir, elemKind, density, BenchmarkData.totalValues());
-        listPath = NestedLogicalTypeFileGenerator.listFile(dir, elemKind, density);
+        long totalValues = BenchmarkData.totalValues();
+        NestedLogicalTypeFileGenerator.ensureList(dir, elemKind, density, totalValues);
+        listPath = NestedLogicalTypeFileGenerator.listFile(dir, elemKind, density, totalValues);
         context = HardwoodContext.create();
     }
 

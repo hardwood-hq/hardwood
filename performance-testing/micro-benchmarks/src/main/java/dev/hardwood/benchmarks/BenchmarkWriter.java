@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Random;
 
 import org.apache.avro.Schema;
@@ -71,8 +72,29 @@ public final class BenchmarkWriter {
         return Files.exists(path) && Files.size(path) > 0;
     }
 
+    /// The fixture file `<stem>_<pageVersion>_<size>.parquet` in `dir`, e.g.
+    /// `list_int64_none_v2_8000000.parquet`. The name carries every property that shapes
+    /// the file content beyond what `stem` names — the data page version and the fixture
+    /// size (leaf values or rows) — so a generator that skips a [#present] file never
+    /// reuses one written under different settings.
+    public static Path corpusFile(Path dir, String stem, long size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException("Fixture size must be positive but was " + size);
+        }
+        return dir.resolve(stem + "_" + pageVersion() + "_" + size + ".parquet");
+    }
+
+    /// The data page version from `-Dperf.pageVersion`, `v1` or `v2` (the default).
+    public static String pageVersion() {
+        String version = System.getProperty("perf.pageVersion", "v2").toLowerCase(Locale.ROOT);
+        if (!version.equals("v1") && !version.equals("v2")) {
+            throw new IllegalArgumentException("perf.pageVersion must be 'v1' or 'v2' but was '"
+                    + System.getProperty("perf.pageVersion") + "'");
+        }
+        return version;
+    }
+
     private static WriterVersion writerVersion() {
-        String version = System.getProperty("perf.pageVersion", "v2");
-        return "v1".equalsIgnoreCase(version) ? WriterVersion.PARQUET_1_0 : WriterVersion.PARQUET_2_0;
+        return pageVersion().equals("v1") ? WriterVersion.PARQUET_1_0 : WriterVersion.PARQUET_2_0;
     }
 }

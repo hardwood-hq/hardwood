@@ -48,33 +48,37 @@ import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.RowWriter;
 import dev.hardwood.writer.WriterConfig;
 
-/// Encodes a flat, taxi-shaped fixture through the three write APIs, the write-side
-/// counterpart of the read path's `FlatPerformanceTest`.
+/// Encodes a flat, taxi-shaped fixture through Hardwood's columnar and row write APIs and
+/// parquet-java's record writer, the write-side counterpart of the read path's
+/// `FlatPerformanceTest`.
 ///
 /// | Contender | API |
 /// |-----------|-----|
 /// | `hardwoodColumnar` | [ColumnWriter#writeBatch], 1024-row batches |
-/// | `hardwoodRow` | [ParquetFileWriter#rowWriter()] → [RowWriter#writeRow] |
+/// | `hardwoodRow` | [ParquetFileWriter#rowWriter()] → [RowWriter#writeRow], fields set by name |
+/// | `hardwoodRowByIndex` | as `hardwoodRow`, fields set by index |
+/// | `hardwoodRowByIndexRaw` | as `hardwoodRowByIndex`, with pre-encoded `BYTE_ARRAY` values and raw timestamps |
 /// | `parquetJavaGroup` | parquet-java's [ExampleParquetWriter] over `SimpleGroup` |
 ///
 /// **parquet-java has no columnar write API** — its `WriteSupport` is record-at-a-time by
-/// construction — so the comparison is really the two record-shaped APIs head to head, with
-/// Hardwood's columnar API as the ceiling neither row API can beat.
+/// construction — so the comparison is really the record-shaped APIs head to head, with
+/// Hardwood's columnar API as the ceiling no row API can beat.
 ///
 /// What each contender pays inside the measured region is the cost of its own API, which is
-/// not the same cost in all three:
+/// not the same cost for all of them:
 ///
 /// - `parquetJavaGroup` builds one `SimpleGroup` per record. That object is inherent to
 ///   parquet-java's design, so it belongs in the number, but the gap is not pure encoding
 ///   speed.
-/// - `hardwoodRow` writes `pickup_ts` through [dev.hardwood.writer.StructBuilder#setTimestamp],
-///   so the annotated-value conversion the other two do not perform is in its number. That is
+/// - `hardwoodRow` and `hardwoodRowByIndex` write `pickup_ts` through
+///   [dev.hardwood.writer.StructBuilder#setTimestamp], so the annotated-value conversion the
+///   other contenders do not perform is in their numbers. That is
 ///   what a caller holding records actually pays. The [Instant] objects themselves come from
 ///   the fixture, so their allocation is outside the measured region and only the conversion
 ///   and the pointer chase are inside it.
 /// - parquet-java writes a column index and an offset index per column chunk, which Hardwood
 ///   does not produce yet, so its files carry a little metadata Hardwood's do not.
-/// - The two Hardwood contenders write into `ByteBufferOutputFile` and parquet-java into
+/// - The Hardwood contenders write into `ByteBufferOutputFile` and parquet-java into
 ///   [MemoryOutputFile], which are not the same sink. Both accumulate into a
 ///   `ByteArrayOutputStream`; `ByteBufferOutputFile` takes a [ByteBuffer] and appends the
 ///   array behind it, so neither side copies the payload twice on the way to the buffer.

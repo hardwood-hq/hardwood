@@ -77,8 +77,8 @@ public class NestedMultiListReadBenchmark {
         Path dir = Path.of(BenchmarkData.dir());
         long totalValues = BenchmarkData.totalValues();
         NestedListFileGenerator.ensureMultiList(dir, elemKind, density, totalValues);
-        listPath = NestedListFileGenerator.multiListFile(dir, elemKind, density);
-        flatPath = NestedListFileGenerator.multiListFlatFile(dir, elemKind, density);
+        listPath = NestedListFileGenerator.multiListFile(dir, elemKind, density, totalValues);
+        flatPath = NestedListFileGenerator.multiListFlatFile(dir, elemKind, density, totalValues);
         listLeaves = NestedListFileGenerator.multiListLeaves();
         listFields = NestedListFileGenerator.multiListFields();
         flatColumns = NestedListFileGenerator.multiFlatColumns();

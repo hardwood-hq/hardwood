@@ -31,11 +31,26 @@ public final class BenchmarkData {
 
     /// Leaf-value count per list / repeated / depth fixture, `-Dperf.totalValues`.
     public static long totalValues() {
-        return Long.getLong("perf.totalValues", DEFAULT_TOTAL_VALUES);
+        return longProperty("perf.totalValues", DEFAULT_TOTAL_VALUES);
     }
 
     /// Row count for the mixed / struct fixtures, `-Dperf.rows`.
     public static long rows() {
-        return Long.getLong("perf.rows", DEFAULT_ROWS);
+        return longProperty("perf.rows", DEFAULT_ROWS);
+    }
+
+    /// The system property `name` parsed as a `long`, or `defaultValue` when it is unset or blank.
+    /// A value that does not parse throws rather than falling back to the default.
+    private static long longProperty(String name, long defaultValue) {
+        String value = System.getProperty(name);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        }
+        catch (NumberFormatException e) {
+            throw new IllegalArgumentException(name + " must be a number but was '" + value + "'", e);
+        }
     }
 }

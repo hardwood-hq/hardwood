@@ -54,7 +54,7 @@ public final class NestedLogicalTypeGate {
             for (LogicalElem elem : LogicalElem.values()) {
                 for (NullDensity density : NullDensity.values()) {
                     NestedLogicalTypeFileGenerator.ensureList(dir, elem, density, totalValues);
-                    Path path = NestedLogicalTypeFileGenerator.listFile(dir, elem, density);
+                    Path path = NestedLogicalTypeFileGenerator.listFile(dir, elem, density, totalValues);
                     Fold typed = foldTyped(path, elem, context);
                     Fold generic = foldGeneric(path, elem, context);
                     require(elem + "/" + density + " typed vs generic", typed, generic);
