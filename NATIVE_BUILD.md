@@ -41,20 +41,6 @@ cd cli
 
 See the [CLI reference](docs/content/reference/cli.md#docker) for running the published image.
 
-### Troubleshooting: missing `error-prone-checks` artifact
-
-The QA profile wires in a build-only annotation-processor module, `dev.hardwood:hardwood-error-prone-checks`. On a clean tree, a native build of `cli` alone can fail with:
-
-```
-Could not find artifact dev.hardwood:hardwood-error-prone-checks:jar:1.0.0-SNAPSHOT
-```
-
-Build that module alongside the CLI:
-
-```bash
-./mvnw -Dnative package -pl cli,error-prone-checks -am
-```
-
 ## How the native build works
 
 The CLI module uses the [aesh](https://aeshell.github.io/) command framework and GraalVM/Mandrel native image. Several non-obvious pieces are required to make all compression codecs work correctly in a native binary.
@@ -92,6 +78,6 @@ The solution differs by codec:
 
 ## Testing the native binary
 
-Automated coverage of the native binary is provided by Failsafe integration tests that spawn the compiled executable as a subprocess; see [_designs-legacy/INTEGRATION_TESTS.md](_designs-legacy/INTEGRATION_TESTS.md). They run during `./mvnw -Dnative -pl cli verify`.
+Automated coverage of the native binary is provided by Failsafe integration tests that spawn the compiled executable as a subprocess; see [TESTING.md](TESTING.md#the-native-test-layer). They run during `./mvnw -Dnative -pl cli verify`.
 
 For ad-hoc manual testing of the native binary against S3, see the [Manual S3 testing](TESTING.md#manual-s3-testing) recipe in [TESTING.md](TESTING.md).

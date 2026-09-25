@@ -155,8 +155,6 @@ jobs:
           key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-javadoc-
-            maven-${{ runner.os }}-integration-tests-java21-
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 

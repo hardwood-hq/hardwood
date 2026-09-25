@@ -32,7 +32,7 @@ import dev.tamboui.style.Style;
 /// Body content (kv values, schema rows, top-bar facts, table data)
 /// uses `Style.EMPTY` and reads as the user's terminal default fg.
 ///
-/// See `_designs-legacy/DIVE_THEME.md` for the full decision tree authors
+/// See `_designs/DIVE_UI_RULES.md#visual-hierarchy` for the full decision tree authors
 /// should follow when adding new content. Direct use of `Color.*`
 /// constants or literal modifier styles outside this class is
 /// reserved for `Theme` itself; everything else routes through one

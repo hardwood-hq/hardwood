@@ -41,9 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// is recoverable as `ORDER BY __row__`, and the comparison reduces to checking that both
 /// sides return the same ordered list of `__row__` values.
 ///
-/// This is P1 (design: `_designs-legacy/DIFFERENTIAL_TESTING.md`, tracked by #548): row-identity only,
-/// filters on a required column. Per-column value comparison and `byteRange` translation are P2.
-/// Combinations that are known-wrong today are marked `pending(<issue>)` and skipped via
+/// Row identity only, filters on a required column; the harness is described in
+/// `TESTING.md#differential-testing`. Combinations that are known-wrong today are marked `pending(<issue>)` and skipped via
 /// [Assumptions]; clearing the marker once the bug is fixed turns this into the fix's verifier.
 @Tag("differential")
 class DifferentialReadTest {

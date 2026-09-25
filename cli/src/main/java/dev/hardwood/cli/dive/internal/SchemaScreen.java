@@ -183,7 +183,7 @@ public final class SchemaScreen {
         }
         // Column widths are measured over every row so they do not shift as
         // the tree scrolls; only the rows on screen become Lines. See
-        // DIVE_LIST_VIEWPORT_VIRTUALIZATION.md.
+        // _designs/DIVE_UI_RULES.md#viewport-virtualization.
         RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
                 rows.size(), Math.max(1, split.get(1).height() - 3));
         Style headerStyle = Theme.accent().bold();

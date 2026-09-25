@@ -158,8 +158,8 @@ M = merge into target, D = delete (plan for finished work, or superseded), K = k
 
 Code defects and JavaDoc drift found during the survey; fixed independently of the doc work.
 
-- [ ] `Theme.error()` reads `$COLORTERM` directly and ignores `hardwood.dive.truecolor`, unlike `accent()`/`selection()` (`cli/.../dive/internal/Theme.java:127`). Screenshot runs render named-ANSI red.
-- [ ] Navigation rule 1 says headings and blanks are cursor stops; `Document.java` says they are not. Decide which is intended.
+- [x] `Theme.error()` reads `$COLORTERM` directly and ignores `hardwood.dive.truecolor`, unlike `accent()`/`selection()` (`cli/.../dive/internal/Theme.java:127`). Screenshot runs render named-ANSI red.
+- [x] Navigation rule 1 says headings and blanks are cursor stops; `Document.java` says they are not. Decide which is intended.
 - [x] CLAUDE.md names `RowWindow.bottomPinned`; the API is `RowWindow.from(scrollTop, selection, total, viewport)` plus `adjustTop`.
 - [ ] Stale JavaDoc: `ColumnChunkBuffer` (pages cut "while records arrive"), `ParquetMetadataReader` and `jfr/FileOpenedEvent` (`MultiFileRowReader`, `FileManager`), `DictionaryParser`/`PageDecoder`/`ColumnIndexBuffers` (`PageScanner`), `FileSchema.validateVariantGroup` ("Phase 2"), `LogicalAccessorKind:91` (links COALESCED_OFFSET_INDEX_READS).
 - [ ] Unused: `SimdOperations.markNulls`, `unpackBitWidth1`, `unpackBitWidthN` (both implementations, no production caller).
@@ -193,7 +193,7 @@ One area per session, with the `hardwood-design-consolidation` skill (`.claude/s
 - [x] Rules and `_plans/` split: CLAUDE.md, CONTRIBUTING.md, review checklist; WRITER_SUPPORT and REMOTE_READ_PATH moved to `_plans/`
 - [x] `_designs-legacy/` for the unconsolidated docs; test attribution once per section
 - [x] Filtering (6–8); closes #1110
-- [ ] CLI and infrastructure (20–24), `TESTING.md`, `PERFORMANCE.md`; repoints CLAUDE.md's dive and Diátaxis rules
+- [x] CLI and infrastructure (20–24), `TESTING.md`, `PERFORMANCE.md`; repoints CLAUDE.md's dive and Diátaxis rules
 - [ ] Read path (1–5)
 - [ ] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
 - [ ] Writer (16–19); trims `_plans/WRITER_SUPPORT.md` to the open stages of #1291
