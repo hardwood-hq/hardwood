@@ -14,8 +14,7 @@ import java.util.TreeSet;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
-import dev.hardwood.internal.thrift.PageHeaderReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
@@ -60,15 +59,15 @@ public final class Encodings {
         return !metaData.encodingStats().isEmpty();
     }
 
-    /// Bytes read at `dictionary_page_offset` to decode the dictionary page's
-    /// own header. A thrift-compact page header runs to a few dozen bytes; this
-    /// is generous enough that no writer's is truncated by it, and small enough
-    /// that the figure costs one short read rather than the whole page.
-    private static final int HEADER_PROBE_BYTES = 256;
-
     /// How many distinct values the chunk's dictionary holds, or -1 when the
     /// chunk has none, or keeps its data in another file under the split-file
     /// layout, where the offsets address that file and not this one.
+    ///
+    /// The dictionary page is located as the dictionary load locates it
+    /// ([DictionaryParser#readPageHeader]): at `dictionary_page_offset`, or, for a
+    /// chunk that omits that optional field, at the chunk's first page. A chunk that
+    /// omits it and declares no dictionary encoding has no dictionary page, and is
+    /// answered without a read.
     ///
     /// Only the dictionary page's *header* is read, so the cost is one short
     /// seek and no decode however large the dictionary is — the entry count is
@@ -79,17 +78,20 @@ public final class Encodings {
     ///
     /// @throws IOException if the header bytes cannot be read
     public static long dictionaryEntries(ColumnChunk chunk, InputFile inputFile) throws IOException {
-        Long offset = chunk.metaData().dictionaryPageOffset();
-        if (offset == null || offset <= 0 || !chunk.filePath().isEmpty()) {
+        ColumnMetaData metaData = chunk.metaData();
+        if (!chunk.filePath().isEmpty()
+                || (metaData.dictionaryPageOffset() == null && !declaresDictionaryEncoding(metaData))) {
             return -1;
         }
-        int length = Math.toIntExact(
-                Math.min(HEADER_PROBE_BYTES, chunk.metaData().totalCompressedSize()));
-        PageHeader header = PageHeaderReader.read(
-                new ThriftCompactReader(inputFile.readRange(offset, length)));
-        return header.dictionaryPageHeader() != null
+        PageHeader header = DictionaryParser.readPageHeader(inputFile, chunk, "");
+        return header != null && header.dictionaryPageHeader() != null
                 ? header.dictionaryPageHeader().numValues()
                 : -1;
+    }
+
+    private static boolean declaresDictionaryEncoding(ColumnMetaData metaData) {
+        return metaData.encodings().contains(Encoding.PLAIN_DICTIONARY)
+                || metaData.encodings().contains(Encoding.RLE_DICTIONARY);
     }
 
     /// Abbreviated, `+`-joined label for a set of encodings. Ordered by the

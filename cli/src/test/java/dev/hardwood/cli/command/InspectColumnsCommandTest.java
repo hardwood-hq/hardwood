@@ -137,6 +137,19 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
                 .isEqualTo("DICT 4%");
     }
 
+    /// `dictionary_page_offset` is optional: a chunk that omits it (`label`) starts with its
+    /// dictionary page at `data_page_offset`, and its cardinality is reported as for a chunk that
+    /// declares the offset (`id`).
+    @Test
+    void aDictionaryWithoutItsDeclaredOffsetCarriesItsCardinality() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f",
+                getClass().getResource("/dict_missing_page_offset.parquet").getPath());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(rankedCellOf(result.output(), "label", "Encoding")).isEqualTo("DICT 3%");
+        assertThat(rankedCellOf(result.output(), "id", "Encoding")).isEqualTo("DICT 100%");
+    }
+
     /// A column with no dictionary page has no cardinality to report, and the
     /// label must not grow a misleading `0%`.
     @Test

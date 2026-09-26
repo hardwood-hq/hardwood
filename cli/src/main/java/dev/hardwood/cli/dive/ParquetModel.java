@@ -67,8 +67,8 @@ public final class ParquetModel implements AutoCloseable {
     private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
     private static final int PAGE_HEADER_CACHE_CAPACITY = 8;
-    /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
-    /// user to opt in via the Dictionary-screen confirm prompt (or via
+    /// Default maximum compressed dictionary-page size for a Dictionary load. Larger
+    /// pages need the user to opt in via the Dictionary-screen confirm prompt (or via
     /// `--max-dict-bytes` to raise this default). 16 MiB covers typical
     /// numeric and short-string dictionaries without accidentally loading
     /// hundreds of MB of BYTE_ARRAY values.
@@ -81,6 +81,7 @@ public final class ParquetModel implements AutoCloseable {
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
     private final Map<ChunkKey, Long> dictionaryEntriesCache = new HashMap<>();
+    private final Map<ChunkKey, Long> dictionaryPageBytesCache = new HashMap<>();
     /// Bounded LRU: page headers are decoded once per chunk-visit and a wide
     /// table can have hundreds of chunks. Capping prevents the cache from
     /// growing unboundedly across a long dive session.
@@ -341,12 +342,12 @@ public final class ParquetModel implements AutoCloseable {
         return List.copyOf(headers);
     }
 
-    /// Loads the dictionary for a column chunk when the chunk is within the
+    /// Loads the dictionary for a column chunk when its dictionary page is within the
     /// `dictionaryReadCapBytes` size limit. Returns `null` if the chunk is not
-    /// dictionary-encoded **or** if the chunk size would exceed the cap; in
+    /// dictionary-encoded **or** if the page's compressed size would exceed the cap; in
     /// the latter case, call [#dictionaryForced] to bypass and load anyway.
     public Dictionary dictionary(int rowGroupIndex, int columnIndex) {
-        if (dictionaryChunkBytes(rowGroupIndex, columnIndex) > dictionaryReadCapBytes) {
+        if (dictionaryPageBytes(rowGroupIndex, columnIndex) > dictionaryReadCapBytes) {
             return null;
         }
         return loadDictionary(rowGroupIndex, columnIndex);
@@ -358,11 +359,31 @@ public final class ParquetModel implements AutoCloseable {
         return loadDictionary(rowGroupIndex, columnIndex);
     }
 
-    /// The total compressed byte size of a column chunk — used by the
-    /// Dictionary screen to decide whether to show a confirm-load prompt
-    /// before calling [#dictionaryForced].
-    public long dictionaryChunkBytes(int rowGroupIndex, int columnIndex) {
-        return chunk(rowGroupIndex, columnIndex).metaData().totalCompressedSize();
+    /// The compressed size of a column chunk's dictionary page, as its header states it, or `0`
+    /// when the chunk has none — used by the Dictionary screen to decide whether to show a
+    /// confirm-load prompt before calling [#dictionaryForced].
+    ///
+    /// Cached for the session: the screen asks on every render, and the figure costs a short
+    /// read of the page header that the footer cannot serve. A header that cannot be read fails
+    /// the call, placed at the chunk.
+    public long dictionaryPageBytes(int rowGroupIndex, int columnIndex) {
+        return dictionaryPageBytesCache.computeIfAbsent(new ChunkKey(rowGroupIndex, columnIndex),
+                key -> readDictionaryPageBytes(key.rowGroupIndex(), key.columnIndex()));
+    }
+
+    private long readDictionaryPageBytes(int rowGroupIndex, int columnIndex) {
+        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
+        try {
+            cc.requireSameFile();
+            PageHeader header = DictionaryParser.readPageHeader(inputFile, cc, "");
+            return header != null ? header.compressedPageSize() : 0;
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        catch (RuntimeException e) {
+            throw placed(e, rowGroupIndex, columnIndex);
+        }
     }
 
     public int dictionaryReadCapBytes() {

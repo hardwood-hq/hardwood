@@ -21,7 +21,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactConstants;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -90,11 +92,49 @@ class DictionaryParserTest {
                         + " offset 60");
     }
 
+    /// A header probe grows while the header does not fit, but not without bound: a header that
+    /// runs past [PageFormatProbe#MAX_PEEK_SIZE], as a corrupt length makes one, fails as a
+    /// corrupt file rather than being read to the end of a chunk that may span gigabytes.
+    @Test
+    void aDictionaryPageHeaderProbeStopsAtTheMaximumPeekSize() throws IOException {
+        int chunkSize = 3 * PageFormatProbe.MAX_PEEK_SIZE;
+        ByteBuffer bytes = ByteBuffer.allocate(chunkSize);
+        bytes.put(oversizedPageHeader(2 * PageFormatProbe.MAX_PEEK_SIZE)).rewind();
+        try (InputFile file = InputFile.of(bytes)) {
+            file.open();
+
+            assertThatThrownBy(() -> DictionaryParser.readPageHeader(file, chunk(0, null, chunkSize), "[f] "))
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage("[f] Page header at offset 0 exceeds maximum peek size ("
+                            + PageFormatProbe.MAX_PEEK_SIZE + " bytes)");
+        }
+    }
+
+    /// A dictionary page header carrying an unknown binary field of `padding` bytes, which a
+    /// reader skips but has to have in its buffer to skip.
+    private static byte[] oversizedPageHeader(int padding) {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(2); // Thrift PageType.DICTIONARY_PAGE
+        writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(0);
+        writer.writeFieldBegin(99, ThriftCompactConstants.FieldType.BINARY);
+        writer.writeBinary(new byte[padding]);
+        writer.writeFieldStop();
+        return writer.toByteArray();
+    }
+
     /// A column chunk starting at `dataPageOffset` unless it declares a dictionary page.
     private static ColumnChunk chunk(long dataPageOffset, Long dictionaryPageOffset) {
+        return chunk(dataPageOffset, dictionaryPageOffset, 100);
+    }
+
+    private static ColumnChunk chunk(long dataPageOffset, Long dictionaryPageOffset, long totalCompressedSize) {
         ColumnMetaData metaData = new ColumnMetaData(PhysicalType.BYTE_ARRAY, List.of(Encoding.PLAIN),
-                FieldPath.of("col"), CompressionCodec.UNCOMPRESSED, 10, 100, 100, Map.of(),
-                dataPageOffset, dictionaryPageOffset, null, null, null, null, List.of(), null);
+                FieldPath.of("col"), CompressionCodec.UNCOMPRESSED, 10, totalCompressedSize, totalCompressedSize,
+                Map.of(), dataPageOffset, dictionaryPageOffset, null, null, null, null, List.of(), null);
         return new ColumnChunk(metaData, null, null, null, null, null);
     }
 

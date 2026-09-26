@@ -101,14 +101,15 @@ Everything below the footer is read lazily, on the first screen that asks, and c
 | `ColumnIndex`, `OffsetIndex` | (row group, column) | Parsed from that row group's region | Session; `null` cached for a chunk without one |
 | Page headers | (row group, column) | The chunk's compressed extent walked header to header, in `readRange` windows of at most 64 MiB (one read for a smaller chunk); a window ends at the first page that does not fit, so a body longer than a window is skipped | Bounded LRU of chunks |
 | `Dictionary` | (row group, column) | The dictionary page alone, read by `DictionaryParser.readPage` (the read the dictionary filter makes) and parsed by `DictionaryParser` | Bounded LRU of chunks |
-| Dictionary entry count | (row group, column) | A bounded probe of the dictionary page header | Session |
+| Dictionary entry count | (row group, column) | A bounded probe of the dictionary page header, located as the dictionary load locates it (`Encodings.dictionaryEntries` through `DictionaryParser.readPageHeader`) | Session |
+| Dictionary page size | (row group, column) | The same probe (`DictionaryParser.readPageHeader`) | Session |
 | Group paths of the schema | — | Walk of the schema | Session |
 
 The LRU bounds exist because page-header lists and dictionaries scale with the data, and a long session over a wide file would otherwise retain one per chunk visited. The index region is fetched per row group so that a screen listing every chunk of a row group costs one round trip on remote storage rather than one per chunk.
 
 The dictionary entry count is asked for only by Column chunk detail. The list screens do not show it: one read per visible row would cost a round trip per row on remote storage, paid again for every row scrolled into view.
 
-`dictionary` refuses a chunk whose compressed size exceeds the read cap (`--max-dict-bytes`) and returns `null`; the Dictionary screen then shows a confirm prompt, and `dictionaryForced` loads it once the reader opts in. The cap compares the chunk's compressed size from the footer, not the dictionary page's size; the load itself reads only the dictionary page.
+`dictionary` refuses a chunk whose dictionary page's compressed size exceeds the read cap (`--max-dict-bytes`) and returns `null`; the Dictionary screen then shows a confirm prompt naming that size, and `dictionaryForced` loads it once the reader opts in. The size is what the load reads and decompresses, so it comes from the page's own header (`dictionaryPageBytes`), not from the footer's chunk size.
 
 A chunk whose `file_path` names another file is refused (`ColumnChunk.requireSameFile`) before its page headers or dictionary are read from its offsets.
 
