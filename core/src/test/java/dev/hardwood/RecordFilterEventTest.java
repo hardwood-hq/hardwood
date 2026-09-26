@@ -20,7 +20,6 @@ import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -131,10 +130,9 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
                      .filter(ID_OVER_150)
                      .build()) {
-            ColumnReader id = columns.getColumnReader("id");
             long rows = 0;
-            while (id.nextBatch()) {
-                rows += id.getRecordCount();
+            while (columns.nextBatch()) {
+                rows += columns.getRecordCount();
             }
             assertThat(rows).isEqualTo(KEPT);
         }
@@ -185,10 +183,9 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
                      .filter(ID_OVER_150)
                      .build()) {
-            ColumnReader id = columns.getColumnReader("id");
             long rows = 0;
-            while (id.nextBatch()) {
-                rows += id.getRecordCount();
+            while (columns.nextBatch()) {
+                rows += columns.getRecordCount();
             }
             assertThat(rows).isEqualTo(2 * KEPT);
         }

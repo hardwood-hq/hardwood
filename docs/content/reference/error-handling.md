@@ -31,7 +31,7 @@ it. **Trying again may help for `IOException`, and will not for anything else.**
 | `NullPointerException` | Calling a primitive accessor (`getInt`, `getLong`, etc.) on a null field without checking `isNull()` first |
 | `IndexOutOfBoundsException` | A field index outside `[0, getFieldCount())` on `getFieldName(int)`, on a `RowReader` or on a `PqStruct` |
 | `NoSuchElementException` | Calling `next()` on a `RowReader` when `hasNext()` returns `false` |
-| `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, or calling nested-column methods on a flat column |
+| `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, calling `nextBatch()` on a reader obtained from `ColumnReaders`, or calling nested-column methods on a flat column |
 
 Requesting the wrong type for a column, such as `getLong` on an `INT32` column, is a programming
 error whose exception type is deliberately unspecified, and is covered in

@@ -75,7 +75,7 @@ class BloomFilterEndToEndTest {
         ColumnProjection projection = ColumnProjection.columns("code", "id");
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
             try (ColumnReaders cols = reader.buildColumnReaders(projection).filter(ABSENT).build()) {
-                assertThat(countRows(cols.getColumnReader("code"))).isZero();
+                assertThat(countRows(cols)).isZero();
             }
             try (ColumnReaders cols = reader.buildColumnReaders(projection).filter(PRESENT).build()) {
                 ColumnReader code = cols.getColumnReader("code");
@@ -137,6 +137,14 @@ class BloomFilterEndToEndTest {
         int total = 0;
         while (reader.nextBatch()) {
             total += reader.getRecordCount();
+        }
+        return total;
+    }
+
+    private static int countRows(ColumnReaders readers) throws IOException {
+        int total = 0;
+        while (readers.nextBatch()) {
+            total += readers.getRecordCount();
         }
         return total;
     }

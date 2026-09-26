@@ -23,10 +23,10 @@ import dev.hardwood.schema.FileSchema;
 /// transparently handles cross-file prefetching when more than one file is
 /// involved.
 ///
-/// Use [#nextBatch()] to advance every underlying reader in lockstep — this is
-/// the structurally-safe path for multi-column consumption: a single call drives
+/// [#nextBatch()] advances every underlying reader in lockstep: a single call drives
 /// every reader, returns false when the readers are exhausted, and validates that the
-/// readers report matching record counts.
+/// readers report matching record counts. The readers show the group's current batch;
+/// they do not advance or close on their own.
 ///
 /// ```java
 /// try (ParquetFileReader parquet = ParquetFileReader.openAll(files);
@@ -47,11 +47,10 @@ public class ColumnReaders implements Closeable {
 
     /// The pipeline every reader of this group is a view of.
     private final ColumnScan scan;
-    /// The first position's reader of each column.
+    /// One reader per column, by field path.
     private final Map<String, ColumnReader> readersByName;
-    /// One reader per position, in the order the projection requests the columns. A column
-    /// requested more than once has a reader of its own at each position, all views of the one
-    /// payload cursor, so that each tracks the batch it last took up.
+    /// One entry per position, in the order the projection requests the columns. A column
+    /// requested more than once has the same reader at each of its positions.
     private final ColumnReader[] readersByIndex;
 
     /// A group of views over the payload columns of `scan`, the columns of `payload`.
@@ -63,9 +62,8 @@ public class ColumnReaders implements Closeable {
         for (int position = 0; position < positionCount; position++) {
             int projectedIndex = payload.requestedColumn(position);
             ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(projectedIndex));
-            ColumnReader reader = new ColumnReader(scan, projectedIndex, schema, columnSchema);
-            readersByName.putIfAbsent(columnSchema.fieldPath().toString(), reader);
-            readersByIndex[position] = reader;
+            readersByIndex[position] = readersByName.computeIfAbsent(columnSchema.fieldPath().toString(),
+                    path -> new ColumnReader(scan, projectedIndex, schema, columnSchema, true));
         }
     }
 
@@ -96,8 +94,7 @@ public class ColumnReaders implements Closeable {
     /// [ColumnProjection#all()], contributes them in schema order, so a column listed after a
     /// group in `columns(...)` sits after all of that group's leaf columns and moves when the
     /// group gains or loses a field. A column that several names select appears at each of
-    /// their positions, with a reader of its own at each; [#getColumnReader(String)] returns
-    /// the first.
+    /// their positions, with the same reader at each.
     ///
     /// @param index index among the requested leaf columns (0-based)
     /// @return the ColumnReader at the given index
@@ -105,7 +102,9 @@ public class ColumnReaders implements Closeable {
         return readersByIndex[index];
     }
 
-    /// Advance every underlying [ColumnReader] to its next batch in lockstep.
+    /// Advance every underlying [ColumnReader] to its next batch in lockstep. This is the only
+    /// way to advance the group: [ColumnReader#nextBatch()] on one of its readers throws
+    /// [IllegalStateException].
     ///
     /// All readers share one pipeline, so they always publish batches at the same row
     /// boundaries. This method advances that pipeline once and returns:
@@ -122,10 +121,6 @@ public class ColumnReaders implements Closeable {
     /// happen — the guard exists to detect future regressions in the per-column drain
     /// workers, not to be triggered in production.
     ///
-    /// Calling [ColumnReader#nextBatch()] on each reader in turn instead moves the group
-    /// once as well: the first reader called advances it, and the others take up the same
-    /// batch.
-    ///
     /// @return true if a new aligned batch is available across all readers, false if exhausted
     /// @throws IOException if the bytes could not be read
     /// @throws dev.hardwood.reader.ParquetReadException if the file's bytes are not what a
@@ -138,17 +133,16 @@ public class ColumnReaders implements Closeable {
     ///         group was closed
     public boolean nextBatch() throws IOException {
         boolean advanced = scan.advance();
-        for (ColumnReader reader : readersByIndex) {
+        for (ColumnReader reader : readersByName.values()) {
             reader.adoptCurrentStep();
         }
         return advanced;
     }
 
-    /// Number of records in the group's current batch, whether [#nextBatch()] or
-    /// [ColumnReader#nextBatch()] on one of its readers advanced the group to it.
+    /// Number of records in the group's current batch.
     ///
-    /// Equal to every underlying reader's [ColumnReader#getRecordCount()] once that reader
-    /// has taken up the batch — alignment is validated when the group advances.
+    /// Equal to every underlying reader's [ColumnReader#getRecordCount()] — alignment is
+    /// validated when the group advances.
     ///
     /// @throws IllegalStateException if no batch is currently available — call
     ///         [#nextBatch()] first
@@ -160,7 +154,8 @@ public class ColumnReaders implements Closeable {
         return scan.recordCount();
     }
 
-    /// Releases the resources held by every reader of this group. Idempotent.
+    /// Releases the resources held by every reader of this group, after which [#nextBatch()]
+    /// throws [IllegalStateException]. Idempotent.
     @Override
     public void close() throws IOException {
         scan.close();

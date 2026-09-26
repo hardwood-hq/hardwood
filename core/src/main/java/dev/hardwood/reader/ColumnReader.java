@@ -53,13 +53,13 @@ import dev.hardwood.schema.FileSchema;
 /// **Array ownership.** Every array and [Validity] handed back by an
 /// accessor ([#getInts()], [#getLongs()], [#getLayerOffsets(int)],
 /// [#getLeafValidity()], and the rest) belongs to the current batch and is
-/// freshly allocated by the [#nextBatch()] call that produced it, except
-/// [Validity#NO_NULLS], a shared immutable singleton. A later
-/// [#nextBatch()] never reuses or overwrites an array returned for an
-/// earlier batch — so a returned array may be kept and read after the reader
-/// has advanced, including handed off to another thread for processing. The
-/// reader itself is still a single-threaded cursor: only one consumer thread
-/// may call [#nextBatch()]. (The capacity-sizing note on [#getBinaryValues()]
+/// freshly allocated by the call that produced it — [#nextBatch()], or
+/// [ColumnReaders#nextBatch()] for a reader of a group — except
+/// [Validity#NO_NULLS], a shared immutable singleton. A later advance never
+/// reuses or overwrites an array returned for an earlier batch — so a
+/// returned array may be kept and read after the reader has advanced,
+/// including handed off to another thread for processing. The reader itself
+/// is still a single-threaded cursor: only one consumer thread may advance it. (The capacity-sizing note on [#getBinaryValues()]
 /// is about array *length*, not reuse; that buffer is fresh per batch too.)
 ///
 /// **This API is [Experimental]:** the shape of the batch accessors and
@@ -74,11 +74,9 @@ public class ColumnReader implements Closeable {
     private final boolean nested;
     private final NestedLevelComputer.Layers layers;
 
-    /// The [ColumnScan#generation()] this view last adopted. When it equals the
-    /// scan's, [#nextBatch()] advances the scan; when it is one behind, a sibling
-    /// already did, and this view adopts that step; further behind, adopting would
-    /// skip a step and is refused.
-    private long consumedGeneration;
+    /// Whether this view belongs to a [ColumnReaders] group, which advances and closes the
+    /// scan; otherwise this view is the scan's only one and does both itself.
+    private final boolean groupMember;
 
     // Current batch state, adopted from the payload cursor (flat uses
     // BatchExchange.Batch, nested uses NestedBatch)
@@ -102,10 +100,12 @@ public class ColumnReader implements Closeable {
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
-    /// A view of payload column `payloadIndex` of `scan`.
-    ColumnReader(ColumnScan scan, int payloadIndex, FileSchema schema, ColumnSchema column) {
+    /// A view of payload column `payloadIndex` of `scan`, advanced by a [ColumnReaders] group
+    /// when `groupMember` is set and by its own [#nextBatch()] otherwise.
+    ColumnReader(ColumnScan scan, int payloadIndex, FileSchema schema, ColumnSchema column, boolean groupMember) {
         this.scan = scan;
         this.payloadIndex = payloadIndex;
+        this.groupMember = groupMember;
         this.column = column;
         this.layers = NestedLevelComputer.computeLayers(schema.getRootNode(), column.columnIndex());
         this.nested = ColumnCursor.isNested(layers, column);
@@ -129,12 +129,10 @@ public class ColumnReader implements Closeable {
     ///
     /// To read several columns of the same rows, use [ColumnReaders], from
     /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]. Its
-    /// readers share one decode pipeline and one batch size. [ColumnReaders#nextBatch()]
-    /// advances the whole group in one call. Calling this method on each member in turn also
-    /// moves the group once per turn: the first member called advances the group, and each
-    /// other member takes up that same batch. A member that the group has moved on by more
-    /// than one batch since it last took one up would skip a batch, so this method throws
-    /// [IllegalStateException] for it instead.
+    /// readers share one decode pipeline and one batch size, and [ColumnReaders#nextBatch()]
+    /// advances all of them. A reader obtained from a [ColumnReaders] shows the group's
+    /// current batch and does not advance on its own: this method throws
+    /// [IllegalStateException] for it.
     ///
     /// @return true if a batch is available, false if exhausted
     /// @throws IOException if the bytes could not be read
@@ -144,20 +142,14 @@ public class ColumnReader implements Closeable {
     ///         checksum fails, values that do not decode under the encoding declared for
     ///         them. In a multi-file read this covers a later file that is not Parquet at
     ///         all, or whose schema cannot be reconciled with the first file's
-    /// @throws IllegalStateException if this reader, or any reader of its group, was closed, or
-    ///         if the group moved on by more than one batch since this reader last took one up
+    /// @throws IllegalStateException if this reader was closed, or was obtained from a
+    ///         [ColumnReaders]
     public boolean nextBatch() throws IOException {
-        scan.requireOpen();
-        long behind = scan.generation() - consumedGeneration;
-        if (behind == 0) {
-            scan.advance();
+        if (groupMember) {
+            throw new IllegalStateException("ColumnReader '" + column.fieldPath()
+                    + "' belongs to a ColumnReaders group: advance the group with ColumnReaders.nextBatch()");
         }
-        else if (behind > 1) {
-            throw new IllegalStateException(prefix() + "ColumnReader '" + column.name()
-                    + "' would skip " + (behind - 1) + " batch(es): other readers of its group"
-                    + " advanced the group past them. Call nextBatch() on every reader of the"
-                    + " group in turn, or use ColumnReaders.nextBatch()");
-        }
+        scan.advance();
         return adoptCurrentStep();
     }
 
@@ -167,7 +159,6 @@ public class ColumnReader implements Closeable {
     ///
     /// @return whether the step holds a batch
     boolean adoptCurrentStep() {
-        consumedGeneration = scan.generation();
         invalidatePerBatchCaches();
         if (!scan.hasBatch()) {
             currentFlatBatch = null;
@@ -421,13 +412,14 @@ public class ColumnReader implements Closeable {
         return column;
     }
 
-    /// Releases the resources held by this reader. Closing any reader of a
-    /// [ColumnReaders] group closes the whole group, after which [#nextBatch()] on any
-    /// of its readers throws [IllegalStateException]. Idempotent: calling it more
-    /// than once has no further effect.
+    /// Releases the resources held by this reader. Idempotent: calling it more than once has
+    /// no further effect. A reader obtained from a [ColumnReaders] holds no resources of its
+    /// own, and closing it has no effect; [ColumnReaders#close()] releases the group.
     @Override
     public void close() throws IOException {
-        scan.close();
+        if (!groupMember) {
+            scan.close();
+        }
     }
 
     // ==================== Internal ====================
@@ -565,7 +557,8 @@ public class ColumnReader implements Closeable {
 
     private void checkBatchAvailable() {
         if (currentFlatBatch == null && currentNestedBatch == null) {
-            throw new IllegalStateException(prefix() + "No batch available. Call nextBatch() first.");
+            throw new IllegalStateException(prefix() + "No batch available. Call "
+                    + (groupMember ? "ColumnReaders.nextBatch()" : "nextBatch()") + " first.");
         }
     }
 

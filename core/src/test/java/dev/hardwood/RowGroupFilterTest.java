@@ -161,8 +161,7 @@ class RowGroupFilterTest {
              ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.columns("id"))
                      .filter(RowGroupPredicate.byteRange(0, rg1Mid))
                      .build()) {
-            ColumnReader col = cols.getColumnReader("id");
-            assertThat(firstAndLastIds(col)).containsExactly(1L, 100L);
+            assertThat(firstAndLastIds(cols::nextBatch, cols.getColumnReader("id"))).containsExactly(1L, 100L);
         }
     }
 
@@ -319,14 +318,24 @@ class RowGroupFilterTest {
     }
 
     private static long[] firstAndLastIds(ColumnReader col) throws IOException {
+        return firstAndLastIds(col::nextBatch, col);
+    }
+
+    /// The first and last `id` a read yields, `advance` stepping the read that `col` views.
+    private static long[] firstAndLastIds(BatchAdvance advance, ColumnReader col) throws IOException {
         long first = -1;
         long last = -1;
-        while (col.nextBatch()) {
+        while (advance.next()) {
             int n = col.getRecordCount();
             long[] ids = col.getLongs();
             if (first < 0 && n > 0) first = ids[0];
             if (n > 0) last = ids[n - 1];
         }
         return new long[] {first, last};
+    }
+
+    @FunctionalInterface
+    private interface BatchAdvance {
+        boolean next() throws IOException;
     }
 }

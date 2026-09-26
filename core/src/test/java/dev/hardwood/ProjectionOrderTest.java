@@ -252,24 +252,17 @@ class ProjectionOrderTest {
         }
     }
 
-    /// Each position is its own reader, so stepping every index once per turn moves the group
-    /// by one batch even where two indices hold the same column.
     @Test
-    void columnReadersWithARepeatedColumnStepReaderByReader() throws Exception {
+    void columnReadersShareOneReaderAcrossARepeatedColumn() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FLAT));
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id", "value", "id"))
                      .batchSize(1)
                      .build()) {
 
+            assertThat(columns.getColumnReader(2)).isSameAs(columns.getColumnReader(0));
+
             List<String> rows = new ArrayList<>();
-            while (true) {
-                boolean advanced = true;
-                for (int i = 0; i < columns.getColumnCount(); i++) {
-                    advanced &= columns.getColumnReader(i).nextBatch();
-                }
-                if (!advanced) {
-                    break;
-                }
+            while (columns.nextBatch()) {
                 rows.add(columns.getColumnReader(0).getLongs()[0] + "/"
                         + columns.getColumnReader(1).getLongs()[0] + "/"
                         + columns.getColumnReader(2).getLongs()[0]);
