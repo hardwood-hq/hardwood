@@ -184,8 +184,15 @@ class MultiFileRowReaderTest {
             int readsAfterFailure = invalid.footerReadCount();
 
             // A malformed file now reaches the caller as what it is, rather than
-            // wrapped as a metadata read that failed.
-            assertThatThrownBy(reader::rowReader)
+            // wrapped as a metadata read that failed. It is raised when the read
+            // reaches it, after the rows of the file before it.
+            assertThatThrownBy(() -> {
+                try (RowReader rows = reader.rowReader()) {
+                    while (rows.hasNext()) {
+                        rows.next();
+                    }
+                }
+            })
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("[<memory>] Not a Parquet file (invalid magic number at end)");
             assertThat(invalid.footerReadCount()).isEqualTo(readsAfterFailure);

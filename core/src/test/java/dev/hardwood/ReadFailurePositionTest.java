@@ -20,9 +20,12 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -84,6 +87,40 @@ class ReadFailurePositionTest {
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
                  ColumnReader column = reader.columnReader("id")) {
                 while (column.nextBatch()) {
+                    // read to the corrupt page
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 2, column 'id', page "
+                                                            + "0] PageHeader has unknown page type: -1408");
+    }
+
+    /// One column failing while the others read on: `value` has no fault, so its batch holds
+    /// row group 2 while `id` stops before it. The failure is what the read reports, not the
+    /// batches the two columns got that far with.
+    @Test
+    void aRowReaderReportsOneColumnsFailure() throws Exception {
+        ByteBuffer corrupted = withCorruptRowGroup2();
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
+                 RowReader rows = reader.rowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 2, column 'id', page "
+                                                            + "0] PageHeader has unknown page type: -1408");
+    }
+
+    /// The same, for a group of column readers, which advance in lockstep too.
+    @Test
+    void columnReadersReportOneColumnsFailure() throws Exception {
+        ByteBuffer corrupted = withCorruptRowGroup2();
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
+                 ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id", "value"))) {
+                while (columns.nextBatch()) {
                     // read to the corrupt page
                 }
             }

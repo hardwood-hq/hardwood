@@ -72,6 +72,12 @@ public class PageSource {
         return currentPlan != null ? currentPlan.currentPage() : ExceptionContext.UNKNOWN_PAGE;
     }
 
+    /// Whether no work item is active: the column has not started, or has finished one and
+    /// not yet been handed the next. Only valid on the retriever thread.
+    public boolean isBetweenWorkItems() {
+        return currentWorkItem == null;
+    }
+
     /// Whether statistics proved the current work item's row group matches the filter
     /// predicate in full. Only valid on the retriever thread.
     public boolean isCurrentFilterAlwaysMatches() {
