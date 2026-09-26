@@ -99,7 +99,7 @@ Everything below the footer is read lazily, on the first screen that asks, and c
 |---|---|---|---|
 | Page-index region | row group | `RowGroupIndexBuffers.fetch`: one `readRange` for the whole contiguous column-index and offset-index region of the row group | Session; bounded by the file's page-index bytes |
 | `ColumnIndex`, `OffsetIndex` | (row group, column) | Parsed from that row group's region | Session; `null` cached for a chunk without one |
-| Page headers | (row group, column) | The chunk's compressed extent walked header to header, in `readRange` windows of at most 64 MiB (one read for a smaller chunk); a window ends at the first page that does not fit, so a body longer than a window is skipped | Bounded LRU of chunks |
+| Page headers | (row group, column) | The chunk's compressed extent walked header to header by `PageHeaderWalk`, in bounded `readRange` windows (one read for a chunk that fits one); a window ends at the first page that does not fit, so a body longer than a window is skipped | Bounded LRU of chunks |
 | `Dictionary` | (row group, column) | The dictionary page alone, read by `DictionaryParser.readPage` (the read the dictionary filter makes) and parsed by `DictionaryParser` | Bounded LRU of chunks |
 | Dictionary entry count | (row group, column) | A bounded probe of the dictionary page header, located as the dictionary load locates it (`Encodings.dictionaryEntries` through `DictionaryParser.readPageHeader`) | Session |
 | Dictionary page size | (row group, column) | The same probe (`DictionaryParser.readPageHeader`) | Session |
@@ -173,7 +173,7 @@ Tests: `DiveReadFailureTest` (cli) damages a page header, a column index, an off
 
 Dive composes what `info`, `schema`, `footer`, `inspect` and `print` show separately into one navigable session; the batch commands remain the surface for scripts, pipes and agents. The dependency runs one way: `DiveCommand` depends on `cli.dive`, and no other command does.
 
-What dive shares with the commands lives in `dev.hardwood.cli.internal`: value and size formatting (`ValueFormatter`, `Sizes`, `Fmt`, `BinaryValues`, `LevelSummary`, governed by [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md)), encoding helpers (`Encodings`) and text helpers (`Strings`). `FileMixin` resolves `-f` for dive as for every command, local path or S3 URI. `InspectPagesCommand` and `InspectDictionaryCommand` parse page headers and dictionaries at the byte level as `ParquetModel` does, and classify and place their failures with the same `ExceptionContext.readFailureAt`; `inspect dictionary` reads the dictionary page with `DictionaryParser.readPage`, as dive does.
+What dive shares with the commands lives in `dev.hardwood.cli.internal`: value and size formatting (`ValueFormatter`, `Sizes`, `Fmt`, `BinaryValues`, `LevelSummary`, governed by [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md)), encoding helpers (`Encodings`), the page-header walk (`PageHeaderWalk`) and text helpers (`Strings`). `FileMixin` resolves `-f` for dive as for every command, local path or S3 URI. `InspectPagesCommand` and `InspectDictionaryCommand` parse page headers and dictionaries at the byte level as `ParquetModel` does, and classify and place their failures with the same `ExceptionContext.readFailureAt`; `inspect pages` walks page headers with `PageHeaderWalk` and `inspect dictionary` reads the dictionary page with `DictionaryParser.readPage`, as dive does.
 
 `DiveCommand` adds what an interactive session needs:
 

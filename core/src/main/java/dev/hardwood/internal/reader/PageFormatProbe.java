@@ -29,7 +29,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// All data pages in a single column chunk share the same format in practice
 /// (Parquet writers don't mix v1 and v2 within one chunk), so a single peek
 /// at the first data page is authoritative.
-final class PageFormatProbe {
+public final class PageFormatProbe {
 
     /// Initial peek size for a page header. One KiB covers a typical header
     /// without inline `min_value`/`max_value` binaries.
@@ -41,8 +41,9 @@ final class PageFormatProbe {
 
     /// Upper bound on the peek size. Headers carrying long inline statistics
     /// rarely exceed a few KiB; 1 MiB is comfortably beyond that and protects
-    /// against runaway reads on a corrupt file.
-    static final int MAX_PEEK_SIZE = 1024 * 1024;
+    /// against runaway reads on a corrupt file. Also bounds the header reads made outside the
+    /// pipeline, by [DictionaryParser#readPageHeader] and the CLI's page-header walk.
+    public static final int MAX_PEEK_SIZE = 1024 * 1024;
 
     private PageFormatProbe() {
     }

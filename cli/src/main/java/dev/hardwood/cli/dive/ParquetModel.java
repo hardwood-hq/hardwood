@@ -21,6 +21,7 @@ import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Encodings;
+import dev.hardwood.cli.internal.PageHeaderWalk;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.ColumnIndexBuffers;
@@ -30,9 +31,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
-import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -73,10 +72,6 @@ public final class ParquetModel implements AutoCloseable {
     /// numeric and short-string dictionaries without accidentally loading
     /// hundreds of MB of BYTE_ARRAY values.
     private static final int DEFAULT_DICTIONARY_READ_CAP_BYTES = 16 * 1024 * 1024;
-
-    /// Largest single read of the page-header walk. A chunk up to this size is one read; a
-    /// larger one, including one past what a `readRange` can address, is walked in windows.
-    private static final int PAGE_HEADER_WINDOW_BYTES = 64 * 1024 * 1024;
 
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
@@ -291,7 +286,10 @@ public final class ParquetModel implements AutoCloseable {
             // The offsets address the file named by file_path, not this one; the pages this
             // would walk are whatever happens to sit there.
             cc.requireSameFile();
-            result = walkPageHeaders(inputFile, start, cmd.totalCompressedSize(), PAGE_HEADER_WINDOW_BYTES);
+            List<PageHeader> headers = new ArrayList<>();
+            PageHeaderWalk.walk(inputFile, start, cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
+                    headers::add);
+            result = List.copyOf(headers);
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -301,45 +299,6 @@ public final class ParquetModel implements AutoCloseable {
         }
         pageHeaderCache.put(key, result);
         return result;
-    }
-
-    /// Reads the headers of the pages in `[start, start + totalBytes)`, header to header, in
-    /// reads of at most `windowBytes`. A window ends where the next page no longer fits; the
-    /// next read starts at that page's header, so a body longer than a window is skipped rather
-    /// than read. A header cut off by the window's end is read again at the start of a larger
-    /// window, and one cut off by the chunk's end is a truncated chunk.
-    static List<PageHeader> walkPageHeaders(InputFile inputFile, long start, long totalBytes,
-            int windowBytes) throws IOException {
-        List<PageHeader> headers = new ArrayList<>();
-        long end = start + totalBytes;
-        long position = start;
-        int window = windowBytes;
-        while (position < end) {
-            int windowLength = Math.toIntExact(Math.min(end - position, window));
-            ByteBuffer buffer = inputFile.readRange(position, windowLength);
-            long relative = 0;
-            while (relative < windowLength) {
-                ThriftCompactReader tcr = new ThriftCompactReader(buffer, Math.toIntExact(relative));
-                PageHeader header;
-                try {
-                    header = PageHeaderReader.read(tcr);
-                }
-                catch (ThriftTruncatedException e) {
-                    if (relative > 0) {
-                        break;
-                    }
-                    if (windowLength == end - position) {
-                        throw e;
-                    }
-                    window = Math.toIntExact(Math.min(2L * window, Integer.MAX_VALUE));
-                    break;
-                }
-                headers.add(header);
-                relative += tcr.getBytesRead() + (long) header.compressedPageSize();
-            }
-            position += relative;
-        }
-        return List.copyOf(headers);
     }
 
     /// Loads the dictionary for a column chunk when its dictionary page is within the
