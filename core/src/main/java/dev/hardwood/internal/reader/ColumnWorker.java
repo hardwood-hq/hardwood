@@ -55,6 +55,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Stored in the reorder buffer for a [PageInfo#BOUNDARY_MARKER], which is not decoded.
     private static final DecodedPage BOUNDARY_MARKER = new DecodedPage(null, PageRowMask.ALL);
 
+    /// Stored in the reorder buffer behind the last page the retriever submitted when it
+    /// failed: the drain assembles every page before it, then reports [#retrieverFailure].
+    private static final DecodedPage FAILURE_SENTINEL = new DecodedPage(null, PageRowMask.ALL);
+
     private final PageSource pageSource;
     private final DecompressorFactory decompressorFactory;
     private final Executor decodeExecutor;
@@ -323,6 +327,19 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private long throttleNanos;
     private int totalPagesSubmitted;
     private int throttleWakes;
+    /// Sequence number of the next reorder-buffer slot the retriever fills.
+    private int nextSeq;
+    /// The retriever's failure, written before [#FAILURE_SENTINEL] is stored, so the
+    /// drain reads it after taking the sentinel.
+    private Throwable retrieverFailure;
+    /// Whether the retriever failed between two work items, written and read like
+    /// [#retrieverFailure]. Only [RowGroupIterator#workItemAt] throws there, and only when
+    /// planning a file failed, which every column meets at the same row: the end of the files
+    /// planned before it. The drain's partial batch is then aligned with every other
+    /// column's, so it is published. A failure inside a work item is met by this column
+    /// alone, at a row the other columns read past, and its partial batch is not published:
+    /// a reader taking the columns in lockstep would find it shorter than theirs.
+    private boolean retrieverFailedBetweenWorkItems;
 
     private void runRetriever() {
         try {
@@ -331,7 +348,6 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     column.name(), MAX_INFLIGHT_PAGES, batchCapacity);
 
             PageDecoder pageDecoder = null;
-            int nextSeq = 0;
 
             long t0;
             PageInfo pageInfo;
@@ -388,19 +404,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 f.whenComplete((v, t) -> inFlightDecodes.remove(f));
             }
 
-            if (!done) {
-                // The sentinel needs a free slot. If all MAX_INFLIGHT_PAGES slots
-                // are occupied (pages submitted but not yet drained), wait for
-                // the drain to advance before writing.
-                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
-                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
-                }
-                if (!done) {
-                    int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
-                    reorderBuffer.set(sentinelSlot, EMPTY_SENTINEL);
-                    LockSupport.unpark(drainThread);
-                }
-            }
+            handOverBehindSubmittedPages(EMPTY_SENTINEL);
 
             LOG.log(System.Logger.Level.DEBUG,
                     "[{0}] Retriever finished: {1} pages submitted. "
@@ -409,8 +413,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleWakes);
         }
         catch (Exception e) {
-            signalError(enrichWithPlace(e, pageSource.getCurrentFileName(),
-                    pageSource.getCurrentRowGroupIndex(), pageSource.getCurrentPageIndex()));
+            // Reported by the drain once it has assembled the pages submitted before it: what
+            // failed lies after them. A read that reaches the file whose planning failed
+            // returns every row of the files before it first.
+            retrieverFailure = enrichWithPlace(e, pageSource.getCurrentFileName(),
+                    pageSource.getCurrentRowGroupIndex(), pageSource.getCurrentPageIndex());
+            retrieverFailedBetweenWorkItems = pageSource.isBetweenWorkItems();
+            handOverBehindSubmittedPages(FAILURE_SENTINEL);
         }
         catch (Error err) {
             // Nothing here can act on it, and it is not the file's fault, so it is neither
@@ -446,6 +455,19 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             throw err;
         }
         LockSupport.unpark(drainThread);
+    }
+
+    /// Stores `sentinel` in the slot after the last page submitted, for the drain to take
+    /// once it has drained every page before it. Waits for that slot to be free; stores
+    /// nothing once the worker is done, since the drain no longer takes it.
+    private void handOverBehindSubmittedPages(DecodedPage sentinel) {
+        while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+            LockSupport.parkNanos(WAKE_CHECK_NANOS);
+        }
+        if (!done) {
+            reorderBuffer.set(nextSeq % MAX_INFLIGHT_PAGES, sentinel);
+            LockSupport.unpark(drainThread);
+        }
     }
 
     // ==================== Drain VThread ====================
@@ -514,6 +536,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             }
             if (decoded == EMPTY_SENTINEL) {
                 finishDrain();
+                return true;
+            }
+            if (decoded == FAILURE_SENTINEL) {
+                if (retrieverFailedBetweenWorkItems && rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                signalError(retrieverFailure);
                 return true;
             }
 

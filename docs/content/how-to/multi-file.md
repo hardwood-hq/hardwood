@@ -52,11 +52,11 @@ any order. Every projected column, and every column a filter predicate tests, mu
 matching physical type, logical type, repetition type, and fixed byte length, and its enclosing
 groups must match in nullability and repeatedness, otherwise a `SchemaIncompatibleException` is
 thrown. A file is planned as the read arrives at it, so a mismatch in a later file surfaces from
-the reading loop rather than from the call that built the reader, and always before any row of
-that file is returned. Columns that are neither projected nor filtered on are not checked, so
-files may carry additional columns or omit unused ones. With no explicit projection, all columns
-of the first file are projected and therefore required in every subsequent file reached by the
-data-reader plan.
+the reading loop rather than from the call that built the reader, after every row of the files
+before it and before any row of that file is returned. Columns that are neither projected nor
+filtered on are not checked, so files may carry additional columns or omit unused ones. With no
+explicit projection, all columns of the first file are projected and therefore required in every
+subsequent file reached by the data-reader plan.
 
 By default, `Hardwood.create()` sizes the thread pool to the number of available processors. To control the decode parallelism, create a `HardwoodContext` of the desired size and pass it to `Hardwood.create(HardwoodContext)`:
 
