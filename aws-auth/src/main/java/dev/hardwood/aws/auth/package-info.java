@@ -11,5 +11,5 @@
 /// [SdkCredentialsProviders] adapts AWS SDK `CredentialsProvider` instances
 /// into the [dev.hardwood.s3.S3CredentialsProvider] interface used by
 /// `hardwood-s3`, enabling standard AWS credential resolution (environment
-/// variables, instance profiles, SSO, etc.).
+/// variables, profiles, SSO, assumed roles, web identity, instance profiles, etc.).
 package dev.hardwood.aws.auth;

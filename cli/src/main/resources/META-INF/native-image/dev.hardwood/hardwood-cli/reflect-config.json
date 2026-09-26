@@ -5,6 +5,13 @@
       {"name": "<init>", "parameterTypes": []}
     ]
   },
+  {
+    "comment": "The AWS SDK loads its assumed-role provider factory by name. The sts, sso and ssooidc jars ship reflection metadata for their other factories, but not for this one.",
+    "name": "software.amazon.awssdk.services.sts.internal.StsProfileCredentialsProviderFactory",
+    "methods": [
+      {"name": "<init>", "parameterTypes": []}
+    ]
+  },
 
   {
     "name": "com.github.luben.zstd.Zstd"

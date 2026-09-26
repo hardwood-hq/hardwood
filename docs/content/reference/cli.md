@@ -487,7 +487,7 @@ hardwood schema -f s3://my-bucket/data.parquet
 hardwood print -n 10 -f s3://my-bucket/data.parquet
 ```
 
-The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, SSO, EC2/ECS instance profiles, web identity), which decides the order in which those sources are tried. See [Read from S3](../how-to/s3.md#credentials) for the credential options available to the library.
+The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials` and `~/.aws/config` profiles, SSO, assumed roles, web identity, EC2/ECS instance profiles), which decides the order in which those sources are tried. See [Read from S3](../how-to/s3.md#credentials) for the credential options available to the library.
 
 The CLI additionally reads these environment variables:
 

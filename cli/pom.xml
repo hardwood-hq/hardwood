@@ -399,6 +399,9 @@
                 <arg>--initialize-at-run-time=org.jline.nativ</arg>
                 <arg>--initialize-at-run-time=org.jline.terminal.impl.jni</arg>
                 <arg>-H:-UseServiceLoaderFeature</arg>
+                <!-- The AWS SDK's STS and SSO clients go through java.net.URL; the SDK enables only https,
+                     so a plain-http endpoint (AWS_ENDPOINT_URL_STS pointing at LocalStack, say) needs this. -->
+                <arg>--enable-url-protocols=http</arg>
               </buildArgs>
             </configuration>
           </plugin>

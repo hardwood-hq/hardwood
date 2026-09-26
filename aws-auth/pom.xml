@@ -79,20 +79,37 @@
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>auth</artifactId>
+    </dependency>
+    <!-- The default credential chain loads these providers reflectively and skips them when absent:
+         sso for SSO profiles, ssooidc for sso-session profiles, sts for web identity and assumed roles.
+         Their SDK clients use url-connection-client instead of the Apache and Netty clients. -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sso</artifactId>
       <exclusions>
-        <!-- Exclude signing/HTTP/checksum modules — only credential resolution is needed -->
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-aws</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-aws-eventstream</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-spi</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>checksums</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>checksums-spi</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>metrics-spi</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>endpoints-spi</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>retries-spi</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>retries</artifactId></exclusion>
-        <exclusion><groupId>software.amazon.eventstream</groupId><artifactId>eventstream</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
       </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>ssooidc</artifactId>
+      <exclusions>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>sts</artifactId>
+      <exclusions>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>apache-client</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>netty-nio-client</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
     </dependency>
 
     <!-- Test dependencies -->
@@ -115,6 +132,16 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <environmentVariables>
+            <!-- The SDK resolves the SSO token cache under HOME; keep the tests off the developer's own -->
+            <HOME>${project.build.directory}/aws-home</HOME>
+          </environmentVariables>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
