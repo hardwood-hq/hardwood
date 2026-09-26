@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.jfr.FileMappingEvent;
 
 /// [InputFile] backed by a memory-mapped file.
@@ -100,12 +99,7 @@ public class MappedInputFile implements InputFile {
 
         // Validate explicitly: FileChannel.map does not reject a region past EOF
         // (it would map beyond the file and SIGBUS on access), unlike ByteBuffer.slice.
-        // The comparison is written to avoid overflow when offset + length wraps.
-        if (offset < 0 || length < 0 || offset > fileBytes - length) {
-            throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name)
-                    + "readRange(" + offset + ", " + length
-                    + ") out of bounds (" + fileBytes + " bytes)");
-        }
+        ReadRanges.checkBounds(name, offset, length, fileBytes);
 
         if (wholeFile != null) {
             return wholeFile.slice(Math.toIntExact(offset), length);

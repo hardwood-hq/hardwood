@@ -294,6 +294,23 @@ class S3InputFileIT {
         }
     }
 
+    /// A zero-length read within the object is answered without a request, both below the
+    /// tail cache and at the end of the object.
+    @Test
+    void zeroLengthReadIssuesNoRequest() throws Exception {
+        try (S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet")) {
+            file.open();
+            long length = file.length();
+            long openRequests = file.networkRequestCount();
+
+            assertThat(file.readRange(0, 0).remaining()).isZero();
+            assertThat(file.readRange(length / 2, 0).remaining()).isZero();
+            assertThat(file.readRange(length, 0).remaining()).isZero();
+
+            assertThat(file.networkRequestCount()).isEqualTo(openRequests);
+        }
+    }
+
     private static void assertOutOfBounds(S3InputFile file, long offset, int length) throws IOException {
         long fileLength = file.length();
         assertThatThrownBy(() -> file.readRange(offset, length))

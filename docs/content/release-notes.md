@@ -43,6 +43,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - When `ParquetFileReader.open(...)` or `openAll(...)` fails, every input file is closed, as is a context the call created, and closing a reader attempts every input file even when one fails with an unchecked exception ([#1322](https://github.com/hardwood-hq/hardwood/issues/1322)).
 
+- `readRange` on an in-memory `InputFile` raises `IndexOutOfBoundsException` naming the file for a range outside it, as the other backends do, instead of an `ArithmeticException` or an exception without the file name, and a zero-length `readRange` on an S3 file returns an empty buffer without a request instead of failing ([#1348](https://github.com/hardwood-hq/hardwood/issues/1348)).
+
 - A page whose header declares more values than its body holds raises a `ParquetReadException` instead of returning values left over from an earlier page ([#1308](https://github.com/hardwood-hq/hardwood/issues/1308)).
 
 - Metadata that lacks a field the format requires (in the footer, the schema, a logical type annotation, a page header or the page index) or carries one with the wrong Thrift type raises a `ParquetReadException` instead of being read with default values, and a negative footer length raises one instead of an out-of-bounds read error. Key-value metadata holding an entry without a key is read as absent ([#1320](https://github.com/hardwood-hq/hardwood/issues/1320)).
