@@ -6857,3 +6857,29 @@ print(f"  - predicate_nested_{{single,multi}}.parquet: {PRED_ROWS} rows, struct 
 print(f"  - predicate_opaque_{{single,dict,bloom}}.parquet: {PRED_ROWS} rows, BSON, INTERVAL, BYTE_ARRAY DECIMAL, NULL and GEOMETRY")
 print(f"  - predicate_int96_{{single,multi,dict}}.parquet: {PRED_ROWS} rows, INT96 timestamps, one non-canonical")
 print(f"  - predicate_ts12_{{single,multi,dict,bloom,pages}}.parquet: {PRED_ROWS} rows, FIXED_LEN_BYTE_ARRAY(12) timestamps")
+
+# Twelve row groups of 400 rows over twenty INT64 columns, pages of 100 rows, with a page index.
+# `c00` counts 0..399 within every row group, so `c00 < 100` keeps the first page of each and
+# every row group's page index is consulted. Twenty columns stride one column's index slices
+# through each block, as a wide schema does (#708).
+index_windows_path = 'core/src/test/resources/page_index_windows.parquet'
+index_windows_rgs = 12
+index_windows_rg_rows = 400
+pq.write_table(
+    pa.table({
+        f'c{c:02d}': pa.array(
+            [(i % index_windows_rg_rows) if c == 0 else i * 20 + c
+             for i in range(index_windows_rgs * index_windows_rg_rows)],
+            type=pa.int64())
+        for c in range(20)
+    }),
+    index_windows_path,
+    row_group_size=index_windows_rg_rows,
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    write_batch_size=100,
+    data_page_size=1,
+    write_page_index=True,
+)
+print(f"\nGenerated {index_windows_path}: {index_windows_rgs} row groups x {index_windows_rg_rows} rows, 20 INT64 columns, pages of 100 rows, page index")

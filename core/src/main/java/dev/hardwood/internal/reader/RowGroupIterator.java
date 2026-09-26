@@ -111,11 +111,15 @@ public class RowGroupIterator implements Closeable {
     private long plannedRows;
     private long planSkipRemaining;
     private boolean metadataFilteringEnabled = true;
+    /// The most bytes one [IndexWindow] fetches, gaps included, unless a single row group needs
+    /// more.
+    private final long indexWindowBytes =
+            Long.getLong("hardwood.internal.indexWindowBytes", 16L * 1024 * 1024);
     /// The failure that ended planning, rethrown to every later request for a work item
     /// past the files planned before it. See [#planNextFile].
     private Throwable planningFailure;
-    /// How many work items the files planned before the failed one make up. The failed
-    /// file's own row groups, appended before it failed, lie past it and are not handed out.
+    /// How many work items the files planned before the failed one make up. A failed file's
+    /// work items are not handed out, whether or not any reached the work list.
     private int workItemsBeforeFailure;
 
     /// Reference schema leaf ordinals this read touches: every projected column plus
@@ -165,6 +169,9 @@ public class RowGroupIterator implements Closeable {
     /// `leafDecisions` holds what statistics and bloom filters decided for each
     /// leaf of the filter, for the row group's dictionaries to sharpen once the
     /// read reaches it; `null` when no metadata filtering applies.
+    ///
+    /// `indexWindow` fetches the row group's page-index slices together with those
+    /// of the work items planned beside it; `null` only while its file is planned.
     public record WorkItem(
             InputFile inputFile,
             RowGroup rowGroup,
@@ -175,8 +182,16 @@ public class RowGroupIterator implements Closeable {
             int workItemIndex,
             long rowsConsumedBefore,
             boolean filterAlwaysMatches,
-            RowGroupFilterEvaluator.LeafDecisions leafDecisions
-    ) {}
+            RowGroupFilterEvaluator.LeafDecisions leafDecisions,
+            IndexWindow indexWindow
+    ) {
+
+        WorkItem withIndexWindow(IndexWindow window) {
+            return new WorkItem(inputFile, rowGroup, fileSchema, columnOrdinals, fileIndex,
+                    rowGroupIndex, workItemIndex, rowsConsumedBefore, filterAlwaysMatches,
+                    leafDecisions, window);
+        }
+    }
 
     /// Cached shared metadata for one row group, reused across columns.
     ///
@@ -472,11 +487,11 @@ public class RowGroupIterator implements Closeable {
                                 LazyMaskCapability.of(MaskCapability.YES), null, true);
                     }
                 }
+                // After the dictionaries: a row group they drop alone in its window costs no
+                // index read. The fetch runs under this entry's bin lock and takes no further
+                // lock but the window's own monitor.
+                RowGroupIndexBuffers indexBuffers = workItem.indexWindow().buffersFor(idx);
                 boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
-                BitSet columnIndexColumns = columnIndexColumns(workItem, pageFiltering);
-                RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
-                        workItem.inputFile(), workItem.rowGroup(),
-                        offsetIndexColumns(workItem, columnIndexColumns), columnIndexColumns);
 
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
@@ -692,6 +707,7 @@ public class RowGroupIterator implements Closeable {
             metadataCache.remove(idx);
             fetchPlanCache.remove(idx);
             nextRowGroupPrefetched.remove(idx);
+            workItem.indexWindow().release(idx);
         }
     }
 
@@ -842,7 +858,7 @@ public class RowGroupIterator implements Closeable {
             Dictionary preloadedDictionary = shared.dictionaries() == null
                     ? null : shared.dictionaries().loaded(fileOrdinal);
 
-            if (colBuffers == null || colBuffers.offsetIndex() == null) {
+            if (colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
                 // inline DataPageHeader.statistics and per-page row masks both
                 // happen inside SequentialFetchPlan. Inline page statistics are bounds
@@ -1305,6 +1321,7 @@ public class RowGroupIterator implements Closeable {
         metadataCache.clear();
         fetchPlanCache.clear();
         nextRowGroupPrefetched.clear();
+        releaseIndexWindows();
 
         try {
             if (ownsFileMetadataCache) {
@@ -1327,6 +1344,18 @@ public class RowGroupIterator implements Closeable {
 
     // ==================== Internal ====================
 
+    /// Drops the page-index bytes of every window, including those of work items a read that
+    /// stopped early never released. The work list stays reachable from the readers.
+    private synchronized void releaseIndexWindows() {
+        IndexWindow previous = null;
+        for (WorkItem workItem : workItems) {
+            if (workItem.indexWindow() != previous) {
+                previous = workItem.indexWindow();
+                previous.releaseAll();
+            }
+        }
+    }
+
     /// Plans one more file, appending its surviving row groups to the work list.
     ///
     /// Returns `false` when there is nothing left to plan — every file done, or
@@ -1339,8 +1368,8 @@ public class RowGroupIterator implements Closeable {
     /// Each column plans on its own retriever thread, and a column that found nothing left
     /// to plan would end its stream cleanly while the column that hit the failure has yet
     /// to report it, so the read could end empty without an exception (#1278). Retrying the
-    /// file is no option either, as the row groups it added before failing are in the work
-    /// list already.
+    /// file is no option either: planning it has already advanced the shared planning state,
+    /// the next file to plan, the row budget and the rows still to skip among them.
     private synchronized boolean planNextFile() throws IOException {
         rethrowPlanningFailure();
         int plannedBefore = workItems.size();
@@ -1406,6 +1435,8 @@ public class RowGroupIterator implements Closeable {
         List<FilteredRowGroup> rowGroups = filterRowGroups(
                 sourceRowGroups, prepared.inputFile(), columnOrdinals);
 
+        // Appended to the work list once the file's index windows are formed over them.
+        List<WorkItem> planned = new ArrayList<>();
         for (int kept = 0; kept < rowGroups.size() && planRowBudget > 0; kept++) {
             FilteredRowGroup decided = rowGroups.get(kept);
             RowGroup rg = decided.rowGroup();
@@ -1418,7 +1449,7 @@ public class RowGroupIterator implements Closeable {
 
             long leadingSkip = planSkipRemaining;
             planSkipRemaining = 0;
-            if (workItems.isEmpty()) {
+            if (workItems.isEmpty() && planned.isEmpty()) {
                 firstRowGroupSkip = leadingSkip;
             }
 
@@ -1428,19 +1459,18 @@ public class RowGroupIterator implements Closeable {
                 chunkPaths.verify(rg, rgIndex, prepared.inputFile());
             }
 
-            workItemRefCounts.put(workItems.size(),
-                    new AtomicInteger(projection.decoded().getProjectedColumnCount()));
-            workItems.add(new WorkItem(
+            planned.add(new WorkItem(
                     prepared.inputFile(),
                     rg,
                     prepared.schema(),
                     columnOrdinals,
                     fileIndex,
                     rgIndex,
-                    workItems.size(),
+                    workItems.size() + planned.size(),
                     plannedRows,
                     decided.alwaysMatches(),
-                    decided.leafDecisions()));
+                    decided.leafDecisions(),
+                    null));
 
             // maxRows limiting: deduct row count from budget.
             // With a filter active, actual match count is unpredictable,
@@ -1451,12 +1481,64 @@ public class RowGroupIterator implements Closeable {
             plannedRows += rgRows - leadingSkip;
         }
 
+        appendWithIndexWindows(planned);
+
         // Trigger prefetch of next file
         triggerPrefetch(fileIndex + 1);
 
         LOG.log(System.Logger.Level.DEBUG,
                 "Planned file {0}: {1} row groups in the work list so far",
                 fileIndex, workItems.size());
+        return true;
+    }
+
+    /// Appends one file's planned work items to the work list, each with the [IndexWindow] it
+    /// falls into.
+    private void appendWithIndexWindows(List<WorkItem> planned) {
+        if (planned.isEmpty()) {
+            return;
+        }
+        int count = planned.size();
+        RowGroup[] rowGroups = new RowGroup[count];
+        int[] rowGroupIndexes = new int[count];
+        BitSet[] offsetIndexColumns = new BitSet[count];
+        BitSet[] columnIndexColumns = new BitSet[count];
+        for (int i = 0; i < count; i++) {
+            WorkItem workItem = planned.get(i);
+            rowGroups[i] = workItem.rowGroup();
+            rowGroupIndexes[i] = workItem.rowGroupIndex();
+            columnIndexColumns[i] = new BitSet();
+            offsetIndexColumns[i] = new BitSet();
+            // A row group with a chunk in another file fails before its page index is read
+            // (requireSameFile), so it asks for none: its offsets address that other file.
+            if (storedInThisFile(workItem.rowGroup())) {
+                columnIndexColumns[i] = columnIndexColumns(workItem,
+                        filterPredicate != null && metadataFilteringEnabled);
+                offsetIndexColumns[i] = offsetIndexColumns(workItem, columnIndexColumns[i]);
+            }
+        }
+        WorkItem first = planned.getFirst();
+        List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
+                first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
+                columnIndexColumns);
+        int next = 0;
+        for (IndexWindow window : windows) {
+            for (int m = 0; m < window.memberCount(); m++) {
+                WorkItem workItem = planned.get(next++);
+                workItemRefCounts.put(workItem.workItemIndex(),
+                        new AtomicInteger(projection.decoded().getProjectedColumnCount()));
+                workItems.add(workItem.withIndexWindow(window));
+            }
+        }
+    }
+
+    /// Whether every chunk of `rowGroup` stores its data in the file being read.
+    private static boolean storedInThisFile(RowGroup rowGroup) {
+        for (ColumnChunk chunk : rowGroup.columns()) {
+            if (!chunk.filePath().isEmpty()) {
+                return false;
+            }
+        }
         return true;
     }
 
