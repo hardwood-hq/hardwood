@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -139,6 +140,12 @@ public class RowGroupIterator implements Closeable {
     /// than indexed because the work list grows, and read from every column's
     /// retriever thread without the planning lock.
     private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
+
+    /// Work items whose first demand access has started the next row group's prefetch, held
+    /// until every column releases the item. The next row group is prefetched once per work
+    /// item, whichever column reaches the item first and whether or not the previous
+    /// prefetch planned it.
+    private final Set<Integer> nextRowGroupPrefetched = ConcurrentHashMap.newKeySet();
 
     /// A single unit of work: one row group in one file.
     ///
@@ -581,31 +588,30 @@ public class RowGroupIterator implements Closeable {
     public FetchPlan getColumnPlan(WorkItem workItem, int projectedColumnIndex) throws IOException {
         int workItemIndex = workItem.workItemIndex();
         FetchPlan[] plans = fetchPlanCache.get(workItemIndex);
-        if (plans != null) {
-            return plans[projectedColumnIndex];
+        if (plans == null) {
+            try {
+                plans = fetchPlanCache.computeIfAbsent(workItemIndex, idx -> {
+                    try {
+                        return computeFetchPlans(workItem);
+                    }
+                    catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+            }
+            catch (UncheckedIOException e) {
+                // Wrapped only to leave the mapping function, and undone in the frame
+                // that can declare what happened.
+                throw ExceptionContext.unwrap(e);
+            }
         }
-        // The mapping function stays pure metadata work. Prefetching the next row group
-        // plans the next file when this one is exhausted, which reads a footer and, under
-        // a filter, probes bloom filters; a ConcurrentHashMap holds a bin
-        // lock for the whole of a mapping function, so that I/O must not run inside one.
-        boolean[] planned = new boolean[1];
-        try {
-            plans = fetchPlanCache.computeIfAbsent(workItemIndex, idx -> {
-                planned[0] = true;
-                try {
-                    return computeFetchPlans(workItem);
-                }
-                catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            });
-        }
-        catch (UncheckedIOException e) {
-            // Wrapped only to leave the mapping function, and undone in the frame
-            // that can declare what happened.
-            throw ExceptionContext.unwrap(e);
-        }
-        if (planned[0]) {
+        // The first demand access prefetches the next row group, whether it planned this
+        // one or found the plans the previous prefetch cached; the prefetch task does not
+        // come through here, so prefetch stays one row group ahead. This runs outside the
+        // mapping function: prefetching plans the next file when this one is exhausted,
+        // which reads a footer and, under a filter, probes bloom filters, and a
+        // ConcurrentHashMap holds a bin lock for the whole of a mapping function.
+        if (nextRowGroupPrefetched.add(workItemIndex)) {
             prefetchNextRowGroup(workItem);
         }
         return plans[projectedColumnIndex];
@@ -631,6 +637,7 @@ public class RowGroupIterator implements Closeable {
         if (remaining == 0) {
             metadataCache.remove(idx);
             fetchPlanCache.remove(idx);
+            nextRowGroupPrefetched.remove(idx);
         }
     }
 
@@ -657,8 +664,10 @@ public class RowGroupIterator implements Closeable {
     /// under a filter, where planning also probes that file's bloom filters, which
     /// nothing has started.
     ///
-    /// Called by [#getColumnPlan] after its `computeIfAbsent` returns, never from inside
-    /// it: this blocks, and a mapping function holds a bin lock for its whole duration.
+    /// Called once per work item, by the first [#getColumnPlan] to reach it, after its
+    /// `computeIfAbsent` returns, never from inside it: this blocks, and a mapping function
+    /// holds a bin lock for its whole duration. The task below plans the next row group
+    /// without going through [#getColumnPlan], so it starts no further prefetch.
     private void prefetchNextRowGroup(WorkItem currentWorkItem) throws IOException {
         WorkItem nextWorkItem = workItemAt(currentWorkItem.workItemIndex() + 1);
         if (nextWorkItem == null) {
@@ -1222,6 +1231,7 @@ public class RowGroupIterator implements Closeable {
         closed = true;
         metadataCache.clear();
         fetchPlanCache.clear();
+        nextRowGroupPrefetched.clear();
 
         try {
             if (ownsFileMetadataCache) {
