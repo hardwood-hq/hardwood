@@ -42,6 +42,11 @@ import jdk.jfr.consumer.RecordingStream;
 /// }
 /// ```
 ///
+/// The recording stream is configured not to reuse `RecordedEvent` objects. With
+/// reuse, the stream refills the objects of one flush with the events of a later
+/// flush, so a captured event could report the fields of another event of the same
+/// type.
+///
 /// ### Asymmetric assertions
 ///
 /// When writing assertions against event counts or event field sums, include
@@ -82,6 +87,7 @@ public abstract class AbstractJfrRecorderTest {
     final void startJfrRecording() {
         capturedEvents = Collections.synchronizedList(new ArrayList<>());
         recording = new RecordingStream();
+        recording.setReuse(false);
         recording.onEvent(capturedEvents::add);
         recording.startAsync();
         stopped = false;
