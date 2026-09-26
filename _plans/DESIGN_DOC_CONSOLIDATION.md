@@ -57,7 +57,7 @@ Areas delete their sources outright. These facts from them belong to targets not
 |---|---|---|
 | `WRITER_SUPPORT.md` | Trimmed WRITER_SUPPORT: ordering rules, completed-stage list, open stages 21b, 22–25, 29, 30, 32–35, 37 | #1291 |
 | `REMOTE_READ_PATH.md` | Delivery table of REMOTE_READ_PATH | #1262 |
-| `READ_PATH_CONVERGENCE.md` | Draft outside this branch; moves to `_plans/` when committed | #1169 |
+| `READ_PATH_CONVERGENCE.md` | Moved to `_plans/`; folds into `ROW_READER.md` when #1169 completes | #1169 |
 | `PARSED_METADATA_REUSE.md` | Draft outside this branch; moves to `_plans/` when committed | #837 |
 | `DESIGN_DOC_CONSOLIDATION.md` | This file; deleted when the last area lands | — |
 
