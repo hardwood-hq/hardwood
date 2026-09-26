@@ -81,10 +81,12 @@ class DictionaryPushDownIoTest {
         Reads present = read(PRESENT);
 
         assertThat(present.rows()).isEqualTo(1000);
+        // The filtered read also fetches the ColumnIndex, in a request of its own beside the
+        // OffsetIndex request both reads issue.
         assertThat(present.requests())
-                .as("the dictionary page is one request on top of the unfiltered read, and it "
-                        + "pruned nothing")
-                .isEqualTo(unfiltered.requests() + 1);
+                .as("the dictionary page is one request on top of the unfiltered read and the "
+                        + "ColumnIndex, and it pruned nothing")
+                .isEqualTo(unfiltered.requests() + 2);
     }
 
     @Test

@@ -97,15 +97,15 @@ Everything below the footer is read lazily, on the first screen that asks, and c
 
 | Structure | Key | Read | Retention |
 |---|---|---|---|
-| Page-index region | row group | `RowGroupIndexBuffers.fetch`: one `readRange` for the whole contiguous column-index and offset-index region of the row group | Session; bounded by the file's page-index bytes |
-| `ColumnIndex`, `OffsetIndex` | (row group, column) | Parsed from that row group's region | Session; `null` cached for a chunk without one |
+| Page-index slices | row group | `RowGroupIndexBuffers.fetch` for every column: the row group's ColumnIndexes and its OffsetIndexes, one `readRange` per structure when each is contiguous | Session; bounded by the file's page-index bytes |
+| `ColumnIndex`, `OffsetIndex` | (row group, column) | Parsed from that row group's slices | Session; `null` cached for a chunk without one |
 | Page headers | (row group, column) | The chunk's compressed extent walked header to header by `PageHeaderWalk`, in bounded `readRange` windows (one read for a chunk that fits one); a window ends at the first page that does not fit, so a body longer than a window is skipped | Bounded LRU of chunks |
 | `Dictionary` | (row group, column) | The dictionary page alone, read by `DictionaryParser.readPage` (the read the dictionary filter makes) and parsed by `DictionaryParser` | Bounded LRU of chunks |
 | Dictionary entry count | (row group, column) | A bounded probe of the dictionary page header, located as the dictionary load locates it (`Encodings.dictionaryEntries` through `DictionaryParser.readPageHeader`) | Session |
 | Dictionary page size | (row group, column) | The same probe (`DictionaryParser.readPageHeader`) | Session |
 | Group paths of the schema | — | Walk of the schema | Session |
 
-The LRU bounds exist because page-header lists and dictionaries scale with the data, and a long session over a wide file would otherwise retain one per chunk visited. The index region is fetched per row group so that a screen listing every chunk of a row group costs one round trip on remote storage rather than one per chunk.
+The LRU bounds exist because page-header lists and dictionaries scale with the data, and a long session over a wide file would otherwise retain one per chunk visited. The page index is fetched per row group so that a screen listing every chunk of a row group costs one round trip per structure on remote storage rather than one per chunk.
 
 The dictionary entry count is asked for only by Column chunk detail. The list screens do not show it: one read per visible row would cost a round trip per row on remote storage, paid again for every row scrolled into view.
 

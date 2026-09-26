@@ -13,7 +13,7 @@ whether to fix their code or stop trusting the file.
 | `ParquetReadException` | they arrived and are not valid Parquet | no |
 | `SchemaIncompatibleException` | a `ParquetReadException`: schemas that cannot be reconciled across a multi-file read, or a footer disagreeing with itself | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
-| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, a column chunk read without an OffsetIndex, a page-index region or a range-backed file over 2 GB | no |
+| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, a column chunk read without an OffsetIndex or a range-backed file over 2 GB | no |
 | `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held | no |
 | `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 

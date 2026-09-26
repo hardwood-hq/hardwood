@@ -29,6 +29,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A `RowReader` filters on a column outside its projection instead of throwing partway through iteration when statistics do not settle the predicate ([#1242](https://github.com/hardwood-hq/hardwood/issues/1242)).
 
+- A read fetches the page index of the columns it reads only, and a row group whose page index spans more than 2 GB is read instead of raising `UnsupportedOperationException` ([#708](https://github.com/hardwood-hq/hardwood/issues/708), [#1113](https://github.com/hardwood-hq/hardwood/issues/1113)).
+
 - A filter column outside the projection is not read in row groups whose statistics prove every row matches, and a `RowReader` no longer resolves it by name ([#1274](https://github.com/hardwood-hq/hardwood/issues/1274)).
 
 - A filtered `ColumnReader` evaluates a predicate on a field of a required struct instead of throwing ([#1279](https://github.com/hardwood-hq/hardwood/issues/1279)).

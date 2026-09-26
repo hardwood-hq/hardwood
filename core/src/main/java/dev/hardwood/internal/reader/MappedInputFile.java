@@ -28,7 +28,7 @@ import dev.hardwood.jfr.FileMappingEvent;
 ///   [MappedByteBuffer] (its offsets are `int`). The [FileChannel] is kept open
 ///   and each [#readRange] maps just the requested region on demand. A single
 ///   requested region must still fit in an `int` length — in practice a column
-///   chunk, page group, or row-group index region, each at most 2 GB — but the
+///   chunk, page group, or merged page-index request, each at most 2 GB — but the
 ///   file as a whole may be arbitrarily large.
 ///
 /// **Interruption (larger-than-2 GB path only).** That path keeps the
