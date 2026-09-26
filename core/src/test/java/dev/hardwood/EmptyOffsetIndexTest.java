@@ -104,7 +104,8 @@ class EmptyOffsetIndexTest {
         ByteBuffer file = withEmptyOffsetIndex(true);
         assertThatThrownBy(() -> {
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
-                 RowReader rows = reader.buildRowReader().filter(FilterPredicate.gtEq("id", 0L)).build()) {
+                 // Half the row group, so statistics leave it undecided and page filtering runs.
+                 RowReader rows = reader.buildRowReader().filter(FilterPredicate.lt("id", 500L)).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }

@@ -491,7 +491,7 @@ public class RowGroupIterator implements Closeable {
                 // index read. The fetch runs under this entry's bin lock and takes no further
                 // lock but the window's own monitor.
                 RowGroupIndexBuffers indexBuffers = workItem.indexWindow().buffersFor(idx);
-                boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
+                boolean pageFiltering = pageFiltering(workItem);
 
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
@@ -515,6 +515,13 @@ public class RowGroupIterator implements Closeable {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// Whether the read narrows `workItem`'s rows by the ColumnIndex: under a filter with metadata
+    /// filtering on, in a row group statistics left undecided. In one they proved to match in full,
+    /// no page bound can rule a page out, since every value of it matches.
+    private boolean pageFiltering(WorkItem workItem) {
+        return filterPredicate != null && metadataFilteringEnabled && !workItem.filterAlwaysMatches();
     }
 
     /// The file ordinals of the columns whose ColumnIndex the read of `workItem` needs: the filter
@@ -1512,8 +1519,7 @@ public class RowGroupIterator implements Closeable {
             // A row group with a chunk in another file fails before its page index is read
             // (requireSameFile), so it asks for none: its offsets address that other file.
             if (storedInThisFile(workItem.rowGroup())) {
-                columnIndexColumns[i] = columnIndexColumns(workItem,
-                        filterPredicate != null && metadataFilteringEnabled);
+                columnIndexColumns[i] = columnIndexColumns(workItem, pageFiltering(workItem));
                 offsetIndexColumns[i] = offsetIndexColumns(workItem, columnIndexColumns[i]);
             }
         }

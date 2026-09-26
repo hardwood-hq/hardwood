@@ -431,8 +431,9 @@ class FilterOnlyColumnSkipTest {
 
     /// Row group 0's `id` chunk statistics claim `[500, 999]` while its column index keeps the
     /// real page bounds `0..999`, in pages of 100 rows. `500 <= id < 1250` is proven for row
-    /// group 0 by the chunk statistics while page filtering drops its first five pages, and row
-    /// group 1 (`1000..1999`) is left to the record filter.
+    /// group 0 by the chunk statistics, so the read trusts them: it neither evaluates the column
+    /// index nor filters the row group's rows, and returns all of them. Row group 1
+    /// (`1000..1999`) is left to the record filter.
     private static final Path INDEX_DISAGREES = Path.of("src/test/resources/filter_only_column_index_disagrees.parquet");
 
     private static FilterPredicate idFrom500To1250(boolean recordMatcher) {
@@ -442,7 +443,7 @@ class FilterOnlyColumnSkipTest {
 
     @ParameterizedTest
     @ValueSource(booleans = { false, true })
-    void rowReaderSkipsTheFilterOnlyColumnInAProvenRowGroupThePageIndexNarrows(boolean recordMatcher)
+    void rowReaderReadsAProvenRowGroupWholeWhateverItsColumnIndexSays(boolean recordMatcher)
             throws Exception {
         List<String> labels = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INDEX_DISAGREES));
@@ -455,12 +456,12 @@ class FilterOnlyColumnSkipTest {
                 labels.add(rows.getString("label"));
             }
         }
-        assertThat(labels).isEqualTo(expectedLabels(500, 1250));
+        assertThat(labels).isEqualTo(expectedLabels(0, 1250));
     }
 
     @ParameterizedTest
     @ValueSource(booleans = { false, true })
-    void columnReadersSkipTheFilterOnlyColumnInAProvenRowGroupThePageIndexNarrows(boolean recordMatcher)
+    void columnReadersReadAProvenRowGroupWholeWhateverItsColumnIndexSays(boolean recordMatcher)
             throws Exception {
         List<String> labels = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INDEX_DISAGREES));
@@ -475,7 +476,7 @@ class FilterOnlyColumnSkipTest {
                 }
             }
         }
-        assertThat(labels).isEqualTo(expectedLabels(500, 1250));
+        assertThat(labels).isEqualTo(expectedLabels(0, 1250));
     }
 
     // ==================== Fully matching row group between undecided ones ====================

@@ -5513,10 +5513,8 @@ print("  - gt(id, 200) yields 0 rows if stats are trusted, 100 rows if ignored")
 # Two row groups of 1000 rows, `id` running 0-1999, in pages of 100 rows. RG0's
 # `id` chunk statistics are rewritten to [500, 999] while its column index still
 # records the real page bounds. `gte(id, 500) AND lt(id, 1250)` then proves RG0
-# fully matching from the chunk statistics, while page filtering drops its first
-# five pages; RG1 is left to the record filter. A column the predicate references
-# and the projection does not must stay aligned with the projected ones across
-# the two.
+# fully matching from the chunk statistics, which the read trusts: it returns all
+# of RG0 without consulting its column index. RG1 is left to the record filter.
 
 _index_disagrees_path = 'core/src/test/resources/filter_only_column_index_disagrees.parquet'
 _index_disagrees_ids = list(range(2000))
