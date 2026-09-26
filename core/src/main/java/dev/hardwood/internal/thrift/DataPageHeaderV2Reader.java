@@ -15,6 +15,9 @@ import dev.hardwood.metadata.Statistics;
 /// Reader for DataPageHeaderV2 from Thrift Compact Protocol.
 public class DataPageHeaderV2Reader {
 
+    /// Ids of the fields the format requires of a `DataPageHeaderV2`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4, 5, 6 };
+
     public static DataPageHeaderV2 read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.DATA_PAGE_HEADER_V2);
         try {
@@ -35,6 +38,7 @@ public class DataPageHeaderV2Reader {
         int repetitionLevelsByteLength = 0;
         boolean isCompressed = true; // Default value per Parquet spec
         Statistics statistics = null;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -42,36 +46,40 @@ public class DataPageHeaderV2Reader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Fields 1-6 are required, so a wrong wire type fails here rather than being
+                // reported as a field that never arrived.
                 case 1: // num_values
-                    if (reader.acceptField(header, Codes.I32)) {
-                        numValues = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    numValues = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // num_nulls
-                    if (reader.acceptField(header, Codes.I32)) {
-                        numNulls = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    numNulls = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 3: // num_rows
-                    if (reader.acceptField(header, Codes.I32)) {
-                        numRows = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    numRows = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
-                case 4: // encoding — required, so a wrong wire type fails here
+                case 4: // encoding
                     reader.requireField(header, Codes.I32);
                     encodingValue = reader.readI32();
                     encoding = ThriftEnumLookup.encoding(encodingValue);
+                    seen |= 1L << fieldId;
                     break;
                 case 5: // definition_levels_byte_length
-                    if (reader.acceptField(header, Codes.I32)) {
-                        definitionLevelsByteLength = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    definitionLevelsByteLength = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 6: // repetition_levels_byte_length
-                    if (reader.acceptField(header, Codes.I32)) {
-                        repetitionLevelsByteLength = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    repetitionLevelsByteLength = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 7: // is_compressed
                     isCompressed = reader.readBooleanField(header, isCompressed);
@@ -87,9 +95,7 @@ public class DataPageHeaderV2Reader {
             }
         }
 
-        if (encoding == null) {
-            throw ThriftCompactReader.missingFields(ThriftStruct.DATA_PAGE_HEADER_V2, 4);
-        }
+        ThriftCompactReader.requireFields(ThriftStruct.DATA_PAGE_HEADER_V2, seen, REQUIRED_FIELDS);
 
         return new DataPageHeaderV2(numValues, numNulls, numRows, encoding, encodingValue,
                 definitionLevelsByteLength, repetitionLevelsByteLength, isCompressed, statistics);
