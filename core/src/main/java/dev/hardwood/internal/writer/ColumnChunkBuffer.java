@@ -85,9 +85,6 @@ import dev.hardwood.writer.ColumnEncoding;
 ///
 /// Under any other policy the encoding is settled before a value arrives: no dictionary is built,
 /// so the chunk pays neither the interning nor the index array and states no `distinct_count`.
-/// Each value's `PLAIN` width is still accumulated, because that total is what bounds the
-/// buffered row group and plans the page cuts — it is the writer's measure of buffered data, not
-/// a term of the `AUTO` comparison alone.
 final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     private final PhysicalType type;
@@ -216,8 +213,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     }
 
     /// Binds the value encoder to this batch's source, then shreds records
-    /// `[fromRecord, fromRecord + count)` of this column straight into the page buffers, sealing
-    /// pages as they fill.
+    /// `[fromRecord, fromRecord + count)` of this column into the chunk's level and value stores.
+    /// No page is cut until the row group is flushed.
     void append(RecordShredder shredder, ColumnSource source, int columnIndex, int fromRecord, int count) {
         values.reset(source);
         shredder.shred(columnIndex, fromRecord, count, this);

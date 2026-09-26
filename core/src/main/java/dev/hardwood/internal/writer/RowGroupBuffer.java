@@ -53,7 +53,7 @@ public final class RowGroupBuffer {
     }
 
     /// @param schema the file schema
-    /// @param pageTargetBytes buffered bytes after which a data page is cut
+    /// @param pageTargetBytes encoded bytes after which a data page is cut at flush
     /// @param rowGroupBufferTargetBytes retained bytes at which the row group is cut
     /// @param rowGroupTargetRows records at which the row group is cut
     /// @param encodings each leaf column's resolved encoding policy, in schema order

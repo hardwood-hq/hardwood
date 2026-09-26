@@ -13,7 +13,7 @@ import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 
 /// The vocabulary of the write-path coverage assertion described in
-/// `_designs-legacy/WRITE_COVERAGE_ASSERTION.md`: what a cell is, and how one is spelled.
+/// `_designs/WRITER_VALIDATION.md`: what a cell is, and how one is spelled.
 ///
 /// A **cell** is one point of one projection, spelled as a string so that it survives the trip
 /// through the file [CoverageRegistry] writes and [WriteCoverageVerdictTest] reads back. The

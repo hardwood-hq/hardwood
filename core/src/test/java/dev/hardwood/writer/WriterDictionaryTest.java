@@ -44,10 +44,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Which encoding a column chunk is written in, and what the chunk then carries.
 ///
 /// The choice is made once per chunk from the values it holds, as
-/// `_designs-legacy/WRITER_DICTIONARY_SELECTION.md` describes, so these pin both ends of it — a chunk
-/// that argues for a dictionary and one that argues against — across the repetition shapes and
-/// the nested layouts, plus the analysis cap that abandons a dictionary to bound memory rather
-/// than to decide an encoding.
+/// `_designs/WRITER_ENCODING.md#dictionary-decision` describes, so these pin both ends of it — a
+/// chunk that argues for a dictionary and one that argues against — across the repetition shapes
+/// and the nested layouts, plus a dictionary given up part-way through its chunk.
 class WriterDictionaryTest {
 
     @Test
@@ -79,12 +78,12 @@ class WriterDictionaryTest {
     }
 
     @Test
-    void dictionaryIsGivenUpWhenItOutgrowsTheAnalysisCap() throws Exception {
-        // The cap is max(rowGroupBufferTargetBytes / 2, 1 MiB), so a 4 MiB target caps the dictionary at
-        // 2 MiB — reached after 524,288 distinct INT32 values, part-way through this column. From
-        // there the chunk holds resolved values followed by directly appended ones, which is the
-        // one path where the value store carries both, and the only path that leaves the chunk
-        // unable to state its cardinality.
+    void dictionaryGivenUpPartWayKeepsEveryValue() throws Exception {
+        // An all-distinct column loses the size probes part-way through its chunk, which gives the
+        // dictionary up there. From then on the chunk holds resolved values followed by directly
+        // appended ones, which is the one path where the value store carries both, and a path
+        // that leaves the chunk unable to state its cardinality. The 4 MiB target keeps the
+        // whole column in one row group.
         int n = 900_000;
         int[] values = new int[n];
         for (int i = 0; i < n; i++) {

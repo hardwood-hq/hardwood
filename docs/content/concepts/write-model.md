@@ -29,7 +29,7 @@ Three things follow for a caller:
 
 - **A file is valid only after `close()` returns.** Before that, the destination holds pages without a footer, and no reader can open it. A writer abandoned mid-way leaves nothing readable.
 - **A failure leaves nothing behind.** When the writer cannot finish, it discards what it has written. A write call that throws fails the writer, and `close()` then discards the output instead of publishing the rows written before the failure. A failure the writer does not see, such as one in the code producing the data, is handled by `abort()`; see [Handle Write Failures](../how-to/write-failures.md). The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path.
-- **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close`, with no seeking and no size known ahead of time. That is what lets the same interface serve a file channel today and a multipart object upload later.
+- **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close` / `discard`, with no seeking and no size known ahead of time, so the same interface serves a file channel or a multipart object upload. `close()` publishes the file and `discard()` throws it away; the writer calls exactly one of them.
 
 ## What bounds memory
 

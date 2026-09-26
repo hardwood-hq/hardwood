@@ -43,9 +43,8 @@ public final class LogicalTypeValueRange {
     /// arithmetic per column.
     private static final long[] POWERS_OF_TEN = powersOfTen();
 
-    /// Digits of unscaled value each integral physical type can hold, beyond which a `DECIMAL`
-    /// precision bounds nothing: every value of the type is already within it.
-    private static final int INT32_DIGITS = 9;
+    /// Digits of unscaled value an `INT64` holds, the widest precision an integral `DECIMAL`
+    /// declares.
     private static final int INT64_DIGITS = 18;
 
     /// The annotation the bound comes from, named in the caller's rejection. `null` marks the
@@ -176,7 +175,9 @@ public final class LogicalTypeValueRange {
     /// also how the reader returns it.
     ///
     /// A `TIME` bounds the value to one day of its unit, and a `DECIMAL` to the digits its
-    /// precision declares.
+    /// precision declares. That precision never exceeds what the physical type can hold: the
+    /// schema builder's `LogicalTypeValidator` refuses a wider one, and a schema read from a file
+    /// has it dropped by `LeafAnnotation.dropFault`, which counts digits the same way.
     private static LogicalTypeValueRange integral(PhysicalType type, LogicalType logicalType) {
         int typeBits = type == PhysicalType.INT32 ? Integer.SIZE : Long.SIZE;
         if (logicalType instanceof LogicalType.IntType intType) {
@@ -192,12 +193,6 @@ public final class LogicalTypeValueRange {
             return new LogicalTypeValueRange(logicalType, 0L, unitsPerDay(time.unit()) - 1, null, 0, false);
         }
         if (logicalType instanceof LogicalType.DecimalType decimal) {
-            int digits = type == PhysicalType.INT32 ? INT32_DIGITS : INT64_DIGITS;
-            if (decimal.precision() > digits) {
-                // Every value of the physical type has at most this many digits, so the
-                // declared precision cannot exclude any of them.
-                return UNBOUNDED;
-            }
             long bound = POWERS_OF_TEN[decimal.precision()] - 1;
             return new LogicalTypeValueRange(logicalType, -bound, bound, null, 0, false);
         }

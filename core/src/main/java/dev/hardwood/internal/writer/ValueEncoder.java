@@ -194,7 +194,7 @@ abstract class ValueEncoder {
     abstract int intern(int valueIndex);
 
     /// The bytes the dictionary body would occupy if written, which is one half of what a chunk's
-    /// encoding is chosen on and the measure the analysis cap bounds.
+    /// encoding is chosen on.
     abstract long dictionaryPlainBytes();
 
     /// Appends the dictionary's value at `dictionaryIndex` to the value store, the operation that

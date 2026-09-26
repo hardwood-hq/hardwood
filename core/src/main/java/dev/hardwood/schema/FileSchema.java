@@ -24,7 +24,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
 /// Root schema container representing the complete Parquet schema.
-/// Supports both flat schemas and nested structures (structs, lists).
+/// Supports both flat schemas and nested structures (structs, lists, maps).
 ///
 /// @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
@@ -134,7 +134,7 @@ public class FileSchema {
         return true;
     }
 
-    /// Creates a builder for constructing a flat schema programmatically, for use
+    /// Creates a builder for constructing a schema, flat or nested, programmatically, for use
     /// with the writer.
     ///
     /// @param name the schema (message) name, conventionally `"schema"`

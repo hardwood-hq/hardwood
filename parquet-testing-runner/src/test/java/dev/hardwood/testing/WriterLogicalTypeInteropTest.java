@@ -43,7 +43,7 @@ import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The logical-type half of the write-path interop gate (`_designs-legacy/WRITER_INTEROP_GATE.md`):
+/// The logical-type half of the write-path interop gate (`_designs/WRITER_VALIDATION.md`):
 /// every annotation the writer emits is written onto a column, and parquet-java parses it out of
 /// the schema and reads the annotated values back.
 ///

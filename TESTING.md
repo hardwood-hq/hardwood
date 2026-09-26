@@ -114,7 +114,7 @@ The harness is a set of JUnit classes in `core/src/test/java/dev/hardwood/`, eac
 
 A query that is known to disagree with the oracle can be marked `pending("<issue>")` in `DifferentialReadTest`, which skips it through a JUnit assumption; removing the marker once the bug is fixed turns the case into the fix's verifier.
 
-`WriterDifferentialTest` (`core`, package `dev.hardwood.writer`) runs the harness in the opposite direction: Hardwood writes a file and DuckDB reads it back. Its files carry a synthetic index column `r` in place of `__row__`.
+`WriterDifferentialTest` (`core`, package `dev.hardwood.writer`) runs the harness in the opposite direction: Hardwood writes a file and DuckDB reads it back. Its files carry a synthetic index column `r` in place of `__row__`. It is one of the reader tiers of the write path in [WRITER_VALIDATION.md](_designs/WRITER_VALIDATION.md).
 
 ### How fixtures are chosen
 

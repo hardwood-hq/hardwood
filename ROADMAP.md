@@ -174,13 +174,13 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ## Phase 6: Writer Implementation
 
-> Architecture and delivery sequencing for write support live in
-> [_plans/WRITER_SUPPORT.md](_plans/WRITER_SUPPORT.md) (#1291), which is the plan of
-> record. The boxes below are the fine-grained inventory ticked as increments land.
+> The writer's design is in [_designs/WRITER.md](_designs/WRITER.md) and its siblings; the
+> open stages are sequenced in [_plans/WRITER_SUPPORT.md](_plans/WRITER_SUPPORT.md) (#1291).
+> The boxes below are the fine-grained inventory ticked as stages land.
 
 ### 6.1 Writer Architecture
 - [x] Implement `RowWriter` — the row-oriented layer over the columnar core, obtained from
-  `ParquetFileWriter.rowWriter()` (see `_designs-legacy/WRITER_ROW_API.md`)
+  `ParquetFileWriter.rowWriter()` (see `_designs/WRITER_INPUT.md#rowwriter`)
 - [x] Implement `WriterConfig` (row-group row and buffer targets, page target, per-column encoding policy,
   codec, statistics truncation, precision-loss policy)
 - [x] Implement `ColumnWriter` — the columnar entry point, obtained from
@@ -189,7 +189,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Row-group and page assembly (`internal.writer.RowGroupBuffer`, `ColumnChunkBuffer`), the
   internal counterparts of the `RowGroupWriter` / `PageWriter` this inventory first sketched
 - [x] User documentation for the writer public API (`docs/content/`, see
-  [`_designs-legacy/WRITER_DOCS.md`](_designs-legacy/WRITER_DOCS.md))
+  [the writer reference](docs/content/reference/writer.md))
 
 ### 6.2 Write Flow
 - [x] Record buffering
