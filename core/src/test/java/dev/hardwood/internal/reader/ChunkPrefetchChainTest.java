@@ -33,9 +33,10 @@ class ChunkPrefetchChainTest {
     void everyChunkHandlePrefetchesItsSuccessor() throws Exception {
         ReadSignals signals = new ReadSignals();
         CountingInputFile file = new CountingInputFile(signals);
+        PrefetchTasks prefetchTasks = new PrefetchTasks();
         ChunkHandle[] handles = new ChunkHandle[CHUNKS];
         for (int i = 0; i < CHUNKS; i++) {
-            handles[i] = new ChunkHandle(file, (long) i * CHUNK, CHUNK, "chunk " + i);
+            handles[i] = new ChunkHandle(file, (long) i * CHUNK, CHUNK, "chunk " + i, prefetchTasks);
         }
         for (int i = 0; i < CHUNKS - 1; i++) {
             handles[i].setNextChunk(handles[i + 1]);
@@ -60,9 +61,10 @@ class ChunkPrefetchChainTest {
     void everySharedRegionPrefetchesItsSuccessor() throws Exception {
         ReadSignals signals = new ReadSignals();
         CountingInputFile file = new CountingInputFile(signals);
+        PrefetchTasks prefetchTasks = new PrefetchTasks();
         SharedRegion[] regions = new SharedRegion[CHUNKS];
         for (int i = 0; i < CHUNKS; i++) {
-            regions[i] = new SharedRegion(file, (long) i * CHUNK, CHUNK, "region " + i);
+            regions[i] = new SharedRegion(file, (long) i * CHUNK, CHUNK, "region " + i, prefetchTasks);
         }
         for (int i = 0; i < CHUNKS - 1; i++) {
             regions[i].setNextRegion(regions[i + 1]);

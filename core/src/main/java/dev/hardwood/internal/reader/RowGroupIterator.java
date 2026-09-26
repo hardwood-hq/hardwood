@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -82,8 +81,10 @@ public class RowGroupIterator implements Closeable {
     /// [#close()] can be reached more than once, for instance through a
     /// column-reader scan that its group and every reader of that group close.
     /// Closing twice releases nothing twice. Volatile because the prefetch tasks,
-    /// which may still run after [#close()], read it.
+    /// which [#close()] waits for after setting it, read it.
     private volatile boolean closed;
+    /// The speculative tasks this iterator's read has started; [#close()] waits for them.
+    private final PrefetchTasks prefetchTasks = new PrefetchTasks();
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -670,16 +671,16 @@ public class RowGroupIterator implements Closeable {
         return counter != null && counter.get() == 0;
     }
 
-    /// Triggers async pre-computation and pre-fetch for the next row group.
-    /// The plan computation is pure metadata work (no I/O). The pre-fetch
-    /// kicks off the first chunk's `readRange()` asynchronously.
+    /// Triggers async pre-computation and pre-fetch for the next row group, as a task
+    /// [#close()] waits for. The plan computation reads the row group's page index,
+    /// and under a filter its dictionaries; the pre-fetch then reads the first chunk.
     ///
     /// The next row group is asked for through [#workItemAt], so the last row group of a
     /// file prefetches into the next one rather than stopping at the boundary — which
     /// is the one step of a read this prefetch exists to cover.
     ///
     /// That call stays on the caller. Planning a file validates its schema against the
-    /// reference and throws when they disagree; raised inside the fire-and-forget task
+    /// reference and throws when they disagree; raised inside the speculative task
     /// below, the throw would be lost and the file skipped, with its rows silently
     /// missing from the read. The caller is the retriever, and what it blocks on is the
     /// next file's footer, whose read [#triggerPrefetch] has already started — except
@@ -695,7 +696,7 @@ public class RowGroupIterator implements Closeable {
         if (nextWorkItem == null) {
             return;
         }
-        CompletableFuture.runAsync(() -> {
+        prefetchTasks.submit(() -> {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "prefetch rg=" + nextWorkItem.rowGroupIndex())) {
                 FetchPlan[] nextPlans = fetchPlanCache.computeIfAbsent(
@@ -814,7 +815,8 @@ public class RowGroupIterator implements Closeable {
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
                         perRgMaxRows, leaves, matchingRows, rowGroup.numRows(), preloadedDictionary,
-                        shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal));
+                        shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
+                        prefetchTasks);
                 continue;
             }
 
@@ -863,7 +865,7 @@ public class RowGroupIterator implements Closeable {
                     String purpose = "rg=" + workItem.rowGroupIndex()
                             + " col=" + originalIndex
                             + " pageGroup=" + (g + 1) + "/" + groupCount;
-                    handles.add(new ChunkHandle(inputFile, group.offset, group.length, purpose));
+                    handles.add(new ChunkHandle(inputFile, group.offset, group.length, purpose, prefetchTasks));
                 }
                 for (int i = 0; i < handles.size() - 1; i++) {
                     handles.get(i).setNextChunk(handles.get(i + 1));
@@ -872,7 +874,8 @@ public class RowGroupIterator implements Closeable {
                 if (dictStart > 0 && !foldDictionary) {
                     dictionaryHandle = new ChunkHandle(inputFile, dictStart,
                             Math.toIntExact(firstDataPageOffset - dictStart),
-                            "rg=" + workItem.rowGroupIndex() + " col=" + originalIndex + " dictionary");
+                            "rg=" + workItem.rowGroupIndex() + " col=" + originalIndex + " dictionary",
+                            prefetchTasks);
                     dictionaryHandle.setNextChunk(handles.get(0));
                 }
 
@@ -995,7 +998,7 @@ public class RowGroupIterator implements Closeable {
             int regionLength = Math.toIntExact(regionEnd - regionOffset);
             String purpose = "rg=" + workItem.rowGroupIndex()
                     + " region=" + group.get(0).planIndex() + ".." + group.get(group.size() - 1).planIndex();
-            SharedRegion region = new SharedRegion(inputFile, regionOffset, regionLength, purpose);
+            SharedRegion region = new SharedRegion(inputFile, regionOffset, regionLength, purpose, prefetchTasks);
             if (previous != null) {
                 previous.setNextRegion(region);
             }
@@ -1241,17 +1244,24 @@ public class RowGroupIterator implements Closeable {
         return context;
     }
 
-    /// Releases iterator-local caches. Standalone iterators also wait for
-    /// in-flight metadata loads and close their input files; iterators owned by
-    /// ParquetFileReader leave those shared resources to the parent and instead
-    /// tell it to stop tracking this iterator, so a closed child reader's work
-    /// list does not stay reachable for the parent's whole lifetime.
+    /// Waits for the speculative tasks the read has started, then releases
+    /// iterator-local caches. Standalone iterators also wait for in-flight metadata
+    /// loads and close their input files; iterators owned by ParquetFileReader leave
+    /// those shared resources to the parent and instead tell it to stop tracking this
+    /// iterator, so a closed child reader's work list does not stay reachable for the
+    /// parent's whole lifetime.
+    ///
+    /// The caller stops the column workers first, so no retriever starts a task while
+    /// this waits.
     @Override
     public void close() throws IOException {
         if (closed) {
             return;
         }
         closed = true;
+        // Before the caches are cleared: a planning task holds its cache entry's lock
+        // for as long as it plans, and the files are closed only after this returns.
+        prefetchTasks.awaitAll();
         metadataCache.clear();
         fetchPlanCache.clear();
         nextRowGroupPrefetched.clear();

@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.hardwood.InputFile;
@@ -38,6 +37,7 @@ public final class SharedRegion {
     private final long fileOffset;
     private final int length;
     private final String purpose;
+    private final PrefetchTasks prefetchTasks;
     private volatile SharedRegion nextRegion;
     private volatile ByteBuffer data;
     /// Set by the first [#ensureFetched] that finds a next region chained, which
@@ -45,11 +45,15 @@ public final class SharedRegion {
     /// its successor when the read reaches it, so pre-fetch stays one region ahead.
     private final AtomicBoolean nextRegionPrefetched = new AtomicBoolean();
 
-    public SharedRegion(InputFile inputFile, long fileOffset, int length, String purpose) {
+    /// @param prefetchTasks where the pre-fetch of the next region runs, so the read's
+    ///        owner can wait for it before closing the file
+    public SharedRegion(InputFile inputFile, long fileOffset, int length, String purpose,
+                        PrefetchTasks prefetchTasks) {
         this.inputFile = inputFile;
         this.fileOffset = fileOffset;
         this.length = length;
         this.purpose = purpose;
+        this.prefetchTasks = prefetchTasks;
     }
 
     public long fileOffset() {
@@ -102,7 +106,7 @@ public final class SharedRegion {
         SharedRegion next = nextRegion;
         if (next != null && !nextRegionPrefetched.get() && nextRegionPrefetched.compareAndSet(false, true)
                 && next.data == null) {
-            CompletableFuture.runAsync(FetchReason.bind(() -> {
+            prefetchTasks.submit(() -> {
                 try {
                     next.fetchData();
                 }
@@ -114,7 +118,7 @@ public final class SharedRegion {
                             "Prefetch failed for region at offset {0} (length {1}) in {2}",
                             next.fileOffset, next.length, next.inputFile.name(), e);
                 }
-            }));
+            });
         }
         return buf;
     }
