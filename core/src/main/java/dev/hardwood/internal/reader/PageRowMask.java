@@ -14,9 +14,11 @@ package dev.hardwood.internal.reader;
 /// For nested columns they are top-level record indices, identified by
 /// repetition level zero in the page's rep-level stream.
 ///
-/// The sentinel [#ALL] indicates "keep every row in the page" — assembly takes
-/// the existing arraycopy fast path without per-interval iteration. Callers that
-/// drop a page entirely use a `null` mask reference (no `PageRowMask` exists).
+/// The sentinel [#ALL] indicates "keep every row in the page", and the page is
+/// used as decoded. Under any other mask, a nested page is trimmed to its records
+/// when decoded ([PageTrimmer]) and a flat page's kept intervals are copied during
+/// assembly. Callers that drop a page entirely use a `null` mask reference (no
+/// `PageRowMask` exists).
 public final class PageRowMask {
 
     /// Sentinel value indicating "keep every row in the page". Shared across all

@@ -25,7 +25,7 @@ Tests: `MultiFileRowReaderTest`, `IteratorTrackingTest`, `ParentCloseTest`.
 |---|---|---|---|
 | Retriever (virtual) | one per decoded column | whole read | Pulls pages from the `PageSource`, which plans files, computes fetch plans and fetches page bytes on demand; submits decode tasks; throttles |
 | Drain (virtual) | one per decoded column | whole read | Takes decoded pages in sequence order, assembles batches, runs drain-side filter fragments, publishes |
-| Decode task | up to the reorder depth per column | one page | Decompresses and decodes one page on the `HardwoodContext` pool, stores the result, wakes the drain |
+| Decode task | up to the reorder depth per column | one page | Decompresses and decodes one page on the `HardwoodContext` pool, trims a masked nested page to its kept records ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)), stores the result, wakes the drain |
 | Speculative task | as triggered | one step | On the common `ForkJoinPool` (a new thread per task when its parallelism is below 2): the next file's footer load, the next row group's fetch plans and first-chunk prefetch, one-ahead chunk and region prefetches. The iterator's `PrefetchTasks` tracks all but the footer load, which the `FileMetadataCache` tracks |
 | Consumer | the caller's thread | caller-managed | Polls every column's exchange and reads the batches |
 

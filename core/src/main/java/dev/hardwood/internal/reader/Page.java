@@ -73,19 +73,29 @@ public sealed interface Page {
     /// `null` on a fixed-width decode) are carried through. This lets the fast path
     /// reuse the regular value decoders and stamp the shape afterwards.
     static Page withFixedListK(Page page, int fixedListK) {
+        return withShape(page, page.size(), fixedListK);
+    }
+
+    /// Returns a copy of `page` whose logical length is `size`. The value, level and
+    /// dictionary-index arrays are shared; positions from `size` on are ignored.
+    static Page withSize(Page page, int size) {
+        return withShape(page, size, page.fixedListK());
+    }
+
+    private static Page withShape(Page page, int size, int fixedListK) {
         return switch (page) {
             case BooleanPage p -> new BooleanPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), fixedListK);
+                    p.maxDefinitionLevel(), size, fixedListK);
             case IntPage p -> new IntPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), fixedListK);
+                    p.maxDefinitionLevel(), size, fixedListK);
             case LongPage p -> new LongPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), fixedListK);
+                    p.maxDefinitionLevel(), size, fixedListK);
             case FloatPage p -> new FloatPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), fixedListK);
+                    p.maxDefinitionLevel(), size, fixedListK);
             case DoublePage p -> new DoublePage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), fixedListK);
+                    p.maxDefinitionLevel(), size, fixedListK);
             case ByteArrayPage p -> new ByteArrayPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), p.dictionary(), p.dictIndices(), fixedListK);
+                    p.maxDefinitionLevel(), size, p.dictionary(), p.dictIndices(), fixedListK);
         };
     }
 
