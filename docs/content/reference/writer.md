@@ -283,7 +283,7 @@ hardwood version <version> (build <commit>)
 
 The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
-A failure while `close()` finishes the file discards the output as well. When the output cannot be discarded, `close()` and `abort()` throw the `IOException`.
+A failure while `close()` finishes or publishes the file discards the output as well, and `close()` throws it. When the output cannot be discarded, `abort()` and `close()` on a failed writer throw the `IOException`; a failure while finishing or publishing carries it as a suppressed exception.
 
 ## What the Writer Rejects
 

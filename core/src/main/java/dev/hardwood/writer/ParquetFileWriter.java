@@ -465,11 +465,12 @@ public final class ParquetFileWriter implements Closeable {
     /// file at the destination.
     ///
     /// If a write has thrown, the output is discarded instead, leaving nothing at the
-    /// destination. A failure while finishing discards the output as well. Does nothing if the
-    /// writer is already closed or aborted.
+    /// destination. A failure while finishing or publishing the file discards the output as
+    /// well, and a failure to discard it is attached to the thrown exception as suppressed.
+    /// Does nothing if the writer is already closed or aborted.
     ///
-    /// @throws IOException if the file cannot be finished, or a discarded output cannot be
-    ///         released
+    /// @throws IOException if the file cannot be finished or published, or a discarded output
+    ///         cannot be released
     @Override
     public void close() throws IOException {
         if (state == State.FAILED) {

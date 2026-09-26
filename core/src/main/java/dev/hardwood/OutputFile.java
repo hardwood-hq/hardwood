@@ -51,6 +51,16 @@ public interface OutputFile extends Closeable {
     /// @throws IllegalStateException if [#create()] has not been called
     long position();
 
+    /// Finalizes the file and publishes it at the destination.
+    ///
+    /// When publishing fails, `close()` releases the resources and discards what was
+    /// written before it throws, leaving the destination as if nothing was written. A
+    /// failure to discard is attached to the thrown exception as suppressed.
+    ///
+    /// @throws IOException if the file cannot be published
+    @Override
+    void close() throws IOException;
+
     /// Discards everything written and releases resources without publishing a
     /// file at the destination. This is the failure counterpart to [#close()]:
     /// [#close()] finalizes (commits) the file, `discard()` throws it away. The
