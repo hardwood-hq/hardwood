@@ -1227,25 +1227,10 @@ public class RowGroupIterator implements Closeable {
             if (ownsFileMetadataCache) {
                 fileMetadataCache.close();
                 // Reported rather than logged: a close that fails has failed, and a
-                // warning nobody reads is a silent failure. One is raised and the
-                // rest suppressed beneath it, as ParquetFileReader.close does.
-                IOException firstFailure = null;
-                for (InputFile file : inputFiles) {
-                    try {
-                        file.close();
-                    }
-                    catch (IOException e) {
-                        if (firstFailure == null) {
-                            firstFailure = e;
-                        }
-                        else {
-                            firstFailure.addSuppressed(e);
-                        }
-                    }
-                }
-                if (firstFailure != null) {
-                    throw firstFailure;
-                }
+                // warning nobody reads is a silent failure. Every file is attempted, one
+                // failure is raised and the rest suppressed beneath it, as
+                // ParquetFileReader.close does.
+                InputFileCloser.closeAll(inputFiles);
             }
         }
         finally {

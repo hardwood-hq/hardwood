@@ -22,6 +22,7 @@ import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.FileMetadataCache;
 import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.InputFileCloser;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
@@ -279,17 +280,7 @@ public class ParquetFileReader implements Closeable {
     private static void closeAfterOpenFailure(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
                                               boolean ownsContext, Exception failure) {
         if (inputFiles != null) {
-            for (InputFile file : inputFiles) {
-                if (file == null) {
-                    continue;
-                }
-                try {
-                    file.close();
-                }
-                catch (IOException | RuntimeException closeException) {
-                    failure.addSuppressed(closeException);
-                }
-            }
+            InputFileCloser.closeAll(inputFiles, failure);
         }
         if (ownsContext) {
             try {
@@ -1126,23 +1117,7 @@ public class ParquetFileReader implements Closeable {
         }
 
         if (ownsInputFiles) {
-            IOException firstFailure = null;
-            for (InputFile file : inputFiles) {
-                try {
-                    file.close();
-                }
-                catch (IOException e) {
-                    if (firstFailure == null) {
-                        firstFailure = e;
-                    }
-                    else {
-                        firstFailure.addSuppressed(e);
-                    }
-                }
-            }
-            if (firstFailure != null) {
-                throw firstFailure;
-            }
+            InputFileCloser.closeAll(inputFiles);
         }
     }
 }
