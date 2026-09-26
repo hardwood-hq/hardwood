@@ -16,6 +16,7 @@ import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.thrift.ThriftTruncatedException;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -33,6 +34,10 @@ public final class DictionaryParser {
     /// absent `dictionary_page_offset`. Covers a page header plus the body of all but unusually
     /// large dictionaries, so the common case still resolves in a single read.
     private static final int DICTIONARY_PROBE_BYTES = 64 * 1024;
+
+    /// Bytes first read for a dictionary page header alone. A thrift-compact page header runs to a
+    /// few dozen bytes, so this is one short read; a longer header widens it.
+    private static final int HEADER_PROBE_BYTES = 256;
 
     private DictionaryParser() {}
 
@@ -55,6 +60,64 @@ public final class DictionaryParser {
     /// @throws ParquetReadException if the offsets or the page header contradict the chunk
     public static ByteBuffer readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
             throws IOException {
+        Extent extent = extent(columnChunk, messagePrefix);
+        ByteBuffer region = inputFile.readRange(extent.start(),
+                Math.toIntExact(Math.min(extent.openingRead(), extent.availableBytes())));
+        int pageLength = pageLength(region);
+        if (pageLength < 0) {
+            return null;
+        }
+        if (pageLength > extent.availableBytes()) {
+            throw new ParquetReadException(messagePrefix
+                    + "Malformed Parquet metadata: the dictionary page header declares "
+                    + pageLength + " bytes but only " + extent.availableBytes()
+                    + " bytes remain in the chunk");
+        }
+        return pageLength > region.remaining()
+                ? inputFile.readRange(extent.start(), pageLength)
+                : region.slice(0, pageLength);
+    }
+
+    /// Reads the header of a column chunk's dictionary page, or returns `null` when the chunk's
+    /// first page is not a dictionary page.
+    ///
+    /// The page is located as [#readPage] locates it, and only its header is read: a short probe,
+    /// widened while the header does not fit in it, up to the end of the chunk or
+    /// [PageFormatProbe#MAX_PEEK_SIZE], whichever comes first.
+    ///
+    /// @param messagePrefix as [#readPage]
+    /// @throws ParquetReadException as [#readPage], or if the header does not fit in the chunk or
+    ///         exceeds [PageFormatProbe#MAX_PEEK_SIZE]
+    public static PageHeader readPageHeader(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
+            throws IOException {
+        Extent extent = extent(columnChunk, messagePrefix);
+        int ceiling = Math.min(PageFormatProbe.MAX_PEEK_SIZE, extent.availableBytes());
+        int probe = Math.min(HEADER_PROBE_BYTES, ceiling);
+        while (true) {
+            try {
+                PageHeader header = PageHeaderReader.read(
+                        new ThriftCompactReader(inputFile.readRange(extent.start(), probe)));
+                return header.type() == PageType.DICTIONARY_PAGE ? header : null;
+            }
+            catch (ThriftTruncatedException e) {
+                if (probe >= extent.availableBytes()) {
+                    throw e;
+                }
+                if (probe >= ceiling) {
+                    throw new ParquetReadException(messagePrefix + "Page header at offset " + extent.start()
+                            + " exceeds maximum peek size (" + ceiling + " bytes)", e);
+                }
+                probe = Math.min(2 * probe, ceiling);
+            }
+        }
+    }
+
+    /// Where a chunk's first page starts, how many bytes the chunk leaves it, and how much to read
+    /// first to take in the whole of a dictionary page there.
+    ///
+    /// The available bytes are a bound on the page, whose own size is an int; a chunk over 2 GB
+    /// bounds it no tighter than that.
+    private static Extent extent(ColumnChunk columnChunk, String messagePrefix) {
         ColumnMetaData metaData = columnChunk.metaData();
         long dataPageOffset = metaData.dataPageOffset();
         long chunkStart;
@@ -70,25 +133,12 @@ public final class DictionaryParser {
                     + "Malformed Parquet metadata: the dictionary page is at offset " + chunkStart
                     + " but the chunk ends at offset " + chunkEnd);
         }
-        // A bound on the page, whose own size is an int; a chunk over 2 GB bounds it no
-        // tighter than that.
         int availableBytes = Math.toIntExact(Math.min(chunkEnd - chunkStart, Integer.MAX_VALUE));
         long openingRead = dataPageOffset > chunkStart ? dataPageOffset - chunkStart : DICTIONARY_PROBE_BYTES;
+        return new Extent(chunkStart, availableBytes, openingRead);
+    }
 
-        ByteBuffer region = inputFile.readRange(chunkStart, Math.toIntExact(Math.min(openingRead, availableBytes)));
-        int pageLength = pageLength(region);
-        if (pageLength < 0) {
-            return null;
-        }
-        if (pageLength > availableBytes) {
-            throw new ParquetReadException(messagePrefix
-                    + "Malformed Parquet metadata: the dictionary page header declares "
-                    + pageLength + " bytes but only " + availableBytes
-                    + " bytes remain in the chunk");
-        }
-        return pageLength > region.remaining()
-                ? inputFile.readRange(chunkStart, pageLength)
-                : region.slice(0, pageLength);
+    private record Extent(long start, int availableBytes, long openingRead) {
     }
 
     /// Total byte length of the dictionary page starting at the beginning of `region` — its header

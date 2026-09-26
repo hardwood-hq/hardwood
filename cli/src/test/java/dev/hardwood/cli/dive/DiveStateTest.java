@@ -29,6 +29,9 @@ import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
+import dev.hardwood.cli.internal.Sizes;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.metadata.PageType;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -1119,17 +1122,15 @@ class DiveStateTest {
     }
 
     @Test
-    void dictionaryConfirmPromptShownWhenChunkExceedsCap() throws Exception {
-        // Force the cap below the chunk size so the screen lands on the
-        // confirm prompt instead of auto-loading. dictionary_with_crc
-        // has an actual dictionary on column 1; the test column doesn't
-        // matter for the gating logic — only its compressed-bytes size
-        // vs. the cap.
+    void dictionaryConfirmPromptShownWhenDictionaryPageExceedsCap() throws Exception {
+        // Force the cap below the dictionary page's size so the screen lands
+        // on the confirm prompt instead of auto-loading. dictionary_with_crc
+        // has an actual dictionary on column 1.
         Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
-            long chunkBytes = m.dictionaryChunkBytes(0, 1);
-            assertThat(chunkBytes).isPositive();
-            m.setDictionaryReadCapBytes(1);  // smaller than any real chunk
+            long pageBytes = m.dictionaryPageBytes(0, 1);
+            assertThat(pageBytes).isPositive();
+            m.setDictionaryReadCapBytes(1);  // smaller than any real dictionary page
 
             NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
             stack.push(new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true));
@@ -1164,6 +1165,58 @@ class DiveStateTest {
 
             assertThat(handled).isTrue();
             assertThat(((ScreenState.DictionaryView) stack.top()).loadConfirmed()).isFalse();
+        }
+    }
+
+    /// The size the cap is compared against is the dictionary page's compressed size, as its
+    /// header states it, not the chunk's.
+    @Test
+    void dictionaryPageBytesIsTheDictionaryPagesCompressedSize() throws Exception {
+        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            PageHeader dictionaryHeader = m.pageHeaders(0, 1).getFirst();
+
+            assertThat(dictionaryHeader.type()).isEqualTo(PageType.DICTIONARY_PAGE);
+            assertThat(m.dictionaryPageBytes(0, 1)).isEqualTo(dictionaryHeader.compressedPageSize());
+        }
+    }
+
+    /// The entry count Column chunk detail shows finds the dictionary page as the load does,
+    /// including in a chunk that omits the optional `dictionary_page_offset` (`label`).
+    @Test
+    void dictionaryEntriesOfAChunkWithoutItsDeclaredOffset() throws Exception {
+        Path file = Path.of(getClass().getResource("/dict_missing_page_offset.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            assertThat(m.chunk(0, 1).metaData().dictionaryPageOffset()).isNull();
+
+            assertThat(m.dictionaryEntries(0, 1))
+                    .isPositive()
+                    .isEqualTo(m.dictionaryForced(0, 1).size());
+        }
+    }
+
+    /// A chunk far larger than the cap whose dictionary page fits under it loads without asking.
+    @Test
+    void dictionaryConfirmPromptSkippedWhenOnlyTheChunkExceedsCap() throws Exception {
+        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            m.setDictionaryReadCapBytes(1_000);
+            assertThat(m.chunk(0, 1).metaData().totalCompressedSize()).isGreaterThan(1_000);
+
+            assertThat(m.dictionary(0, 1)).isNotNull();
+        }
+    }
+
+    @Test
+    void dictionaryConfirmPromptNamesTheDictionaryPageSize() throws Exception {
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            m.setDictionaryReadCapBytes(1);
+            ScreenState.DictionaryView state = new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true);
+
+            assertThat(RenderHarness.render(new Rect(0, 0, 100, 16), state, m)
+                    .contains("This dictionary page is " + Sizes.format(m.dictionaryPageBytes(0, 1)) + " compressed,"))
+                    .isTrue();
         }
     }
 
