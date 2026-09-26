@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -39,6 +40,10 @@ public final class SharedRegion {
     private final String purpose;
     private volatile SharedRegion nextRegion;
     private volatile ByteBuffer data;
+    /// Set by the first [#ensureFetched] that finds a next region chained, which
+    /// starts that region's pre-fetch. A region a pre-fetch fetched still pre-fetches
+    /// its successor when the read reaches it, so pre-fetch stays one region ahead.
+    private final AtomicBoolean nextRegionPrefetched = new AtomicBoolean();
 
     public SharedRegion(InputFile inputFile, long fileOffset, int length, String purpose) {
         this.inputFile = inputFile;
@@ -55,9 +60,9 @@ public final class SharedRegion {
         return length;
     }
 
-    /// Chains a one-ahead region for asynchronous pre-fetch. When this
-    /// region's data is first fetched, the next region's fetch is
-    /// kicked off on a worker thread.
+    /// Chains a one-ahead region for asynchronous pre-fetch. The first
+    /// [#ensureFetched] of this region kicks off the next region's fetch
+    /// on a worker thread.
     public void setNextRegion(SharedRegion next) {
         this.nextRegion = next;
     }
@@ -83,16 +88,20 @@ public final class SharedRegion {
     }
 
     /// Ensures the region's data is fetched. First call triggers
-    /// `readRange`; subsequent calls return the cached buffer.
-    /// After fetching, kicks off async pre-fetch of the next region.
+    /// `readRange`; subsequent calls return the cached buffer. The first
+    /// call made while a next region is chained kicks off async pre-fetch of
+    /// that region, whether this call fetched the data or found it already
+    /// fetched by a pre-fetch; a pre-fetch fetches through [#fetchData] and so
+    /// does not chain further.
     public ByteBuffer ensureFetched() throws IOException {
         ByteBuffer buf = data;
-        if (buf != null) {
-            return buf;
+        if (buf == null) {
+            fetchData();
+            buf = data;
         }
-        fetchData();
         SharedRegion next = nextRegion;
-        if (next != null && next.data == null) {
+        if (next != null && !nextRegionPrefetched.get() && nextRegionPrefetched.compareAndSet(false, true)
+                && next.data == null) {
             CompletableFuture.runAsync(FetchReason.bind(() -> {
                 try {
                     next.fetchData();
@@ -107,7 +116,7 @@ public final class SharedRegion {
                 }
             }));
         }
-        return data;
+        return buf;
     }
 
     private void fetchData() throws IOException {
