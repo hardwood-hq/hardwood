@@ -211,6 +211,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
     abstract void initDrainState();
 
+    /// Pairs a page with its mask for the reorder buffer. Runs on the decode thread, so work
+    /// done here stays off the drain. The page and mask pass through unchanged, and
+    /// [#assemblePage] applies the mask.
+    DecodedPage prepareDecodedPage(Page page, PageRowMask mask) {
+        return new DecodedPage(page, mask);
+    }
+
     /// Assembles a single decoded page into the current batch.
     /// `mask` selects which records of the page to keep — [PageRowMask#ALL]
     /// when filter pushdown is inactive (or matched the whole page), otherwise
@@ -440,7 +447,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             Page page = pageInfo.isNullPlaceholder()
                     ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
                     : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), levelScratchBuffer[slot]);
-            reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
+            reorderBuffer.set(slot, prepareDecodedPage(page, pageInfo.mask()));
         }
         catch (Exception e) {
             signalError(enrichWithPlace(e, fileNameBuffer[slot], rowGroupBuffer[slot],

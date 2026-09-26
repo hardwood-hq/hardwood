@@ -201,7 +201,8 @@ public class RowRanges {
     /// Returns the per-page [PageRowMask] for the page covering rows
     /// `[pageFirstRow, pageLastRow)`.
     ///
-    /// - [PageRowMask#ALL] when this is [#isAll()] — keep every row in the page.
+    /// - [PageRowMask#ALL] when this is [#isAll()], or when a single matching range covers the
+    ///   whole page — keep every row in the page.
     /// - `null` when no matching range overlaps the page — caller drops the page.
     /// - Otherwise a mask whose intervals are the intersections of the matching
     ///   ranges with `[pageFirstRow, pageLastRow)`, expressed as page-relative
@@ -231,6 +232,9 @@ public class RowRanges {
         }
         if (pos == 0) {
             return null;
+        }
+        if (pos == 2 && result[0] == 0 && result[1] == pageLastRow - pageFirstRow) {
+            return PageRowMask.ALL;
         }
         if (pos != result.length) {
             int[] trimmed = new int[pos];
