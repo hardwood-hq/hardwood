@@ -8,7 +8,6 @@
 package dev.hardwood;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,13 +16,14 @@ import java.util.function.IntFunction;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import dev.hardwood.jfr.AbstractJfrRecorderTest;
+import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -53,16 +53,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// `500 <= id < 2500` places the fully matching row group between two undecided ones, where the
 /// filter-only column's batches must close at the rows the payload columns' batches close at.
 ///
-/// Whether a column was read in a row group is observed through `RowGroupScanned`, which the
-/// fetch plan of a column that is read emits and a skipped column's does not. Each test reads
-/// its own copy of a fixture, so an event a sibling test emitted late cannot stand in for one
-/// this test expects, or against one it expects absent.
-class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
+/// Whether a column was read in a row group is observed through the reads issued against the
+/// file: a column that is read fetches bytes of its chunk in that row group, and a skipped
+/// column's plan holds no chunk handle and fetches none. Reads that refine the row-group
+/// decision through dictionaries do not count as reading the column.
+class FilterOnlyColumnSkipTest {
 
     private static final int ROWS = 3000;
     private static final int ROWS_PER_GROUP = 1000;
     private static final long THRESHOLD = 1500;
-    private static final String ROW_GROUP_SCANNED_EVENT = "dev.hardwood.RowGroupScanned";
 
     @TempDir
     static Path dir;
@@ -70,15 +69,14 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     private static Path flatFixture;
     private static Path nestedFixture;
 
-    /// This test's copies of the fixtures.
-    private Path flatFile;
-    private Path nestedFile;
+    /// This test's fixture files, recording every read issued against them.
+    private CountingInputFile flatFile;
+    private CountingInputFile nestedFile;
 
     @BeforeEach
-    void copyFixtures(TestInfo test) throws IOException {
-        String name = test.getTestMethod().orElseThrow().getName() + "_" + Math.abs(test.getDisplayName().hashCode());
-        flatFile = Files.copy(flatFixture, dir.resolve(name + "_flat.parquet"));
-        nestedFile = Files.copy(nestedFixture, dir.resolve(name + "_nested.parquet"));
+    void wrapFixtures() {
+        flatFile = new CountingInputFile(InputFile.of(flatFixture));
+        nestedFile = new CountingInputFile(InputFile.of(nestedFixture));
     }
 
     @BeforeAll
@@ -177,7 +175,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void flatRowReaderSkipsABinaryFilterOnlyColumn() throws Exception {
         List<Long> ids = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("id"))
                      .filter(FilterPredicate.lt("label", label(THRESHOLD)))
@@ -197,7 +195,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @ValueSource(ints = { 500, 1000, 1200, 5000 })
     void flatRowReaderHonoursHeadAcrossTheSkippedRowGroup(int head) throws Exception {
         List<String> labels = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("label"))
                      .filter(FilterPredicate.lt("id", THRESHOLD))
@@ -213,7 +211,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
 
     @Test
     void flatRowReaderDoesNotResolveTheFilterOnlyColumnInAnyRowGroup() throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("label"))
                      .filter(FilterPredicate.lt("id", THRESHOLD))
@@ -224,7 +222,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
                 count++;
                 assertThatThrownBy(() -> rows.getLong("id"))
                         .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage("[" + flatFile.getFileName() + "] Column not in projection: id");
+                        .hasMessage("[" + flatFixture.getFileName() + "] Column not in projection: id");
                 // The JVM's own bounds check raises it; its message is dropped once the
                 // throw site is compiled, so only the type is pinned.
                 assertThatThrownBy(() -> rows.getLong(1))
@@ -237,7 +235,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     private void assertFlatRowReaderReadsTheMatchingRows(FilterPredicate filter) throws IOException {
         List<String> labels = new ArrayList<>();
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("amount", "label"))
                      .filter(filter)
@@ -258,7 +256,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
             throws Exception {
         // Under a cap the reader counts matches row by row, in a fully matching batch too.
         List<String> labels = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("label"))
                      .filter(atLeastThreshold(recordMatcher))
@@ -295,7 +293,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @ValueSource(booleans = { false, true })
     void columnReadersAnswerTheSkippedRowGroupWithoutEvaluatingIt(boolean recordMatcher) throws Exception {
         List<String> labels = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("amount", "label"))
                      .filter(atLeastThreshold(recordMatcher))
                      .build()) {
@@ -313,7 +311,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void columnReaderSkipsTheFilterOnlyColumnInTheFullyMatchingRowGroup() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              ColumnReader column = reader.buildColumnReader("amount")
                      .filter(FilterPredicate.lt("id", THRESHOLD))
                      .build()) {
@@ -332,7 +330,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void columnReadersSkipTheFilterOnlyColumnOnTheRecordMatcherBackend() throws Exception {
         List<String> labels = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("amount", "label"))
                      .filter(forRecordMatcher(
                              FilterPredicate.lt("id", THRESHOLD), FilterPredicate.lt("id", -5L)))
@@ -351,7 +349,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void nestedColumnReaderSkipsANestedFilterOnlyColumn() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              ColumnReader column = reader.buildColumnReader("s.amount")
                      .filter(FilterPredicate.lt("s.code", THRESHOLD))
                      .build()) {
@@ -371,7 +369,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void nestedRowReaderSkipsATopLevelFilterOnlyColumn() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("s"))
                      .filter(FilterPredicate.lt("id", THRESHOLD))
@@ -391,7 +389,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void nestedRowReaderSkipsAFilterOnlyLeafUnderAProjectedStruct() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("s.amount"))
                      .filter(FilterPredicate.lt("s.code", THRESHOLD))
@@ -415,7 +413,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @ValueSource(ints = { 500, 1000, 1200, 5000 })
     void nestedRowReaderHonoursHeadAcrossTheSkippedRowGroup(int head) throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("s"))
                      .filter(FilterPredicate.lt("id", THRESHOLD))
@@ -502,7 +500,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     void flatRowReaderSkipsTheFilterOnlyColumnBetweenUndecidedRowGroups(boolean recordMatcher) throws Exception {
         List<String> labels = new ArrayList<>();
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("amount", "label"))
                      .filter(idBetween(recordMatcher))
@@ -523,7 +521,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     void flatRowReaderHonoursHeadAroundTheSkippedRowGroup(int head, boolean recordMatcher) throws Exception {
         // 1000 matches end inside the fully matching row group, 1800 inside the last one.
         List<String> labels = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("label"))
                      .filter(idBetween(recordMatcher))
@@ -544,7 +542,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
         // row group starts is a short one on every column.
         List<String> labels = new ArrayList<>();
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(flatFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("amount", "label"))
                      .filter(idBetween(recordMatcher))
                      .batchSize(64)
@@ -568,7 +566,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void nestedRowReaderSkipsTheFilterOnlyColumnBetweenUndecidedRowGroups() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("s.amount"))
                      .filter(between("s.code"))
@@ -585,7 +583,7 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
     @Test
     void nestedColumnReaderSkipsTheFilterOnlyColumnBetweenUndecidedRowGroups() throws Exception {
         List<Double> amounts = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile));
+        try (ParquetFileReader reader = ParquetFileReader.open(nestedFile);
              ColumnReader column = reader.buildColumnReader("s.amount")
                      .filter(between("s.code"))
                      .batchSize(64)
@@ -605,38 +603,54 @@ class FilterOnlyColumnSkipTest extends AbstractJfrRecorderTest {
 
     /// Asserts that `column` of `file` was not read in the first row group and was read in
     /// the second, which statistics left to the record filter. `payloadColumn`, read in both,
-    /// shows the recording captured the first row group at all.
-    private void assertSkipped(Path file, String column, String payloadColumn) {
+    /// shows the reads of the first row group were recorded at all.
+    private void assertSkipped(CountingInputFile file, String column, String payloadColumn)
+            throws IOException {
         assertSkipped(file, column, payloadColumn, 0);
     }
 
-    /// As [#assertSkipped(Path, String, String)], with the fully matching row group at
-    /// `skippedRowGroup`; the undecided one is always row group 1.
-    private void assertSkipped(Path file, String column, String payloadColumn, int skippedRowGroup) {
-        awaitEvents();
-        String fileName = file.getFileName().toString();
-        assertThat(scanned(fileName, payloadColumn, skippedRowGroup))
-                .as("payload column scanned in row group " + skippedRowGroup).isTrue();
-        assertThat(scanned(fileName, column, skippedRowGroup))
-                .as("filter-only column scanned in row group " + skippedRowGroup).isFalse();
-        assertThat(scanned(fileName, column, 1)).as("filter-only column scanned in row group 1").isTrue();
+    /// As [#assertSkipped(CountingInputFile, String, String)], with the fully matching row
+    /// group at `skippedRowGroup`; the undecided one is always row group 1.
+    private void assertSkipped(CountingInputFile file, String column, String payloadColumn,
+            int skippedRowGroup) throws IOException {
+        assertThat(chunkRead(file, payloadColumn, skippedRowGroup))
+                .as("payload column read in row group " + skippedRowGroup).isTrue();
+        assertThat(chunkRead(file, column, skippedRowGroup))
+                .as("filter-only column read in row group " + skippedRowGroup).isFalse();
+        assertThat(chunkRead(file, column, 1)).as("filter-only column read in row group 1").isTrue();
     }
 
     /// Asserts that `column` of `file` was not read in row group 1, which statistics proved
     /// to match in full, and was read in row groups 0 and 2, which they left undecided.
-    private void assertSkippedBetween(Path file, String column, String payloadColumn) {
-        awaitEvents();
-        String fileName = file.getFileName().toString();
-        assertThat(scanned(fileName, payloadColumn, 1)).as("payload column scanned in row group 1").isTrue();
-        assertThat(scanned(fileName, column, 1)).as("filter-only column scanned in row group 1").isFalse();
-        assertThat(scanned(fileName, column, 0)).as("filter-only column scanned in row group 0").isTrue();
-        assertThat(scanned(fileName, column, 2)).as("filter-only column scanned in row group 2").isTrue();
+    private void assertSkippedBetween(CountingInputFile file, String column, String payloadColumn)
+            throws IOException {
+        assertThat(chunkRead(file, payloadColumn, 1)).as("payload column read in row group 1").isTrue();
+        assertThat(chunkRead(file, column, 1)).as("filter-only column read in row group 1").isFalse();
+        assertThat(chunkRead(file, column, 0)).as("filter-only column read in row group 0").isTrue();
+        assertThat(chunkRead(file, column, 2)).as("filter-only column read in row group 2").isTrue();
     }
 
-    private boolean scanned(String fileName, String column, int rowGroupIndex) {
-        return events(ROW_GROUP_SCANNED_EVENT)
-                .anyMatch(e -> e.getString("file").equals(fileName)
-                        && e.getString("column").equals(column)
-                        && e.getInt("rowGroupIndex") == rowGroupIndex);
+    /// Whether a read other than a pruning read overlapped the chunk of the leaf `column` in
+    /// row group `rowGroupIndex` of `file`. A column's chunk is fetched before any of its rows
+    /// is decoded, so every read the reader needed is recorded by the time it returns.
+    private boolean chunkRead(CountingInputFile file, String column, int rowGroupIndex) throws IOException {
+        ColumnMetaData chunk = chunk(file, column, rowGroupIndex);
+        long start = chunk.dictionaryPageOffset() != null ? chunk.dictionaryPageOffset() : chunk.dataPageOffset();
+        long end = start + chunk.totalCompressedSize();
+        return file.reads().stream()
+                .filter(r -> !r.reason().contains("pruning"))
+                .anyMatch(r -> r.offset() < end && r.end() > start);
+    }
+
+    private ColumnMetaData chunk(CountingInputFile file, String column, int rowGroupIndex)
+            throws IOException {
+        Path path = file == flatFile ? flatFixture : nestedFixture;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
+            return reader.getFileMetaData().rowGroups().get(rowGroupIndex).columns().stream()
+                    .map(ColumnChunk::metaData)
+                    .filter(c -> c.pathInSchema().leafName().equals(column))
+                    .findFirst()
+                    .orElseThrow();
+        }
     }
 }
