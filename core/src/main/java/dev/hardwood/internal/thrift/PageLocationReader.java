@@ -13,6 +13,9 @@ import dev.hardwood.metadata.PageLocation;
 /// Reader for PageLocation from Thrift Compact Protocol.
 public class PageLocationReader {
 
+    /// Ids of the fields the format requires of a `PageLocation`: all of them.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3 };
+
     public static PageLocation read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.PAGE_LOCATION);
         try {
@@ -27,6 +30,7 @@ public class PageLocationReader {
         long offset = 0;
         int compressedPageSize = 0;
         long firstRowIndex = 0;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -34,27 +38,32 @@ public class PageLocationReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Every field is required, so a wrong wire type fails here rather than being
+                // reported as a field that never arrived.
                 case 1: // offset (i64)
-                    if (reader.acceptField(header, Codes.I64)) {
-                        offset = reader.readNonNegativeI64();
-                    }
+                    reader.requireField(header, Codes.I64);
+                    offset = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // compressed_page_size (i32)
-                    if (reader.acceptField(header, Codes.I32)) {
-                        compressedPageSize = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    compressedPageSize = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 3: // first_row_index (i64)
-                    if (reader.acceptField(header, Codes.I64)) {
-                        firstRowIndex = reader.readNonNegativeI64();
-                    }
+                    reader.requireField(header, Codes.I64);
+                    firstRowIndex = reader.readNonNegativeI64();
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
         }
+
+        ThriftCompactReader.requireFields(ThriftStruct.PAGE_LOCATION, seen, REQUIRED_FIELDS);
 
         return new PageLocation(offset, compressedPageSize, firstRowIndex);
     }

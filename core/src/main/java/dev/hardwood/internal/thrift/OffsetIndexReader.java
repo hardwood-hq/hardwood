@@ -35,6 +35,7 @@ public class OffsetIndexReader {
     private static OffsetIndex readInternal(ThriftCompactReader reader) {
         List<PageLocation> pageLocations = Collections.emptyList();
         long[] unencodedByteArrayDataBytes = null;
+        boolean pageLocationsSeen = false;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -43,10 +44,10 @@ public class OffsetIndexReader {
             }
 
             switch (ThriftCompactReader.fieldId(header)) {
-                case 1: // page_locations (required list<PageLocation>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        pageLocations = reader.readStructList(PageLocationReader::read);
-                    }
+                case 1: // page_locations (required list<PageLocation>) — so a wrong wire type fails here
+                    reader.requireField(header, Codes.LIST);
+                    pageLocations = reader.readStructList(PageLocationReader::read);
+                    pageLocationsSeen = true;
                     break;
                 case 2: // unencoded_byte_array_data_bytes (list<i64>, optional)
                     if (reader.acceptField(header, Codes.LIST)) {
@@ -57,6 +58,10 @@ public class OffsetIndexReader {
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
+        }
+
+        if (!pageLocationsSeen) {
+            throw ThriftCompactReader.missingFields(ThriftStruct.OFFSET_INDEX, 1);
         }
 
         return new OffsetIndex(pageLocations, unencodedByteArrayDataBytes);

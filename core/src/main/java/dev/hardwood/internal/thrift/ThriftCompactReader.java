@@ -498,6 +498,24 @@ public class ThriftCompactReader {
         return fallback;
     }
 
+    /// Read a **required** `bool` field, failing as [#requireField] does when the field is
+    /// declared as anything but `bool`.
+    ///
+    /// @param header the field header just read
+    /// @throws ParquetReadException if the field declares a different wire type
+    boolean requireBooleanField(int header) {
+        byte type = fieldType(header);
+        if (type == TYPE_BOOLEAN_TRUE) {
+            return true;
+        }
+        if (type == TYPE_BOOLEAN_FALSE) {
+            return false;
+        }
+        throw isKnownType(type)
+                ? malformed(wrongType("wire", type, hex(TYPE_BOOLEAN_TRUE) + " or " + hex(TYPE_BOOLEAN_FALSE)))
+                : malformed("Unknown field type: " + type);
+    }
+
     /// Read a list/set header.
     ///
     /// A long-form element count is validated against the bytes still in the buffer. Every Thrift
