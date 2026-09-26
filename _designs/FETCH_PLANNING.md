@@ -136,7 +136,7 @@ Tests: `CrossColumnCoalesceTest`.
 
 ## Page masking
 
-A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`, which are the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)) or the range `[residue, numRows)` a fast `tail` sets on the first work item ([ROW_READER.md](ROW_READER.md#tail)). How workers apply a mask is in [NESTED_DECODE.md](NESTED_DECODE.md) and [READ_PIPELINE.md](READ_PIPELINE.md).
+A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`, which are the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)) or the range `[residue, numRows)` a fast `tail` sets on the first work item ([ROW_READER.md](ROW_READER.md#tail)). A nested column's decode task trims the decoded page to its kept records, so nested assembly only sees unmasked pages ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)); a flat column's drain copies each kept interval.
 
 ### The mask-capability gate
 

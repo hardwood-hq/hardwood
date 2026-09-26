@@ -64,6 +64,24 @@ Tests: `ColumnReaderLayerModelTest`, `UnannotatedRepeatedListTest`, `LegacyTwoLe
 
 Tests: `FixedSizeListEngagementTest` (scratch reuse across pages), `SimdOperationsTest` (stale tail ignored). The single-decode-per-holder exclusion is untested.
 
+## Masked pages
+
+A page row mask ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking)) on a nested column is applied on the page's decode task, not on the drain (`NestedColumnWorker.prepareDecodedPage`); a flat column keeps its mask to the drain, which copies each kept interval. `PageTrimmer` moves the positions of the kept records to the front of the page's value, dictionary-index and level arrays, in place, and shortens `page.size()`. Assembly therefore only ever sees unmasked pages: its paths have one shape whatever masks the read carries, and a trimmed page whose leaves are all present takes the bulk copy.
+
+Where a record starts depends on the page:
+
+| Page | Record `r` |
+|---|---|
+| `fixedListK > 0` | values `[r × k, (r + 1) × k)` |
+| no repetition levels (no repeated ancestor) | value `r` |
+| anything else | the positions from the `r`-th repetition level `0` up to the next |
+
+On a regular page, record `0` is the one its first value opens, so a masked page whose first repetition level is not `0` fails the read with a `ParquetReadException`.
+
+Trimming in place relies on the page owning its arrays. Value and dictionary-index arrays are allocated per decoded page. Level arrays are the slot's scratch, which is not handed to another decode until the drain has consumed the page ([pooled scratch](#level-decode-and-scratch)). A value array pooled across pages would let one page's trim corrupt another. Untested.
+
+Tests: `PageTrimmerTest`, `NestedV2NoIndexMaskingTest`, `MisalignedPageBoundariesTest`.
+
 ## Assembly on the drain
 
 The drain thread assembles decoded pages into a batch through reusable accumulators: a typed value array, definition and repetition level arrays, and record offsets. `NestedColumnWorker.assemblePage` routes each page to one of three paths:
@@ -71,15 +89,15 @@ The drain thread assembles decoded pages into a batch through reusable accumulat
 | Page | Path |
 |---|---|
 | `fixedListK > 0` | fixed-width assembly ([Fixed-size-list fast path](#fixed-size-list-fast-path)) |
-| all-present, unmasked, not byte-array | whole-page bulk copy ([All-present page bulk copy](#all-present-page-bulk-copy)) |
-| anything else | per-element: each kept position copies its value and both levels |
+| all-present, not byte-array | whole-page bulk copy ([All-present page bulk copy](#all-present-page-bulk-copy)) |
+| anything else | per-element: each position copies its value and both levels |
 
 Invariants every path keeps:
 
 - **Records are never split across batches.** A record opens at each `repLevel == 0`; a full batch is published at the next record boundary. Batch boundaries therefore depend only on record counts and the flush rules every column shares, which is what keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
-- **Masks apply per record.** A page row mask drops whole records; the per-element path skips the positions of a dropped record, and the fixed-width path copies each kept interval.
+- **Masks are applied before assembly.** A masked page arrives trimmed to its kept records ([Masked pages](#masked-pages)), so every path keeps every value it is given.
 - **A published batch owns its arrays.** The accumulators are reused for the next batch, so publish copies the value, level and offset arrays out (`trimValues`, including the bytes prefix of a variable-length leaf). The one exception hands the accumulator itself to the batch and allocates a fresh one ([Fixed-size-list fast path](#fixed-size-list-fast-path)).
-- **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with a `ParquetReadException`. Later chunks are not checked.
+- **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with a `ParquetReadException`. Later pages are checked only when masked, since trimming needs each masked page to open a record ([Masked pages](#masked-pages)).
 
 `NestedBatch.allPresent` records whether every page contributing to the batch passed the all-present gate. A page that spans a publish passes its status on to the next batch.
 
@@ -120,10 +138,9 @@ Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeLi
 
 A page whose leaves are all present stores its values as one contiguous block, 1:1 with page positions; the repetition levels group them into records but do not move them. The regular path copies such a page in bulk instead of per element. The property is presence, not shape: lists of any length, maps, structs, and non-repeated columns assembled by the nested worker qualify alike.
 
-**Gate** (`assembleRegularPage`), evaluated once per page, all three required:
+**Gate** (`assembleRegularPage`), evaluated once per page, both required:
 
 - `page.allPresent()`: the definition-level array is `null` (the O(1) gate above, or a column with `maxDefinitionLevel == 0`).
-- `mask.isAll()`: the page is read unmasked, so its kept values are one record-aligned span.
 - The page is not a `Page.ByteArrayPage`: `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves append into a shared byte buffer and stay per element.
 
 A page that fails any condition takes the per-element path in full; there is no sub-page run detection.
@@ -159,7 +176,7 @@ A fixed-width batch has `fixedListK > 0`, `null` definition and repetition level
 
 Batches cut at the same rows in every column, at the flush points every column evaluates identically ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). A change of page shape is not one of them, so the assembler never publishes early on one. When an open fixed-width batch meets a regular page or a different `k`, `materializeFixedWidthBatchLevels` converts it to the regular representation in place (every element present, each record a `0` then `k − 1` ones) and keeps filling it; a fixed-width page arriving in an already-regular batch is written with the same synthesized levels. A published batch is thus wholly fixed-width with one `k`, or wholly regular.
 
-Fixed-width assembly honours page row masks: each kept interval is copied in batch-capacity chunks with one `copyValueRun` per chunk. Record selection on a filtered read keeps whole records, so `compactNestedBatch` keeps `fixedListK` and the view is rebuilt arithmetically.
+A masked fixed-width page arrives trimmed to its kept records, still consecutive `k`-runs, and is copied in batch-capacity chunks with one `copyValueRun` per chunk. Record selection on a filtered read keeps whole records, so `compactNestedBatch` keeps `fixedListK` and the view is rebuilt arithmetically.
 
 **Value hand-off.** A fresh fixed-width batch sizes its value accumulator to exactly `batchCapacity × k`. When the batch publishes full, that array becomes the batch's values and the next batch starts on a fresh array, so the values are copied once (page to batch) as on the flat path. A partial batch (file tail, row cap) or a batch that fell back is trimmed as usual.
 
@@ -167,7 +184,7 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 
 ## Boundaries
 
-- **Partially present or masked pages** take the per-element path in full; bulk-copying present runs inside such pages is #750.
+- **Partially present pages** take the per-element path in full; bulk-copying present runs inside such pages is #750.
 - **Non-repeated columns** in a nested row read are assembled by `NestedColumnWorker` and pay the levels machinery (with the bulk copy when all-present); direct addressing for them is #732.
 - **Fixed-size list, 2-level required lists and bare repeated primitives** (`maxDefinitionLevel == 1` with a `REPEATED` leaf) take the regular path; #808.
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.

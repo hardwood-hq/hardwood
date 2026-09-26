@@ -32,10 +32,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// and no rows; the worker assembles nothing for it and only closes the batch
 /// in progress where its siblings close theirs.
 ///
-/// The optional [#mask()] selects which records of the decoded page the
-/// assembler should keep. Defaults to [PageRowMask#ALL] (keep everything);
-/// the filter-pushdown path attaches a tighter mask when the page only
-/// partially overlaps the matching rows.
+/// The optional [#mask()] selects which records of the decoded page are kept.
+/// Defaults to [PageRowMask#ALL] (keep everything); the filter-pushdown path
+/// attaches a tighter mask when the page only partially overlaps the matching
+/// rows. A masked nested page is trimmed to its kept records when it is decoded
+/// ([PageTrimmer]); a flat column's assembly copies the kept intervals.
 public class PageInfo {
 
     /// The one page of a column that is not read in a row group. See [SkippedColumnFetchPlan].
@@ -117,8 +118,8 @@ public class PageInfo {
         return this == BOUNDARY_MARKER;
     }
 
-    /// Per-page row selection. [PageRowMask#ALL] when the assembler should keep
-    /// every row; otherwise a tighter mask coming from filter pushdown.
+    /// Per-page row selection. [PageRowMask#ALL] when every row is kept;
+    /// otherwise a tighter mask coming from filter pushdown.
     public PageRowMask mask() {
         return mask;
     }

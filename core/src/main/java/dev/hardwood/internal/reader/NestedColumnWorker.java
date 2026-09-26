@@ -130,8 +130,19 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         currentPageAllPresent = true;
     }
 
+    /// Trims a masked page to the records its mask keeps ([PageTrimmer]), so assembly only
+    /// sees whole pages: the per-value loop carries no mask checks, and a trimmed page whose
+    /// values are all present takes the bulk copy.
+    @Override
+    DecodedPage prepareDecodedPage(Page page, PageRowMask mask) {
+        return new DecodedPage(mask.isAll() ? page : PageTrimmer.trim(page, mask), PageRowMask.ALL);
+    }
+
     @Override
     void assemblePage(Page page, PageRowMask mask) {
+        if (!mask.isAll()) {
+            throw new IllegalStateException("A nested page reaches assembly untrimmed; masked pages are trimmed when decoded");
+        }
         currentPageAllPresent = page.allPresent();
         currentBatchAllPresent &= currentPageAllPresent;
         int k = page.fixedListK();
@@ -148,13 +159,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             materializeFixedWidthBatchLevels();
         }
         if (pageFixedWidth && (rowsInCurrentBatch == 0 || batchFixedK == k)) {
-            assembleFixedWidthPage(page, mask, k, false);
+            assembleFixedWidthPage(page, k, false);
         }
         else if (pageFixedWidth) {
-            assembleFixedWidthPage(page, mask, k, true);
+            assembleFixedWidthPage(page, k, true);
         }
         else {
-            assembleRegularPage(page, mask);
+            assembleRegularPage(page);
         }
     }
 
@@ -182,8 +193,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     /// Assembly for a fixed-width `k`-element page: every record is a present list
     /// of exactly `k` elements, so record boundaries are implicit and values are
-    /// bulk-copied per record with arithmetic record offsets. Masking and
-    /// batch/row splitting mirror [#assembleRegularPage] at record granularity.
+    /// bulk-copied per record with arithmetic record offsets. Batch/row splitting
+    /// mirrors [#assembleRegularPage] at record granularity.
     ///
     /// When `asRegularBatch` is `false` the batch stays on the fast path: the
     /// level arrays are skipped and `batchFixedK` is stamped so the omitted
@@ -193,7 +204,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// written and `batchFixedK` left `0`, keeping the batch wholly regular.
     /// `batchFixedK` is (re)stamped inside the loop because a mid-page
     /// [#publishCurrentBatch] (at batch capacity) resets it for the next batch.
-    private void assembleFixedWidthPage(Page page, PageRowMask mask, int k, boolean asRegularBatch) {
+    private void assembleFixedWidthPage(Page page, int k, boolean asRegularBatch) {
         nestedFirstValueSeen = true;
         // On a fresh fast-path batch, size the value accumulator to exactly
         // batchCapacity * k so a full batch fills it precisely and publish can hand
@@ -203,65 +214,59 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             prepareFixedWidthValues(k);
         }
         int pageRecords = page.size() / k;
-        boolean maskAll = mask.isAll();
-        // Kept record ranges are contiguous k-runs, so each range is copied in
+        // The page's records are one contiguous run of k-value records, copied in
         // batch-capacity-sized chunks with one arraycopy per chunk rather than one
-        // per record. Unmasked = the whole page; masked = each interval (page-local
-        // record indices), clamped to the page.
-        int rangeCount = maskAll ? 1 : mask.intervalCount();
-        for (int rangeIdx = 0; rangeIdx < rangeCount; rangeIdx++) {
-            int r = maskAll ? 0 : Math.max(0, mask.start(rangeIdx));
-            int rangeEnd = maskAll ? pageRecords : Math.min(pageRecords, mask.end(rangeIdx));
-            while (r < rangeEnd) {
-                if (rowsInCurrentBatch >= batchCapacity) {
-                    publishCurrentBatch();
-                    if (done) {
-                        return;
-                    }
-                }
-                if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
-                    if (rowsInCurrentBatch > 0) {
-                        publishCurrentBatch();
-                    }
-                    finishDrain();
+        // per record.
+        int r = 0;
+        while (r < pageRecords) {
+            if (rowsInCurrentBatch >= batchCapacity) {
+                publishCurrentBatch();
+                if (done) {
                     return;
                 }
-
-                int records = Math.min(rangeEnd - r, batchCapacity - rowsInCurrentBatch);
-                if (activeMaxRows > 0) {
-                    records = (int) Math.min(records, activeMaxRows - totalRowsAssembled);
-                }
-                int span = records * k;
-                int destStart = nestedValueCount;
-                if (asRegularBatch) {
-                    ensureNestedCapacity(nestedValueCount + span);
-                }
-                else {
-                    ensureValueCapacity(nestedValueCount + span);
-                }
-                copyValueRun(page, r * k, destStart, span);
-                for (int j = 0; j < records; j++) {
-                    nestedRecordOffsets[rowsInCurrentBatch + j] = destStart + j * k;
-                }
-                if (asRegularBatch) {
-                    Arrays.fill(nestedDefLevels, destStart, destStart + span, maxDefinitionLevel);
-                    Arrays.fill(nestedRepLevels, destStart, destStart + span, 1);
-                    for (int j = 0; j < records; j++) {
-                        nestedRepLevels[destStart + j * k] = 0;
-                    }
-                }
-                else {
-                    batchFixedK = k;
-                }
-                nestedValueCount += span;
-                rowsInCurrentBatch += records;
-                totalRowsAssembled += records;
-                r += records;
             }
+            if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
+                if (rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                finishDrain();
+                return;
+            }
+
+            int records = Math.min(pageRecords - r, batchCapacity - rowsInCurrentBatch);
+            if (activeMaxRows > 0) {
+                records = (int) Math.min(records, activeMaxRows - totalRowsAssembled);
+            }
+            int span = records * k;
+            int destStart = nestedValueCount;
+            if (asRegularBatch) {
+                ensureNestedCapacity(nestedValueCount + span);
+            }
+            else {
+                ensureValueCapacity(nestedValueCount + span);
+            }
+            copyValueRun(page, r * k, destStart, span);
+            for (int j = 0; j < records; j++) {
+                nestedRecordOffsets[rowsInCurrentBatch + j] = destStart + j * k;
+            }
+            if (asRegularBatch) {
+                Arrays.fill(nestedDefLevels, destStart, destStart + span, maxDefinitionLevel);
+                Arrays.fill(nestedRepLevels, destStart, destStart + span, 1);
+                for (int j = 0; j < records; j++) {
+                    nestedRepLevels[destStart + j * k] = 0;
+                }
+            }
+            else {
+                batchFixedK = k;
+            }
+            nestedValueCount += span;
+            rowsInCurrentBatch += records;
+            totalRowsAssembled += records;
+            r += records;
         }
     }
 
-    private void assembleRegularPage(Page page, PageRowMask mask) {
+    private void assembleRegularPage(Page page) {
         int pageSize = page.size();
         int[] pageDefLevels = page.definitionLevels();
         int[] pageRepLevels = page.repetitionLevels();
@@ -277,44 +282,22 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
 
         // Whole-page all-present fast path: every leaf is present (PageDecoder's
-        // O(1) def-gate), so on an unmasked page the values are one contiguous,
-        // record-aligned run that can be bulk-copied instead of walked per element.
-        // Byte-array leaves stay on the per-element path — their values are appended
-        // into a shared buffer, not arraycopy-able.
-        if (page.allPresent() && mask.isAll() && !(page instanceof Page.ByteArrayPage)) {
+        // O(1) def-gate), so the values are one contiguous, record-aligned run that
+        // can be bulk-copied instead of walked per element. Byte-array leaves stay on
+        // the per-element path — their values are appended into a shared buffer, not
+        // arraycopy-able.
+        if (page.allPresent() && !(page instanceof Page.ByteArrayPage)) {
             assembleAllPresentPage(page, pageRepLevels);
             return;
         }
 
-        boolean maskAll = mask.isAll();
-        int intervalCount = maskAll ? 0 : mask.intervalCount();
-        int intervalCursor = 0;
-        int recordIndex = -1;
-
         for (int i = 0; i < pageSize; i++) {
             int repLevel = pageRepLevels != null ? pageRepLevels[i] : 0;
-            boolean atRecordStart = repLevel == 0;
-
-            if (atRecordStart) {
-                recordIndex++;
-                if (!maskAll) {
-                    while (intervalCursor < intervalCount
-                            && recordIndex >= mask.end(intervalCursor)) {
-                        intervalCursor++;
-                    }
-                }
-            }
-
-            if (!maskAll && (intervalCursor >= intervalCount
-                    || recordIndex < mask.start(intervalCursor))) {
-                continue;
-            }
 
             // A record start (repLevel = 0) closes the previous top-level record and
-            // opens a new one — except at the first kept value of the stream, where
-            // we also start record 0. Masked-out records are already filtered by the
-            // `continue` above, so they never reach this branch.
-            if (atRecordStart && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
+            // opens a new one — except at the first value of the stream, where we also
+            // start record 0.
+            if (repLevel == 0 && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
                 // Previous record is complete — check if batch is full
                 if (rowsInCurrentBatch >= batchCapacity) {
                     publishCurrentBatch();
@@ -342,8 +325,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 totalRowsAssembled++;
             }
             else if (nestedValueCount == 0 && rowsInCurrentBatch == 0) {
-                // First kept value of the stream — start record 0. May not be the
-                // first value of the first page if the mask skipped earlier records.
+                // First value of the stream — start record 0.
                 nestedRecordOffsets[0] = 0;
                 rowsInCurrentBatch = 1;
                 totalRowsAssembled++;
@@ -361,7 +343,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
     }
 
-    /// Whole-page assembly for an all-present, unmasked page. Every leaf is present
+    /// Whole-page assembly for an all-present page. Every leaf is present
     /// ([Page#allPresent]), so the page's values are 1:1 with positions and
     /// contiguous. The record and batch-capacity bookkeeping mirrors
     /// [#assembleRegularPage] — a record opens at each `repLevel == 0`, a full batch

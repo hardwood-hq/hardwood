@@ -378,13 +378,16 @@ class RowRangesTest {
 
     @Test
     void testMaskForPageWholePageInsideSingleRange() {
-        // Range [100, 200), page [120, 180) entirely inside → mask covers full page
+        // Range [100, 200), page [120, 180) entirely inside → every row kept
         RowRanges ranges = singleRange(100, 200);
-        PageRowMask mask = ranges.maskForPage(120, 180);
-        assertEquals(1, mask.intervalCount());
-        assertEquals(0, mask.start(0));
-        assertEquals(60, mask.end(0));
-        assertEquals(60, mask.totalRecords());
+        assertSame(PageRowMask.ALL, ranges.maskForPage(120, 180));
+    }
+
+    @Test
+    void testMaskForPageRangeCoincidingWithPage() {
+        // Range [100, 200), page [100, 200) → every row kept
+        RowRanges ranges = singleRange(100, 200);
+        assertSame(PageRowMask.ALL, ranges.maskForPage(100, 200));
     }
 
     @Test
@@ -409,12 +412,9 @@ class RowRangesTest {
 
     @Test
     void testMaskForPageRangeStraddlesBothEnds() {
-        // Range [50, 250), page [100, 200) → mask is [0, 100)
+        // Range [50, 250), page [100, 200) → every row kept
         RowRanges ranges = singleRange(50, 250);
-        PageRowMask mask = ranges.maskForPage(100, 200);
-        assertEquals(1, mask.intervalCount());
-        assertEquals(0, mask.start(0));
-        assertEquals(100, mask.end(0));
+        assertSame(PageRowMask.ALL, ranges.maskForPage(100, 200));
     }
 
     @Test
