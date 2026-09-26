@@ -85,9 +85,6 @@ public final class ParquetFileWriter implements Closeable {
     private final OutputFile out;
     private final FileSchema schema;
     private final WriterConfig config;
-    /// The configured row target, held down to what a chunk's buffers can index. One bound rather
-    /// than two: a caller's row target above the structural ceiling is the ceiling.
-    private final int rowGroupTargetRows;
     private final RecordShredder shredder;
     private final Compressor compressor;
     /// The range each column's annotation declares, resolved once and handed to every batch.
@@ -122,14 +119,13 @@ public final class ParquetFileWriter implements Closeable {
         this.out = out;
         this.schema = schema;
         this.config = config;
-        this.rowGroupTargetRows = (int) Math.min(config.rowGroupTargetRows(), RowGroupBuffer.MAX_ROWS);
         this.shredder = new RecordShredder(schema);
         this.compressor = compressor;
         this.ranges = LogicalTypeValueRange.forSchema(schema);
         // One buffer serves every row group: flushing it resets it in place, so the writer's
         // largest allocation is made once per file rather than once per row group.
         this.current = new RowGroupBuffer(schema, config.pageTargetBytes(),
-                config.rowGroupBufferTargetBytes(), encodings,
+                config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
                 config.statisticsTruncationLength(), compressor, config.codec());
     }
 
@@ -146,11 +142,8 @@ public final class ParquetFileWriter implements Closeable {
     /// and the peak of a batch that spans several row groups falls inside a single `writeBatch`,
     /// where nothing outside the writer can observe it.
     long peakRetainedBytes() {
-        return peakRetainedBytes;
+        return current.peakRetainedBytes();
     }
-
-    private long peakRetainedBytes;
-
 
     /// Opens a writer with the default [WriterConfig].
     ///
@@ -408,36 +401,7 @@ public final class ParquetFileWriter implements Closeable {
             shredder.bind(sources, batch.validities(), batch.structValidities(),
                     batch.listValidities(), batch.listOffsets());
             batch.markConsumed();
-            int rows = shredder.recordCount();
-            int pos = 0;
-            // Carried across iterations: what the row group holds after a slice is also the room the
-            // next slice is sized against, so it is read once per slice rather than once for each.
-            long retained = current.retainedBytes();
-            while (pos < rows) {
-                // A slice at a time. What a range actually costs is only known once it has been
-                // appended — a value interned against a live dictionary retains an index where it
-                // repeats and an index plus the value where it does not, which needs the hash — so
-                // the writer sizes a slice by what it *could* cost and then reads what the row group
-                // turned out to hold. Sizing it by the bound is what keeps a batch whose records
-                // widen part way through from carrying a row group far past its target, which no
-                // measurement of the records already appended could anticipate.
-                int slice = Math.min(Math.min(rows - pos, SLICE_RECORDS),
-                        rowGroupTargetRows - current.rowCount());
-                slice = current.sliceThatFits(shredder, sources, pos, slice,
-                        config.rowGroupBufferTargetBytes() - retained);
-                current.appendRecords(shredder, sources, pos, slice);
-                pos += slice;
-                retained = current.retainedBytes();
-                if (retained > peakRetainedBytes) {
-                    peakRetainedBytes = retained;
-                }
-                // Either target closes the group, whichever is reached first.
-                if (retained >= config.rowGroupBufferTargetBytes()
-                        || current.rowCount() >= rowGroupTargetRows) {
-                    flushRowGroup();
-                    retained = current.retainedBytes();
-                }
-            }
+            current.append(shredder, sources, this::flushRowGroup);
         }
         catch (Throwable t) {
             markFailed();
@@ -451,15 +415,6 @@ public final class ParquetFileWriter implements Closeable {
             state = State.FAILED;
         }
     }
-
-    /// Records appended between two readings of what the row group holds.
-    ///
-    /// It bounds how far a row group can overshoot its byte target: at most one slice, and a
-    /// slice is drawn from the batch the caller has already materialized, a [ColumnSource]
-    /// holding the caller's arrays by reference rather than copying them. Small enough that the
-    /// overshoot is a fraction of the target for any record a caller can hold; large enough that
-    /// a column's slice is one bulk copy rather than a call per value.
-    private static final int SLICE_RECORDS = 4096;
 
     /// Finishes the file: writes the row group still buffered and the footer, and publishes the
     /// file at the destination.

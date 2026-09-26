@@ -18,6 +18,7 @@ import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridEncoder;
 import dev.hardwood.internal.thrift.PageHeaderWriter;
@@ -168,14 +169,23 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// carries, and no dictionary is built at all.
     private final ColumnEncoding encoding;
 
+    /// The most any of this chunk's `int`-indexed stores may hold; see
+    /// [RowGroupBuffer#MAX_STORE_CAPACITY].
+    private final int storeCapacity;
+
+    /// The dictionary index whose assignment fills the dictionary's table, after which the chunk
+    /// gives the dictionary up rather than let the table outgrow what an array can hold.
+    private static final int LAST_DICTIONARY_INDEX = DictionaryEncoder.MAX_SIZE - 1;
+
     /// @param column the column's schema (physical type, level depths)
     /// @param pageTargetBytes encoded bytes after which a data page is cut
     /// @param encoding this column's resolved encoding policy
     /// @param compressor compresses each page body before framing
     /// @param codec the codec `compressor` applies, recorded in the chunk metadata
+    /// @param storeCapacity the most any of this chunk's `int`-indexed stores may hold
     ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, long budgetBytesPerColumn,
                       ColumnEncoding encoding, int statisticsTruncationLength,
-                      Compressor compressor, CompressionCodec codec) {
+                      Compressor compressor, CompressionCodec codec, int storeCapacity) {
         this.type = column.type();
         this.maxDefLevel = column.maxDefinitionLevel();
         this.maxRepLevel = column.maxRepetitionLevel();
@@ -202,6 +212,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.repLevels = maxRepLevel > 0 ? new ByteArrayBuilder(startingCapacity) : null;
         this.compressor = compressor;
         this.codec = codec;
+        this.storeCapacity = storeCapacity;
     }
 
     /// Binds the value encoder to this batch's source, then shreds records
@@ -226,7 +237,13 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 if (indexCount == indices.length) {
                     indices = Arrays.copyOf(indices, ValueEncoder.grownCapacity(indices.length));
                 }
-                indices[indexCount++] = values.intern(valueIndex);
+                int index = values.intern(valueIndex);
+                indices[indexCount++] = index;
+                if (index == LAST_DICTIONARY_INDEX) {
+                    // The dictionary is full; its values go to the store, which the row group's
+                    // cut keeps able to take every present value of the chunk.
+                    giveUpDictionary();
+                }
             }
             else {
                 values.store(valueIndex);
@@ -335,20 +352,50 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// sizes a slice with this and then cuts the row group on what the slice turned out to cost,
     /// so being conservative here shortens the last slices of a row group rather than the row
     /// group itself.
+    ///
+    /// [#EXCEEDS_STORES] where the range could take one of the chunk's `int`-indexed stores past
+    /// [#storeCapacity]: the entries it may add, which bound every level, index and value store,
+    /// or the content it would add to a binary column's packed store, counted as though every
+    /// present value of the chunk were stored — which is where a dictionary's values go when the
+    /// chunk gives it up.
     long maxRetainedBytesFor(ColumnSource source, int records, int leafFrom, int leafCount,
             int phantomLayers) {
-        long entries = (long) leafCount + (long) records * phantomLayers;
+        long entries = maxEntries(records, leafCount, phantomLayers);
+        long content = values.contentBytesFor(source, leafFrom, leafCount);
+        if (!storesCanTake(entries, content)) {
+            return EXCEEDS_STORES;
+        }
         long bytes = entries * levelBytesPerEntry;
         long perValue = values.maxRetainedBytesPerValue();
         if (perValue != ValueEncoder.VARIABLE_RETAINED_BYTES) {
             return bytes + leafCount * perValue;
         }
-        BinaryColumnSource binary = (BinaryColumnSource) source;
-        bytes += leafCount * BinaryValueEncoder.variableValueOverheadBytes();
-        for (int i = leafFrom; i < leafFrom + leafCount; i++) {
-            bytes += binary.valueBytesAt(i);
-        }
-        return bytes;
+        return bytes + leafCount * BinaryValueEncoder.variableValueOverheadBytes() + content;
+    }
+
+    /// Stands for a record range that one of the chunk's stores cannot take.
+    static final long EXCEEDS_STORES = -1;
+
+    private static long maxEntries(int records, int leafCount, int phantomLayers) {
+        return (long) leafCount + (long) records * phantomLayers;
+    }
+
+    /// Whether the stores can take `entries` more entries and `content` more bytes of packed
+    /// content. Entries are held one below the capacity, since a value store keeps one offset past
+    /// its last value.
+    private boolean storesCanTake(long entries, long content) {
+        return entryCount + entries < storeCapacity
+                && values.contentBytes(presentCount) + content <= storeCapacity;
+    }
+
+    /// The failure for a single record that this chunk's stores cannot take even when empty, and
+    /// which no row group can therefore hold.
+    IllegalArgumentException recordTooLarge(ColumnSchema column, ColumnSource source, int leafFrom,
+                                            int leafCount, int phantomLayers) {
+        return new IllegalArgumentException("A record is too large for a row group: its values for column '"
+                + column.fieldPath() + "' take up to " + maxEntries(1, leafCount, phantomLayers) + " entries and "
+                + values.contentBytesFor(source, leafFrom, leafCount) + " bytes, and a column chunk holds at most "
+                + (storeCapacity - 1) + " entries and " + storeCapacity + " bytes of values");
     }
 
     /// Encodes and writes the whole column chunk — dictionary page (when present) then data
@@ -439,6 +486,10 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// being a fraction of a percent of it.
     private boolean dictionaryWins() {
         if (!dictionaryAlive || values.dictionarySize() == 0) {
+            return false;
+        }
+        // A dictionary whose page body no store can hold is no option at all.
+        if (values.dictionaryPlainBytes() > storeCapacity) {
             return false;
         }
         long indexBits = (long) indexCount * LevelEncoder.bitWidth(values.dictionarySize() - 1);

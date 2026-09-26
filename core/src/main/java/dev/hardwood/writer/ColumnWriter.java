@@ -52,8 +52,9 @@ public final class ColumnWriter {
     ///
     /// @param filler populates the batch's columns; must cover every column exactly once
     /// @throws IOException if the write fails
-    /// @throws IllegalArgumentException if the batch does not cover every column, or its
-    ///         per-layer inputs do not agree on a record count
+    /// @throws IllegalArgumentException if the batch does not cover every column, its
+    ///         per-layer inputs do not agree on a record count, or one record's values for a
+    ///         column are more than a column chunk can hold
     /// @throws UnsupportedOperationException if the schema has a shape the writer cannot
     ///         produce
     /// @throws IllegalStateException if the writer is closed, or a previous write has failed

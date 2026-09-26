@@ -64,18 +64,15 @@ abstract class ValueEncoder {
     /// sizes a row group reaches.
     static int grownCapacity(int current) {
         int grown = current + (current >> 1) + 8;
-        if (grown < 0 || grown > MAX_STORE_CAPACITY) {
-            if (current >= MAX_STORE_CAPACITY) {
+        if (grown < 0 || grown > RowGroupBuffer.MAX_STORE_CAPACITY) {
+            if (current >= RowGroupBuffer.MAX_STORE_CAPACITY) {
                 throw new IllegalStateException(
-                        "A column chunk cannot hold more than " + MAX_STORE_CAPACITY + " values");
+                        "A column chunk cannot hold more than " + RowGroupBuffer.MAX_STORE_CAPACITY + " values");
             }
-            return MAX_STORE_CAPACITY;
+            return RowGroupBuffer.MAX_STORE_CAPACITY;
         }
         return grown;
     }
-
-    /// Largest value store a chunk may grow to, below the JVM's array-length ceiling.
-    private static final int MAX_STORE_CAPACITY = Integer.MAX_VALUE - 8;
 
     /// The capacity a column's value store starts at: an equal share of the row group's byte
     /// budget, counted in values of this column's own width.
@@ -282,6 +279,20 @@ abstract class ValueEncoder {
 
     /// Stands for a value whose width has to be read from the batch.
     static final long VARIABLE_RETAINED_BYTES = -1;
+
+    /// The bytes this chunk's packed content store would hold were every one of its
+    /// `presentValues` present values stored rather than interned, which is what it holds once the
+    /// chunk gives up its dictionary. `0` for a type whose values are not packed as bytes, whose
+    /// store is bounded by its value count.
+    long contentBytes(long presentValues) {
+        return 0;
+    }
+
+    /// What the values at `[leafFrom, leafFrom + leafCount)` of `source` would add to
+    /// [#contentBytes], charging every slot as present.
+    long contentBytesFor(ColumnSource source, int leafFrom, int leafCount) {
+        return 0;
+    }
 
     /// What a new entry costs each dictionary, mirroring the tables charged in `retainedBytes()`.
     static final long INT_DICTIONARY_BYTES_PER_ENTRY = Integer.BYTES + 2L * (Integer.BYTES + Integer.BYTES);

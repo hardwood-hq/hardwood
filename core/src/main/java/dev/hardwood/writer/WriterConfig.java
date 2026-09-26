@@ -227,7 +227,7 @@ public final class WriterConfig {
         /// what the buffer target allows has no effect beyond it.
         ///
         /// A structural ceiling sits under both: a chunk accumulates into `int`-indexed buffers,
-        /// so a row group holds at most `Integer.MAX_VALUE - 8` records however many are asked
+        /// so a row group holds at most `Integer.MAX_VALUE - 9` records however many are asked
         /// for. A target above that is that ceiling, which is what makes `Long.MAX_VALUE` the way
         /// to say "no row limit, cut on bytes alone".
         public Builder rowGroupTargetRows(long rowGroupTargetRows) {
