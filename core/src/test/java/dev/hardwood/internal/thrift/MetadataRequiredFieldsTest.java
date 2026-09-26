@@ -15,11 +15,14 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.reader.ParquetReadException;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// The required fields of the schema, logical-type and page-index structs fail where they
 /// arrive carrying the wrong wire type, and are named at the struct's STOP when they never
-/// arrive, rather than taking a default.
+/// arrive, rather than taking a default. A malformed `KeyValue` entry instead drops the
+/// optional list it sits in.
 class MetadataRequiredFieldsTest {
 
     private static ThriftCompactReader reader(byte[] bytes) {
@@ -58,6 +61,38 @@ class MetadataRequiredFieldsTest {
         assertThatThrownBy(() -> SchemaElementReader.read(reader(element)))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("SchemaElement is missing required field: name");
+    }
+
+    /// `key_value_metadata` is optional wherever it appears, so an entry without its required
+    /// key drops the whole list, as a writer that omits the field would leave it, and the
+    /// struct around it reads on.
+    @Test
+    void keyValueWithoutKeyDropsTheList() {
+        byte[] valid = new ThriftStructBuilder()
+                .field(1, FieldType.BINARY).binary("k".getBytes(UTF_8))
+                .field(2, FieldType.BINARY).binary("v".getBytes(UTF_8))
+                .stop().build();
+        byte[] keyless = new ThriftStructBuilder()
+                .field(2, FieldType.BINARY).binary("v".getBytes(UTF_8))
+                .stop().build();
+        byte[] list = new ThriftStructBuilder().structList(valid, keyless).raw(0x7f).build();
+        ThriftCompactReader reader = reader(list);
+
+        assertThat(KeyValueMetadataReader.read(reader)).isEmpty();
+        assertThat(reader.readByte()).isEqualTo((byte) 0x7f);
+    }
+
+    @Test
+    void keyValueKeyOfWrongWireTypeDropsTheList() {
+        byte[] entry = new ThriftStructBuilder()
+                .field(1, FieldType.I32).i32(1)
+                .field(2, FieldType.BINARY).binary("v".getBytes(UTF_8))
+                .stop().build();
+        byte[] list = new ThriftStructBuilder().structList(entry).raw(0x7f).build();
+        ThriftCompactReader reader = reader(list);
+
+        assertThat(KeyValueMetadataReader.read(reader)).isEmpty();
+        assertThat(reader.readByte()).isEqualTo((byte) 0x7f);
     }
 
     @Test
