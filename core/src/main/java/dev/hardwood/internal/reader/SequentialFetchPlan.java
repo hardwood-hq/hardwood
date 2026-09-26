@@ -126,6 +126,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
+    /// Where the one-ahead pre-fetch of each chunk runs.
+    private final PrefetchTasks prefetchTasks;
     /// Optional pre-created first [ChunkHandle], typically a region-backed
     /// view from cross-column coalescing (#374). When set, the iterator's
     /// first `advanceChunk(0)` call uses this handle instead of creating
@@ -145,7 +147,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves,
                                  RowRanges matchingRows, long rowGroupRowCount,
-                                 Dictionary preloadedDictionary) {
+                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -168,6 +170,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
+        this.prefetchTasks = prefetchTasks;
     }
 
     @Override
@@ -272,7 +275,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0);
+                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0, new PrefetchTasks());
     }
 
     /// @param preloadedDictionary the column's dictionary if pruning has read it, which the plan
@@ -280,12 +283,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     ///        otherwise
     /// @param preloadedDictionaryEnd where the preloaded dictionary's page ends, which is where
     ///        the plan starts reading; ignored without a preloaded dictionary
+    /// @param prefetchTasks where the one-ahead pre-fetch of each chunk runs; the overloads
+    ///        without it give the plan tasks of its own that nothing waits for
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount,
-                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd) {
+                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd,
+                                      PrefetchTasks prefetchTasks) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         if (preloadedDictionary != null) {
@@ -301,7 +307,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves,
                 matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
-                preloadedDictionary);
+                preloadedDictionary, prefetchTasks);
     }
 
     /// Computes the per-fetch chunk size.
@@ -487,7 +493,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int remaining = columnChunkLength - relPos;
                 int handleLength = Math.min(remaining, chunkSize);
                 currentHandle = new ChunkHandle(inputFile, columnChunkOffset + relPos, handleLength,
-                        chunkPurpose(relPos));
+                        chunkPurpose(relPos), prefetchTasks);
                 handleStart = relPos;
             }
             handleEnd = handleStart + currentHandle.length();
@@ -499,7 +505,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int nextLength = Math.min(nextRemaining, chunkSize);
                 currentHandle.setNextChunk(
                         new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength,
-                                chunkPurpose(nextStart)));
+                                chunkPurpose(nextStart), prefetchTasks));
             }
         }
 

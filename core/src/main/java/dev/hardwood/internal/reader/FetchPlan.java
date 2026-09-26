@@ -41,7 +41,7 @@ public interface FetchPlan {
     /// on a `PageInfo`, may reach the file through the underlying [ChunkHandle].
     PageIterator pages();
 
-    /// Triggers async pre-fetch of this plan's first chunk.
+    /// Fetches this plan's first chunk on the calling thread, a speculative task.
     /// No-op for sequential plans or empty plans.
     default void prefetch() {}
 }

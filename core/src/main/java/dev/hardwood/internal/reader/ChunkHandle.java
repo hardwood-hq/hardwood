@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -38,6 +37,9 @@ public class ChunkHandle {
     /// the per-handle `nextChunk` chain is unused (pre-fetch is
     /// driven at the region level).
     private final SharedRegion region;
+    /// Where the one-ahead pre-fetch runs; `null` for a region-backed handle, which
+    /// leaves pre-fetch to its region.
+    private final PrefetchTasks prefetchTasks;
     private volatile ChunkHandle nextChunk;
     private volatile ByteBuffer data;
 
@@ -49,12 +51,16 @@ public class ChunkHandle {
     /// @param purpose human-readable [FetchReason] tag attached to the underlying
     ///        `readRange` so fetch logs can attribute bytes to a specific
     ///        row-group / column / page-group
-    public ChunkHandle(InputFile inputFile, long fileOffset, int length, String purpose) {
+    /// @param prefetchTasks where the one-ahead pre-fetch of the next chunk runs, so the
+    ///        read's owner can wait for it before closing the file
+    public ChunkHandle(InputFile inputFile, long fileOffset, int length, String purpose,
+                       PrefetchTasks prefetchTasks) {
         this.inputFile = inputFile;
         this.fileOffset = fileOffset;
         this.length = length;
         this.purpose = purpose;
         this.region = null;
+        this.prefetchTasks = prefetchTasks;
     }
 
     /// Creates a chunk handle that's a sub-range of a coalesced cross-column
@@ -68,6 +74,7 @@ public class ChunkHandle {
         this.length = length;
         this.purpose = purpose;
         this.region = region;
+        this.prefetchTasks = null;
     }
 
     /// Returns the absolute file offset of this chunk.
@@ -113,9 +120,9 @@ public class ChunkHandle {
         // does not trigger further pre-fetches)
         ChunkHandle next = nextChunk;
         if (next != null) {
-            // Carry the caller's FetchReason across the thread handoff;
+            // PrefetchTasks carries the caller's FetchReason across the thread handoff;
             // otherwise the next-chunk readRange would log as `unattributed`.
-            CompletableFuture.runAsync(FetchReason.bind(() -> {
+            prefetchTasks.submit(() -> {
                 try {
                     next.fetchData();
                 }
@@ -130,7 +137,7 @@ public class ChunkHandle {
                             "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
                             next.fileOffset, next.length, next.inputFile.name(), e);
                 }
-            }));
+            });
         }
         return data;
     }
