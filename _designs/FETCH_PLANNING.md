@@ -23,18 +23,26 @@ A row group's reads happen when the first decoded column reaches it, or earlier 
 | # | Step | Where | Requests |
 |---|---|---|---|
 | 1 | Dictionaries a filter can prune with: fully dictionary-encoded filter columns whose `EQ`/`IN` leaf statistics and bloom filters left undecided | `computeSharedMetadata` → `RowGroupDictionaryFilterSource` | One per such column, sized by the gap to the first data page or by a bounded probe, and a second only when the page header declares more than that read held |
-| 2 | Page index | `RowGroupIndexBuffers.fetch` | The OffsetIndex of every decoded column the row group reads and, under page filtering, the ColumnIndex and OffsetIndex of every filter column; merged under the [gap policy](#gap-policy), each structure's slices on their own. At most one request per structure when the slices lie within the gap limit of each other; none for a structure no needed chunk has |
+| 2 | Page index | `IndexWindow.buffersFor` | The OffsetIndex of every decoded column the row group reads and, under page filtering, the ColumnIndex and OffsetIndex of every filter column. Fetched for the row group's [index window](#page-index-windows) by the first of its members to ask: at most one request per structure when the window's slices lie within the gap limit of each other, none when an earlier member fetched the window, none for a structure no needed chunk has |
 | 3 | Mask-capability probe | `PageFormatProbe` | At most one page-header probe per decoded nested column without an OffsetIndex (re-read with a larger window while the header is truncated, up to a bound that marks the file corrupt), none after the first column that closes the gate, and only when the row group's ranges are not all rows or a fast `tail` asks ([page masking](#page-masking)) |
 | 4 | Fetch plans | `computeFetchPlans` | None |
 | 5 | Data | the plans' `ChunkHandle`s and `SharedRegion`s | As few as the [gap policy](#gap-policy) and the plan shapes allow, issued as the column's retriever advances |
 
-A row group its dictionaries drop gets `FetchPlan.EMPTY` for every column, and steps 2 to 5 read nothing for it. The dictionaries read in step 1 stay in the row group's `SharedRowGroupMetadata` until every column has released the row group, and the fetch plans decode with them, so a dictionary page pruning read is not fetched again. How the dictionaries refine the decisions planning recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
+A row group its dictionaries drop gets `FetchPlan.EMPTY` for every column, and steps 3 to 5 read nothing for it; step 2 reads nothing for it unless another member of its window asks. The dictionaries read in step 1 stay in the row group's `SharedRowGroupMetadata` until every column has released the row group, and the fetch plans decode with them, so a dictionary page pruning read is not fetched again. How the dictionaries refine the decisions planning recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
-Page filtering applies when the read has a filter and metadata filtering is on, in a row group statistics proved to match as well: a ColumnIndex that disagrees with the chunk statistics still narrows the rows. Writers commonly lay the page index out by structure, then row group, then column: all ColumnIndexes, then all OffsetIndexes. The gap between a row group's ColumnIndexes and its OffsetIndexes holds the ColumnIndexes of every later row group and the OffsetIndexes of every earlier one, so the two structures are never merged into one request. Within a structure the needed slices of one row group are strided by the columns the read does not use, and a gap wider than the gap limit splits the request. `RowGroupIndexBuffers.forColumn` fails for a column outside the needed set, so a column the read forgot to ask for is not mistaken for one without an index.
+Page filtering applies when the read has a filter and metadata filtering is on, in a row group statistics proved to match as well: a ColumnIndex that disagrees with the chunk statistics still narrows the rows. `RowGroupIndexBuffers.forColumn` fails for a column outside the needed set, so a column the read forgot to ask for is not mistaken for one without an index.
 
-**Coalescing never crosses a row group.** Every merge is computed in step 4 from one row group's plans, so the bytes a row group holds are released with its plans and do not keep a neighbour's alive. Untested.
+### Page-index windows
 
-Tests: `RowGroupIndexBuffersTest`, `DictionaryPushDownIoTest`, `PageFormatProbeTest`, `S3SelectiveReadJfrIT` (s3).
+Planning a file splits its work items into windows of consecutive row groups (`IndexWindow.plan`), and step 2 fetches a window's slices together. A window takes as many row groups as fit the bytes it fetches, gaps included, within a budget, and at least one, so a file whose page index fits the budget is read in one window. The budget bounds what a window holds, since a large file's page index reaches hundreds of megabytes; a read that stops early has fetched at most one budget of index it does not use. A window is fetched only when one of its members asks, never at planning.
+
+Writers commonly lay the page index out by structure, then row group, then column: all ColumnIndexes, then all OffsetIndexes. A window merges its ColumnIndex slices with each other and its OffsetIndex slices with each other under the [gap policy](#gap-policy), never one structure's with the other's: the gap between a window's last ColumnIndex slice and its first OffsetIndex slice holds the ColumnIndexes of every later row group, which the following windows fetch themselves. Consecutive windows therefore fetch disjoint bytes, and a read fetches no byte of the page index twice. Within a structure one column's slices are strided by the columns the read does not use, and a gap wider than the gap limit splits the request.
+
+A window fetches under one monitor: the first member to ask fetches, the others wait for it, and a failed fetch stores nothing, so the next member to ask fetches again. The fetch runs inside the shared-metadata computation, after the dictionaries, so it holds the lock of that row group's cache entry and takes no further lock but the window's monitor. A window drops its bytes once every column has released all its members, and every window drops them when the iterator closes. The windows holding bytes therefore run from the one the slowest column is in to the one the fastest column's next-row-group prefetch opened.
+
+**Data coalescing never crosses a row group.** Every merge of data ranges is computed in step 4 from one row group's plans, so the data bytes a row group holds are released with its plans and do not keep a neighbour's alive. Untested. Page-index windows cross row groups and hold their bytes until their last member is released.
+
+Tests: `RowGroupIndexBuffersTest`, `IndexWindowTest`, `IndexWindowIoTest`, `IndexWindowLifecycleTest`, `DictionaryPushDownIoTest`, `PageFormatProbeTest`, `S3SelectiveReadJfrIT` (s3).
 
 ## Gap policy
 
@@ -183,7 +191,7 @@ Tests: `SequentialFetchPlanChunkSizeTest`, `S3SelectiveReadJfrIT` (s3).
 |---|---|
 | `footer-info`, `footer-body` | footer |
 | `rg=N pruning` | bloom filters at planning, dictionaries on entry |
-| `rg=N indexes` | page index and mask probe |
+| `rg=N indexes`, `rg=A-B indexes` | a page-index window over row groups `A` to `B`, and the mask probe of row group `N` |
 | `rg=N col=C pageGroup=g/G`, `rg=N col=C dictionary` | indexed plan handles |
 | `rg=N col='name' seqChunk@K` | sequential plan handles |
 | `rg=N region=A..B` | a shared region whose first and last members in file order are plans `A` and `B` |
@@ -193,7 +201,7 @@ Tests: `CrossColumnCoalesceTest`, `PageRangeIoTest`, `DictionaryPrefixFetchTest`
 
 ## Boundaries
 
-- **Index and bloom-filter slices across row groups (#708, #735).** The page index is read per row group, so a read of many row groups issues up to two index requests for each; bloom filters are read one request each and not merged under the gap policy.
+- **Bloom-filter slices (#735).** Bloom filters are read one request each at planning, not merged under the gap policy and not windowed with the page index.
 - **Sequential chunks ignore row ranges (#1025).** A sequential plan under a mask fetches the chunk and skips unmatched page bodies after the fact.
 - **Page-level skip for the `skip` residue (#381).** The residue of a physical `skip` is fetched and decoded, although a page mask could drop its leading pages as it does for `tail`.
 - **Fast `tail` on nested v1 without an OffsetIndex (#1306).** Such a column closes the mask gate, so `tail` decodes and discards the residue.

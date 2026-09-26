@@ -108,7 +108,7 @@ consumer polls
   → retriever unparks and resumes
 ```
 
-**How far a read runs ahead of its consumer is bounded by these queues, never by the size of the file or the number of row groups or files.** No row group's column data is fetched before a column's retriever reaches it, apart from the next row group's planning reads (page index, and dictionaries under a filter), its first chunk and the one-ahead chunk prefetch ([FETCH_PLANNING.md](FETCH_PLANNING.md)); a consumer that stops reading stops the fetching. The per-column horizon is the reorder buffer's pages plus the batches the exchange holds, which exceeds `MAX_INFLIGHT_PAGES` pages (#370).
+**How far a read runs ahead of its consumer is bounded by these queues, never by the size of the file or the number of row groups or files.** No row group's column data is fetched before a column's retriever reaches it, apart from the next row group's planning reads (the page index of its index window, and dictionaries under a filter), its first chunk and the one-ahead chunk prefetch ([FETCH_PLANNING.md](FETCH_PLANNING.md)); a consumer that stops reading stops the fetching. The per-column horizon is the reorder buffer's pages plus the batches the exchange holds, which exceeds `MAX_INFLIGHT_PAGES` pages (#370).
 
 Tests: `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
 
@@ -230,7 +230,7 @@ Sizing the decode pool is a resource concern and stays on the context. A behavio
 | `hardwood.fixed-list-fast-path` | `false` (opt-in) | Transitional: the default flips once the path is trusted, then the key is retired | The fixed-size-list decode fast path ([NESTED_DECODE.md](NESTED_DECODE.md)) |
 | `hardwood.metadata-filtering` | `true` | Permanent escape hatch for files with unreliable metadata | Every metadata-derived filter decision ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) |
 
-A stable knob that needs a typed contract stays typed on its builder and out of the map, as `batchSize(int)` does on the column-reader builders. The `hardwood.internal.*` system properties (reorder depth, coalescing span, sequential chunk size) are tuning overrides and not part of `ReaderConfig`. The user-facing option reference is [reader.md](../docs/content/reference/reader.md#reader-options).
+A stable knob that needs a typed contract stays typed on its builder and out of the map, as `batchSize(int)` does on the column-reader builders. The `hardwood.internal.*` system properties (reorder depth, coalescing span, sequential chunk size, page-index window budget) are tuning overrides and not part of `ReaderConfig`. The user-facing option reference is [reader.md](../docs/content/reference/reader.md#reader-options).
 
 Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 

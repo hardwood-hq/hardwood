@@ -341,7 +341,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Page locations (offset, size, first row)
   - [x] Per-page unencoded `BYTE_ARRAY` sizes
 - [x] Page index reading (`ColumnIndexReader`, `OffsetIndexReader`)
-- [x] Coalesced index fetching (`RowGroupIndexBuffers` — single read per row group)
+- [x] Coalesced index fetching (`IndexWindow` — the slices a read needs, per structure, in windows of row groups)
 - [x] OffsetIndex-based page scanning (`PageScanner.scanPagesFromIndex()`)
 - [x] Page skipping based on ColumnIndex min/max (`PageFilterEvaluator`, integrated with `FileManager` for page-range I/O)
 - [ ] Page index writing
