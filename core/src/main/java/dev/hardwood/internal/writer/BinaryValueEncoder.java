@@ -247,6 +247,27 @@ final class BinaryValueEncoder extends ValueEncoder {
                 : VARIABLE_RETAINED_BYTES;
     }
 
+    @Override
+    long contentBytes(long presentValues) {
+        // The values without the length prefix each carries in plainValueBits.
+        return fixedLength()
+                ? presentValues * typeLength
+                : plainValueBits / Byte.SIZE - presentValues * Integer.BYTES;
+    }
+
+    @Override
+    long contentBytesFor(ColumnSource source, int leafFrom, int leafCount) {
+        if (fixedLength()) {
+            return (long) leafCount * typeLength;
+        }
+        BinaryColumnSource binary = (BinaryColumnSource) source;
+        long bytes = 0;
+        for (int i = leafFrom; i < leafFrom + leafCount; i++) {
+            bytes += binary.valueBytesAt(i);
+        }
+        return bytes;
+    }
+
     /// What a variable-width value retains beyond its own bytes: an offset in the store, an index
     /// in the chunk's index stream, and the fixed part of a dictionary entry.
     static long variableValueOverheadBytes() {

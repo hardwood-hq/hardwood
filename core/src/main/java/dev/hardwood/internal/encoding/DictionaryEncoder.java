@@ -20,6 +20,12 @@ public final class DictionaryEncoder {
 
     private static final int EMPTY = -1;
 
+    /// The most entries a dictionary can hold, here and in [LongDictionaryEncoder] and
+    /// [BinaryDictionaryEncoder], which share this table's layout: a power-of-two table resized
+    /// at 75% load reaches its last `int`-indexable capacity of `2^30` slots, and one entry
+    /// more would double it past what an array can hold.
+    public static final int MAX_SIZE = (1 << 30) - (1 << 28);
+
     // Open-addressed hash table with linear probing. slotIndex[s] is the dictionary index
     // stored in slot s, or EMPTY when the slot is free; slotValue[s] is that entry's value.
     private int[] slotValue;

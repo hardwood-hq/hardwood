@@ -100,12 +100,15 @@ final class ByteArrayBuilder {
         return at;
     }
 
-    /// Grows the backing array to hold at least `needed` bytes, doubling where doubling still
-    /// fits an `int` so that a buffer filled a byte at a time is copied a bounded number of times.
+    /// Grows the backing array to hold at least `needed` bytes, doubling up to
+    /// [RowGroupBuffer#MAX_STORE_CAPACITY] so that a buffer filled a byte at a time is copied a
+    /// bounded number of times however large it gets.
     private void grow(int needed) {
-        buf = Arrays.copyOf(buf, Math.max(needed, buf.length <= MAX_GROWTH ? buf.length * 2 : needed));
+        if (needed > RowGroupBuffer.MAX_STORE_CAPACITY) {
+            throw new IllegalStateException(
+                    "A byte buffer cannot hold more than " + RowGroupBuffer.MAX_STORE_CAPACITY + " bytes");
+        }
+        long doubled = Math.min(2L * buf.length, RowGroupBuffer.MAX_STORE_CAPACITY);
+        buf = Arrays.copyOf(buf, Math.max(needed, (int) doubled));
     }
-
-    /// Largest length that may be doubled without overflowing an `int`.
-    private static final int MAX_GROWTH = Integer.MAX_VALUE / 2;
 }

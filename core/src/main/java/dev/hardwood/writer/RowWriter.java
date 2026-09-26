@@ -84,7 +84,8 @@ public final class RowWriter {
     /// @throws IOException if writing a completed batch fails
     /// @throws IllegalArgumentException if the filler names a field the schema does not have,
     ///         sets one twice, uses a setter that does not fit a field's declared type, or
-    ///         leaves a `REQUIRED` field unset
+    ///         leaves a `REQUIRED` field unset; or if a record of the batch this call completes
+    ///         has more values for a column than a column chunk can hold
     /// @throws IndexOutOfBoundsException if the filler addresses a field by an index the
     ///         struct it is setting does not have
     /// @throws IllegalStateException if the writer is closed, or a previous write has failed
