@@ -193,10 +193,10 @@ What pruning relies on from the parsed metadata. Parse tolerance itself is in [F
 
 - **Absent is distinct from present-but-empty.** Every optional statistic surfaces as `null` when absent. PyArrow writes a non-repeated column's repetition-level histogram present but empty in `SizeStatistics` and absent in the `ColumnIndex`. An empty definition-level histogram fails `sizedFor` and proves nothing. For `nan_count` the distinction carries the conclusion: only a recorded `0` proves no `NaN`.
 - **Histogram layout.** `SizeStatistics` holds one histogram of `maxLevel + 1` entries per chunk. `ColumnIndex` holds one per page, concatenated page-major; `definitionLevelHistogram(i)` slices page `i` at stride `length / pageCount`. `ColumnIndexReader` rejects a histogram whose length is not a whole number of entries per page; a divisible length with the wrong stride is caught by `sizedFor`.
-- **Per-page arrays agree.** `ColumnIndexReader` rejects `min_values`, `max_values`, `null_counts` or `nan_counts` whose length differs from `null_pages`. `PageFilterEvaluator` rejects a `ColumnIndex` and `OffsetIndex` that disagree on the page count, with a `ParquetReadException` naming the column. Page filtering indexes all of them with one page index.
+- **Per-page arrays agree.** `ColumnIndexReader` rejects `min_values`, `max_values`, `null_counts` or `nan_counts` whose length differs from `null_pages`. `PageFilterEvaluator` rejects a `ColumnIndex` and `OffsetIndex` that disagree on the page count, with a `ParquetReadException` naming the column. Page filtering indexes all of them with one page index. An `OffsetIndex` that locates no page for a chunk whose `num_values` is positive is rejected as it is parsed against the chunk's metadata (`OffsetIndexReader`), for page filtering and fetch planning alike; page filtering would otherwise keep none of the chunk's rows.
 - **Null pages.** The `min_values` and `max_values` entries of a null page are placeholders and are not decoded.
 
-Tests: `SizeStatisticsMetadataTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`.
+Tests: `SizeStatisticsMetadataTest`, `MalformedMetadataValidationTest`, `PageFilterEvaluatorTest`, `EmptyOffsetIndexTest`.
 
 ## Row groups
 

@@ -9,13 +9,22 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OffsetIndexReaderTest {
 
@@ -103,6 +112,33 @@ class OffsetIndexReaderTest {
         assertThat(index.unencodedByteArrayDataBytes()).isNull();
         assertThat(index.pageLocations()).hasSize(1);
         assertThat(index.pageLocations().get(0).offset()).isEqualTo(100L);
+    }
+
+    @Test
+    void rejectsNoPageLocationsForAChunkWithValues() {
+        byte[] thrift = struct().field(1, FieldType.LIST).structList().stop().build();
+
+        assertThatThrownBy(() -> OffsetIndexReader.read(
+                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(12)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Malformed Parquet metadata: OffsetIndex.page_locations is empty but the"
+                        + " column chunk has 12 values");
+    }
+
+    @Test
+    void acceptsNoPageLocationsForAChunkWithoutValues() {
+        byte[] thrift = struct().field(1, FieldType.LIST).structList().stop().build();
+
+        OffsetIndex index = OffsetIndexReader.read(
+                new ThriftCompactReader(ByteBuffer.wrap(thrift)), chunkWithValues(0));
+
+        assertThat(index.pageLocations()).isEmpty();
+    }
+
+    private static ColumnMetaData chunkWithValues(long numValues) {
+        return new ColumnMetaData(PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("c"),
+                CompressionCodec.UNCOMPRESSED, numValues, 0, 0, Map.of(), 0, null, null, null, null, null,
+                List.of(), null);
     }
 
     /// A `PageLocation` struct body: offset, compressed_page_size, first_row_index.

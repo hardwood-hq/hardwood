@@ -837,7 +837,7 @@ public class RowGroupIterator implements Closeable {
 
             try {
                 OffsetIndex offsetIndex = OffsetIndexReader.read(
-                        new ThriftCompactReader(colBuffers.offsetIndex()));
+                        new ThriftCompactReader(colBuffers.offsetIndex()), columnChunk.metaData());
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
                 // Determine needed pages (filter + maxRows). Each entry pairs a
@@ -901,9 +901,9 @@ public class RowGroupIterator implements Closeable {
                         context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
             }
             catch (ParquetReadException e) {
-                throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                        + "Failed to compute fetch plan for column " + projCol
-                        + " in row group " + workItem.rowGroupIndex() + ": " + e.getMessage(), e);
+                throw new ParquetReadException(ExceptionContext.readPrefix(inputFile.name(),
+                        workItem.rowGroupIndex(), columnSchema.fieldPath().toString())
+                        + "Failed to compute the fetch plan: " + e.getMessage(), e);
             }
         }
 
