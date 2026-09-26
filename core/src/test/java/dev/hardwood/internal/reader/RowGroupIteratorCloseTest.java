@@ -34,10 +34,12 @@ class RowGroupIteratorCloseTest {
 
         private final InputFile delegate;
         private final String name;
+        private final boolean failUnchecked;
 
-        private UncloseableInputFile(InputFile delegate, String name) {
+        private UncloseableInputFile(InputFile delegate, String name, boolean failUnchecked) {
             this.delegate = delegate;
             this.name = name;
+            this.failUnchecked = failUnchecked;
         }
 
         @Override
@@ -62,12 +64,15 @@ class RowGroupIteratorCloseTest {
 
         @Override
         public void close() throws IOException {
+            if (failUnchecked) {
+                throw new IllegalStateException("cannot release " + name);
+            }
             throw new IOException("cannot release " + name);
         }
     }
 
     private static InputFile uncloseable(String name) {
-        return new UncloseableInputFile(InputFile.of(TEST_FILE), name);
+        return new UncloseableInputFile(InputFile.of(TEST_FILE), name, false);
     }
 
     @Test
@@ -111,6 +116,22 @@ class RowGroupIteratorCloseTest {
                     List.of(uncloseable("first.parquet"), closeable), context, 0);
 
             assertThatThrownBy(iterator::close).isInstanceOf(IOException.class);
+        }
+
+        assertThat(closeable.closeCount()).isEqualTo(1);
+    }
+
+    @Test
+    void anUncheckedCloseFailureStillClosesTheRemainingFiles() throws Exception {
+        CountingInputFile closeable = new CountingInputFile(InputFile.of(TEST_FILE));
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            RowGroupIterator iterator = new RowGroupIterator(
+                    List.of(new UncloseableInputFile(InputFile.of(TEST_FILE), "first.parquet", true), closeable),
+                    context, 0);
+
+            assertThatThrownBy(iterator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("cannot release first.parquet");
         }
 
         assertThat(closeable.closeCount()).isEqualTo(1);
