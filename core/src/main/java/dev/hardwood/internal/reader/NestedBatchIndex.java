@@ -7,9 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.schema.ProjectedSchema;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -57,25 +55,6 @@ final class NestedBatchIndex {
         this.elementValidity = elementValidity;
         this.projectedSchema = projectedSchema;
         this.fileName = fileName;
-    }
-
-    /// Fails when the caller has asked a column for a float it does not hold.
-    ///
-    /// Reached only once the `FLOAT` fast path has been ruled out, so a column that holds
-    /// floats never arrives here. Shared by every nested accessor that reads a `FLOAT16`,
-    /// so all of them answer a caller the same way. The column is named by its leaf name,
-    /// as every other message this reader composes names it. A column whose annotation its
-    /// width cannot carry arrives unannotated, so it reaches here as what it physically is
-    /// rather than as a broken `FLOAT16`.
-    void requireFloatAccess(SchemaNode.PrimitiveNode column) {
-        LogicalType logicalType = column.logicalType();
-        if (logicalType instanceof LogicalType.Float16Type) {
-            return;
-        }
-        throw new IllegalArgumentException(ExceptionContext.filePrefix(fileName)
-                + "Column '" + column.name() + "' is " + column.type()
-                + (logicalType == null ? "" : " annotated " + logicalType)
-                + ", which cannot be read as a float");
     }
 
     /// Build the batch index from [NestedBatch] objects whose index fields
@@ -181,7 +160,7 @@ final class NestedBatchIndex {
     Object decodeLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
         return LeafKind.of(schema) == LeafKind.STRING
                 ? getString(projectedCol, valueIndex)
-                : NestedLeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
+                : LeafDecoder.decode(getValue(projectedCol, valueIndex), schema);
     }
 
     // ==================== Index Navigation ====================

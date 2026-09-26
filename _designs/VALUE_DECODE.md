@@ -105,7 +105,9 @@ Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `
 A row-reader accessor turns a stored leaf value into the Java value it returns by one of two routes, the same on the flat and nested paths.
 
 - **Typed** accessors (`getDate`, `getDecimal`, `PqList.dates()` and their siblings) name the type they return. They read the stored primitive straight from the column array and call the `LogicalTypeConverter` entry point for that type. Nothing is boxed on the way: `getDate` reaches `intToDate(int)` from an `int[]`.
-- **Generic** accessors (`getValue`, `PqList.values()`, `PqMap.Entry.getValue()`) return whatever the column holds, so they start from an `Object` and dispatch. The box is the return type of the accessor. On the nested path they go through `NestedLeafDecoder.decode`, which adds the `SchemaNode` unwrap and returns a group node untouched, since struct, list and map values are built by the flyweights.
+
+  Every typed decode is stated once, in `LeafDecoder`, as a guardless read over the column's value array, the value's index in it and, where the decode needs them, the physical type and the annotation (or the unit or scale taken from it). Each reader computes the index by its own addressing and calls these reads directly, or, for a single nested leaf, through `LeafDecoder`'s `read*` methods, which take the `NestedBatchIndex`, the projected column and the leaf's `SchemaNode` and unwrap them into the same reads. A `PqList` typed view reads the unit or scale off the annotation once and calls the reads per element. A decode fixed there is fixed for every accessor.
+- **Generic** accessors (`getValue`, `PqList.values()`, `PqMap.Entry.getValue()`) return whatever the column holds, so they start from an `Object` and dispatch. The box is the return type of the accessor. Both paths go through `LeafDecoder.decode`: `FlatRowReader` with the `LeafKind` it classified at construction, the nested path through an overload that adds the `SchemaNode` unwrap and returns a group node untouched, since struct, list and map values are built by the flyweights.
 
 `LeafKind` is the single statement of how a leaf decodes on the generic route:
 
@@ -117,13 +119,13 @@ A row-reader accessor turns a stored leaf value into the Java value it returns b
 | `CONVERT` | any other annotated leaf | `LogicalTypeConverter.convert` |
 | `GROUP` | a struct, list or map node | built by the flyweights; no leaf decode |
 
-`FlatRowReader` classifies each column once at construction; the nested flyweights classify per leaf through `LeafKind.of(SchemaNode)`, and `NestedBatchIndex.decodeLeaf` sends a `STRING` leaf to `getString` before `NestedLeafDecoder.decode` is reached, because that method decodes from a raw `byte[]` and cannot use a cached `String`. `LeafKind.of(PhysicalType, LogicalType)` never answers `GROUP`, which is why a flat column's `GROUP` case is an internal error.
+`FlatRowReader` classifies each column once at construction; the nested flyweights classify per leaf through `LeafKind.of(SchemaNode)`, and `NestedBatchIndex.decodeLeaf` sends a `STRING` leaf to `getString` before `LeafDecoder.decode` is reached, because that method decodes from a raw `byte[]` and cannot use a cached `String`. `LeafKind.of(PhysicalType, LogicalType)` never answers `GROUP`, which is why a flat column's `GROUP` case is an internal error.
 
 **Byte-array payloads.** `DECIMAL`, `UUID`, `INTERVAL`, `FLOAT16` and the 12-byte `FIXED_LEN_BYTE_ARRAY` timestamps over a byte-array column are decoded where they sit in `BinaryBatchValues.bytes` (`decimalAt`, `uuidAt`, `intervalAt`, `float16At`, `flba12InstantAt`, `flba12LocalDateTimeAt`), each backed by an offset-taking overload on `LogicalTypeConverter` (on `Flba12Timestamps` for the two timestamp forms). `byteArrayAt` materialises a copy and is reserved for accessors that hand the `byte[]` to the caller. Reading in place does not depend on escape analysis removing a discarded copy, which it does not do reliably on list elements.
 
 The guards that reject a column an accessor does not fit, and the conversion rules per annotation, are in [LOGICAL_TYPES.md](LOGICAL_TYPES.md).
 
-Tests: `LeafKindTest`, `NestedLeafDecoderTest`, `DictionaryStringReuseTest`.
+Tests: `LeafKindTest`, `LeafDecoderTest`, `DictionaryStringReuseTest`.
 
 ## SIMD and scalar fallback
 

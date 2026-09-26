@@ -417,13 +417,13 @@ final class PqMapImpl implements PqMap {
 
     private LocalDate readDateValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readDate(
+        return idx < 0 ? null : LeafDecoder.readDate(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private LocalTime readTimeValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readTime(
+        return idx < 0 ? null : LeafDecoder.readTime(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
@@ -432,31 +432,31 @@ final class PqMapImpl implements PqMap {
     /// [TimestampAccessorKind] that the value column is the UTC-adjusted kind.
     private Instant readTimestampValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(
+        return idx < 0 ? null : LeafDecoder.readTimestamp(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private LocalDateTime readLocalTimestampValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readLocalTimestamp(
+        return idx < 0 ? null : LeafDecoder.readLocalTimestamp(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private BigDecimal readDecimalValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readDecimal(
+        return idx < 0 ? null : LeafDecoder.readDecimal(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private UUID readUuidValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readUuid(
+        return idx < 0 ? null : LeafDecoder.readUuid(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
     private PqInterval readIntervalValue(int valueIdx) {
         int idx = valueIndexOrNull(valueIdx);
-        return idx < 0 ? null : NestedLeafDecoder.readInterval(
+        return idx < 0 ? null : LeafDecoder.readInterval(
                 batch, mapDesc.valueProjCol(), idx, requirePrimitiveValue());
     }
 
@@ -540,7 +540,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            return NestedLeafDecoder.readString(batch, keyProjCol, valueIdx, requirePrimitiveKey());
+            return LeafDecoder.readString(batch, keyProjCol, valueIdx, requirePrimitiveKey());
         }
 
         @Override
@@ -596,8 +596,8 @@ final class PqMapImpl implements PqMap {
             if (primitive.type() != PhysicalType.FLOAT) {
                 // Ruling out FLOAT first lets the shared guard name a value that is
                 // neither, rather than leaving it to the cast below.
-                batch.requireFloatAccess(primitive);
-                return ((BinaryBatchValues) batch.valueArrays[valueProjCol]).float16At(valueIdx);
+                LogicalAccessorKind.requireFloat16(batch.fileName, primitive);
+                return LeafDecoder.float16At(batch.valueArrays[valueProjCol], valueIdx);
             }
             return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
@@ -626,7 +626,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            return NestedLeafDecoder.readString(batch, valueProjCol, valueIdx, requirePrimitiveValue());
+            return LeafDecoder.readString(batch, valueProjCol, valueIdx, requirePrimitiveValue());
         }
 
         @Override

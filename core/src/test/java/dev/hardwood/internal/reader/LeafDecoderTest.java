@@ -18,14 +18,14 @@ import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class NestedLeafDecoderTest {
+class LeafDecoderTest {
 
     @Test
     void decodesStringWhenStringLogicalTypeIsSet() {
         SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, LogicalType.string());
         byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
 
-        Object result = NestedLeafDecoder.decode(bytes, schema);
+        Object result = LeafDecoder.decode(bytes, schema);
 
         assertThat(result).isInstanceOf(String.class).isEqualTo("hello");
     }
@@ -39,7 +39,7 @@ class NestedLeafDecoderTest {
         SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, null);
         byte[] bytes = new byte[] {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1};
 
-        Object result = NestedLeafDecoder.decode(bytes, schema);
+        Object result = LeafDecoder.decode(bytes, schema);
 
         assertThat(result).isInstanceOf(byte[].class).isEqualTo(bytes);
     }
@@ -49,7 +49,7 @@ class NestedLeafDecoderTest {
         SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, LogicalType.bson());
         byte[] bytes = new byte[] {0x05, 0x00, 0x00, 0x00, 0x00};
 
-        Object result = NestedLeafDecoder.decode(bytes, schema);
+        Object result = LeafDecoder.decode(bytes, schema);
 
         assertThat(result).isInstanceOf(byte[].class).isEqualTo(bytes);
     }
@@ -58,7 +58,7 @@ class NestedLeafDecoderTest {
     void passesThroughNull() {
         SchemaNode.PrimitiveNode schema = primitive(PhysicalType.BYTE_ARRAY, null);
 
-        assertThat(NestedLeafDecoder.decode(null, schema)).isNull();
+        assertThat(LeafDecoder.decode(null, schema)).isNull();
     }
 
     private static SchemaNode.PrimitiveNode primitive(PhysicalType type, LogicalType logicalType) {

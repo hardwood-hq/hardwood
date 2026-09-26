@@ -253,6 +253,13 @@ public final class ExceptionContext {
             wrapped.initCause(e);
             return wrapped;
         }
+        // What a typed accessor raises when asked for a type its column does not hold: the
+        // cast the decode makes, which the caller is told about as that cast.
+        if (e.getClass() == ClassCastException.class) {
+            ClassCastException wrapped = new ClassCastException(newMessage);
+            wrapped.initCause(e);
+            return wrapped;
+        }
 
         // For CompletionException and other wrapper types: try to preserve the type
         // via the (String, Throwable) constructor. For CompletionException, preserve

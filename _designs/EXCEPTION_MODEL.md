@@ -22,11 +22,11 @@ does not hold, where validating ahead of the decode would cost every accessor ca
 error back if it can be made free, which the exception path is: it runs only once the call
 has already failed.
 
-`getDate`, `getUuid`, `getInterval` and `getString` are outside that, because no cast on
-their way to the value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
+`getDate`, `getUuid`, `getInterval`, `getString` and the `FLOAT16` branch of `getFloat` are
+outside that, because no cast on their way to the value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
 `FIXED_LEN_BYTE_ARRAY` of the right width is one `BinaryBatchValues` — an `INT96` included,
-which is 12 bytes and so reads as an `INTERVAL`. Every byte column decodes to some text.
-Each of the four checks the annotation
+which is 12 bytes and so reads as an `INTERVAL`. Every byte column decodes to some text, and `getFloat` reads any byte column that is not a
+`FLOAT` two bytes at a time. Each of the five checks the annotation
 first (`LogicalAccessorKind`), since what it buys is not a better exception but the only one
 there is.
 

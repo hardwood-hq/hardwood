@@ -45,7 +45,7 @@ Areas delete their sources outright. These facts from them belong to targets not
 |---|---|---|
 | `LOGICAL_TYPES.md` | `getDate`, `getUuid`, `getInterval` read nothing from the annotation and check `LogicalAccessorKind.requireDate/requireUuid/requireInterval` first; `getString` is guarded by `requireText` (`TextColumns.holdsText`, the rule the `String` filter literal uses) | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | Every other annotation-decoding accessor casts the annotation it expects (e.g. `(LogicalType.TimeType) leaf.logicalType()`); another or no annotation fails at that cast, and a physical-type mismatch surfaces as the storage array's `ClassCastException` (#971) | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | FLOAT against FLOAT16 and the two TIMESTAMP kinds have their own guards: `NestedBatchIndex.requireFloatAccess`, `TimestampAccessorKind.require` | NESTED_PRIMITIVE_LEAF_DECODE |
+| `LOGICAL_TYPES.md` | FLOAT against FLOAT16 and the two TIMESTAMP kinds have their own guards: `LogicalAccessorKind.requireFloat16`, `TimestampAccessorKind.require` | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | A group element against a leaf accessor is rejected by `PqListImpl.requirePrimitiveElement` / `PqMapImpl.requirePrimitiveValue`; without them the accessor would decode the group's first leaf | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | Typed whole-column views (`PqList.dates()` and siblings) resolve and guard the annotation once, when the view is built | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | An unannotated INT96 decodes as an `Instant` by convention; sound because `FileSchema` drops any annotation INT96 cannot carry | NESTED_PRIMITIVE_LEAF_DECODE |

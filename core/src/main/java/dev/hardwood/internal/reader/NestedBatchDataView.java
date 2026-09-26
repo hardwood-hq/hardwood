@@ -214,9 +214,9 @@ public final class NestedBatchDataView {
         if (p.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) batchIndex.valueArrays[projCol])[valueIdx];
         }
-        batchIndex.requireFloatAccess(p.schema());
+        LogicalAccessorKind.requireFloat16(batchIndex.fileName, p.schema());
         try {
-            return ((BinaryBatchValues) batchIndex.valueArrays[projCol]).float16At(valueIdx);
+            return LeafDecoder.float16At(batchIndex.valueArrays[projCol], valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -273,9 +273,9 @@ public final class NestedBatchDataView {
         if (p.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) fieldValueArrays[projectedIndex])[valueIdx];
         }
-        batchIndex.requireFloatAccess(p.schema());
+        LogicalAccessorKind.requireFloat16(batchIndex.fileName, p.schema());
         try {
-            return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).float16At(valueIdx);
+            return LeafDecoder.float16At(fieldValueArrays[projectedIndex], valueIdx);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -488,7 +488,7 @@ public final class NestedBatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        return NestedLeafDecoder.readString(batchIndex, projCol, valueIdx, p.schema());
+        return LeafDecoder.readString(batchIndex, projCol, valueIdx, p.schema());
     }
 
     private byte[] getBinary(TopLevelFieldMap.FieldDesc.Primitive p) {
@@ -513,7 +513,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readDate(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readDate(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -526,7 +526,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readTime(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readTime(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -542,7 +542,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -555,7 +555,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readLocalTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readLocalTimestamp(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -568,7 +568,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readDecimal(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readDecimal(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -581,7 +581,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readUuid(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readUuid(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -594,7 +594,7 @@ public final class NestedBatchDataView {
             return null;
         }
         try {
-            return NestedLeafDecoder.readInterval(batchIndex, p.projectedCol(), valueIdx, p.schema());
+            return LeafDecoder.readInterval(batchIndex, p.projectedCol(), valueIdx, p.schema());
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);

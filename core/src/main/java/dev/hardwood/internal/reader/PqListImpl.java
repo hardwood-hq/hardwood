@@ -142,7 +142,7 @@ final class PqListImpl implements PqList {
             return new LeafList<>(pos -> batch.getString(projCol, pos));
         }
         return new LeafList<>(pos ->
-                NestedLeafDecoder.decode(batch.getValue(projCol, pos), elementSchema));
+                LeafDecoder.decode(batch.getValue(projCol, pos), elementSchema));
     }
 
     @Override
@@ -201,9 +201,9 @@ final class PqListImpl implements PqList {
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         if (leaf.type() != PhysicalType.FLOAT) {
-            batch.requireFloatAccess(leaf);
+            LogicalAccessorKind.requireFloat16(batch.fileName, leaf);
             return new LeafList<>(pos ->
-                    ((BinaryBatchValues) batch.valueArrays[projCol]).float16At(pos));
+                    LeafDecoder.float16At(batch.valueArrays[projCol], pos));
         }
         return new LeafList<>(pos -> ((float[]) batch.valueArrays[projCol])[pos]);
     }
@@ -238,7 +238,7 @@ final class PqListImpl implements PqList {
     public List<LocalDate> dates() {
         int projCol = listDesc.firstLeafProjCol();
         LogicalAccessorKind.requireDate(batch.fileName, requirePrimitiveElement());
-        return new LeafList<>(pos -> NestedLeafDecoder.dateAt(batch, projCol, pos));
+        return new LeafList<>(pos -> LeafDecoder.dateAt(batch.valueArrays[projCol], pos));
     }
 
     @Override
@@ -247,7 +247,7 @@ final class PqListImpl implements PqList {
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimeType) leaf.logicalType()).unit();
-        return new LeafList<>(pos -> NestedLeafDecoder.timeAt(batch, projCol, pos, type, unit));
+        return new LeafList<>(pos -> LeafDecoder.timeAt(batch.valueArrays[projCol], pos, type, unit));
     }
 
     @Override
@@ -255,12 +255,12 @@ final class PqListImpl implements PqList {
         TimestampAccessorKind.require(elementSchema, true);
         int projCol = listDesc.firstLeafProjCol();
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
-        if (NestedLeafDecoder.isInt96Timestamp(leaf)) {
-            return new LeafList<>(pos -> NestedLeafDecoder.int96TimestampAt(batch, projCol, pos));
+        if (LeafDecoder.isInt96Timestamp(leaf)) {
+            return new LeafList<>(pos -> LeafDecoder.int96TimestampAt(batch.valueArrays[projCol], pos));
         }
         PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
-        return new LeafList<>(pos -> NestedLeafDecoder.timestampAt(batch, projCol, pos, type, unit));
+        return new LeafList<>(pos -> LeafDecoder.timestampAt(batch.valueArrays[projCol], pos, type, unit));
     }
 
     @Override
@@ -270,7 +270,7 @@ final class PqListImpl implements PqList {
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         LogicalType.TimeUnit unit = ((LogicalType.TimestampType) leaf.logicalType()).unit();
-        return new LeafList<>(pos -> NestedLeafDecoder.localTimestampAt(batch, projCol, pos, type, unit));
+        return new LeafList<>(pos -> LeafDecoder.localTimestampAt(batch.valueArrays[projCol], pos, type, unit));
     }
 
     @Override
@@ -279,21 +279,21 @@ final class PqListImpl implements PqList {
         SchemaNode.PrimitiveNode leaf = requirePrimitiveElement();
         PhysicalType type = leaf.type();
         int scale = ((LogicalType.DecimalType) leaf.logicalType()).scale();
-        return new LeafList<>(pos -> NestedLeafDecoder.decimalAt(batch, projCol, pos, type, scale));
+        return new LeafList<>(pos -> LeafDecoder.decimalAt(batch.valueArrays[projCol], pos, type, scale));
     }
 
     @Override
     public List<UUID> uuids() {
         int projCol = listDesc.firstLeafProjCol();
         LogicalAccessorKind.requireUuid(batch.fileName, requirePrimitiveElement());
-        return new LeafList<>(pos -> NestedLeafDecoder.uuidAt(batch, projCol, pos));
+        return new LeafList<>(pos -> LeafDecoder.uuidAt(batch.valueArrays[projCol], pos));
     }
 
     @Override
     public List<PqInterval> intervals() {
         int projCol = listDesc.firstLeafProjCol();
         LogicalAccessorKind.requireInterval(batch.fileName, requirePrimitiveElement());
-        return new LeafList<>(pos -> NestedLeafDecoder.intervalAt(batch, projCol, pos));
+        return new LeafList<>(pos -> LeafDecoder.intervalAt(batch.valueArrays[projCol], pos));
     }
 
     // ==================== Nested Type Accessors ====================

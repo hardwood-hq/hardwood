@@ -15,7 +15,7 @@ each one costs, and the order in which they are merged.
 | Batch | `BatchExchange.Batch` | `NestedBatch` | `BatchExchange`, `BinaryBatchValues` |
 | Reader | `FlatRowReader` | `NestedRowReader` → `NestedBatchDataView` | `StructAccessor` |
 | Flyweights | — | `PqStructImpl`, `PqListImpl`, `PqMapImpl` | `NestedBatchIndex` |
-| Leaf decode | inline in `FlatRowReader` | inline in four classes | `LogicalTypeConverter`, `LeafKind` |
+| Leaf decode | — | — | `LeafDecoder`, `LogicalTypeConverter`, `LeafKind` |
 
 The IO and decode layers are path-agnostic. The duplication is in the worker, the
 batch and the accessors.
@@ -94,12 +94,14 @@ on the `ColumnReader` API rather than the row reader. It splits on shape rather 
 repetition, sending a non-repeated leaf under a group to the nested worker, so it agrees
 with stage 3's interim predicate and not with the end state's.
 
-## Finding 4 — five copies of the leaf decode
+## Finding 4 — two copies of the leaf decode
 
-`getDate`, `getTime`, `getTimestamp`, `getLocalTimestamp`, `getDecimal`, `getUuid`,
-`getInterval`, `getFloat` (FLOAT16) and the `getValue` dispatch are written out in five
-places: 58 call sites into `LogicalTypeConverter` and `BinaryBatchValues` for twelve
-distinct decodes.
+The typed decodes behind `getDate`, `getTime`, `getTimestamp`, `getLocalTimestamp`,
+`getDecimal`, `getUuid`, `getInterval` and `getFloat` (FLOAT16) were stated twice: in
+`NestedLeafDecoder`, which `NestedBatchDataView` and the three flyweights shared but which
+was typed on `NestedBatchIndex`, and inline in `FlatRowReader`. The FLOAT16 guard existed
+twice as well, as `NestedBatchIndex.requireFloatAccess` and a private copy in
+`FlatRowReader`.
 
 | Class | Container | Index | Leaf schema |
 | --- | --- | --- | --- |
@@ -109,19 +111,18 @@ distinct decodes.
 | `PqMapImpl` | `batch.valueArrays` | `valueIdx` | `SchemaNode.PrimitiveNode` |
 | `PqListImpl` | `batch.valueArrays` | `pos` | `SchemaNode.PrimitiveNode` |
 
-Every container is an `Object[]` holding the same element types. The four nested
-classes share one container instance and one schema carrier. The decodes differ only in
-which `(col, idx)` they are handed.
+Every container is an `Object[]` holding the same element types, so a decode over
+`(values, idx)` serves all five. Stage 1 closes this.
 
-The copies have already drifted. `TimestampAccessorKind` is called inside the accessor
-in `FlatRowReader` and by the caller in the flyweights. `requireFloatAccess` exists
-twice with two separately worded messages. `ExceptionContext` enrichment reaches the two
-readers and none of the three flyweights, which is #1156 and #447. #971 is one change
-against a shared helper and five against the current shape. The CLI's four renderers
-(#1021) decode from the same table again, and should land on the same helper.
+What remains differs by caller, not by decode. The nested readers call
+`TimestampAccessorKind` before their null check, `FlatRowReader` after it, so a null
+value of the wrong timestamp kind is refused on one path and returned as `null` on the
+other. `ExceptionContext` enrichment reaches the two readers and none of the three
+flyweights, which is #1156 and #447. The CLI's four renderers (#1021) decode from the
+same table again.
 
 `ColumnSchema` and `SchemaNode.PrimitiveNode` are two public records describing one
-leaf. Unifying them is a public-API change and is not required: a helper taking
+leaf. Unifying them is a public-API change and is not required: a decode taking
 `(PhysicalType, LogicalType)` leaves each caller to unwrap its own carrier.
 
 ## Finding 5 — batch sizing under-counts the nested path
@@ -167,8 +168,8 @@ Two constraints come with it, both named by #732 and neither designed away here:
   accessor indirection, so the flat case survives as a performance specialization of one
   model rather than as a second implementation of the accessor contract.
 
-Today's class names still describe what they hold under this model, so nothing is
-renamed.
+Today's reader, worker and batch class names still describe what they hold under this
+model, so none of them is renamed.
 
 ## Delivery plan
 
@@ -178,7 +179,7 @@ the evidence above.
 The order removes cruft first. Few stages strictly depend on their predecessors — stage
 2 gates the numbers stages 3 and 5 are judged on, and stage 1 has to precede stage 4 —
 but every stage after the first works in code the first has already deduplicated, and
-the reader merge is the last thing that should meet five copies of a decode.
+the reader merge is the last thing that should meet two copies of a decode.
 
 | # | Stage | Closes | Issues | Depends on |
 | --- | --- | --- | --- | --- |
@@ -202,22 +203,21 @@ by optimising the worker that would no longer see them.
 
 Closes finding 4. Issue: #1334.
 
-First because every stage after it touches these classes, and this way they are
-deduplicated once rather than edited five times each. It carries no performance claim
-beyond not regressing, so it does not wait on stage 2.
+First because every stage after it touches these classes. It carries no performance
+claim beyond not regressing, so it does not wait on stage 2.
 
-1. A package-private helper over `(Object[] arrays, int col, int idx, PhysicalType,
-   LogicalType)`, holding the logical decodes and the `TimestampAccessorKind` /
-   `LogicalAccessorKind` / `requireFloatAccess` guards, landed on `PqStructImpl`,
-   `PqMapImpl` and `PqListImpl`: one container, one schema carrier, no hot-loop
-   exposure.
-2. The same helper into `NestedBatchDataView`, then `FlatRowReader`. The gate is that
-   `FlatPerformanceTest` does not move.
+`NestedLeafDecoder` becomes `LeafDecoder`, its guardless reads taking the column's value
+array rather than a `NestedBatchIndex`, and `FlatRowReader` reads through it. The FLOAT16
+guard moves to `LogicalAccessorKind.requireFloat16`. Every annotation cast in the flat
+accessors then runs inside the file-name enrichment, as on the nested path, and
+`ExceptionContext` keeps a `ClassCastException` a `ClassCastException` when it adds the
+file name. `FlatPerformanceTest` and `NestedPerformanceTest` call none of the typed
+accessors, so the gate is a scan that does: the NYC taxi timestamp columns read through
+`getLocalTimestamp` must not slow down.
 
-The failures that were five changes then become one each: #1156 and #447 (nested
-accessors name the file), #971 (a type mismatch names the column), and #1021, whose
-four CLI renderers decode from the same table a fifth and sixth time and consolidate on
-this helper rather than beside it.
+#1156 and #447 (nested accessors name the file), #971 (a type mismatch names the column)
+and #1021 (the CLI renderers) are then each one change against the shared decode. The
+timestamp guard's position relative to the null check is decided with #971.
 
 ### Stage 2 — benchmark projected reads
 

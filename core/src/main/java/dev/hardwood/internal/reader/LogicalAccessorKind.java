@@ -13,8 +13,8 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
 
-/// The check `getDate`, `getUuid`, `getInterval` and `getString` need, and no other
-/// accessor does.
+/// The check `getDate`, `getUuid`, `getInterval`, `getString` and the `FLOAT16` branch of
+/// `getFloat` need, and no other accessor does.
 ///
 /// Asking a typed accessor for a type its column does not hold is normally caught by
 /// a cast the decode already performs, and #971 is the sweep that gives that failure
@@ -27,11 +27,13 @@ import dev.hardwood.schema.SchemaNode;
 /// on the way to the value succeeds, and the accessor returns a decode of the wrong
 /// bytes. `getString` is the widest of them: every column held as bytes decodes to
 /// *some* text, so without a check it returns a `DECIMAL`'s or an `INT96`'s stored
-/// bytes as characters. There is no exception here to improve — only one to raise.
+/// bytes as characters. `getFloat` reads any byte-array column that is not a `FLOAT` as
+/// a `FLOAT16`, two bytes at a time. There is no exception here to improve — only one to
+/// raise.
 ///
 /// The rejection is a caller's error, so per `_designs/EXCEPTION_MODEL.md` it carries
 /// the file name and nothing else of the read's position, and names the column in the
-/// problem, as [NestedBatchIndex#requireFloatAccess] does.
+/// problem.
 public final class LogicalAccessorKind {
 
     private LogicalAccessorKind() {
@@ -67,6 +69,21 @@ public final class LogicalAccessorKind {
             String fileName, String column, PhysicalType type, LogicalType logicalType) {
         if (!(logicalType instanceof LogicalType.IntervalType)) {
             throw rejection(fileName, column, type, logicalType, "an interval");
+        }
+    }
+
+    static void requireFloat16(String fileName, SchemaNode.PrimitiveNode leaf) {
+        requireFloat16(fileName, leaf.name(), leaf.type(), leaf.logicalType());
+    }
+
+    /// Refuses a column `getFloat` cannot read, once its `FLOAT` fast path has been ruled
+    /// out: the one other column it reads is a `FLOAT16`. A column whose annotation its
+    /// width cannot carry arrives unannotated, the annotation having been dropped where the
+    /// schema was built, so it is refused as what it physically is.
+    static void requireFloat16(
+            String fileName, String column, PhysicalType type, LogicalType logicalType) {
+        if (!(logicalType instanceof LogicalType.Float16Type)) {
+            throw rejection(fileName, column, type, logicalType, "a float");
         }
     }
 
