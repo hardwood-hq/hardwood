@@ -8,7 +8,6 @@
 package dev.hardwood.cli.dive;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -129,48 +128,6 @@ class DataPreviewIoTest {
             // Re-fetch bounded by current RG, not full prefix.
             assertThat(backDelta).as("backward intra-RG re-fetch is bounded")
                     .isLessThanOrEqualTo(afterEnd);
-        }
-    }
-
-    /// Tracks total bytes returned by [#readRange]. The Parquet footer
-    /// fetch and the data-page fetches both flow through it.
-    private static final class ByteCountingInputFile implements InputFile {
-
-        private final InputFile delegate;
-        private final AtomicLong bytesRead = new AtomicLong();
-
-        ByteCountingInputFile(InputFile delegate) {
-            this.delegate = delegate;
-        }
-
-        long bytesRead() {
-            return bytesRead.get();
-        }
-
-        @Override
-        public void open() throws IOException {
-            delegate.open();
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            bytesRead.addAndGet(length);
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public long length() throws IOException {
-            return delegate.length();
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public void close() throws IOException {
-            delegate.close();
         }
     }
 }
