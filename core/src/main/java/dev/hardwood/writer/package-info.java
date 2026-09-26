@@ -19,5 +19,5 @@
 ///   records. It stages records into batches and submits them through the same core.
 ///
 /// A file is written through one of the two, not both. [WriterConfig] carries the page and
-/// row-group targets, the codec and the dictionary settings for either.
+/// row-group targets, the codec and the encoding policies for either.
 package dev.hardwood.writer;

@@ -42,7 +42,7 @@ import static dev.hardwood.testing.Coverage.StorageForm;
 /// to be noticed.
 ///
 /// The required cells are pairwise projections of that space rather than its cross product. See
-/// `_designs-legacy/WRITE_COVERAGE_ASSERTION.md` for why each projection is admitted.
+/// `_designs/WRITER_VALIDATION.md` for why each projection is admitted.
 final class CoverageDomain {
 
     private CoverageDomain() {

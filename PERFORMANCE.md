@@ -385,4 +385,4 @@ A new benchmark in this module controls for the following:
 
 A change is measured branch against `main`, on the same machine in the same session: build `benchmarks.jar` on `main`, run the benchmark, build it on the branch, run it again, and compare ms/op together with JMH's reported error. Performance changes are not gated behind `ReaderConfig` or `WriterConfig` options for the sake of an A/B comparison; the benchmark carries no on/off toggles, and the comparison is between two builds.
 
-Numbers from a laptop or a container show relative movement during development. Numbers that are quoted (in an issue, a PR description or the tables above) come from a dedicated bare-metal machine with no other load.
+Numbers from a laptop or a container show relative movement during development. Numbers that are quoted (in an issue, a PR description or the tables above) come from a dedicated bare-metal machine with no other load. A quoted number states the machine, the pinned clock, the JDK, the row count and the commit it was taken at.

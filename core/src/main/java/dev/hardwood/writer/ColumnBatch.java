@@ -27,8 +27,9 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/// One aligned slice of a file's columns. Every column in a batch must have the same
-/// number of values, which is the batch's row count.
+/// One aligned slice of a file's columns. Every column outside a `LIST` or `MAP` must have
+/// the same number of values, which is the batch's row count; a leaf under a `LIST` or `MAP`
+/// holds the concatenated entries its offsets account for.
 ///
 /// A batch is not constructed directly: [ColumnWriter#writeBatch] creates it, bound
 /// to the schema, hands it to a filler that populates the columns, then submits it — so
@@ -148,7 +149,8 @@ public final class ColumnBatch {
     /// Sets the entry offsets of a `LIST`, addressed by the list group's dot-separated path.
     /// `offsets` has length `parentCount + 1`; `offsets[i+1] - offsets[i]` is the number of
     /// entries of list `i`, and a zero delta is an empty list. The list's element leaf is
-    /// filled separately through [#ints], its values holding the concatenated entries.
+    /// filled separately through the setter for its type, its values holding the concatenated
+    /// entries.
     ///
     /// @param listPath the list group's path (e.g. `"phones"`)
     /// @param offsets the entry offsets
@@ -183,8 +185,8 @@ public final class ColumnBatch {
     /// Sets the entry offsets of a `MAP`, addressed by the map group's dot-separated path.
     /// A thin alias over [#list(String, int[])]: the map's `key` and `value` leaves share
     /// this one offsets array, `offsets[i+1] - offsets[i]` being the number of entries of
-    /// map `i`, and a zero delta an empty map. The key and value leaves are filled through
-    /// [#ints] at `<mapPath>.key_value.key` and `<mapPath>.key_value.value`.
+    /// map `i`, and a zero delta an empty map. The key and value leaves are filled through the
+    /// setters for their types at `<mapPath>.key_value.key` and `<mapPath>.key_value.value`.
     ///
     /// @param mapPath the map group's path (e.g. `"props"`)
     /// @param offsets the entry offsets

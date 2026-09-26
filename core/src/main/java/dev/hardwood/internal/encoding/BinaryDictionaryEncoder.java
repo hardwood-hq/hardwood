@@ -73,8 +73,7 @@ public final class BinaryDictionaryEncoder {
     /// Empties the dictionary for a new column chunk, keeping the hash table and the value array
     /// it has grown to but releasing the values themselves. A chunk that gives up its dictionary
     /// has just resolved every one of those values into its own store, so holding the entries
-    /// until each slot is overwritten would keep two copies of exactly the data the analysis cap
-    /// exists to bound.
+    /// until each slot is overwritten would keep two copies of the chunk's distinct values.
     public void clear() {
         Arrays.fill(slotIndex, EMPTY);
         Arrays.fill(values, 0, size, null);

@@ -32,11 +32,12 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 ///
 /// `rowGroupBufferTargetBytes` is the writer's only memory bound: a row group's column chunks have to
 /// be encoded before any of their metadata is known, so the values stay resident until the group
-/// flushes. What stays resident is more than the values themselves — a chunk being analyzed for
-/// a dictionary holds the value store, an `int` index per value, and the dictionary's own array
-/// and lookup table, none of which the target counts — so the true peak is a multiple of it.
+/// flushes. The target is compared against the writer's account of what it retains (the value
+/// store, an `int` index per interned value, the dictionary's entries and table, the level
+/// streams), but every store also holds growth headroom beyond what it is charged for, so the
+/// true peak sits above the target.
 ///
-/// That multiple is what this pins. It is deliberately loose: the number is a tripwire for a
+/// How far above is what this pins. It is deliberately loose: the number is a tripwire for a
 /// structure being retained that was not before, not a specification of the writer's footprint,
 /// and a bound tight enough to be exact would fail on GC timing rather than on a regression.
 ///
