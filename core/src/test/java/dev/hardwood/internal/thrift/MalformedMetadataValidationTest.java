@@ -225,6 +225,7 @@ class MalformedMetadataValidationTest {
                 .field(1, FieldType.LIST).boolList(false, false)
                 .field(2, FieldType.LIST).binaryList(new byte[]{ 1 }, new byte[]{ 2 })
                 .field(3, FieldType.LIST).binaryList(new byte[]{ 3 }, new byte[]{ 4 })
+                .field(4, FieldType.I32).i32(0)
                 .field(5, FieldType.LIST).i64List(0L)
                 .stop().build();
         assertThatThrownBy(() -> ColumnIndexReader.read(reader(index)))
@@ -240,6 +241,7 @@ class MalformedMetadataValidationTest {
                 .field(1, FieldType.LIST).boolList(false, true)
                 .field(2, FieldType.LIST).binaryList(new byte[]{ 1 }, new byte[]{ 2 })
                 .field(3, FieldType.LIST).binaryList(new byte[]{ 3 }, new byte[]{ 4 })
+                .field(4, FieldType.I32).i32(0)
                 .field(5, FieldType.LIST).i64List(0L, 5L)
                 .stop().build();
         ColumnIndex columnIndex = assertDoesNotThrow(() -> ColumnIndexReader.read(reader(index)));
@@ -354,6 +356,7 @@ class MalformedMetadataValidationTest {
                 .field(1, FieldType.LIST).boolList(false, false)
                 .field(2, FieldType.LIST).binaryList(new byte[]{ 1 }, new byte[]{ 2 })
                 .field(3, FieldType.LIST).binaryList(new byte[]{ 3 }, new byte[]{ 4 })
+                .field(4, FieldType.I32).i32(0)
                 .field(6, FieldType.LIST).i64List(0L, 1L, 2L, 3L, 4L)
                 .stop().build();
         assertThatThrownBy(() -> ColumnIndexReader.read(reader(index)))

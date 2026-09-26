@@ -77,10 +77,9 @@ public class SchemaElementReader {
                         repetitionType = ThriftEnumLookup.repetitionType(reader.readI32());
                     }
                     break;
-                case 4: // name (required)
-                    if (reader.acceptField(header, Codes.BINARY)) {
-                        name = reader.readString();
-                    }
+                case 4: // name (required) — so a wrong wire type fails here
+                    reader.requireField(header, Codes.BINARY);
+                    name = reader.readString();
                     break;
                 case 5: // num_children (optional)
                     if (reader.acceptField(header, Codes.I32)) {
@@ -117,6 +116,10 @@ public class SchemaElementReader {
                     reader.skipField(ThriftCompactReader.fieldType(header));
                     break;
             }
+        }
+
+        if (name == null) {
+            throw ThriftCompactReader.missingFields(ThriftStruct.SCHEMA_ELEMENT, 4);
         }
 
         return new ReadElement(

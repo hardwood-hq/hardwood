@@ -34,6 +34,9 @@ import dev.hardwood.reader.ParquetReadException;
 /// lengths are cross-checked once the struct has been read — see [#checkPageCounts].
 public class ColumnIndexReader {
 
+    /// Ids of the fields the format requires of a `ColumnIndex`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
+
     public static ColumnIndex read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.COLUMN_INDEX);
         try {
@@ -53,6 +56,7 @@ public class ColumnIndexReader {
         long[] repetitionLevelHistograms = null;
         long[] definitionLevelHistograms = null;
         long[] nanCounts = null;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -60,26 +64,29 @@ public class ColumnIndexReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Fields 1-4 are required, so a wrong wire type fails here rather than being
+                // reported as a field that never arrived.
                 case 1: // null_pages (required list<bool>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        nullPages = reader.readBoolArray();
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    nullPages = reader.readBoolArray();
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // min_values (required list<binary>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        minValues = reader.readBinaryList();
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    minValues = reader.readBinaryList();
+                    seen |= 1L << fieldId;
                     break;
                 case 3: // max_values (required list<binary>)
-                    if (reader.acceptField(header, Codes.LIST)) {
-                        maxValues = reader.readBinaryList();
-                    }
+                    reader.requireField(header, Codes.LIST);
+                    maxValues = reader.readBinaryList();
+                    seen |= 1L << fieldId;
                     break;
-                case 4: // boundary_order (enum)
-                    if (reader.acceptField(header, Codes.I32)) {
-                        boundaryOrder = boundaryOrder(reader.readI32());
-                    }
+                case 4: // boundary_order (required enum)
+                    reader.requireField(header, Codes.I32);
+                    boundaryOrder = boundaryOrder(reader.readI32());
+                    seen |= 1L << fieldId;
                     break;
                 case 5: // null_counts (list<i64>, optional)
                     if (reader.acceptField(header, Codes.LIST)) {
@@ -106,6 +113,8 @@ public class ColumnIndexReader {
                     break;
             }
         }
+
+        ThriftCompactReader.requireFields(ThriftStruct.COLUMN_INDEX, seen, REQUIRED_FIELDS);
 
         checkPageCounts(nullPages.length, minValues.size(), maxValues.size(), nullCounts, nanCounts,
                 repetitionLevelHistograms, definitionLevelHistograms);

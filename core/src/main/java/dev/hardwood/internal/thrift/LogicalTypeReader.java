@@ -20,6 +20,10 @@ public class LogicalTypeReader {
     private static final System.Logger LOG =
             System.getLogger(LogicalTypeReader.class.getName());
 
+    /// The required fields of the member structs that have any — `DecimalType`, `TimeType`,
+    /// `TimestampType` and `IntType` — which are fields 1 and 2 of each.
+    private static final int[] BOTH_FIELDS = { 1, 2 };
+
     public static LogicalType read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.LOGICAL_TYPE);
         try {
@@ -42,57 +46,24 @@ public class LogicalTypeReader {
             // Union: only one field should be set, but we need to read to the end
             if (result == null) {
                 result = switch (ThriftCompactReader.fieldId(header)) {
-                    case 1 -> { // STRING
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.string();
-                    }
-                    case 2 -> { // MAP
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty Struct
-                        yield LogicalType.map();
-                    }
-                    case 3 -> { // LIST
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty Struct
-                        yield LogicalType.list();
-                    }
-                    case 4 -> { // ENUM
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.enumType();
-                    }
-                    case 5 -> readDecimalType(reader);
-                    case 6 -> { // DATE
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.date();
-                    }
-                    case 7 -> readTimeType(reader);
-                    case 8 -> readTimestampType(reader);
-                    case 9 -> { // INTERVAL
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.interval();
-                    }
-                    case 10 -> readIntType(reader);
-                    case 11 -> { // NULL
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.nullType();
-                    }
-                    case 12 -> { // JSON
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.json();
-                    }
-                    case 13 -> { // BSON
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.bson();
-                    }
-                    case 14 -> { // UUID
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.uuid();
-                    }
-                    case 15 -> { // FLOAT16
-                        reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield LogicalType.float16();
-                    }
-                    case 16 -> readVariantType(reader);
-                    case 17 -> readGeometryType(reader);
-                    case 18 -> readGeographyType(reader);
+                    case 1 -> emptyArm(reader, header, LogicalType.string()); // STRING
+                    case 2 -> emptyArm(reader, header, LogicalType.map()); // MAP
+                    case 3 -> emptyArm(reader, header, LogicalType.list()); // LIST
+                    case 4 -> emptyArm(reader, header, LogicalType.enumType()); // ENUM
+                    case 5 -> readDecimalType(reader, header);
+                    case 6 -> emptyArm(reader, header, LogicalType.date()); // DATE
+                    case 7 -> readTimeType(reader, header);
+                    case 8 -> readTimestampType(reader, header);
+                    case 9 -> emptyArm(reader, header, LogicalType.interval()); // INTERVAL
+                    case 10 -> readIntType(reader, header);
+                    case 11 -> emptyArm(reader, header, LogicalType.nullType()); // NULL
+                    case 12 -> emptyArm(reader, header, LogicalType.json()); // JSON
+                    case 13 -> emptyArm(reader, header, LogicalType.bson()); // BSON
+                    case 14 -> emptyArm(reader, header, LogicalType.uuid()); // UUID
+                    case 15 -> emptyArm(reader, header, LogicalType.float16()); // FLOAT16
+                    case 16 -> readVariantType(reader, header);
+                    case 17 -> readGeometryType(reader, header);
+                    case 18 -> readGeographyType(reader, header);
                     // An arm this version does not know. The format treats a new logical
                     // type as forward-compatible: read the physical values and lose the
                     // semantics, rather than refuse a file a newer writer produced.
@@ -115,7 +86,17 @@ public class LogicalTypeReader {
         }
     }
 
-    private static LogicalType.DecimalType readDecimalType(ThriftCompactReader reader) {
+    /// Reads a member arm whose struct carries no fields. Like every member arm this version
+    /// knows, it must be declared as a struct: skipped by any other wire type, it would still
+    /// assert an annotation the bytes do not encode.
+    private static LogicalType emptyArm(ThriftCompactReader reader, int header, LogicalType type) {
+        reader.requireField(header, Codes.STRUCT);
+        reader.skipField(ThriftCompactReader.fieldType(header));
+        return type;
+    }
+
+    private static LogicalType.DecimalType readDecimalType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.DECIMAL_TYPE);
         try {
             return readDecimalTypeInternal(reader);
@@ -128,6 +109,7 @@ public class LogicalTypeReader {
     private static LogicalType.DecimalType readDecimalTypeInternal(ThriftCompactReader reader) {
         int scale = -1;
         int precision = -1;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -135,16 +117,17 @@ public class LogicalTypeReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
                 case 1: // scale (required)
-                    if (reader.acceptField(header, Codes.I32)) {
-                        scale = reader.readI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    scale = reader.readI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // precision (required)
-                    if (reader.acceptField(header, Codes.I32)) {
-                        precision = reader.readI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    precision = reader.readI32();
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
@@ -152,9 +135,10 @@ public class LogicalTypeReader {
             }
         }
 
-        // Validate both fields were read, and that the pair is one the annotation admits: the
-        // record rejects a scale above the precision as a caller error, which a file carrying
-        // one is not.
+        ThriftCompactReader.requireFields(ThriftStruct.DECIMAL_TYPE, seen, BOTH_FIELDS);
+
+        // Validate that the pair is one the annotation admits: the record rejects a scale above
+        // the precision as a caller error, which a file carrying one is not.
         if (scale < 0 || precision <= 0 || scale > precision) {
             throw new ParquetReadException(
                     "Invalid DecimalType: scale=" + scale + ", precision=" + precision);
@@ -163,7 +147,8 @@ public class LogicalTypeReader {
         return LogicalType.decimal(precision, scale);
     }
 
-    private static LogicalType.TimeType readTimeType(ThriftCompactReader reader) {
+    private static LogicalType.TimeType readTimeType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.TIME_TYPE);
         try {
             return readTimeTypeInternal(reader);
@@ -176,6 +161,7 @@ public class LogicalTypeReader {
     private static LogicalType.TimeType readTimeTypeInternal(ThriftCompactReader reader) {
         boolean isAdjustedToUTC = true;
         LogicalType.TimeType.TimeUnit unit = LogicalType.TimeType.TimeUnit.MILLIS;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -183,12 +169,16 @@ public class LogicalTypeReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
                 case 1: // isAdjustedToUTC (required)
-                    isAdjustedToUTC = reader.readBooleanField(header, isAdjustedToUTC);
+                    isAdjustedToUTC = reader.requireBooleanField(header);
+                    seen |= 1L << fieldId;
                     break;
-                case 2: // unit (required)
+                case 2: // unit (required union)
+                    reader.requireField(header, Codes.STRUCT);
                     unit = readTimeUnit(reader);
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
@@ -196,10 +186,13 @@ public class LogicalTypeReader {
             }
         }
 
+        ThriftCompactReader.requireFields(ThriftStruct.TIME_TYPE, seen, BOTH_FIELDS);
+
         return LogicalType.time(isAdjustedToUTC, unit);
     }
 
-    private static LogicalType.TimestampType readTimestampType(ThriftCompactReader reader) {
+    private static LogicalType.TimestampType readTimestampType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.TIMESTAMP_TYPE);
         try {
             return readTimestampTypeInternal(reader);
@@ -212,6 +205,7 @@ public class LogicalTypeReader {
     private static LogicalType.TimestampType readTimestampTypeInternal(ThriftCompactReader reader) {
         boolean isAdjustedToUTC = true;
         LogicalType.TimestampType.TimeUnit unit = LogicalType.TimestampType.TimeUnit.MILLIS;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -219,12 +213,16 @@ public class LogicalTypeReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
                 case 1: // isAdjustedToUTC (required)
-                    isAdjustedToUTC = reader.readBooleanField(header, isAdjustedToUTC);
+                    isAdjustedToUTC = reader.requireBooleanField(header);
+                    seen |= 1L << fieldId;
                     break;
-                case 2: // unit (required)
+                case 2: // unit (required union)
+                    reader.requireField(header, Codes.STRUCT);
                     unit = readTimeUnit(reader);
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
@@ -232,10 +230,13 @@ public class LogicalTypeReader {
             }
         }
 
+        ThriftCompactReader.requireFields(ThriftStruct.TIMESTAMP_TYPE, seen, BOTH_FIELDS);
+
         return LogicalType.timestamp(isAdjustedToUTC, unit);
     }
 
-    private static LogicalType.IntType readIntType(ThriftCompactReader reader) {
+    private static LogicalType.IntType readIntType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.INT_TYPE);
         try {
             return readIntTypeInternal(reader);
@@ -248,6 +249,7 @@ public class LogicalTypeReader {
     private static LogicalType.IntType readIntTypeInternal(ThriftCompactReader reader) {
         int bitWidth = -1;
         boolean isSigned = true;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -255,14 +257,16 @@ public class LogicalTypeReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
                 case 1: // bitWidth (required)
-                    if (reader.acceptField(header, Codes.BYTE)) {
-                        bitWidth = reader.readByte();
-                    }
+                    reader.requireField(header, Codes.BYTE);
+                    bitWidth = reader.readByte();
+                    seen |= 1L << fieldId;
                     break;
                 case 2: // isSigned (required)
-                    isSigned = reader.readBooleanField(header, isSigned);
+                    isSigned = reader.requireBooleanField(header);
+                    seen |= 1L << fieldId;
                     break;
                 default:
                     reader.skipField(ThriftCompactReader.fieldType(header));
@@ -270,9 +274,10 @@ public class LogicalTypeReader {
             }
         }
 
-        // Validate the required field was read, and that it names one of the four widths the
-        // annotation defines: the record rejects any other as a caller error, which a file
-        // carrying one is not.
+        ThriftCompactReader.requireFields(ThriftStruct.INT_TYPE, seen, BOTH_FIELDS);
+
+        // Validate that the width is one of the four the annotation defines: the record rejects
+        // any other as a caller error, which a file carrying one is not.
         if (bitWidth != 8 && bitWidth != 16 && bitWidth != 32 && bitWidth != 64) {
             throw new ParquetReadException("Invalid IntType: bitWidth=" + bitWidth);
         }
@@ -280,7 +285,8 @@ public class LogicalTypeReader {
         return LogicalType.intType(bitWidth, isSigned);
     }
 
-    private static LogicalType.VariantType readVariantType(ThriftCompactReader reader) {
+    private static LogicalType.VariantType readVariantType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.VARIANT_TYPE);
         try {
             return readVariantTypeInternal(reader);
@@ -328,7 +334,8 @@ public class LogicalTypeReader {
         };
     }
 
-    private static LogicalType.GeometryType readGeometryType(ThriftCompactReader reader) {
+    private static LogicalType.GeometryType readGeometryType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.GEOMETRY_TYPE);
         try {
             return readGeometryTypeInternal(reader);
@@ -362,7 +369,8 @@ public class LogicalTypeReader {
         return LogicalType.geometry(crs);
     }
 
-    private static LogicalType.GeographyType readGeographyType(ThriftCompactReader reader) {
+    private static LogicalType.GeographyType readGeographyType(ThriftCompactReader reader, int header) {
+        reader.requireField(header, Codes.STRUCT);
         int saved = reader.pushFieldIdContext(ThriftStruct.GEOGRAPHY_TYPE);
         try {
             return readGeographyTypeInternal(reader);

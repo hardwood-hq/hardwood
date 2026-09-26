@@ -553,6 +553,7 @@ class PageFilterEvaluatorTest {
                 .binaryList(floatBytes(100.0f), floatBytes(200.0f), floatBytes(300.0f))
                 .field(3, FieldType.LIST)
                 .binaryList(floatBytes(199.0f), floatBytes(299.0f), floatBytes(399.0f))
+                .field(4, FieldType.I32).i32(0)
                 .stop().build();
         byte[] offsetIndex = new ThriftStructBuilder()
                 .field(1, FieldType.LIST)
@@ -628,6 +629,7 @@ class PageFilterEvaluatorTest {
                 .binaryList(intBytes(1), intBytes(11), intBytes(21))
                 .field(3, FieldType.LIST)
                 .binaryList(intBytes(10), intBytes(20), intBytes(30))
+                .field(4, FieldType.I32).i32(0)
                 .stop().build();
         byte[] offsetIndex = new ThriftStructBuilder()
                 .field(1, FieldType.LIST)
@@ -662,6 +664,7 @@ class PageFilterEvaluatorTest {
                 .field(1, FieldType.LIST).boolList(false, false)
                 .field(2, FieldType.LIST).binaryList(intBytes(1), intBytes(30))
                 .field(3, FieldType.LIST).binaryList(intBytes(20), intBytes(11))
+                .field(4, FieldType.I32).i32(0)
                 .stop().build();
         byte[] offsetIndex = new ThriftStructBuilder()
                 .field(1, FieldType.LIST)
@@ -712,6 +715,7 @@ class PageFilterEvaluatorTest {
                 .binaryList(intBytes(0), intBytes(0))
                 .field(3, FieldType.LIST)
                 .binaryList(intBytes(0), intBytes(0))
+                .field(4, FieldType.I32).i32(0)
                 .field(7, FieldType.LIST)
                 .i64List(
                         10, 20, 0, 0,
@@ -763,6 +767,7 @@ class PageFilterEvaluatorTest {
                 .binaryList(intBytes(0), intBytes(0))
                 .field(3, FieldType.LIST)
                 .binaryList(intBytes(0), intBytes(0))
+                .field(4, FieldType.I32).i32(0)
                 .field(5, FieldType.LIST)
                 .i64List(30, 30)
                 .stop()
@@ -829,6 +834,7 @@ class PageFilterEvaluatorTest {
                 .binaryList(intBytes(0), intBytes(0))
                 .field(3, FieldType.LIST)
                 .binaryList(intBytes(0), intBytes(0))
+                .field(4, FieldType.I32).i32(0)
                 .field(7, FieldType.LIST)
                 .i64List(
                         0, 30, 0,
