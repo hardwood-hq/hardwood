@@ -77,16 +77,16 @@ class ThriftFieldNamingTest {
     /// message is then exactly what it was before struct naming existed, which
     /// is worse than a right name and far better than a wrong one.
     ///
-    /// `DataPageHeaderV2.definition_levels_byte_length` is an `i32`; declared as a
-    /// struct it fails [ThriftCompactReader#acceptField] and is walked past by
+    /// `PageHeader.crc` is an optional `i32`; declared as a struct it fails
+    /// [ThriftCompactReader#acceptField] and is walked past by
     /// [ThriftCompactReader#skipStruct], which does not know what it is walking.
     @Test
     void aStructNoReaderAnnotatesIsNotNamedAtAll() {
-        // DataPageHeaderV2 field 5 declared a struct, so it is skipped wholesale;
+        // PageHeader field 4 declared a struct, so it is skipped wholesale;
         // inside it, a field header declaring an invalid wire type.
-        byte[] bytes = { 0x5c, 0x1f };
+        byte[] bytes = { 0x4c, 0x1f };
 
-        assertThatThrownBy(() -> DataPageHeaderV2Reader.read(
+        assertThatThrownBy(() -> PageHeaderReader.read(
                 new ThriftCompactReader(ByteBuffer.wrap(bytes))))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unknown field type: 15");

@@ -7,13 +7,14 @@
  */
 package dev.hardwood.internal.thrift;
 
-import java.util.Arrays;
-
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.BoundingBox;
 
 /// Reader for the Thrift BoundingBox struct from Parquet metadata.
 public class BoundingBoxReader {
+
+    /// Ids of the fields the format requires of a `BoundingBox`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
 
     public static BoundingBox read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.BOUNDING_BOX);
@@ -54,24 +55,9 @@ public class BoundingBoxReader {
             }
         }
 
-        int[] missing = new int[4];
-        int absent = 0;
-        if (xmin == null) {
-            missing[absent++] = 1;
-        }
-        if (xmax == null) {
-            missing[absent++] = 2;
-        }
-        if (ymin == null) {
-            missing[absent++] = 3;
-        }
-        if (ymax == null) {
-            missing[absent++] = 4;
-        }
-        if (absent > 0) {
-            throw ThriftCompactReader.missingFields(ThriftStruct.BOUNDING_BOX,
-                    Arrays.copyOf(missing, absent));
-        }
+        long seen = (xmin != null ? 1L << 1 : 0) | (xmax != null ? 1L << 2 : 0)
+                | (ymin != null ? 1L << 3 : 0) | (ymax != null ? 1L << 4 : 0);
+        ThriftCompactReader.requireFields(ThriftStruct.BOUNDING_BOX, seen, REQUIRED_FIELDS);
 
         return new BoundingBox(xmin, xmax, ymin, ymax, zmin, zmax, mmin, mmax);
     }
