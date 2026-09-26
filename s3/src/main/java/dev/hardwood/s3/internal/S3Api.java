@@ -100,6 +100,7 @@ public final class S3Api {
                 if ((status == HTTP_INTERNAL_SERVER_ERROR || status == HTTP_SERVICE_UNAVAILABLE) && attempt < maxRetries) {
                     lastException = new IOException("GET s3://" + bucket + "/" + key
                             + " failed: HTTP " + status);
+                    discardBody(response);
                     continue;
                 }
                 return response;
@@ -116,6 +117,15 @@ public final class S3Api {
             }
         }
         throw lastException;
+    }
+
+    /// Closes a streamed body the caller will never see, so a response
+    /// abandoned for a retry does not hold its connection until GC.
+    /// A byte-array body is already fully read and needs no release.
+    private static void discardBody(HttpResponse<?> response) throws IOException {
+        if (response.body() instanceof InputStream body) {
+            body.close();
+        }
     }
 
     private static void sleepBeforeRetry(int attempt) throws IOException {

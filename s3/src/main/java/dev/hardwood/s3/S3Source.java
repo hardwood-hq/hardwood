@@ -247,18 +247,19 @@ public final class S3Source implements Closeable {
                 }
                 effectiveRegion = "auto";
             }
-            boolean externalClient = httpClient != null;
-            HttpClient client = externalClient
-                    ? httpClient
-                    : HttpClient.newBuilder().connectTimeout(connectTimeout).build();
-            S3Api api = new S3Api(client, credentialsProvider, effectiveRegion, endpointUri, pathStyle,
-                    requestTimeout, maxRetries);
             Path effectiveTempDir = tempDir != null
                     ? tempDir
                     : Path.of(System.getProperty("java.io.tmpdir"));
             if (rangeBacking == RangeBacking.SPARSE_TEMPFILE) {
                 requireUsableTempDir(effectiveTempDir);
             }
+            // Built only after all validation, so a rejected configuration leaves no client behind
+            boolean externalClient = httpClient != null;
+            HttpClient client = externalClient
+                    ? httpClient
+                    : HttpClient.newBuilder().connectTimeout(connectTimeout).build();
+            S3Api api = new S3Api(client, credentialsProvider, effectiveRegion, endpointUri, pathStyle,
+                    requestTimeout, maxRetries);
             return new S3Source(api, client, externalClient, rangeBacking, effectiveTempDir);
         }
 
