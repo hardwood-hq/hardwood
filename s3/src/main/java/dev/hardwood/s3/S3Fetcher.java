@@ -14,11 +14,11 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.reader.ReadRanges;
 import dev.hardwood.s3.internal.S3Api;
 
-/// The network path behind [S3InputFile]: every [#readRange] call issues
+/// The network path behind [S3InputFile]: every non-empty [#readRange] call issues
 /// a signed HTTP `GET` with a byte-range header against one S3 object.
 ///
 /// [#open()] uses a suffix-range GET instead of a HEAD request. This
@@ -96,11 +96,11 @@ final class S3Fetcher implements InputFile {
             throw new IllegalStateException("File not opened: " + name());
         }
         // Checked before the tail cache and before any request, so a bad range fails the same
-        // way wherever it lands. Written so that offset + length cannot overflow.
-        if (offset < 0 || length < 0 || offset > fileLength - length) {
-            throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name())
-                    + "readRange(" + offset + ", " + length
-                    + ") out of bounds (" + fileLength + " bytes)");
+        // way wherever it lands.
+        ReadRanges.checkBounds(name(), offset, length, fileLength);
+        // An empty range has no HTTP Range form: "bytes=o-(o-1)" is unsatisfiable
+        if (length == 0) {
+            return ByteBuffer.allocateDirect(0);
         }
         // Serve from the tail cache if the requested range falls within it
         if (tailCache != null && offset >= tailCacheOffset

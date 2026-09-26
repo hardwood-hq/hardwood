@@ -116,7 +116,29 @@ class ByteBufferInputFileTest {
         assertThat(range.get(2)).isEqualTo((byte) 5);
         assertThatThrownBy(() -> inputFile.readRange(2, 3))
                 .isInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessage("Range [2, 2 + 3) out of bounds for length 4");
+                .hasMessage("[<memory>] readRange(2, 3) out of bounds (4 bytes)");
+    }
+
+    @Test
+    void testReadRangeRejectsOutOfBoundsRanges() throws Exception {
+        InputFile inputFile = InputFile.of(ByteBuffer.wrap(new byte[10]));
+
+        assertThatThrownBy(() -> inputFile.readRange(11, 0))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[<memory>] readRange(11, 0) out of bounds (10 bytes)");
+        assertThatThrownBy(() -> inputFile.readRange(-1, 2))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[<memory>] readRange(-1, 2) out of bounds (10 bytes)");
+        assertThatThrownBy(() -> inputFile.readRange(2, -1))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[<memory>] readRange(2, -1) out of bounds (10 bytes)");
+        assertThatThrownBy(() -> inputFile.readRange(Integer.MAX_VALUE + 1L, 1))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[<memory>] readRange(2147483648, 1) out of bounds (10 bytes)");
+        assertThatThrownBy(() -> inputFile.readRange(Long.MAX_VALUE, Integer.MAX_VALUE))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("[<memory>] readRange(9223372036854775807, 2147483647) out of bounds (10 bytes)");
+        assertThat(inputFile.readRange(10, 0).remaining()).isZero();
     }
 
     private static void assertReadsPlainUncompressed(InputFile inputFile) throws Exception {
