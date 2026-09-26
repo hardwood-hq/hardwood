@@ -187,8 +187,10 @@ class ReadFailurePositionTest {
         ByteBuffer corrupted = ByteBuffer.wrap(bytes);
         assertThatThrownBy(() -> {
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted));
+                 // One value inside each row group, so statistics decide none of them and
+                 // every row group's page index is evaluated.
                  ColumnReader column = reader.buildColumnReader("id")
-                         .filter(FilterPredicate.gtEq("id", 0L))
+                         .filter(FilterPredicate.in("id", 500L, 1500L, 2500L))
                          .build()) {
                 while (column.nextBatch()) {
                     // read as far as the row group whose page index is corrupt

@@ -30,7 +30,7 @@ A row group's reads happen when the first decoded column reaches it, or earlier 
 
 A row group its dictionaries drop gets `FetchPlan.EMPTY` for every column, and steps 3 to 5 read nothing for it; step 2 reads nothing for it unless another member of its window asks. The dictionaries read in step 1 stay in the row group's `SharedRowGroupMetadata` until every column has released the row group, and the fetch plans decode with them, so a dictionary page pruning read is not fetched again. How the dictionaries refine the decisions planning recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
-Page filtering applies when the read has a filter and metadata filtering is on, in a row group statistics proved to match as well: a ColumnIndex that disagrees with the chunk statistics still narrows the rows. `RowGroupIndexBuffers.forColumn` fails for a column outside the needed set, so a column the read forgot to ask for is not mistaken for one without an index.
+Page filtering applies when the read has a filter and metadata filtering is on, in a row group statistics left undecided. In a row group they proved to match in full every value of every page matches, so no page bound can rule a page out; its ColumnIndex is neither fetched nor evaluated, and its skipped filter-only columns need no index at all. `RowGroupIndexBuffers.forColumn` fails for a column outside the needed set, so a column the read forgot to ask for is not mistaken for one without an index.
 
 ### Page-index windows
 

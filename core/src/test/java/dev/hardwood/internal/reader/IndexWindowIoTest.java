@@ -114,6 +114,33 @@ class IndexWindowIoTest {
     }
 
     @Test
+    void aReadStatisticsProveFetchesNoColumnIndexAndNoIndexOfItsFilterOnlyColumn() throws Exception {
+        FileMetaData metaData = metaData();
+        CountingInputFile file = countingFile();
+        int rows = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+                RowReader rowReader = reader.buildRowReader()
+                        .projection(ColumnProjection.columns("c05"))
+                        .filter(FilterPredicate.gtEq("c00", 0L))
+                        .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                rows++;
+            }
+        }
+
+        // Statistics prove every row group, so the read is the unfiltered read of `c05`.
+        assertThat(rows).isEqualTo(12 * 400);
+        List<CountingInputFile.Read> expected = new ArrayList<>();
+        for (int[] window : WINDOWS) {
+            expected.add(new CountingInputFile.Read(offsetIndexStart(metaData, window[0], C05),
+                    length(offsetIndexStart(metaData, window[0], C05), offsetIndexEnd(metaData, window[1], C05)),
+                    reason(window)));
+        }
+        assertThat(indexReads(file)).containsExactlyInAnyOrderElementsOf(expected);
+    }
+
+    @Test
     void aHeadWithinTheFirstRowGroupFetchesThatRowGroupsSlicesOnly() throws Exception {
         FileMetaData metaData = metaData();
         CountingInputFile file = countingFile();
