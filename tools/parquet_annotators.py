@@ -30,6 +30,8 @@ Column chunk layout helpers:
   parquet-mr 1.12 and Trino <427 do.
 - `drop_encoding_stats` — omit the optional `encoding_stats`, making the chunk
   ineligible for dictionary predicate push-down.
+- `understate_data_page_offset` — leave the dictionary page's header out of
+  `data_page_offset`, as DuckDB did before duckdb/duckdb#10829.
 
 Legacy-only fixture helpers (set `converted_type` and clear `logicalType`):
 - `annotate_columns_as_legacy_converted_type` — for primitive columns.
@@ -128,6 +130,14 @@ enum CompressionCodec {
 }
 enum PageType { DATA_PAGE=0, INDEX_PAGE=1, DICTIONARY_PAGE=2, DATA_PAGE_V2=3 }
 enum BoundaryOrder { UNORDERED=0, ASCENDING=1, DESCENDING=2 }
+struct DictionaryPageHeader { 1: required i32 num_values; 2: required Encoding encoding; 3: optional bool is_sorted; }
+struct PageHeader {
+  1: required PageType type;
+  2: required i32 uncompressed_page_size;
+  3: required i32 compressed_page_size;
+  4: optional i32 crc;
+  7: optional DictionaryPageHeader dictionary_page_header;
+}
 struct Statistics {
   1: optional binary max;
   2: optional binary min;
@@ -395,9 +405,9 @@ def set_row_group_min_max(path: str, column_name: str, row_group_index: int,
 
 
 def drop_dictionary_page_offset(path: str, column_name: str) -> None:
-    """Rewrite `path` so the named column chunk omits `dictionary_page_offset`, with
-    `data_page_offset` naming the dictionary page at the chunk start rather than the
-    first data page.
+    """Rewrite `path` so the column chunk at dotted path `column_name` omits
+    `dictionary_page_offset`, with `data_page_offset` naming the dictionary page at the
+    chunk start rather than the first data page.
 
     The field is optional in parquet.thrift and real writers omit it: parquet-mr 1.12
     does (see alltypes_tiny_pages.parquet in apache/parquet-testing), as did Trino before
@@ -413,7 +423,7 @@ def drop_dictionary_page_offset(path: str, column_name: str) -> None:
     for row_group in file_metadata.row_groups:
         for column in row_group.columns:
             meta_data = column.meta_data
-            if meta_data is None or meta_data.path_in_schema != [column_name]:
+            if meta_data is None or '.'.join(meta_data.path_in_schema) != column_name:
                 continue
             if meta_data.dictionary_page_offset is None:
                 raise ValueError(
@@ -455,6 +465,49 @@ def misplace_dictionary_page_offset(path: str, column_name: str) -> None:
         raise ValueError(f"{path} has no column chunk named '{column_name}'")
 
     _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def understate_data_page_offset(path: str, column_path: str) -> None:
+    """Rewrite `path` so the column chunk at dotted `column_path` states a `data_page_offset`
+    that leaves out the dictionary page's header, pointing into the dictionary page body.
+
+    DuckDB wrote this shape before duckdb/duckdb#10829. A reader that walks the chunk from its
+    start and steps over the dictionary page by the page's own header reads it correctly; one
+    that parses a page header at `data_page_offset` reads dictionary bytes instead. It is a
+    footer-only change: every page stays byte-for-byte where PyArrow put it.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    patched = 0
+    for row_group in file_metadata.row_groups:
+        for column in row_group.columns:
+            meta_data = column.meta_data
+            if meta_data is None or '.'.join(meta_data.path_in_schema) != column_path:
+                continue
+            dictionary_offset = meta_data.dictionary_page_offset
+            if dictionary_offset is None:
+                raise ValueError(f"{path} column '{column_path}' has no dictionary page")
+            meta_data.data_page_offset -= _dictionary_header_length(data_before_footer, dictionary_offset)
+            patched += 1
+
+    if patched == 0:
+        raise ValueError(f"{path} has no column chunk named '{column_path}'")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def _dictionary_header_length(data: bytes, offset: int) -> int:
+    """Length in bytes of the dictionary page header at `offset` in `data`."""
+    header = _parquet.PageHeader()
+    header.read(TCompactProtocolFactory().get_protocol(TMemoryBuffer(data[offset:offset + 1024])))
+    if header.type != _parquet.PageType.DICTIONARY_PAGE:
+        raise ValueError(f"no dictionary page header at offset {offset}")
+    out = TMemoryBuffer()
+    header.write(TCompactProtocolFactory().get_protocol(out))
+    encoded = out.getvalue()
+    if data[offset:offset + len(encoded)] != encoded:
+        raise ValueError(f"dictionary page header at offset {offset} holds a field the embedded IDL does not model")
+    return len(encoded)
 
 
 def drop_encoding_stats(path: str, column_name: str) -> None:

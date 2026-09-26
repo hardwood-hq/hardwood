@@ -48,6 +48,7 @@ from parquet_annotators import (
     remove_map_value_field,
     drop_dictionary_page_offset,
     misplace_dictionary_page_offset,
+    understate_data_page_offset,
 )
 
 
@@ -4523,6 +4524,43 @@ print("\nGenerated misaligned_pages_nested_v2.parquet:")
 print(f"  - 1 row group, {NESTED_V2_ROWS} rows, Parquet v2, NO ColumnIndex/OffsetIndex")
 print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, 2 elements per row)")
 print("  - Drives SequentialFetchPlan rep-level walk on a v2 nested column")
+
+# =====================================================================
+# Dictionary-encoded nested LIST<STRING> column without a Page Index whose
+# footer understates data_page_offset (DuckDB before duckdb/duckdb#10829),
+# once per data page version, plus a v2 variant that omits
+# dictionary_page_offset and names the dictionary page as data_page_offset
+# (parquet-mr 1.12, Trino before 427). The page-format probe behind the
+# nested mask gate must find the first data page in each. A well-formed v2
+# variant in two row groups pins the probe at one read per row group.
+# =====================================================================
+
+for _name, _version, _patch, _described, _row_group_size in (
+        ('nested_dict_understated_offset_v1', '1.0', understate_data_page_offset,
+         'data_page_offset without the dictionary header', None),
+        ('nested_dict_understated_offset_v2', '2.0', understate_data_page_offset,
+         'data_page_offset without the dictionary header', None),
+        ('nested_dict_no_dict_offset_v2', '2.0', drop_dictionary_page_offset,
+         'no dictionary_page_offset', None),
+        ('nested_dict_v2', '2.0', None,
+         'well-formed offsets, 2 row groups', 250)):
+    _path = f"core/src/test/resources/{_name}.parquet"
+    writer = pq.ParquetWriter(
+        _path,
+        schema=nested_v2_schema,
+        use_dictionary=['tags.list.element'],
+        compression='NONE',
+        data_page_version=_version,
+        data_page_size=512,
+        write_batch_size=7,
+        write_statistics=True,
+        write_page_index=False,
+    )
+    writer.write_table(nested_v2_table.slice(0, 500), row_group_size=_row_group_size)
+    writer.close()
+    if _patch is not None:
+        _patch(_path, 'tags.list.element')
+    print(f"\nGenerated {_path}: 500 rows, dictionary-encoded tags, {_described}")
 
 # =====================================================================
 # Nested LIST<STRING> column with DATA_PAGE (v1) pages and no Page Index.

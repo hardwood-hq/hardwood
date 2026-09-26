@@ -70,4 +70,28 @@ class MaskProbeIoTest {
                 .filteredOn(read -> read.reason().endsWith(" indexes"))
                 .hasSize(1);
     }
+
+    /// On a file whose footer offsets are consistent, the probe reads the header at
+    /// `data_page_offset` and nothing else: one read per row group, although the nested column is
+    /// dictionary-encoded and its chunk starts with the dictionary page.
+    ///
+    /// Uses nested_dict_v2.parquet: 500 rows in two row groups, a dictionary-encoded `tags` list,
+    /// no Page Index, `DATA_PAGE_V2` pages.
+    @Test
+    void tailReadProbesAWellFormedDictionaryEncodedColumnOncePerRowGroup() throws Exception {
+        CountingInputFile inputFile = new CountingInputFile(
+                InputFile.of(Path.of("src/test/resources/nested_dict_v2.parquet")));
+        inputFile.open();
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
+                RowReader rowReader = reader.buildRowReader().tail(300).build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+            }
+        }
+
+        assertThat(inputFile.reads())
+                .filteredOn(read -> read.reason().endsWith(" indexes"))
+                .extracting(read -> read.reason())
+                .containsExactly("rg=0 indexes", "rg=1 indexes");
+    }
 }
