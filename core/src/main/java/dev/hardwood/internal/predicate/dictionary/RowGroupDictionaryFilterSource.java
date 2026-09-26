@@ -20,7 +20,6 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -30,11 +29,6 @@ import dev.hardwood.schema.FileSchema;
 /// Dictionaries are read on demand: a row group dropped by statistics or a bloom filter never pays
 /// for the dictionary page I/O.
 public final class RowGroupDictionaryFilterSource {
-
-    /// Bytes read speculatively when the offsets give no gap to size the read — an absent
-    /// `dictionary_page_offset`. Covers a page header plus the body of all but unusually large
-    /// dictionaries, so the common case still resolves in a single read.
-    private static final int DICTIONARY_PROBE_BYTES = 64 * 1024;
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
@@ -126,76 +120,21 @@ public final class RowGroupDictionaryFilterSource {
         // "no dictionary": the scan cannot read the chunk either.
         requireSameFile(columnChunk);
 
-        long dataPageOffset = metaData.dataPageOffset();
-
         // A dictionary page is always the chunk's first page. Without the page index,
         // `data_page_offset` stands for the first data page; a file that omits
-        // `dictionary_page_offset` points it at the dictionary page instead, which the probe below
-        // tells apart. A first data page preceding the dictionary page cannot be read at all, so
-        // that fails rather than degrading to "no dictionary".
-        long chunkStart;
-        try {
-            chunkStart = DictionaryParser.firstPageOffset(columnChunk, dataPageOffset);
-        }
-        catch (ParquetReadException e) {
-            throw new ParquetReadException(columnPrefix(metaData) + e.getMessage(), e);
-        }
-        long chunkEnd = chunkStart + metaData.totalCompressedSize();
-        if (chunkEnd <= chunkStart) {
-            throw new ParquetReadException(columnPrefix(metaData)
-                    + "Malformed Parquet metadata: the dictionary page is at offset " + chunkStart
-                    + " but the chunk ends at offset " + chunkEnd);
-        }
-        // Only a bound on the dictionary page, whose own size is an int; a chunk over 2 GB
-        // bounds it no tighter than that.
-        int availableBytes = Math.toIntExact(Math.min(chunkEnd - chunkStart, Integer.MAX_VALUE));
-
-        ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
-        ByteBuffer region = readDictionaryPage(metaData, chunkStart,
-                dataPageOffset > chunkStart
-                        ? Math.toIntExact(dataPageOffset - chunkStart)
-                        : DICTIONARY_PROBE_BYTES,
-                availableBytes);
-        if (region == null) {
+        // `dictionary_page_offset` points it at the dictionary page instead, which the page's own
+        // header tells apart. A first data page preceding the dictionary page cannot be read at
+        // all, so that fails rather than degrading to "no dictionary".
+        ByteBuffer page = DictionaryParser.readPage(inputFile, columnChunk, columnPrefix(metaData));
+        if (page == null) {
             return null;
         }
-        long pageEnd = chunkStart + region.remaining();
-        Dictionary dictionary = DictionaryParser.parse(region, columnSchema, metaData, context);
+        ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
+        long pageEnd = columnChunk.chunkStartOffset() + page.remaining();
+        Dictionary dictionary = DictionaryParser.parse(page, columnSchema, metaData, context);
         pageEnds[columnIndex] = pageEnd;
         return dictionary;
     }
-
-    /// Reads the bytes of the dictionary page beginning at `dictionaryStart`, or `null` when no
-    /// dictionary page is there.
-    ///
-    /// The page's own header states its length; the offsets only size the opening read — the gap to
-    /// the first data page where there is one, a bounded probe otherwise. For a well-formed chunk
-    /// the gap equals the page's length, so the opening read is exact and no second one happens.
-    ///
-    /// A header-declared length is file data, so it is checked against the enclosing column chunk
-    /// before being used to size a read. A page that claims to run past its own chunk is corrupt
-    /// and is rejected here — truncating the read to the chunk instead would fail later and less
-    /// clearly.
-    private ByteBuffer readDictionaryPage(ColumnMetaData metaData, long dictionaryStart,
-            int gapBytes, int availableBytes) throws IOException {
-        ByteBuffer region = inputFile.readRange(dictionaryStart, Math.min(gapBytes, availableBytes));
-        int pageLength = DictionaryParser.pageLength(region);
-        if (pageLength < 0) {
-            return null;
-        }
-
-        if (pageLength > availableBytes) {
-            throw new ParquetReadException(columnPrefix(metaData)
-                    + "Malformed Parquet metadata: the dictionary page header declares "
-                    + pageLength + " bytes but only " + availableBytes
-                    + " bytes remain in the chunk");
-        }
-
-        return pageLength > region.remaining()
-                ? inputFile.readRange(dictionaryStart, pageLength)
-                : region.slice(0, pageLength);
-    }
-
 
     /// Fails unless this chunk stores its data in the file being read.
     ///
