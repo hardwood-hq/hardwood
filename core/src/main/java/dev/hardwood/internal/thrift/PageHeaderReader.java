@@ -18,6 +18,9 @@ import dev.hardwood.reader.ParquetReadException;
 /// Reader for PageHeader from Thrift Compact Protocol.
 public class PageHeaderReader {
 
+    /// Ids of the fields the format requires of a `PageHeader`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3 };
+
     public static PageHeader read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.PAGE_HEADER);
         try {
@@ -36,6 +39,7 @@ public class PageHeaderReader {
         DataPageHeader dataPageHeader = null;
         DataPageHeaderV2 dataPageHeaderV2 = null;
         DictionaryPageHeader dictionaryPageHeader = null;
+        long seen = 0;
 
         while (true) {
             int header = reader.readFieldHeader();
@@ -43,8 +47,11 @@ public class PageHeaderReader {
                 break;
             }
 
-            switch (ThriftCompactReader.fieldId(header)) {
-                case 1: { // type — required, so a wrong wire type fails here
+            int fieldId = ThriftCompactReader.fieldId(header);
+            switch (fieldId) {
+                // Fields 1-3 are required, so a wrong wire type fails here rather than being
+                // reported as a field that never arrived.
+                case 1: { // type
                     reader.requireField(header, Codes.I32);
                     int rawType = reader.readI32();
                     type = ThriftEnumLookup.pageType(rawType);
@@ -52,17 +59,18 @@ public class PageHeaderReader {
                     if (type == PageType.UNKNOWN) {
                         throw new ParquetReadException("PageHeader has unknown page type: " + rawType);
                     }
+                    seen |= 1L << fieldId;
                     break;
                 }
                 case 2: // uncompressed_page_size
-                    if (reader.acceptField(header, Codes.I32)) {
-                        uncompressedPageSize = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    uncompressedPageSize = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 3: // compressed_page_size
-                    if (reader.acceptField(header, Codes.I32)) {
-                        compressedPageSize = reader.readNonNegativeI32();
-                    }
+                    reader.requireField(header, Codes.I32);
+                    compressedPageSize = reader.readNonNegativeI32();
+                    seen |= 1L << fieldId;
                     break;
                 case 4: // crc
                     if (reader.acceptField(header, Codes.I32)) {
@@ -93,10 +101,7 @@ public class PageHeaderReader {
             }
         }
 
-        // Validate required fields
-        if (type == null) {
-            throw ThriftCompactReader.missingFields(ThriftStruct.PAGE_HEADER, 1);
-        }
+        ThriftCompactReader.requireFields(ThriftStruct.PAGE_HEADER, seen, REQUIRED_FIELDS);
 
         return new PageHeader(type, uncompressedPageSize, compressedPageSize,
                 dataPageHeader, dataPageHeaderV2, dictionaryPageHeader, crc);

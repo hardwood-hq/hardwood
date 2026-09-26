@@ -7,12 +7,13 @@
  */
 package dev.hardwood.internal.thrift;
 
-import java.util.Arrays;
-
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 
 public class BloomFilterHeaderReader {
+
+    /// Ids of the fields the format requires of a `BloomFilterHeader`.
+    private static final int[] REQUIRED_FIELDS = { 1, 2, 3, 4 };
 
     public static BloomFilterHeader read(ThriftCompactReader reader) {
         int saved = reader.pushFieldIdContext(ThriftStruct.BLOOM_FILTER_HEADER);
@@ -59,24 +60,9 @@ public class BloomFilterHeaderReader {
             }
         }
 
-        int[] missing = new int[4];
-        int absent = 0;
-        if (numBytes < 0) {
-            missing[absent++] = 1;
-        }
-        if (algorithm == null) {
-            missing[absent++] = 2;
-        }
-        if (hash == null) {
-            missing[absent++] = 3;
-        }
-        if (compression == null) {
-            missing[absent++] = 4;
-        }
-        if (absent > 0) {
-            throw ThriftCompactReader.missingFields(ThriftStruct.BLOOM_FILTER_HEADER,
-                    Arrays.copyOf(missing, absent));
-        }
+        long seen = (numBytes >= 0 ? 1L << 1 : 0) | (algorithm != null ? 1L << 2 : 0)
+                | (hash != null ? 1L << 3 : 0) | (compression != null ? 1L << 4 : 0);
+        ThriftCompactReader.requireFields(ThriftStruct.BLOOM_FILTER_HEADER, seen, REQUIRED_FIELDS);
 
         return new BloomFilterHeader(numBytes, algorithm, hash, compression);
     }
