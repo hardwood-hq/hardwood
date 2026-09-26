@@ -280,6 +280,42 @@ public final class ExceptionContext {
         return new RuntimeException(newMessage, e);
     }
 
+    /// Classifies a runtime failure with [#asReadFailure], then names where the read was with
+    /// [#addReadContext] — what the read pipeline does at its boundaries, for a read made at the
+    /// bytes outside it.
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @param e        the failure to classify and place
+    /// @return the classified, placed failure — never `null`
+    public static RuntimeException readFailureAt(String fileName, int rowGroup, String column,
+            RuntimeException e) {
+        return addReadContext(fileName, rowGroup, column, asReadFailure(e));
+    }
+
+    /// Names where a read was on an [IOException], as a fresh `IOException` with `e` as its
+    /// cause. Returns `e` unchanged when the file name is unavailable or `e`, or its cause,
+    /// already names a file.
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @param page     the page's ordinal, [#DICTIONARY_PAGE], or [#UNKNOWN_PAGE]
+    /// @param e        the transport failure to place
+    /// @return the placed (or original) exception — never `null`
+    public static IOException addReadContext(String fileName, int rowGroup, String column, int page,
+            IOException e) {
+        Throwable cause = e.getCause();
+        if (fileName == null || fileName.isEmpty()
+                || hasFilePrefix(e.getMessage())
+                || (cause != null && hasFilePrefix(cause.getMessage()))) {
+            return e;
+        }
+        return new IOException(readPrefix(fileName, rowGroup, column, page)
+                + (e.getMessage() != null ? e.getMessage() : "I/O failure"), e);
+    }
+
     /// Restates an [UncheckedIOException] as the [IOException] a method that can declare one
     /// should raise.
     ///

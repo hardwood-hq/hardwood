@@ -245,6 +245,38 @@ class ExceptionContextTest {
         assertThat(ExceptionContext.asReadFailure(original)).isSameAs(original);
     }
 
+    /// A read made at the bytes outside the pipeline classifies before it places, as the
+    /// pipeline does: a decoder's out-of-bounds index on a corrupt file leaves as a read failure.
+    @Test
+    void readFailureAtClassifiesThenPlaces() {
+        RuntimeException original = new ArrayIndexOutOfBoundsException("Index 5 out of bounds for length 2");
+
+        RuntimeException placed = ExceptionContext.readFailureAt("f.parquet", 0, "c", original);
+
+        assertThat(placed).isExactlyInstanceOf(ParquetReadException.class)
+                .hasMessage("[f.parquet: row group 0, column 'c'] Index 5 out of bounds for length 2");
+        assertThat(placed.getCause().getCause()).isSameAs(original);
+    }
+
+    @Test
+    void placesAnIOException() {
+        IOException original = new IOException("connection reset");
+
+        IOException placed = ExceptionContext.addReadContext("f.parquet", 2, "c", 4, original);
+
+        assertThat(placed).isExactlyInstanceOf(IOException.class)
+                .hasMessage("[f.parquet: row group 2, column 'c', page 4] connection reset")
+                .hasCause(original);
+    }
+
+    /// An `IOException` already naming its file is not named again.
+    @Test
+    void leavesAPlacedIOExceptionAsItIs() {
+        IOException original = new IOException("[f.parquet] Failed to fetch metadata for row group 2");
+
+        assertThat(ExceptionContext.addReadContext("f.parquet", 2, "c", 4, original)).isSameAs(original);
+    }
+
     /// What callers catch is the base type. A subclass that cannot be reconstructed still
     /// has to leave as a [ParquetReadException], or restating it takes the failure out of
     /// every `catch (ParquetReadException)` above and the file stops being reported as

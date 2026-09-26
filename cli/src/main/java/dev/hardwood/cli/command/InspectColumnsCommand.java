@@ -236,14 +236,14 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     /// which chunk the damaged structure belongs to.
     private static RuntimeException placed(RuntimeException e, ColumnChunk chunk, InputFile inputFile,
                                            int rowGroupIndex) {
-        return ExceptionContext.addReadContext(
+        return ExceptionContext.readFailureAt(
                 inputFile.name(), rowGroupIndex, Sizes.columnPath(chunk.metaData()), e);
     }
 
     private static IOException placed(IOException e, ColumnChunk chunk, InputFile inputFile,
                                       int rowGroupIndex) {
-        return new IOException(ExceptionContext.readPrefix(
-                inputFile.name(), rowGroupIndex, Sizes.columnPath(chunk.metaData())) + e.getMessage(), e);
+        return ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex,
+                Sizes.columnPath(chunk.metaData()), ExceptionContext.UNKNOWN_PAGE, e);
     }
 
     private String header(ColumnSchema columnSchema) {
