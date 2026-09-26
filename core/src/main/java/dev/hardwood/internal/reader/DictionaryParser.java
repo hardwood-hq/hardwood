@@ -7,8 +7,10 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -23,11 +25,71 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Parses dictionary pages from column chunk data.
 ///
-/// Shared by [IndexedFetchPlan], [SequentialFetchPlan] and the dictionary
-/// filter's `RowGroupDictionaryFilterSource`.
+/// Shared by [IndexedFetchPlan], [SequentialFetchPlan], the dictionary
+/// filter's `RowGroupDictionaryFilterSource` and the CLI's `dive`.
 public final class DictionaryParser {
 
+    /// Bytes read speculatively when the offsets give no gap to size the dictionary read — an
+    /// absent `dictionary_page_offset`. Covers a page header plus the body of all but unusually
+    /// large dictionaries, so the common case still resolves in a single read.
+    private static final int DICTIONARY_PROBE_BYTES = 64 * 1024;
+
     private DictionaryParser() {}
+
+    /// Reads a column chunk's dictionary page, header and compressed body, or returns `null` when
+    /// the chunk's first page is not a dictionary page.
+    ///
+    /// The page's own header states its length; the offsets only size the opening read — the gap
+    /// to the first data page where there is one, a bounded probe otherwise. For a well-formed
+    /// chunk the gap equals the page's length, so the opening read is exact and no second one
+    /// happens. Only the page is read, never the rest of the chunk, so a chunk of any size can be
+    /// read this way.
+    ///
+    /// A header-declared length is file data, so it is checked against the enclosing column chunk
+    /// before being used to size a read. A page that claims to run past its own chunk is corrupt
+    /// and is rejected here — truncating the read to the chunk instead would fail later and less
+    /// clearly.
+    ///
+    /// @param messagePrefix put in front of the message of each failure this method raises
+    ///        itself, naming where the chunk is; may be empty
+    /// @throws ParquetReadException if the offsets or the page header contradict the chunk
+    public static ByteBuffer readPage(InputFile inputFile, ColumnChunk columnChunk, String messagePrefix)
+            throws IOException {
+        ColumnMetaData metaData = columnChunk.metaData();
+        long dataPageOffset = metaData.dataPageOffset();
+        long chunkStart;
+        try {
+            chunkStart = firstPageOffset(columnChunk, dataPageOffset);
+        }
+        catch (ParquetReadException e) {
+            throw new ParquetReadException(messagePrefix + e.getMessage(), e);
+        }
+        long chunkEnd = chunkStart + metaData.totalCompressedSize();
+        if (chunkEnd <= chunkStart) {
+            throw new ParquetReadException(messagePrefix
+                    + "Malformed Parquet metadata: the dictionary page is at offset " + chunkStart
+                    + " but the chunk ends at offset " + chunkEnd);
+        }
+        // A bound on the page, whose own size is an int; a chunk over 2 GB bounds it no
+        // tighter than that.
+        int availableBytes = Math.toIntExact(Math.min(chunkEnd - chunkStart, Integer.MAX_VALUE));
+        long openingRead = dataPageOffset > chunkStart ? dataPageOffset - chunkStart : DICTIONARY_PROBE_BYTES;
+
+        ByteBuffer region = inputFile.readRange(chunkStart, Math.toIntExact(Math.min(openingRead, availableBytes)));
+        int pageLength = pageLength(region);
+        if (pageLength < 0) {
+            return null;
+        }
+        if (pageLength > availableBytes) {
+            throw new ParquetReadException(messagePrefix
+                    + "Malformed Parquet metadata: the dictionary page header declares "
+                    + pageLength + " bytes but only " + availableBytes
+                    + " bytes remain in the chunk");
+        }
+        return pageLength > region.remaining()
+                ? inputFile.readRange(chunkStart, pageLength)
+                : region.slice(0, pageLength);
+    }
 
     /// Total byte length of the dictionary page starting at the beginning of `region` — its header
     /// plus its compressed body — or `-1` when the region does not begin with a dictionary page.
