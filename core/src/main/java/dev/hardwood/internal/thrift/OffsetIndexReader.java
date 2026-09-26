@@ -11,8 +11,10 @@ import java.util.Collections;
 import java.util.List;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Reader for OffsetIndex from Thrift Compact Protocol.
 ///
@@ -30,6 +32,25 @@ public class OffsetIndexReader {
         finally {
             reader.popFieldIdContext(saved);
         }
+    }
+
+    /// Reads the OffsetIndex of a column chunk and checks it against the chunk's metadata.
+    ///
+    /// An OffsetIndex locates every data page of its chunk, so one that lists no page for a
+    /// chunk with values is malformed: a read planned from it would fetch none of the chunk.
+    /// The struct alone cannot tell, as `page_locations` is a list that may be empty, so the
+    /// check needs the chunk's `num_values`. Every read that plans pages or filters them from
+    /// an OffsetIndex parses it here.
+    ///
+    /// @param chunkMetaData the metadata of the chunk the index belongs to, or `null` for a
+    ///        chunk whose metadata is not inline, which is then not checked
+    public static OffsetIndex read(ThriftCompactReader reader, ColumnMetaData chunkMetaData) {
+        OffsetIndex offsetIndex = read(reader);
+        if (chunkMetaData != null && chunkMetaData.numValues() > 0 && offsetIndex.pageLocations().isEmpty()) {
+            throw new ParquetReadException("Malformed Parquet metadata: OffsetIndex.page_locations"
+                    + " is empty but the column chunk has " + chunkMetaData.numValues() + " values");
+        }
+        return offsetIndex;
     }
 
     private static OffsetIndex readInternal(ThriftCompactReader reader) {

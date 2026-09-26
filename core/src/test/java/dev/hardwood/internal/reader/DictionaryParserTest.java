@@ -86,8 +86,8 @@ class DictionaryParserTest {
             }
         })
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[dict_misplaced_page_offset.parquet] Failed to compute fetch plan"
-                        + " for column 0 in row group 0: Malformed Parquet metadata: the"
+                .hasMessage("[dict_misplaced_page_offset.parquet: row group 0, column 'label'] Failed to"
+                        + " compute the fetch plan: Malformed Parquet metadata: the"
                         + " dictionary page at offset 61 lies after the first data page at"
                         + " offset 60");
     }
