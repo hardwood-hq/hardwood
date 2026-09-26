@@ -8,7 +8,6 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -22,6 +21,7 @@ import org.aesh.command.option.Option;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.PageHeaderWalk;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.ValueFormatter;
@@ -32,7 +32,6 @@ import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
-import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
@@ -459,20 +458,29 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         ColumnMetaData cmd = chunk.metaData();
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
-        long chunkSize = cmd.totalCompressedSize();
+        PageRows rows = new PageRows(trackRowIndex, cmd.numValues());
+        PageHeaderWalk.walk(inputFile, chunkStart, cmd.totalCompressedSize(), PageHeaderWalk.WINDOW_BYTES,
+                rows::add);
+        return rows.rows;
+    }
 
-        ByteBuffer buffer = inputFile.readRange(chunkStart, Math.toIntExact(chunkSize));
+    /// Collects one row per page header, numbering data pages and, when asked, tracking the first
+    /// row of each; stops the walk once the data pages hold every value the chunk declares.
+    private static final class PageRows {
 
-        List<PageInfo> rows = new ArrayList<>();
-        int pageIndex = 0;
-        long valuesRead = 0;
-        int position = 0;
+        private final boolean trackRowIndex;
+        private final long chunkValues;
+        private final List<PageInfo> rows = new ArrayList<>();
+        private int pageIndex;
+        private long valuesRead;
 
-        while (position < buffer.limit()) {
-            ThriftCompactReader headerReader = new ThriftCompactReader(buffer, position);
-            PageHeader header = PageHeaderReader.read(headerReader);
-            int headerSize = headerReader.getBytesRead();
+        PageRows(boolean trackRowIndex, long chunkValues) {
+            this.trackRowIndex = trackRowIndex;
+            this.chunkValues = chunkValues;
+        }
 
+        /// @return whether the walk goes on
+        boolean add(PageHeader header) {
             boolean isDictionary = header.type() == PageType.DICTIONARY_PAGE;
             String label = isDictionary ? "dict" : String.valueOf(pageIndex);
             Long firstRowIndex = null;
@@ -498,15 +506,12 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             if (header.type() == PageType.DATA_PAGE || header.type() == PageType.DATA_PAGE_V2) {
                 valuesRead += numValues(header);
                 pageIndex++;
-                if (valuesRead >= cmd.numValues()) {
-                    break;
+                if (valuesRead >= chunkValues) {
+                    return false;
                 }
             }
-
-            position += headerSize + header.compressedPageSize();
+            return true;
         }
-
-        return rows;
     }
 
     private static Statistics inlineStatsOf(PageHeader header) {

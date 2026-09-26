@@ -9,18 +9,16 @@ package dev.hardwood.cli.dive;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.metadata.ColumnMetaData;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The byte-level chunk reads dive makes outside the read pipeline stay bounded by what they
-/// need, so a column chunk larger than one `readRange` can address is still inspectable.
+/// The dictionary read dive makes outside the read pipeline stays bounded by what it needs, so
+/// a column chunk larger than one `readRange` can address is still inspectable.
 class ParquetModelChunkReadTest {
 
     /// One row group, 10 000 rows; column 1 (`category`) is dictionary-encoded with 10 entries.
@@ -42,28 +40,5 @@ class ParquetModelChunkReadTest {
             assertThat(counting.bytesRead() - before).isEqualTo(dictionaryPageBytes)
                     .isLessThan(metaData.totalCompressedSize());
         }
-    }
-
-    /// A window smaller than a page makes headers straddle window ends and bodies span several
-    /// windows; the walk must find the same headers as one read of the whole chunk.
-    @Test
-    void walkingPageHeadersInWindowsFindsTheSameHeaders() throws IOException {
-        try (ParquetModel model = ParquetModel.open(InputFile.of(FIXTURE), "column_index_pushdown_dict.parquet")) {
-            ColumnMetaData metaData = model.chunk(0, DICTIONARY_COLUMN).metaData();
-            List<PageHeader> whole = model.pageHeaders(0, DICTIONARY_COLUMN);
-
-            List<PageHeader> windowed = ParquetModel.walkPageHeaders(model.inputFile(),
-                    metaData.dictionaryPageOffset(), metaData.totalCompressedSize(), 16);
-
-            assertThat(whole).hasSizeGreaterThan(2);
-            assertThat(shapes(windowed)).isEqualTo(shapes(whole));
-        }
-    }
-
-    /// Headers carry statistics as `byte[]`, which records compare by identity.
-    private static List<String> shapes(List<PageHeader> headers) {
-        return headers.stream()
-                .map(h -> h.type() + " " + h.compressedPageSize() + "/" + h.uncompressedPageSize())
-                .toList();
     }
 }
