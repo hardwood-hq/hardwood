@@ -185,8 +185,7 @@ public interface OutputFile extends Closeable {
   In-flight bytes are bounded to the part size times a small concurrency multiple, so a
   fast producer cannot outrun the uploads; `CreateMultipartUpload` is deferred until the
   first part flushes, with a single `PutObject` for an output that never exceeds one part.
-  It reuses the read-side S3 / SigV4 stack (`_designs-legacy/S3_OBJECT_STORAGE.md`,
-  `_designs-legacy/S3_ZERO_SDK.md`).
+  It reuses the read-side S3 / SigV4 stack (`_designs/S3_STORAGE.md`).
 
 A file is valid only after `close()` returns successfully. A writer abandoned before
 `close()` produces no footer and therefore no readable file.

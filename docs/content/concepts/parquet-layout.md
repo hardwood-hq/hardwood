@@ -79,13 +79,13 @@ compress well (similar values adjacent) and can be read in isolation (projection
 records each chunk's compressed and uncompressed size, codec, and statistics.
 
 !!! info "2 GB column-chunk limit"
-    A column chunk is addressed within Hardwood as a single in-memory region, so each chunk must
-    be at most 2 GB of *compressed* data. The limit is per chunk, not per file. Local
-    memory-mapped files and S3-backed files may be arbitrarily large overall; the in-memory
-    (`ByteBuffer`) backend additionally caps the *whole file* at 2 GB, and the `dive` TUI caps
-    S3 files at 2 GB because its mmap-backed range cache uses `MappedByteBuffer`. For datasets
-    that don't fit a single supported file, split the data into multiple files at write time and
-    read them as one; see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
+    A column chunk read without an OffsetIndex must be at most 2 GB of *compressed* data; a
+    chunk with an OffsetIndex is read in page groups and has no such limit. Files larger than
+    2 GB are read both locally and from S3, except by the in-memory (`ByteBuffer`) backend and by
+    an S3 file with `RangeBacking.SPARSE_TEMPFILE` (the `dive` TUI's S3 mode), which are limited
+    to 2 GB per file. For datasets that don't fit a single supported file, split the data into
+    multiple files at write time and read them as one; see
+    [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
 ### Page
 

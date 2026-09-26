@@ -242,7 +242,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Data page reading and decoding
 - [x] Page decompression
 - [x] Parallel column batch fetching
-- [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs-legacy/PER_FILE_METADATA.md`](_designs-legacy/PER_FILE_METADATA.md))
+- [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
 
 ### 7.3 Record Assembly (Inverse Dremel)
 - [x] Column reader synchronization (via RowReader)

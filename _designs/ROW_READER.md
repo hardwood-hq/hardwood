@@ -128,7 +128,7 @@ Without a filter, `skip(n)` starts the read at physical row `n` of the concatena
 
 | Condition | Path |
 |---|---|
-| Every kept row group can take a per-page row mask on every decoded column (`RowGroupIterator.canFastSkipAllRowGroups`) | `setTailSkip(residue)` gives work item 0 the matching range `[residue, numRows)`. Pages wholly before it are not fetched, and the first page it touches is trimmed to it, so the workers assemble exactly `n` rows |
+| Every kept row group can take a per-page row mask on every decoded column (`RowGroupIterator.canFastSkipAllRowGroups`) | `setTailSkip(residue)` gives work item 0 the matching range `[residue, numRows)`. Pages wholly before it are skipped: an indexed column does not fetch them, a sequential one fetches its chunk and skips their bodies ([FETCH_PLANNING.md](FETCH_PLANNING.md#sequential-plans-under-a-mask)). The first page it touches is trimmed to it, so the workers assemble exactly `n` rows |
 | Any kept row group cannot (for example a nested column with v1 data pages and no OffsetIndex) | The residue is decoded and discarded through `next()`, as for `skip` |
 
 The mask applies to every column of the row group or to none, since masking a subset would leave columns row-misaligned (the capability gate is described in [FETCH_PLANNING.md](FETCH_PLANNING.md)). The tail range must be set before any column requests its fetch plan; `setTailSkip` raises `IllegalStateException` afterwards. The probe plans the whole read, which is one footer because tail is single-file.

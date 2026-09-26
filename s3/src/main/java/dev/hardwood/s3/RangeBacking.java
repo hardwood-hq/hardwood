@@ -8,7 +8,7 @@
 package dev.hardwood.s3;
 
 /// How an [S3InputFile] caches fetched byte ranges. See #373 and the
-/// `_designs-legacy/REMOTE_RANGE_BACKING.md` design doc.
+/// `_designs/S3_STORAGE.md#range-backing` design doc.
 public enum RangeBacking {
 
     /// No range cache. Every [S3InputFile#readRange] call issues an

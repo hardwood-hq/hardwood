@@ -1,6 +1,4 @@
-# Design: the exception model
-
-Status: implemented
+# Exception model
 
 Exception handling is organized along two separate axes: retriability, and whether the
 problem is with a file or with the API invocation.
@@ -15,19 +13,20 @@ whether to fix their code or stop trusting the file.
 | `ParquetReadException` | they arrived and are not valid Parquet | no |
 | `SchemaIncompatibleException` | a `ParquetReadException`: schemas that cannot be reconciled across a multi-file read, or a footer disagreeing with itself | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
-| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, limits on index size and mmap-backed files | no |
-| `IllegalArgumentException`, `NullPointerException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held | no |
+| `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, a column chunk read without an OffsetIndex, a page-index region or a range-backed file over 2 GB | no |
+| `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held | no |
+| `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 
 The caller's side is stated except for one case: asking an accessor for a type the column
-does not hold, where validating cost 4% per accessor and 7–8% end-to-end, above the 3% bar,
-so the call surfaces as whatever cast the decode makes raises. #971 covers putting a better
+does not hold, where validating ahead of the decode would cost every accessor call, so the call surfaces as whatever cast the decode makes raises. #971 covers putting a better
 error back if it can be made free, which the exception path is: it runs only once the call
 has already failed.
 
-`getDate`, `getUuid` and `getInterval` are outside that, because no cast on their way to the
-value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
+`getDate`, `getUuid`, `getInterval` and `getString` are outside that, because no cast on
+their way to the value can fail. A `DATE`, a bare `INT32` and a `TIME(MILLIS)` are one `int[]`, and every
 `FIXED_LEN_BYTE_ARRAY` of the right width is one `BinaryBatchValues` — an `INT96` included,
-which is 12 bytes and so reads as an `INTERVAL`. Each of the three checks the annotation
+which is 12 bytes and so reads as an `INTERVAL`. Every byte column decodes to some text.
+Each of the four checks the annotation
 first (`LogicalAccessorKind`), since what it buys is not a better exception but the only one
 there is.
 
@@ -41,7 +40,10 @@ An internal type may still carry a condition between two frames, as long as a bo
 catches it and reissues one of the above. `EncryptedFileException` carries "this footer is
 encrypted" up to `ParquetMetadataReader`, which raises the `UnsupportedOperationException`
 the caller sees. The single catch site is what makes that safe: a type thrown where no frame
-is guaranteed to catch it will reach a caller eventually.
+is guaranteed to catch it will reach a caller eventually. `ThriftTruncatedException`, an
+internal `ParquetReadException` subclass the page-header readers catch to grow a short read, is
+restated as a plain `ParquetReadException` at every boundary that classifies a failure, so
+no caller holds it.
 
 A new public type earns its place only where a caller would act on it. Where the response is
 the same — retry, give up, report — the distinction belongs in the message every one of these
@@ -68,13 +70,12 @@ General structure: `[context] <problem>`.
 The context is the file, the row group, the column and the page, each left out where the
 reader could not determine it. A file's fault carries all of it; a caller's error carries the
 file name alone, since the fix is the same wherever the reader had got to. Because the
-context names the column, the problem does not.
+context names the column, the problem does not (#1158 covers the messages that still do).
 
 The row group and page are the file's own indexes, not the read's: pruning drops row groups
 and a page filter drops pages before either is read. A byte offset is not carried: it is
 known only deep inside a parse, with no boundary there to hand it to. The context lives in
-the message only; putting it on the exception as fields, so that callers route on it without
-parsing, is #1093's remaining half and is not built.
+the message only; `ParquetReadException` carries no position fields.
 
 ## Crossing a thread boundary
 
@@ -84,17 +85,22 @@ passed to `computeIfAbsent`. Those are the only places an I/O failure is wrapped
 caller sees one. **A boundary counts when the language forbids the declaration, not when an
 interface we chose happens to.**
 
-The read pipeline's three threads — page retriever, page decoder, batch assembler — meet at
-boundaries that catch `Exception`, record where they were, and hand it to the consumer.
-Whatever the decoders raise there becomes a `ParquetReadException` keeping the original as
-its cause: a judgement about which mistake to make, since otherwise every corrupt file raises
-an `ArrayIndexOutOfBoundsException` out of a reader. An `Error` is neither retyped nor placed
+The read pipeline's threads (retriever, decode tasks, drain) meet at boundaries that catch
+`Exception`, record where they were, and hand it to the consumer
+([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)). Whatever the decoders raise there,
+other than an `UnsupportedOperationException`, becomes a `ParquetReadException` keeping the
+original as its cause: a judgement about which mistake to make, since otherwise every corrupt file raises
+an `ArrayIndexOutOfBoundsException` out of a reader. `ExceptionContext.asReadFailure` does
+this, also where a footer is loaded and in the byte-level reads outside the pipeline (dive's
+`ParquetModel`, `inspect pages`, `inspect dictionary`, `inspect columns`). An `Error` is neither retyped nor placed
 and reaches the consumer as raised, but is recorded on the way past, or a consumer waiting on
 work that thread will never finish waits for ever.
 
 A prefetch is the exception: nothing waits on it, so a failure has nobody to report to and is
 logged at DEBUG and dropped. That is safe because the buffer field is assigned only on
-success, so nothing is cached and the demand path redoes the work with a caller waiting.
+success, so nothing is cached and the demand path redoes the work with a caller waiting. The
+iterator's close waits for running prefetches (`PrefetchTasks`) before the file closes. A
+footer prefetch is different: `FileMetadataCache` keeps its failure and rethrows it on demand.
 
 ## An annotation the reader cannot use is dropped, not raised
 
