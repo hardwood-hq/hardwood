@@ -72,7 +72,8 @@ class WriterSchemaShapeTest {
 
         // Refused before the destination was opened, so there is nothing at it to clean up.
         assertThatThrownBy(out::position)
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("OutputFile not created");
     }
 
     @Test
@@ -358,6 +359,57 @@ class WriterSchemaShapeTest {
         }
     }
 
+    /// The writer stores each level in a byte, so a column nested deeper than 255 levels cannot
+    /// be written. Here 256 `OPTIONAL` structs around an `OPTIONAL` leaf give it a maximum
+    /// definition level of 257. The depth is a property of the schema, so the rejection comes
+    /// before the destination is opened.
+    @Test
+    void rejectsAColumnNestedDeeperThanTheLevelLimit() {
+        FileSchema schema = optionalLeafUnderOptionalStructs(256);
+        assertThat(schema.getColumn(0).maxDefinitionLevel()).isEqualTo(257);
+        List<String> path = new ArrayList<>();
+        for (int i = 0; i < 256; i++) {
+            path.add("s" + i);
+        }
+        path.add("v");
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(out, schema))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Column " + String.join(".", path) + " nests deeper than the writer supports:"
+                        + " its maximum definition level is 257 and its maximum repetition level is 0,"
+                        + " where levels must fit 255");
+
+        // Refused before the destination was opened.
+        assertThatThrownBy(out::position)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("OutputFile not created");
+    }
+
+    /// The limit is inclusive: 254 `OPTIONAL` structs around an `OPTIONAL` leaf give it a
+    /// maximum definition level of exactly 255, which the byte-wide level store holds, so the
+    /// column is written and reads back with both a present and a null leaf.
+    @Test
+    void writesAColumnNestedExactlyToTheLevelLimit() throws Exception {
+        FileSchema schema = optionalLeafUnderOptionalStructs(254);
+        assertThat(schema.getColumn(0).maxDefinitionLevel()).isEqualTo(255);
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .ints(0, new int[] { 7, 0 }, new boolean[] { false, true }));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ColumnReader column = reader.columnReader(0)) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getRecordCount()).isEqualTo(2);
+            assertThat(column.getInts()[0]).isEqualTo(7);
+            assertThat(column.getLeafValidity().isNull(0)).isFalse();
+            assertThat(column.getLeafValidity().isNull(1)).isTrue();
+        }
+    }
+
     /// A schema the writer cannot produce must leave the destination as it found it.
     /// `ChannelOutputFile` streams to a temporary sibling and renames on close, so a refusal
     /// after the destination was opened orphans that sibling for good — nothing later would
@@ -395,6 +447,18 @@ class WriterSchemaShapeTest {
         try (Stream<Path> entries = Files.list(dir)) {
             assertThat(entries).isEmpty();
         }
+    }
+
+    /// A schema of one `OPTIONAL` `INT32` leaf `v` under `depth` nested `OPTIONAL` structs
+    /// `s0` … `s{depth - 1}`, so its maximum definition level is `depth + 1`.
+    private static FileSchema optionalLeafUnderOptionalStructs(int depth) {
+        List<SchemaElement> elements = new ArrayList<>();
+        elements.add(SchemaElement.root("schema", 1));
+        for (int i = 0; i < depth; i++) {
+            elements.add(SchemaElement.group("s" + i, RepetitionType.OPTIONAL, 1));
+        }
+        elements.add(SchemaElement.primitive("v", PhysicalType.INT32, RepetitionType.OPTIONAL));
+        return FileSchema.fromSchemaElements(elements);
     }
 
     /// Reads a list column back as one list of values per record, so what the writer emitted
