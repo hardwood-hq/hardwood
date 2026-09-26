@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -19,8 +20,9 @@ import dev.hardwood.internal.FetchReason;
 ///
 /// Multiple pages within a column share a `ChunkHandle` (one handle per
 /// coalesced page group). The actual `readRange()` call is deferred until
-/// the first page in this chunk is accessed. After fetching, async pre-fetch
-/// of the next chunk handle is triggered to overlap I/O with decode.
+/// the first page in this chunk is accessed. The first access that finds a next
+/// chunk handle chained triggers its async pre-fetch, whether this handle's bytes
+/// were fetched by that access or earlier by a pre-fetch, to overlap I/O with decode.
 ///
 /// For local files backed by memory-mapped I/O, `readRange()` returns a
 /// zero-copy slice — the fetch is instant and pre-fetch is effectively a no-op.
@@ -40,6 +42,10 @@ public class ChunkHandle {
     private final SharedRegion region;
     private volatile ChunkHandle nextChunk;
     private volatile ByteBuffer data;
+    /// Set by the first [#ensureFetched] that finds a next chunk chained, which
+    /// starts that chunk's pre-fetch. A handle a pre-fetch fetched still pre-fetches
+    /// its successor when the read reaches it, so pre-fetch stays one chunk ahead.
+    private final AtomicBoolean nextChunkPrefetched = new AtomicBoolean();
 
     /// Creates a chunk handle for a byte range in the given file.
     ///
@@ -91,48 +97,51 @@ public class ChunkHandle {
     }
 
     /// Ensures the chunk data is fetched. Triggers fetch on first call,
-    /// returns cached data on subsequent calls. After fetching, kicks off
-    /// async pre-fetch of the next chunk (one-ahead only — the pre-fetch
-    /// does not chain further).
+    /// returns cached data on subsequent calls. The first call made while a
+    /// next chunk is chained kicks off async pre-fetch of that chunk, whether
+    /// this call fetched the data or found it already fetched by a pre-fetch;
+    /// a pre-fetch fetches through [#fetchData] and so does not chain further.
     ///
     /// @return the fetched data buffer
     public ByteBuffer ensureFetched() throws IOException {
         ByteBuffer buf = data;
-        if (buf != null) {
-            return buf;
+        if (buf == null) {
+            fetchData();
+            buf = data;
         }
-        fetchData();
         // Region-backed handles delegate pre-fetch to SharedRegion.nextRegion,
         // not to the per-handle nextChunk chain — the chain may still be set
         // by the per-column page-group construction, but it would re-fetch
         // bytes the shared region already covers.
         if (region != null) {
-            return data;
+            return buf;
         }
-        // Pre-fetch next chunk asynchronously (one-ahead only — fetchData
-        // does not trigger further pre-fetches)
         ChunkHandle next = nextChunk;
-        if (next != null) {
-            // Carry the caller's FetchReason across the thread handoff;
-            // otherwise the next-chunk readRange would log as `unattributed`.
-            CompletableFuture.runAsync(FetchReason.bind(() -> {
-                try {
-                    next.fetchData();
-                }
-                catch (IOException e) {
-                    // Speculative: nothing is waiting on this, and a failed prefetch
-                    // leaves the handle unfetched, so the demand path fetches it again
-                    // and reports the failure to a caller that is waiting for it.
-                    // DEBUG rather than WARN so a sustained backend outage does not
-                    // emit one line per chunk for failures that are about to be
-                    // reported properly.
-                    LOG.log(System.Logger.Level.DEBUG,
-                            "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
-                            next.fileOffset, next.length, next.inputFile.name(), e);
-                }
-            }));
+        if (next != null && !nextChunkPrefetched.get() && nextChunkPrefetched.compareAndSet(false, true)) {
+            prefetch(next);
         }
-        return data;
+        return buf;
+    }
+
+    /// Fetches `next` asynchronously, carrying the caller's [FetchReason] across
+    /// the thread handoff; otherwise the next-chunk readRange would log as `unattributed`.
+    private static void prefetch(ChunkHandle next) {
+        CompletableFuture.runAsync(FetchReason.bind(() -> {
+            try {
+                next.fetchData();
+            }
+            catch (IOException e) {
+                // Speculative: nothing is waiting on this, and a failed prefetch
+                // leaves the handle unfetched, so the demand path fetches it again
+                // and reports the failure to a caller that is waiting for it.
+                // DEBUG rather than WARN so a sustained backend outage does not
+                // emit one line per chunk for failures that are about to be
+                // reported properly.
+                LOG.log(System.Logger.Level.DEBUG,
+                        "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
+                        next.fileOffset, next.length, next.inputFile.name(), e);
+            }
+        }));
     }
 
     /// Fetches this chunk's data if not already cached. Does NOT trigger
