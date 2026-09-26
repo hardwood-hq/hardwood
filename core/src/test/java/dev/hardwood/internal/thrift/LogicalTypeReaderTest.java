@@ -88,7 +88,7 @@ class LogicalTypeReaderTest {
 
         assertThatThrownBy(() -> read(writer))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Invalid IntType: bitWidth=-1");
+                .hasMessage("IntType is missing required field: bitWidth");
     }
 
     @Test

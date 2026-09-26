@@ -200,8 +200,8 @@ class Float16LogicalTypeTest {
     }
 
     /// The same relabelling, aimed at the annotations the other conversions read.
-    /// `duration` is `FIXED_LEN_BYTE_ARRAY(12)`, so neither `DATE` nor `TIME` can be read from
-    /// it whatever the values say, and each is dropped the same way. The
+    /// `duration` is `FIXED_LEN_BYTE_ARRAY(12)`, so `DATE` cannot be read from it whatever the
+    /// values say, and is dropped the same way. The
     /// accessor that would have converted then fails as it does on any unannotated column,
     /// rather than reporting the file.
     ///
@@ -220,11 +220,13 @@ class Float16LogicalTypeTest {
     }
 
     /// Union variant bytes: the low nibble is the STRUCT wire type, the high nibble the
-    /// field-id delta from zero — so `0x6C` is `DATE` (6), `0x7C` `TIME` (7) and `0xEC` `UUID`
-    /// (14). The first two cannot be read from a `FIXED_LEN_BYTE_ARRAY` at all; `UUID` can, but
-    /// only at sixteen bytes. `TIMESTAMP` (8) is left out: twelve bytes are one of its carriers.
+    /// field-id delta from zero — so `0x6C` is `DATE` (6) and `0xEC` `UUID` (14). `DATE` cannot
+    /// be read from a `FIXED_LEN_BYTE_ARRAY` at all; `UUID` can, but only at sixteen bytes.
+    /// `TIMESTAMP` (8) is left out: twelve bytes are one of its carriers. `TIME` (7) is left out
+    /// because its member struct has required fields, which the empty `INTERVAL` struct being
+    /// relabelled does not carry, so the footer fails to parse before the annotation is weighed.
     static Stream<Arguments> contradictedAnnotations() {
-        return Stream.of(Arguments.of(0x6C), Arguments.of(0x7C), Arguments.of(0xEC));
+        return Stream.of(Arguments.of(0x6C), Arguments.of(0xEC));
     }
 
     /// `interval_logical_type_test.parquet` with `duration`'s `LogicalType` union variant
