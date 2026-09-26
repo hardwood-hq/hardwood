@@ -109,6 +109,12 @@ public class RowGroupIterator implements Closeable {
     private long plannedRows;
     private long planSkipRemaining;
     private boolean metadataFilteringEnabled = true;
+    /// The failure that ended planning, rethrown to every later request for a work item
+    /// past the files planned before it. See [#planNextFile].
+    private Throwable planningFailure;
+    /// How many work items the files planned before the failed one make up. The failed
+    /// file's own row groups, appended before it failed, lie past it and are not handed out.
+    private int workItemsBeforeFailure;
 
     /// Reference schema leaf ordinals this read touches: every projected column plus
     /// every column the filter tests — a predicate column need not be projected, but
@@ -649,18 +655,27 @@ public class RowGroupIterator implements Closeable {
     /// file prefetches into the next one rather than stopping at the boundary — which
     /// is the one step of a read this prefetch exists to cover.
     ///
-    /// That call stays on the caller. Planning a file validates its schema against the
-    /// reference and throws when they disagree; raised inside the fire-and-forget task
-    /// below, the throw would be lost and the file skipped, with its rows silently
-    /// missing from the read. The caller is the retriever, and what it blocks on is the
-    /// next file's footer, whose read [#triggerPrefetch] has already started — except
-    /// under a filter, where planning also probes that file's bloom filters, which
-    /// nothing has started.
+    /// That call stays on the caller, so that planning the next file is done by the time the
+    /// read reaches it. The caller is the retriever, and what it blocks on is the next file's
+    /// footer, whose read [#triggerPrefetch] has already started — except under a filter,
+    /// where planning also probes that file's bloom filters, which nothing has started.
+    ///
+    /// A planning failure is not raised here. The iterator keeps it, and every column's own
+    /// request for the next work item rethrows it, so each column fails when its read reaches
+    /// the failed file, with the failure as planning raised it. Raised here, it would fail
+    /// the current row group, which is readable, and be reported as a failure in it.
     ///
     /// Called by [#getColumnPlan] after its `computeIfAbsent` returns, never from inside
     /// it: this blocks, and a mapping function holds a bin lock for its whole duration.
-    private void prefetchNextRowGroup(WorkItem currentWorkItem) throws IOException {
-        WorkItem nextWorkItem = workItemAt(currentWorkItem.workItemIndex() + 1);
+    private void prefetchNextRowGroup(WorkItem currentWorkItem) {
+        WorkItem nextWorkItem;
+        try {
+            nextWorkItem = workItemAt(currentWorkItem.workItemIndex() + 1);
+        }
+        catch (IOException | RuntimeException | Error e) {
+            // The planning failure, kept by planNextFile for the next request to rethrow.
+            return;
+        }
         if (nextWorkItem == null) {
             return;
         }
@@ -1266,7 +1281,47 @@ public class RowGroupIterator implements Closeable {
     /// against the reference, and with a filter probes its bloom filters, so a file
     /// is planned when the read reaches it rather than when the reader was built.
     /// See #1107. Dictionaries are read later, when the read reaches each row group.
+    ///
+    /// A failure is sticky: once planning a file has thrown, every later call rethrows it.
+    /// Each column plans on its own retriever thread, and a column that found nothing left
+    /// to plan would end its stream cleanly while the column that hit the failure has yet
+    /// to report it, so the read could end empty without an exception (#1278). Retrying the
+    /// file is no option either, as the row groups it added before failing are in the work
+    /// list already.
     private synchronized boolean planNextFile() throws IOException {
+        rethrowPlanningFailure();
+        int plannedBefore = workItems.size();
+        try {
+            return planFile();
+        }
+        catch (IOException | RuntimeException | Error e) {
+            planningFailure = e;
+            workItemsBeforeFailure = plannedBefore;
+            throw e;
+        }
+    }
+
+    /// Rethrows the failure that ended planning, if any, as the type it was raised as.
+    ///
+    /// An `Error` is kept as well: the column worker reports one to its exchange like any
+    /// other failure, and a column handed `null` past it would end the read just as silently.
+    ///
+    /// The same instance reaches every column, and the column worker never alters it: naming
+    /// where the read was, or retyping it, makes a new instance. The one change made in place
+    /// is a later failure attached with `addSuppressed`, which is thread-safe.
+    private void rethrowPlanningFailure() throws IOException {
+        if (planningFailure instanceof IOException io) {
+            throw io;
+        }
+        if (planningFailure instanceof RuntimeException re) {
+            throw re;
+        }
+        if (planningFailure instanceof Error err) {
+            throw err;
+        }
+    }
+
+    private boolean planFile() throws IOException {
         if (nextFileToPlan >= inputFiles.size() || planRowBudget <= 0) {
             return false;
         }
@@ -1358,9 +1413,18 @@ public class RowGroupIterator implements Closeable {
     /// Synchronized because every projected column walks this list on its own
     /// retriever thread, and a step past the planned end plans another file.
     /// Planning mutates shared state, so exactly one column may do it at a time;
-    /// the others see the finished result.
+    /// the others see the finished result, or the failure that ended planning.
+    ///
+    /// A work item of a file planned before the failed one is still handed out: the column
+    /// whose prefetch planned the failed file can be ahead of the others, and a column
+    /// failed short of it would return fewer rows of those files than the others.
     public synchronized WorkItem workItemAt(int index) throws IOException {
-        ensurePlannedThrough(index);
+        if (planningFailure == null) {
+            ensurePlannedThrough(index);
+        }
+        else if (index >= workItemsBeforeFailure) {
+            rethrowPlanningFailure();
+        }
         return index < workItems.size() ? workItems.get(index) : null;
     }
 
