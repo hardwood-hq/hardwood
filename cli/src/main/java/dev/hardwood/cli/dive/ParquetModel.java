@@ -193,7 +193,7 @@ public final class ParquetModel implements AutoCloseable {
         }
         ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         ColumnIndex result = null;
-        if (buffers != null && buffers.columnIndex() != null) {
+        if (buffers.columnIndex() != null) {
             try {
                 result = ColumnIndexReader.read(new ThriftCompactReader(buffers.columnIndex()));
             }
@@ -214,7 +214,7 @@ public final class ParquetModel implements AutoCloseable {
         }
         ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         OffsetIndex result = null;
-        if (buffers != null && buffers.offsetIndex() != null) {
+        if (buffers.offsetIndex() != null) {
             try {
                 result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
             }
@@ -226,11 +226,10 @@ public final class ParquetModel implements AutoCloseable {
         return result;
     }
 
-    /// Lazy per-RG fetch of the contiguous offset+column index region. One
-    /// `readRange` per row group instead of N per chunk — the index entries
-    /// are stored contiguously in the Parquet footer, so there's no advantage
-    /// to fetching them one at a time, and on remote storage a single
-    /// round-trip is much cheaper than N small ones.
+    /// Lazy per-RG fetch of every column's offset and column index. A row group's
+    /// entries of each structure are stored contiguously, so this is one `readRange`
+    /// per structure instead of N per chunk, and on remote storage two round trips
+    /// are much cheaper than N small ones.
     private RowGroupIndexBuffers indexBuffersFor(int rowGroupIndex) {
         return indexBuffersCache.computeIfAbsent(rowGroupIndex, rg -> {
             try {

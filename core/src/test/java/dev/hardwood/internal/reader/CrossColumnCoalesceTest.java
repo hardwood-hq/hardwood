@@ -87,8 +87,8 @@ class CrossColumnCoalesceTest {
             int readsForData = countingFile.readCount() - readsBefore;
             // 3 columns, all back-to-back, no filter → all 3 first
             // chunks coalesce into one region. The pipeline also fetches
-            // the per-RG index region (OffsetIndex / ColumnIndex), so
-            // expect at most 2 reads (1 region + 1 index buffer).
+            // the page index (the OffsetIndexes, unfiltered), so expect at
+            // most 2 reads (1 region + 1 index request).
             assertThat(readsForData)
                     .as("Data fetches should coalesce to ≤ 2 ranged GETs (was %d)", readsForData)
                     .isLessThanOrEqualTo(2);

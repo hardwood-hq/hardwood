@@ -92,7 +92,7 @@ public class PageFilterEvaluator {
         }
 
         ColumnIndexBuffers colBuffers = indexBuffers.forColumn(columnIndex);
-        if (colBuffers == null || colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
+        if (colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
             return RowRanges.all(rowCount);
         }
 

@@ -10,6 +10,7 @@ package dev.hardwood.internal.thrift;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Reader for ColumnChunk from Thrift Compact Protocol.
 public class ColumnChunkReader {
@@ -85,8 +86,22 @@ public class ColumnChunkReader {
         if (!fileOffsetSeen) {
             throw ThriftCompactReader.missingFields(ThriftStruct.COLUMN_CHUNK, 2);
         }
+        requireBothOrNeither(offsetIndexOffset, offsetIndexLength, 4, 5);
+        requireBothOrNeither(columnIndexOffset, columnIndexLength, 6, 7);
 
         return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset,
                 columnIndexLength, filePath);
+    }
+
+    /// Fails when a page-index structure is located by only one of its two fields: an offset
+    /// without a length, or a length without an offset, locates no bytes to read.
+    private static void requireBothOrNeither(Long offset, Integer length, int offsetFieldId,
+            int lengthFieldId) {
+        if ((offset == null) != (length == null)) {
+            ThriftStruct struct = ThriftStruct.COLUMN_CHUNK;
+            throw new ParquetReadException(struct.structName() + " sets "
+                    + struct.fieldName(offset == null ? lengthFieldId : offsetFieldId) + " without "
+                    + struct.fieldName(offset == null ? offsetFieldId : lengthFieldId));
+        }
     }
 }

@@ -473,9 +473,10 @@ public class RowGroupIterator implements Closeable {
                     }
                 }
                 boolean pageFiltering = filterPredicate != null && metadataFilteringEnabled;
+                BitSet columnIndexColumns = columnIndexColumns(workItem, pageFiltering);
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
                         workItem.inputFile(), workItem.rowGroup(),
-                        pageFiltering);
+                        offsetIndexColumns(workItem, columnIndexColumns), columnIndexColumns);
 
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
@@ -499,6 +500,31 @@ public class RowGroupIterator implements Closeable {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// The file ordinals of the columns whose ColumnIndex the read of `workItem` needs: the filter
+    /// columns under page filtering, none otherwise.
+    private static BitSet columnIndexColumns(WorkItem workItem, boolean pageFiltering) {
+        BitSet columns = new BitSet();
+        if (pageFiltering) {
+            ResolvedPredicate.collectColumnIndices(workItem.columnOrdinals().filter(), columns);
+        }
+        return columns;
+    }
+
+    /// The file ordinals of the columns whose OffsetIndex the read of `workItem` needs: every
+    /// decoded column the row group reads, to plan its page fetches, and every column in
+    /// `columnIndexColumns`, to map its pages to rows. A skipped filter-only column needs none.
+    private BitSet offsetIndexColumns(WorkItem workItem, BitSet columnIndexColumns) {
+        BitSet columns = (BitSet) columnIndexColumns.clone();
+        ProjectedSchema decoded = projection.decoded();
+        int projectedCount = decoded.getProjectedColumnCount();
+        for (int projCol = 0; projCol < projectedCount; projCol++) {
+            if (!skipsColumn(workItem, projCol)) {
+                columns.set(workItem.columnOrdinals().fileOrdinal(decoded.toOriginalIndex(projCol)));
+            }
+        }
+        return columns;
     }
 
     /// Runs the page-format probe behind the row-group-wide mask gate, see
@@ -531,9 +557,8 @@ public class RowGroupIterator implements Closeable {
     ///
     /// This is the first thing [#getSharedMetadata] does, so it precedes every read the row group
     /// drives: the page index fetched right below, the dictionary and bloom-filter reads that
-    /// prune it, and the fetch plans built from it. The index region alone would already be wrong
-    /// — [RowGroupIndexBuffers#fetch] spans the offsets of *all* the row group's columns, so one
-    /// chunk pointing elsewhere misplaces the region for the rest.
+    /// prune it, and the fetch plans built from it. Every one of those reads takes its offsets
+    /// from the chunk metadata, which addresses the other file for such a chunk.
     ///
     /// @throws UnsupportedOperationException if any chunk names another file
     private static void requireSameFile(WorkItem workItem) {
@@ -808,14 +833,14 @@ public class RowGroupIterator implements Closeable {
             int fileOrdinal = workItem.columnOrdinals().fileOrdinal(originalIndex);
             ColumnChunk columnChunk = rowGroup.columns().get(fileOrdinal);
             ColumnSchema columnSchema = workItem.fileSchema().getColumn(fileOrdinal);
-            ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(fileOrdinal);
-            Dictionary preloadedDictionary = shared.dictionaries() == null
-                    ? null : shared.dictionaries().loaded(fileOrdinal);
-
             if (skipsColumn(workItem, projCol)) {
                 plans[projCol] = SkippedColumnFetchPlan.INSTANCE;
                 continue;
             }
+
+            ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(fileOrdinal);
+            Dictionary preloadedDictionary = shared.dictionaries() == null
+                    ? null : shared.dictionaries().loaded(fileOrdinal);
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via

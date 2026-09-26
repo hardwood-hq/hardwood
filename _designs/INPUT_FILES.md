@@ -95,15 +95,16 @@ The single-read bound turns into limits on regions the read path addresses as on
 |---|---|---|
 | A column chunk in the sequential fetch plan, read in pieces but addressed as one range | 2 GB compressed | `UnsupportedOperationException` from `SequentialFetchPlan.build` |
 | A page | 2 GB (`compressed_page_size` is `i32` in the format) | cannot occur |
-| A row group's coalesced page-index region | 2 GB | `UnsupportedOperationException` from `RowGroupIndexBuffers.fetch` |
+| One OffsetIndex or ColumnIndex | 2 GB (its length is `i32` in the format) | cannot occur |
 
 For local files the effective limit is therefore per column chunk read without an OffsetIndex, not per file; a chunk with an OffsetIndex is read in page groups that each stay within the gap policy's span limit ([parquet-layout.md](../docs/content/concepts/parquet-layout.md#column-chunk)). Every site that narrows a `long` region size to the `int` `readRange` takes uses `Math.toIntExact`, so an oversized region fails before any read rather than wrapping. How the fetch plans split a column chunk into reads is in [FETCH_PLANNING.md](FETCH_PLANNING.md).
 
-Tests: `MappedInputFileLargeFileTest`, `SequentialFetchPlanChunkSizeTest`. The page-index and range-cache limits are untested.
+Page-index slices are merged into requests that stay within the gap policy's span limit, contiguous slices included, unless one slice alone is longer; a slice is at most 2 GB, so no page-index request needs a larger buffer however far apart the slices lie ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
+
+Tests: `MappedInputFileLargeFileTest`, `SequentialFetchPlanChunkSizeTest`, `CoalescedRangesTest`. The range-cache limit is untested.
 
 ## Boundaries
 
 - Mappings are released only by the GC, never at `close()` (#199).
 - In-memory and range-backed files are limited to 2 GB per file (#501; the range-backed case is in [S3_STORAGE.md](S3_STORAGE.md#rangebackedinputfile)).
 - `readRange` does not guarantee a read-only buffer; the in-memory backend can hand out writable views of the user's buffer (#503).
-- A row group whose page-index region spans more than 2 GB cannot be read, although each index structure is within the format's `i32` bound (#1113).

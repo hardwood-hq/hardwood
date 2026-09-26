@@ -9,14 +9,18 @@ package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 class RowGroupIndexBuffersTest {
 
@@ -24,7 +28,7 @@ class RowGroupIndexBuffersTest {
     private static final Path PLAIN_FILE = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
     @Test
-    void fetchesAllColumnIndexesInOneRead() throws Exception {
+    void fetchesEveryColumnsIndexesInOneRequestPerStructure() throws Exception {
         CountingInputFile countingFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
         countingFile.open();
 
@@ -35,8 +39,8 @@ class RowGroupIndexBuffersTest {
         RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(countingFile, rowGroup);
         int readsForFetch = countingFile.readCount() - readsBefore;
 
-        // All column indexes should be fetched in exactly 1 readRange() call
-        assertThat(readsForFetch).isEqualTo(1);
+        // One request per structure
+        assertThat(readsForFetch).isEqualTo(2);
 
         // All 3 columns (id, value, category) should have offset index buffers
         for (int i = 0; i < rowGroup.columns().size(); i++) {
@@ -48,41 +52,45 @@ class RowGroupIndexBuffersTest {
     }
 
     @Test
-    void skipsColumnIndexesWhenNotRequested() throws Exception {
-        CountingInputFile fullIndexFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
-        fullIndexFile.open();
-        FileMetaData fullMeta = ParquetMetadataReader.readMetadata(fullIndexFile);
-        RowGroup fullRowGroup = fullMeta.rowGroups().get(0);
+    void fetchesOnlyTheRequestedSlicesPerStructure() throws Exception {
+        CountingInputFile countingFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
+        countingFile.open();
+        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile);
+        RowGroup rowGroup = meta.rowGroups().get(0);
+        ColumnChunk first = rowGroup.columns().get(0);
+        ColumnChunk last = rowGroup.columns().get(2);
 
-        long fullBytesBefore = fullIndexFile.bytesRead();
-        RowGroupIndexBuffers fullBuffers = RowGroupIndexBuffers.fetch(
-                fullIndexFile, fullRowGroup, true);
-        long fullIndexBytes = fullIndexFile.bytesRead() - fullBytesBefore;
+        int readsBefore = countingFile.readCount();
+        RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(countingFile, rowGroup,
+                BitSet.valueOf(new long[] { 0b101 }), BitSet.valueOf(new long[] { 0b001 }));
 
-        CountingInputFile offsetOnlyFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
-        offsetOnlyFile.open();
-        FileMetaData offsetOnlyMeta = ParquetMetadataReader.readMetadata(offsetOnlyFile);
-        RowGroup offsetOnlyRowGroup = offsetOnlyMeta.rowGroups().get(0);
+        // One request per structure, each spanning only the requested slices.
+        assertThat(countingFile.reads().subList(readsBefore, countingFile.readCount()))
+                .extracting(CountingInputFile.Read::offset, CountingInputFile.Read::length)
+                .containsExactlyInAnyOrder(
+                        tuple(first.columnIndexOffset(), first.columnIndexLength()),
+                        tuple(first.offsetIndexOffset(), Math.toIntExact(last.offsetIndexOffset()
+                                + last.offsetIndexLength() - first.offsetIndexOffset())));
 
-        long offsetOnlyBytesBefore = offsetOnlyFile.bytesRead();
-        RowGroupIndexBuffers offsetOnlyBuffers = RowGroupIndexBuffers.fetch(
-                offsetOnlyFile, offsetOnlyRowGroup, false);
-        long offsetOnlyBytes = offsetOnlyFile.bytesRead() - offsetOnlyBytesBefore;
+        assertThat(buffers.forColumn(0).offsetIndex()).isNotNull();
+        assertThat(buffers.forColumn(0).columnIndex()).isNotNull();
+        assertThat(buffers.forColumn(2).offsetIndex()).isNotNull();
+        assertThat(buffers.forColumn(2).columnIndex()).isNull();
+    }
 
-        assertThat(offsetOnlyBytes)
-                .as("Offset-only index fetch should skip ColumnIndex bytes")
-                .isLessThan(fullIndexBytes);
+    @Test
+    void aColumnTheReadDidNotAskForIsRejected() throws Exception {
+        CountingInputFile countingFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
+        countingFile.open();
+        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile);
+        RowGroup rowGroup = meta.rowGroups().get(0);
 
-        for (int i = 0; i < offsetOnlyRowGroup.columns().size(); i++) {
-            ColumnIndexBuffers colBuffers = offsetOnlyBuffers.forColumn(i);
-            assertThat(colBuffers).as("Column %d", i).isNotNull();
-            assertThat(colBuffers.offsetIndex())
-                    .as("Column %d offset index", i).isNotNull();
-            assertThat(colBuffers.columnIndex())
-                    .as("Column %d column index", i).isNull();
-            assertThat(fullBuffers.forColumn(i).columnIndex())
-                    .as("Column %d full column index", i).isNotNull();
-        }
+        RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(countingFile, rowGroup,
+                BitSet.valueOf(new long[] { 0b001 }), new BitSet());
+
+        assertThatThrownBy(() -> buffers.forColumn(1))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Page index of column 1 was not fetched for this read");
     }
 
     @Test
@@ -100,10 +108,10 @@ class RowGroupIndexBuffersTest {
         // No indexes to fetch — should not issue any readRange() calls
         assertThat(readsForFetch).isEqualTo(0);
 
-        // All columns should return null (no indexes available)
+        // Every column was asked for and has no index
         for (int i = 0; i < rowGroup.columns().size(); i++) {
-            assertThat(buffers.forColumn(i))
-                    .as("Column %d should have no index buffers", i).isNull();
+            assertThat(buffers.forColumn(i).offsetIndex()).as("Column %d offset index", i).isNull();
+            assertThat(buffers.forColumn(i).columnIndex()).as("Column %d column index", i).isNull();
         }
     }
 

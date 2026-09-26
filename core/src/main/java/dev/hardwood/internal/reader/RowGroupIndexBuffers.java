@@ -9,106 +9,110 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
-/// Index buffers for all columns in a single row group.
+/// The page-index slices a read fetched for one row group: the OffsetIndex and ColumnIndex of
+/// the columns it needs, looked up by the column's ordinal in the file via [#forColumn(int)].
 ///
-/// Created by a single `readRange()` call spanning the contiguous
-/// index region in the Parquet footer. Individual column indexes are
-/// accessed by their original column index via [#forColumn(int)].
+/// The slices are views of requests merged per structure by [CoalescedRanges]: ColumnIndex
+/// slices only with ColumnIndex slices, OffsetIndex slices only with OffsetIndex slices.
+/// [#addRanges] and [#slice] let one pair of [CoalescedRanges] serve several row groups.
 public class RowGroupIndexBuffers {
 
     private final ColumnIndexBuffers[] columns;
+    private final BitSet fetched;
 
-    private RowGroupIndexBuffers(ColumnIndexBuffers[] columns) {
+    private RowGroupIndexBuffers(ColumnIndexBuffers[] columns, BitSet fetched) {
         this.columns = columns;
+        this.fetched = fetched;
     }
 
-    /// Returns the index buffers for the given original column index, or `null`
-    /// if no indexes were fetched for that column.
+    /// Returns the index buffers of the column at `columnIndex` in the file. A buffer is `null`
+    /// where the file has no such index for the column, or where the read did not ask for that
+    /// structure.
+    ///
+    /// @throws IllegalStateException if the read did not ask for the column's indexes
     public ColumnIndexBuffers forColumn(int columnIndex) {
-        return (columnIndex < columns.length) ? columns[columnIndex] : null;
+        if (!fetched.get(columnIndex)) {
+            throw new IllegalStateException(
+                    "Page index of column " + columnIndex + " was not fetched for this read");
+        }
+        return columns[columnIndex];
     }
 
-    /// Fetches all offset/column indexes for a row group in a single
-    /// `readRange()` call.
-    ///
-    /// The read spans the lowest to the highest index offset of every column
-    /// chunk in the row group, projected or not. Writers commonly lay out all
-    /// column indexes before all offset indexes, so a span that includes the
-    /// column indexes also covers other row groups' index entries.
-    ///
-    /// @param inputFile the file to read from
-    /// @param rowGroup  the row group whose indexes to fetch
-    public static RowGroupIndexBuffers fetch(InputFile inputFile,
-            RowGroup rowGroup) throws IOException {
-        return fetch(inputFile, rowGroup, true);
-    }
-
-    /// Fetches offset indexes for a row group, and optionally column indexes.
-    ///
-    /// Unfiltered scans need OffsetIndex bytes to plan page reads, but do not
-    /// need ColumnIndex statistics. Filtered scans include both so page-level
-    /// predicate pushdown can evaluate min/max/null-count metadata.
+    /// Fetches the OffsetIndex and ColumnIndex of every column of a row group.
     ///
     /// @param inputFile the file to read from
     /// @param rowGroup the row group whose indexes to fetch
-    /// @param includeColumnIndexes whether ColumnIndex buffers should be fetched
-    public static RowGroupIndexBuffers fetch(InputFile inputFile,
-            RowGroup rowGroup, boolean includeColumnIndexes) throws IOException {
+    public static RowGroupIndexBuffers fetch(InputFile inputFile, RowGroup rowGroup)
+            throws IOException {
+        BitSet all = new BitSet();
+        all.set(0, rowGroup.columns().size());
+        return fetch(inputFile, rowGroup, all, all);
+    }
 
-        List<ColumnChunk> allColumns = rowGroup.columns();
+    /// Fetches the OffsetIndex of the columns in `offsetIndexColumns` and the ColumnIndex of
+    /// those in `columnIndexColumns`, each structure's slices merged on their own.
+    ///
+    /// @param inputFile the file to read from
+    /// @param rowGroup the row group whose indexes to fetch
+    /// @param offsetIndexColumns the file ordinals of the columns whose OffsetIndex is needed
+    /// @param columnIndexColumns the file ordinals of the columns whose ColumnIndex is needed
+    public static RowGroupIndexBuffers fetch(InputFile inputFile, RowGroup rowGroup,
+            BitSet offsetIndexColumns, BitSet columnIndexColumns) throws IOException {
+        CoalescedRanges.Builder offsetIndexes = CoalescedRanges.builder();
+        CoalescedRanges.Builder columnIndexes = CoalescedRanges.builder();
+        addRanges(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexes, columnIndexes);
+        CoalescedRanges offsetIndexRanges = offsetIndexes.build();
+        CoalescedRanges columnIndexRanges = columnIndexes.build();
+        offsetIndexRanges.fetch(inputFile);
+        columnIndexRanges.fetch(inputFile);
+        return slice(rowGroup, offsetIndexColumns, columnIndexColumns, offsetIndexRanges,
+                columnIndexRanges);
+    }
 
-        long minOffset = Long.MAX_VALUE;
-        long maxEnd = Long.MIN_VALUE;
-        for (ColumnChunk col : allColumns) {
-            if (col.offsetIndexOffset() != null) {
-                minOffset = Math.min(minOffset, col.offsetIndexOffset());
-                maxEnd = Math.max(maxEnd,
-                        col.offsetIndexOffset() + col.offsetIndexLength());
-            }
-            if (includeColumnIndexes && col.columnIndexOffset() != null) {
-                minOffset = Math.min(minOffset, col.columnIndexOffset());
-                maxEnd = Math.max(maxEnd,
-                        col.columnIndexOffset() + col.columnIndexLength());
+    /// Adds the slices a row group needs to the builders of the two structures.
+    ///
+    /// @throws IndexOutOfBoundsException if a column ordinal lies outside the row group
+    static void addRanges(RowGroup rowGroup, BitSet offsetIndexColumns, BitSet columnIndexColumns,
+            CoalescedRanges.Builder offsetIndexes, CoalescedRanges.Builder columnIndexes) {
+        List<ColumnChunk> chunks = rowGroup.columns();
+        for (int c = offsetIndexColumns.nextSetBit(0); c >= 0; c = offsetIndexColumns.nextSetBit(c + 1)) {
+            ColumnChunk chunk = chunks.get(c);
+            if (chunk.offsetIndexOffset() != null) {
+                offsetIndexes.add(chunk.offsetIndexOffset(), chunk.offsetIndexLength());
             }
         }
-
-        ColumnIndexBuffers[] result = new ColumnIndexBuffers[allColumns.size()];
-        if (minOffset == Long.MAX_VALUE) {
-            return new RowGroupIndexBuffers(result);
-        }
-
-        long indexRegionSize = maxEnd - minOffset;
-        if (indexRegionSize > Integer.MAX_VALUE) {
-            // The file is correct; this reader will not fetch a region it cannot
-            // address with an int. Not the file's fault, and not something a
-            // second attempt changes.
-            throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Row-group index region too large (" + indexRegionSize
-                    + " bytes) — split the file into smaller row groups");
-        }
-        ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(indexRegionSize));
-
-        for (int i = 0; i < allColumns.size(); i++) {
-            ColumnChunk col = allColumns.get(i);
-            ByteBuffer oi = null;
-            ByteBuffer ci = null;
-            if (col.offsetIndexOffset() != null) {
-                int relOffset = Math.toIntExact(col.offsetIndexOffset() - minOffset);
-                oi = indexRegion.slice(relOffset, col.offsetIndexLength());
+        for (int c = columnIndexColumns.nextSetBit(0); c >= 0; c = columnIndexColumns.nextSetBit(c + 1)) {
+            ColumnChunk chunk = chunks.get(c);
+            if (chunk.columnIndexOffset() != null) {
+                columnIndexes.add(chunk.columnIndexOffset(), chunk.columnIndexLength());
             }
-            if (includeColumnIndexes && col.columnIndexOffset() != null) {
-                int relOffset = Math.toIntExact(col.columnIndexOffset() - minOffset);
-                ci = indexRegion.slice(relOffset, col.columnIndexLength());
-            }
-            result[i] = new ColumnIndexBuffers(oi, ci);
         }
-        return new RowGroupIndexBuffers(result);
+    }
+
+    /// Takes a row group's slices from the fetched ranges its [#addRanges] call planned.
+    static RowGroupIndexBuffers slice(RowGroup rowGroup, BitSet offsetIndexColumns,
+            BitSet columnIndexColumns, CoalescedRanges offsetIndexes, CoalescedRanges columnIndexes) {
+        List<ColumnChunk> chunks = rowGroup.columns();
+        ColumnIndexBuffers[] result = new ColumnIndexBuffers[chunks.size()];
+        BitSet fetched = (BitSet) offsetIndexColumns.clone();
+        fetched.or(columnIndexColumns);
+        for (int c = fetched.nextSetBit(0); c >= 0; c = fetched.nextSetBit(c + 1)) {
+            ColumnChunk chunk = chunks.get(c);
+            ByteBuffer offsetIndex = offsetIndexColumns.get(c) && chunk.offsetIndexOffset() != null
+                    ? offsetIndexes.slice(chunk.offsetIndexOffset(), chunk.offsetIndexLength())
+                    : null;
+            ByteBuffer columnIndex = columnIndexColumns.get(c) && chunk.columnIndexOffset() != null
+                    ? columnIndexes.slice(chunk.columnIndexOffset(), chunk.columnIndexLength())
+                    : null;
+            result[c] = new ColumnIndexBuffers(offsetIndex, columnIndex);
+        }
+        return new RowGroupIndexBuffers(result, fetched);
     }
 }

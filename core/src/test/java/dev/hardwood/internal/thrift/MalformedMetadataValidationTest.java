@@ -95,7 +95,7 @@ class MalformedMetadataValidationTest {
 
     @Test
     void negativeOffsetIndexLengthRejected() {
-        // ColumnChunk: field5 offset_index_length (i32) = -1, which RowGroupIndexBuffers would
+        // ColumnChunk: field5 offset_index_length (i32) = -1, which the page-index read would
         // otherwise pass straight to ByteBuffer.slice().
         byte[] chunk = new ThriftStructBuilder()
                 .field(5, FieldType.I32).i32(-1)
@@ -103,6 +103,30 @@ class MalformedMetadataValidationTest {
         assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("ColumnChunk.offset_index_length \u2014 must be non-negative but was -1");
+    }
+
+    @Test
+    void offsetIndexOffsetWithoutLengthRejected() {
+        // ColumnChunk: field2 file_offset, field4 offset_index_offset, no offset_index_length.
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(4)
+                .field(4, FieldType.I64).i64(100)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnChunk sets offset_index_offset without offset_index_length");
+    }
+
+    @Test
+    void columnIndexLengthWithoutOffsetRejected() {
+        // ColumnChunk: field2 file_offset, field7 column_index_length, no column_index_offset.
+        byte[] chunk = new ThriftStructBuilder()
+                .field(2, FieldType.I64).i64(4)
+                .field(7, FieldType.I32).i32(20)
+                .stop().build();
+        assertThatThrownBy(() -> ColumnChunkReader.read(reader(chunk)))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ColumnChunk sets column_index_length without column_index_offset");
     }
 
     @Test
@@ -158,6 +182,7 @@ class MalformedMetadataValidationTest {
         byte[] chunk = new ThriftStructBuilder()
                 .field(1, FieldType.BINARY).binary(new byte[0])
                 .field(2, FieldType.I64).i64(0)
+                .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
@@ -170,6 +195,7 @@ class MalformedMetadataValidationTest {
         // The field is optional; a chunk that omits it makes no claim about another file.
         byte[] chunk = new ThriftStructBuilder()
                 .field(2, FieldType.I64).i64(0)
+                .field(4, FieldType.I64).i64(1000)
                 .field(5, FieldType.I32).i32(64)
                 .stop().build();
         ColumnChunk columnChunk = assertDoesNotThrow(() -> ColumnChunkReader.read(reader(chunk)));
