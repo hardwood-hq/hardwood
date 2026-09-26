@@ -21,7 +21,8 @@ import dev.hardwood.OutputFile;
 ///
 /// Bytes are streamed to a temporary sibling file and atomically renamed onto the
 /// target path on [#close()], so a failed or abandoned write never leaves a
-/// truncated file presented as a valid Parquet file at the target path.
+/// truncated file presented as a valid Parquet file at the target path. A `close()`
+/// that fails before the rename completes deletes the temporary file.
 ///
 /// Writes are coalesced through an in-memory buffer and flushed to the channel in
 /// bulk, so the many small `write` calls a Parquet footer produces do not each incur a
@@ -82,18 +83,26 @@ public final class ChannelOutputFile implements OutputFile {
         return position;
     }
 
+    /// Flushes the buffer and atomically renames the temporary file onto the target.
+    /// When the flush or the rename fails, the channel is released and the temporary
+    /// file deleted before the failure is rethrown, so nothing is left behind at either
+    /// path; a failure to delete is attached to it as suppressed.
     @Override
     public void close() throws IOException {
         if (channel == null) {
             return;
         }
-        flushBuffer();
-        channel.close();
-        channel = null;
-        buffer = null;
-        Files.move(tempPath, target,
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE);
+        try {
+            flushBuffer();
+            releaseChannel();
+            Files.move(tempPath, target,
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        }
+        catch (IOException | RuntimeException e) {
+            deleteAfterFailure(e);
+            throw e;
+        }
     }
 
     @Override
@@ -102,10 +111,32 @@ public final class ChannelOutputFile implements OutputFile {
             return;
         }
         // Drop the buffered bytes unwritten; the temp file is thrown away anyway.
-        channel.close();
+        releaseChannel();
+        Files.deleteIfExists(tempPath);
+    }
+
+    private void releaseChannel() throws IOException {
+        FileChannel open = channel;
         channel = null;
         buffer = null;
-        Files.deleteIfExists(tempPath);
+        open.close();
+    }
+
+    private void deleteAfterFailure(Exception failure) {
+        if (channel != null) {
+            try {
+                releaseChannel();
+            }
+            catch (IOException e) {
+                failure.addSuppressed(e);
+            }
+        }
+        try {
+            Files.deleteIfExists(tempPath);
+        }
+        catch (IOException e) {
+            failure.addSuppressed(e);
+        }
     }
 
     private void flushBuffer() throws IOException {

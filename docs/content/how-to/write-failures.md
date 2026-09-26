@@ -57,6 +57,6 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
 
 ## The Output Cannot Be Discarded
 
-When the output cannot be released, `close()` or `abort()` throws the `IOException`. Adding it to the original exception with `addSuppressed`, as above, keeps both. On a local file, the temporary sibling of the target path (`<name>.hardwood-tmp`) may then be left behind.
+When the output cannot be released, `close()` or `abort()` throws the `IOException`. Adding it to the original exception with `addSuppressed`, as above, keeps both. On a local file, the temporary sibling of the target path (`<name>.hardwood-tmp`) is left behind only when it cannot be deleted.
 
 The complete rules are in the [Writer Reference](../reference/writer.md#finishing-and-abandoning-a-file).

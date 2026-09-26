@@ -8,15 +8,21 @@
 package dev.hardwood.internal.writer;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Buffering behaviour of [ChannelOutputFile]: writes are coalesced but must reach the
 /// file byte-for-byte and in order, whether they are buffered, span a flush boundary, or
@@ -74,6 +80,52 @@ class ChannelOutputFileTest {
 
         assertThat(Files.exists(file)).isFalse();
         assertThat(Files.exists(dir.resolve("out.bin.hardwood-tmp"))).isFalse();
+    }
+
+    @Test
+    void failedPublishDeletesTemporaryFile(@TempDir Path dir) throws Exception {
+        // A non-empty directory at the target path makes the rename onto it fail.
+        Path file = dir.resolve("out.bin");
+        Files.createDirectory(file);
+        Files.createFile(file.resolve("occupant"));
+        Path tempPath = dir.resolve("out.bin.hardwood-tmp");
+
+        ChannelOutputFile out = new ChannelOutputFile(file);
+        out.create();
+        out.write(ByteBuffer.wrap(filled(100, (byte) 7)));
+
+        assertThatThrownBy(out::close)
+                .isInstanceOf(FileSystemException.class)
+                .hasMessage(tempPath + " -> " + file + ": Is a directory");
+        assertThat(Files.exists(tempPath)).isFalse();
+        assertThat(Files.isDirectory(file)).isTrue();
+
+        // The channel is released: neither call has anything left to do.
+        out.close();
+        out.discard();
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void failedFinalFlushDeletesTemporaryFile(@TempDir Path dir) throws Exception {
+        // The temporary path is a link to /dev/full, which fails every write with ENOSPC.
+        Path file = dir.resolve("out.bin");
+        Path tempPath = dir.resolve("out.bin.hardwood-tmp");
+        Files.createSymbolicLink(tempPath, Path.of("/dev/full"));
+
+        ChannelOutputFile out = new ChannelOutputFile(file);
+        out.create();
+        out.write(ByteBuffer.wrap(filled(100, (byte) 7))); // buffered until close()
+
+        assertThatThrownBy(out::close)
+                .isInstanceOf(IOException.class)
+                .hasMessage("No space left on device");
+        assertThat(Files.exists(tempPath, LinkOption.NOFOLLOW_LINKS)).isFalse();
+        assertThat(Files.exists(file)).isFalse();
+
+        // The channel is released: neither call has anything left to do.
+        out.close();
+        out.discard();
     }
 
     private static byte[] filled(int size, byte value) {
