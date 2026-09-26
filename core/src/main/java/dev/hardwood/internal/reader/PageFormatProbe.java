@@ -48,30 +48,90 @@ public final class PageFormatProbe {
     private PageFormatProbe() {
     }
 
-    /// Returns the page type of the first data page in `columnChunk`. Reads at
-    /// most one bounded `readRange` from `inputFile` (with growth on EOF for
-    /// oversize headers). The dictionary page, if any, is skipped over by
-    /// reading at the column's `dataPageOffset` directly.
+    /// Returns the page type of the first data page in `columnChunk`.
+    ///
+    /// Reads one [#INITIAL_PEEK_SIZE] range at the chunk's `data_page_offset` and takes its
+    /// answer when the bytes there parse as a data page header whose page ends within the
+    /// chunk. Writers have misstated that offset: DuckDB before duckdb/duckdb#10829 understated
+    /// it, pointing into the dictionary page, and a chunk without `dictionary_page_offset` names
+    /// its dictionary page there. When the header does not parse, is a dictionary or index page,
+    /// or overruns the chunk, the probe walks the chunk from its start instead, stepping over
+    /// each dictionary or index page by the length its own header states, the way
+    /// [SequentialFetchPlan] walks the chunk.
     static PageType firstDataPageType(InputFile inputFile,
                                       ColumnChunk columnChunk) throws IOException {
-        long offset = columnChunk.metaData().dataPageOffset();
-        long maxLength = columnChunk.metaData().totalCompressedSize();
-        int peek = (int) Math.min(INITIAL_PEEK_SIZE, maxLength);
-        int peekCeiling = (int) Math.min(MAX_PEEK_SIZE, maxLength);
+        long chunkStart = columnChunk.chunkStartOffset();
+        long chunkEnd = chunkStart + columnChunk.metaData().totalCompressedSize();
+        PageType declared = dataPageAt(inputFile, columnChunk.metaData().dataPageOffset(), chunkStart, chunkEnd);
+        return declared != null ? declared : walkToFirstDataPage(inputFile, chunkStart, chunkEnd);
+    }
+
+    /// The type of the data page whose header is at `offset`, read in a single peek, or `null`
+    /// when the bytes there are not a data page header whose page lies within the chunk.
+    private static PageType dataPageAt(InputFile inputFile, long offset, long chunkStart, long chunkEnd)
+            throws IOException {
+        if (offset < chunkStart || offset >= chunkEnd) {
+            return null;
+        }
+        ThriftCompactReader reader = new ThriftCompactReader(
+                inputFile.readRange(offset, Math.toIntExact(Math.min(INITIAL_PEEK_SIZE, chunkEnd - offset))));
+        PageHeader header;
+        try {
+            header = PageHeaderReader.read(reader);
+        }
+        catch (ParquetReadException notAHeader) {
+            return null;
+        }
+        boolean dataPage = (header.type() == PageType.DATA_PAGE && header.dataPageHeader() != null)
+                || (header.type() == PageType.DATA_PAGE_V2 && header.dataPageHeaderV2() != null);
+        long pageEnd = offset + reader.getBytesRead() + header.compressedPageSize();
+        return dataPage && pageEnd <= chunkEnd ? header.type() : null;
+    }
+
+    /// Walks the chunk's pages from `chunkStart` to the first data page.
+    private static PageType walkToFirstDataPage(InputFile inputFile, long chunkStart, long chunkEnd)
+            throws IOException {
+        long offset = chunkStart;
+        while (offset < chunkEnd) {
+            HeaderAt parsed = readHeader(inputFile, offset, chunkEnd - offset);
+            PageType type = parsed.header().type();
+            if (type != PageType.DICTIONARY_PAGE && type != PageType.INDEX_PAGE) {
+                return type;
+            }
+            long pageEnd = offset + parsed.length() + parsed.header().compressedPageSize();
+            if (pageEnd > chunkEnd) {
+                throw new ParquetReadException("Page at offset " + offset + " ends at offset " + pageEnd
+                        + ", past the end of the column chunk at offset " + chunkEnd);
+            }
+            offset = pageEnd;
+        }
+        throw new ParquetReadException("Column chunk at offset " + chunkStart + " has no data page");
+    }
+
+    /// Reads the page header at `offset`, growing the peek on truncation up to [#MAX_PEEK_SIZE]
+    /// or the bytes remaining in the chunk.
+    private static HeaderAt readHeader(InputFile inputFile, long offset, long remaining)
+            throws IOException {
+        int peekCeiling = Math.toIntExact(Math.min(MAX_PEEK_SIZE, remaining));
+        int peek = Math.min(INITIAL_PEEK_SIZE, peekCeiling);
         while (true) {
             ByteBuffer buf = inputFile.readRange(offset, peek);
+            ThriftCompactReader reader = new ThriftCompactReader(buf);
             try {
-                PageHeader header = PageHeaderReader.read(new ThriftCompactReader(buf));
-                return header.type();
+                PageHeader header = PageHeaderReader.read(reader);
+                return new HeaderAt(header, reader.getBytesRead());
             }
             catch (ThriftTruncatedException truncated) {
                 if (peek >= peekCeiling) {
-                    throw new ParquetReadException("First data page header for column at offset "
-                            + offset + " exceeds " + peekCeiling
-                            + " bytes — the file is likely corrupt", truncated);
+                    throw new ParquetReadException("Page header at offset " + offset + " exceeds "
+                            + peekCeiling + " bytes — the file is likely corrupt", truncated);
                 }
                 peek = Math.min(peekCeiling, peek * 2);
             }
         }
+    }
+
+    /// A parsed page header and its encoded length in bytes.
+    private record HeaderAt(PageHeader header, int length) {
     }
 }
