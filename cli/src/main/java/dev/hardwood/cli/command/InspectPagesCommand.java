@@ -396,7 +396,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             throw placed(e, inputFile, rowGroupIndex, columnPath);
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
+            throw ExceptionContext.readFailureAt(inputFile.name(), rowGroupIndex, columnPath, e);
         }
     }
 
@@ -417,13 +417,13 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             throw placed(e, inputFile, rowGroupIndex, columnPath);
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
+            throw ExceptionContext.readFailureAt(inputFile.name(), rowGroupIndex, columnPath, e);
         }
     }
 
     private static IOException placed(IOException e, InputFile inputFile, int rowGroupIndex, String columnPath) {
-        return new IOException(ExceptionContext.readPrefix(inputFile.name(), rowGroupIndex, columnPath)
-                + e.getMessage(), e);
+        return ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath,
+                ExceptionContext.UNKNOWN_PAGE, e);
     }
 
     private record RowGroupData(int rgIdx, List<PageInfo> pages, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
@@ -448,7 +448,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             return walkPageHeaders(chunk, inputFile, trackRowIndex);
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addReadContext(inputFile.name(), rowGroupIndex, columnPath, e);
+            throw ExceptionContext.readFailureAt(inputFile.name(), rowGroupIndex, columnPath, e);
         }
     }
 

@@ -429,7 +429,7 @@ public final class ParquetModel implements AutoCloseable {
     /// these reads bypass it and go at the bytes directly, so nothing else
     /// would say which chunk the screen was looking at.
     private RuntimeException placed(RuntimeException e, int rowGroupIndex, int columnIndex) {
-        return ExceptionContext.addReadContext(displayPath, rowGroupIndex,
+        return ExceptionContext.readFailureAt(displayPath, rowGroupIndex,
                 schema.getColumn(columnIndex).fieldPath().toString(), e);
     }
 
