@@ -28,11 +28,15 @@ Launch one `general-purpose` agent per target document, in parallel. Each prompt
 
 Root-file extensions (`TESTING.md`, `PERFORMANCE.md`, `ARCHITECTURE.md`) are written by the same agents or one extra agent, under the same brief.
 
+A source whose disposition is **K** (keep) is not drafted. Its agent moves it to `_designs/` and edits it as a minimal diff: the text, structure and wrapping stay, and only sentences the code now contradicts change (plus the change the disposition names). The prompt lists those sentences and nothing else; a prompt that lists topics to cover turns the keep into a rewrite. Check the result with `git diff origin/main:_designs-legacy/<NAME>.md <worktree>/_designs/<NAME>.md`.
+
 ## 3. Review the drafts
 
 Read each target once. Check: every section states current behaviour; no process, status, benchmark numbers or delta words; tests named at most once per section; untested invariants marked; links to siblings instead of restated content; the doc would survive a class rename better than its sources did. Fix small issues directly; send larger ones back to the agent with `SendMessage`.
 
 Record each agent's divergences, untested invariants, dropped content and inbound links in the working file.
+
+Then check that no documented intent was lost. Launch one read-only `general-purpose` agent per target with [references/intent-audit-brief.md](references/intent-audit-brief.md), naming the target and its sources. Each walks its sources claim by claim and reports only what is LOST (still true in the code, needed by a maintainer, in no current document) or CHANGED (the target alters the meaning). Apply the doc-only items; carry any that need a decision into step 4. This runs before the PR, not after.
 
 ## 4. Resolve every divergence with the maintainer before any PR
 
