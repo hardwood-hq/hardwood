@@ -38,10 +38,10 @@ public class RowGroupIndexBuffers {
     /// Fetches all offset/column indexes for a row group in a single
     /// `readRange()` call.
     ///
-    /// The index entries for all columns in a row group are stored
-    /// contiguously in the Parquet footer, so one read covers them all.
-    /// The cost of including non-projected columns is negligible (a few KB
-    /// of extra metadata) compared to the cost of an additional round-trip.
+    /// The read spans the lowest to the highest index offset of every column
+    /// chunk in the row group, projected or not. Writers commonly lay out all
+    /// column indexes before all offset indexes, so a span that includes the
+    /// column indexes also covers other row groups' index entries.
     ///
     /// @param inputFile the file to read from
     /// @param rowGroup  the row group whose indexes to fetch

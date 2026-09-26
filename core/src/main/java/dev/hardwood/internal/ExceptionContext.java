@@ -24,8 +24,8 @@ public final class ExceptionContext {
     /// check, or a failure the pipeline could not attribute.
     ///
     /// Plain ints, because they travel through per-page arrays and per-call arguments where
-    /// an [java.util.OptionalInt] would allocate. [ParquetReadException] is where they
-    /// become optional, once, at the boundary a caller sees.
+    /// an [java.util.OptionalInt] would allocate. A caller sees them only in the message
+    /// prefix; no exception carries them as fields.
     public static final int UNKNOWN_ROW_GROUP = -1;
 
     /// The page of a read that is on none.

@@ -18,8 +18,8 @@ import dev.hardwood.schema.SchemaNode;
 ///
 /// Asking a typed accessor for a type its column does not hold is normally caught by
 /// a cast the decode already performs, and #971 is the sweep that gives that failure
-/// a message; validating ahead of it was measured at 4% per accessor, above the bar
-/// `_designs-legacy/EXCEPTION_MODEL.md` sets, so nothing here duplicates it.
+/// a message; validating ahead of it would cost every accessor call
+/// (`_designs/EXCEPTION_MODEL.md`), so nothing here duplicates it.
 ///
 /// These are the accessors no cast can catch. A `DATE`, a bare `INT32` and a
 /// `TIME(MILLIS)` are one `int[]`; every `FIXED_LEN_BYTE_ARRAY(16)` is one
@@ -29,7 +29,7 @@ import dev.hardwood.schema.SchemaNode;
 /// *some* text, so without a check it returns a `DECIMAL`'s or an `INT96`'s stored
 /// bytes as characters. There is no exception here to improve — only one to raise.
 ///
-/// The rejection is a caller's error, so per `_designs-legacy/EXCEPTION_MODEL.md` it carries
+/// The rejection is a caller's error, so per `_designs/EXCEPTION_MODEL.md` it carries
 /// the file name and nothing else of the read's position, and names the column in the
 /// problem, as [NestedBatchIndex#requireFloatAccess] does.
 public final class LogicalAccessorKind {

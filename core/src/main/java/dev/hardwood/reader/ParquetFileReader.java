@@ -80,10 +80,10 @@ import dev.hardwood.schema.FileSchema;
 /// yet. A context the call creates is closed with them; a context passed in
 /// stays the caller's.
 ///
-/// **Limitation:** When using the default memory-mapped [InputFile], the file
-/// itself may be arbitrarily large, but each individual column chunk must be at
-/// most 2 GB ([Integer#MAX_VALUE] bytes) of compressed data. The in-memory and
-/// object-store backends have a 2 GB limit on the whole file.
+/// **Limitation:** A column chunk read without an OffsetIndex must be at most
+/// 2 GB ([Integer#MAX_VALUE] bytes) of compressed data. Files larger than 2 GB
+/// are read locally and from S3, except by the in-memory backend and by an S3
+/// file with `RangeBacking.SPARSE_TEMPFILE`, which are limited to 2 GB per file.
 public class ParquetFileReader implements Closeable {
 
     /// Sentinel used by the column-reader builders to mean "no explicit batch

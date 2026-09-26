@@ -39,27 +39,10 @@ Root files extended instead of new design docs:
 
 ### Facts from deleted sources
 
-Areas delete their sources outright. These facts from them belong to targets not yet written and have no other copy. The source is readable at `6e7155c5:_designs/<NAME>.md` for the filtering area (#1293) and at `2cba6f90:_designs-legacy/<NAME>.md` for the read path area. Each still holds in the code.
+Areas delete their sources outright. These facts from them belong to targets not yet written and have no other copy. The source is readable at `2cba6f90:_designs-legacy/<NAME>.md` (read path area). Each still holds in the code.
 
 | Target | Fact | Source |
 |---|---|---|
-| `FILE_METADATA.md` | The Statistics parser prefers `min_value`/`max_value` (fields 5/6) over the deprecated `min`/`max` (1/2) and marks bounds deprecated when only the latter are present (PARQUET-1025) | PREDICATE_PUSHDOWN |
-| `FILE_METADATA.md` | A bloom filter body is validated where parsed: `numBytes` a positive multiple of 32, a truncated bitset or missing header field raises | BLOOM_FILTER_SUPPORT |
-| `FILE_METADATA.md` | `SizeStatistics`, `ColumnIndex` and `OffsetIndex` are public records with nullable fields and no public reader entry point for the page index; whole-chunk histogram accessors hand out the parsed array, `definitionLevelHistogram(int)` a copied slice | SIZE_STATISTICS_AND_NAN_COUNTS |
-| `FETCH_PLANNING.md` | A row group's fetch plans for all decoded columns are computed once, by the first column to reach it (`RowGroupIterator.getColumnPlan` → `computeFetchPlans`), cached per work item and evicted when every column has released it. Planning may read the page index, dictionaries under a filter, and one bounded page-header probe for the mask gate | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | The only plan-type branch is whether the column has an OffsetIndex (`IndexedFetchPlan`) or not (`SequentialFetchPlan`); `PageSource` drains either plan's page iterator without knowing which | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | With an OffsetIndex, a filter keeps only the pages overlapping the matching `RowRanges`, each with a `PageRowMask`; no needed page gives `FetchPlan.EMPTY` and nothing is fetched | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | `maxRows` truncates a row group's page list to the per-row-group remainder of the budget (`perRgMaxRows`), on unfiltered reads only | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | Needed pages of a column are coalesced under `CoalescingPolicy` into page groups, one `ChunkHandle` per group. The dictionary page joins the first group only when coalescing would merge them (`foldsDictionary`), otherwise it gets its own handle chained to the first; a dictionary pruning already read is not fetched | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | `ChunkHandle` defers `readRange()` to first access (double-checked, synchronized) and then starts an async fetch of the next chained handle only, with no cascade; a region-backed handle leaves prefetch to `SharedRegion.nextRegion` | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | `SequentialFetchPlan` discovers pages lazily by scanning headers from fixed-size chunk handles chained one ahead; a page straddling chunks is assembled from both (`assembleFromChunks`) | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | Sequential chunk size is `min(chunkLength, 128 MB)` without `maxRows` (override `hardwood.internal.sequentialChunkSize`, an unparseable value rejected); with `maxRows` it is sized from average compressed bytes per value × `maxRows` × a safety factor, floored at 1 MB, and a column ≤ 4 MB is fetched whole (#382) | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | A column without an OffsetIndex still filters below the row group: `SequentialFetchPlan` drops pages by inline page statistics (as null placeholders) and applies per-page row masks | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | Per-page masks are honoured for a row group only when every decoded column is mask-capable (OffsetIndex, flat, or nested with `DATA_PAGE_V2`); otherwise `matchingRows` is promoted to `ALL` for the whole row group, keeping columns aligned | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | Columns fetch independently, except that the first read of coalesce-safe plans may be shared across columns through a `SharedRegion` (`coalesceAcrossColumns`) | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | For memory-mapped local files `readRange()` returns a zero-copy slice, so a fetch is a slice and a prefetch costs nothing | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | `PageInfo` holds page bytes already resolved by the fetch plan, so a decode task does no I/O; `IndexedFetchPlan` does no I/O at plan time and parses its dictionary on first advance | PARSING_PIPELINE_V2 |
-| `FETCH_PLANNING.md` | Entering a row group prefetches the next one: its plans are computed asynchronously and the first chunk of the first plan that reads one is prefetched, skipping empty plans and `SkippedColumnFetchPlan`; `IndexedFetchPlan.prefetch` fetches the dictionary handle first | PARSING_PIPELINE_V2 |
 | `LOGICAL_TYPES.md` | `getDate`, `getUuid`, `getInterval` read nothing from the annotation and check `LogicalAccessorKind.requireDate/requireUuid/requireInterval` first; `getString` is guarded by `requireText` (`TextColumns.holdsText`, the rule the `String` filter literal uses) | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | Every other annotation-decoding accessor casts the annotation it expects (e.g. `(LogicalType.TimeType) leaf.logicalType()`); another or no annotation fails at that cast, and a physical-type mismatch surfaces as the storage array's `ClassCastException` (#971) | NESTED_PRIMITIVE_LEAF_DECODE |
 | `LOGICAL_TYPES.md` | FLOAT against FLOAT16 and the two TIMESTAMP kinds have their own guards: `NestedBatchIndex.requireFloatAccess`, `TimestampAccessorKind.require` | NESTED_PRIMITIVE_LEAF_DECODE |
@@ -193,7 +176,7 @@ Code defects and JavaDoc drift found during the survey; fixed independently of t
 - [x] Navigation rule 1 says headings and blanks are cursor stops; `Document.java` says they are not. Decide which is intended.
 - [x] CLAUDE.md names `RowWindow.bottomPinned`; the API is `RowWindow.from(scrollTop, selection, total, viewport)` plus `adjustTop`.
 - [x] Stale JavaDoc: `ColumnChunkBuffer` (pages cut "while records arrive"), `ParquetMetadataReader` and `jfr/FileOpenedEvent` (`MultiFileRowReader`, `FileManager`), `DictionaryParser`/`PageDecoder`/`ColumnIndexBuffers` (`PageScanner`), `FileSchema.validateVariantGroup` ("Phase 2").
-- [ ] `LogicalAccessorKind:91` links COALESCED_OFFSET_INDEX_READS; repointed with the I/O area.
+- [x] `LogicalAccessorKind:91` links COALESCED_OFFSET_INDEX_READS; repointed with the I/O area.
 - [x] Unused: `SimdOperations.markNulls`, `unpackBitWidth1`, `unpackBitWidthN` (both implementations, no production caller).
 
 ## Links to repoint
@@ -227,7 +210,7 @@ One area per session, with the `hardwood-design-consolidation` skill (`.claude/s
 - [x] Filtering (6–8); closes #1110
 - [x] CLI and infrastructure (20–24), `TESTING.md`, `PERFORMANCE.md`; repoints CLAUDE.md's dive and Diátaxis rules
 - [x] Read path (1–5)
-- [ ] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
+- [x] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
 - [ ] Writer (16–19); trims `_plans/WRITER_SUPPORT.md` to the open stages of #1291
 - [ ] Types (14–15)
 - [ ] `ARCHITECTURE.md` pointers; delete `_designs-legacy/`, this plan and the skill

@@ -25,7 +25,7 @@ Every change should be linked to a GitHub issue. If one doesn't exist for what y
 
 ## Raising exceptions
 
-A failure answers one question for the caller: try again, or stop. The type is what answers it, so pick by category rather than by whatever is convenient to throw. `_designs-legacy/EXCEPTION_MODEL.md` has the full model and `docs/content/reference/error-handling.md` is the version users read.
+A failure answers one question for the caller: try again, or stop. The type is what answers it, so pick by category rather than by whatever is convenient to throw. `_designs/EXCEPTION_MODEL.md` has the full model and `docs/content/reference/error-handling.md` is the version users read.
 
 - **`IOException`** — reading or writing the file failed, and another attempt may succeed. Declare it on every method that can reach the file, and only on those. A method that parses a buffer or decodes a page cannot fail at I/O, so it must not say it can; declaring it there makes a corrupt file look like a failed read.
 - **`ParquetReadException`** — the bytes arrived and are not valid Parquet. Unchecked, raised where the invalidity is detected rather than at some boundary further out.

@@ -23,8 +23,10 @@ public final class SdkCredentialsProviders {
     private SdkCredentialsProviders() {
     }
 
-    /// Returns a provider backed by the full AWS default credential chain
-    /// (env vars, `~/.aws/credentials`, EC2/ECS instance profile, SSO, web identity, etc.).
+    /// Returns a provider backed by the AWS SDK's default credential chain, which
+    /// resolves environment variables, profile files and container and instance
+    /// metadata. SSO and web-identity profiles additionally need the AWS SDK's
+    /// `sso`, `ssooidc` and `sts` modules on the classpath.
     public static S3CredentialsProvider defaultChain() {
         DefaultCredentialsProvider sdk = DefaultCredentialsProvider.builder().build();
         return () -> toHardwood(sdk.resolveCredentials());
