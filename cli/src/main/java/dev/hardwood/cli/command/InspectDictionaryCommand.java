@@ -130,19 +130,8 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
 
-            // Read just the dictionary prefix of the column chunk
             chunk.requireSameFile();
-            Long dictOffset = chunk.metaData().dictionaryPageOffset();
-            long chunkStart = (dictOffset != null && dictOffset > 0)
-                    ? dictOffset
-                    : chunk.metaData().dataPageOffset();
-            // Read enough for the dictionary page (typically a few KB)
-            int dictReadSize = Math.toIntExact(Math.min(
-                    chunk.metaData().totalCompressedSize(), 4 * 1024 * 1024));
-            ByteBuffer dictRegion = inputFile.readRange(chunkStart, dictReadSize);
-
-            Dictionary dictionary = parseDictionary(
-                    dictRegion, columnSchema, chunk, context, inputFile, rgIdx);
+            Dictionary dictionary = readDictionary(columnSchema, chunk, context, inputFile, rgIdx);
 
             if (dictionary == null) {
                 messages.add("Row Group " + rgIdx + ": no dictionary (column is not dictionary-encoded)");
@@ -172,18 +161,21 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
         }
     }
 
-    /// Parses one row group's dictionary, naming the file, row group and column on anything
-    /// the parser raises. A read through `ColumnReader` gets that from the pipeline; this
-    /// command reaches the parser directly, so without it a corrupt dictionary reports only
-    /// "CRC mismatch: expected … but computed …".
-    private static Dictionary parseDictionary(ByteBuffer dictRegion, ColumnSchema columnSchema,
-            ColumnChunk chunk, HardwoodContextImpl context, InputFile inputFile,
-            int rowGroupIndex) {
+    /// Reads and parses one row group's dictionary page, or returns `null` when the chunk has
+    /// none, naming the file, row group and column on anything the parser raises. A read
+    /// through `ColumnReader` gets that from the pipeline; this command reaches the parser
+    /// directly, so without it a corrupt dictionary reports only "CRC mismatch: expected … but
+    /// computed …".
+    private static Dictionary readDictionary(ColumnSchema columnSchema, ColumnChunk chunk,
+            HardwoodContextImpl context, InputFile inputFile, int rowGroupIndex) throws IOException {
         try {
-            return DictionaryParser.parse(dictRegion, columnSchema, chunk.metaData(), context);
+            ByteBuffer page = DictionaryParser.readPage(inputFile, chunk, "");
+            return page != null
+                    ? DictionaryParser.parse(page, columnSchema, chunk.metaData(), context)
+                    : null;
         }
         catch (RuntimeException e) {
-            throw ExceptionContext.addReadContext(
+            throw ExceptionContext.readFailureAt(
                     inputFile.name(), rowGroupIndex, columnSchema.fieldPath().toString(), e);
         }
     }

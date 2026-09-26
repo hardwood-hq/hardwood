@@ -27,7 +27,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// Parses dictionary pages from column chunk data.
 ///
 /// Shared by [IndexedFetchPlan], [SequentialFetchPlan], the dictionary
-/// filter's `RowGroupDictionaryFilterSource` and the CLI's `dive`.
+/// filter's `RowGroupDictionaryFilterSource` and the CLI's `dive` and `inspect dictionary`.
 public final class DictionaryParser {
 
     /// Bytes read speculatively when the offsets give no gap to size the dictionary read — an

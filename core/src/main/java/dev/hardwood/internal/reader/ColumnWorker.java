@@ -596,7 +596,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// exception a caller will see. A `RuntimeException` — including the
     /// `ParquetReadException` most decoder failures have just become — is enriched via
     /// [ExceptionContext#addReadContext], which preserves whatever type it arrived as.
-    /// `IOException` is restated as a fresh `IOException` carrying the prefix: the pipeline
+    /// `IOException` is restated as a fresh `IOException` carrying the prefix, unless it already
+    /// names its file: the pipeline
     /// carries a failure across its thread boundary as a `Throwable`, so it stays checked the
     /// whole way and the readers declare it rather than unwrapping anything. `Error` and other
     /// throwables propagate unchanged.
@@ -617,10 +618,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             // Stays checked. The pipeline carries a failure across its thread
             // boundary as a `Throwable`, so nothing between here and the reader
             // needs it wrapped, and the reader's own signature can declare it.
-            return new IOException(
-                    ExceptionContext.readPrefix(fileName, rowGroup, columnPath, page)
-                            + (ioe.getMessage() != null ? ioe.getMessage() : "I/O failure"),
-                    ioe);
+            return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, ioe);
         }
         return typed;
     }
