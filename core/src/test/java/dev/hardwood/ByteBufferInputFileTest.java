@@ -56,6 +56,84 @@ class ByteBufferInputFileTest {
     }
 
     @Test
+    void testReadFromBufferWithinLargerArray() throws Exception {
+        byte[] bytes = Files.readAllBytes(Paths.get("src/test/resources/plain_uncompressed.parquet"));
+        byte[] larger = new byte[bytes.length + 20];
+        System.arraycopy(bytes, 0, larger, 7, bytes.length);
+        ByteBuffer buffer = ByteBuffer.wrap(larger, 7, bytes.length);
+
+        assertReadsPlainUncompressed(InputFile.of(buffer));
+
+        assertThat(buffer.position()).isEqualTo(7);
+        assertThat(buffer.limit()).isEqualTo(7 + bytes.length);
+    }
+
+    @Test
+    void testReadFromBufferWithNonZeroPosition() throws Exception {
+        byte[] bytes = Files.readAllBytes(Paths.get("src/test/resources/plain_uncompressed.parquet"));
+        ByteBuffer buffer = ByteBuffer.allocate(bytes.length + 5);
+        buffer.put(new byte[5]).put(bytes).position(5);
+
+        assertReadsPlainUncompressed(InputFile.of(buffer));
+
+        assertThat(buffer.position()).isEqualTo(5);
+        assertThat(buffer.limit()).isEqualTo(bytes.length + 5);
+    }
+
+    @Test
+    void testReadFromDirectBufferWithNonZeroPosition() throws Exception {
+        byte[] bytes = Files.readAllBytes(Paths.get("src/test/resources/plain_uncompressed.parquet"));
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length + 5);
+        buffer.put(new byte[5]).put(bytes).position(5);
+
+        assertReadsPlainUncompressed(InputFile.of(buffer));
+
+        assertThat(buffer.position()).isEqualTo(5);
+    }
+
+    @Test
+    void testReadFromReadOnlyBufferWithNonZeroPosition() throws Exception {
+        byte[] bytes = Files.readAllBytes(Paths.get("src/test/resources/plain_uncompressed.parquet"));
+        byte[] larger = new byte[bytes.length + 5];
+        System.arraycopy(bytes, 0, larger, 5, bytes.length);
+        ByteBuffer buffer = ByteBuffer.wrap(larger).position(5).asReadOnlyBuffer();
+
+        assertReadsPlainUncompressed(InputFile.of(buffer));
+
+        assertThat(buffer.position()).isEqualTo(5);
+    }
+
+    @Test
+    void testRemainingContentIsCapturedOnCreation() throws Exception {
+        ByteBuffer buffer = ByteBuffer.wrap(new byte[]{0, 1, 2, 3, 4, 5, 6, 7}, 2, 4);
+        InputFile inputFile = InputFile.of(buffer);
+        buffer.position(0).limit(8);
+
+        assertThat(inputFile.length()).isEqualTo(4);
+        ByteBuffer range = inputFile.readRange(1, 3);
+        assertThat(range.remaining()).isEqualTo(3);
+        assertThat(range.get(0)).isEqualTo((byte) 3);
+        assertThat(range.get(2)).isEqualTo((byte) 5);
+        assertThatThrownBy(() -> inputFile.readRange(2, 3))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("Range [2, 2 + 3) out of bounds for length 4");
+    }
+
+    private static void assertReadsPlainUncompressed(InputFile inputFile) throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile);
+                RowReader rowReader = reader.rowReader()) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
+            for (long id = 1; id <= 3; id++) {
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                assertThat(rowReader.getLong("id")).isEqualTo(id);
+                assertThat(rowReader.getLong("value")).isEqualTo(id * 100);
+            }
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
     void testInputFileOfByteBufferProperties() throws Exception {
         byte[] data = new byte[]{1, 2, 3, 4, 5};
         InputFile inputFile = InputFile.of(ByteBuffer.wrap(data));

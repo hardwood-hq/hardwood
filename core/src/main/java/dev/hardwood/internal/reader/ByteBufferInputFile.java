@@ -13,14 +13,16 @@ import dev.hardwood.InputFile;
 
 /// [InputFile] backed by an in-memory [ByteBuffer].
 ///
+/// The file is the buffer's remaining content, from its position to its limit,
+/// captured as a slice at construction; the caller's buffer is not modified.
 /// Since the data is already in memory, [#open()] is a no-op.
-/// [#readRange] returns slices of the backing buffer (zero-copy).
+/// [#readRange] returns slices of that content (zero-copy).
 public class ByteBufferInputFile implements InputFile {
 
     private final ByteBuffer buffer;
 
     public ByteBufferInputFile(ByteBuffer buffer) {
-        this.buffer = buffer;
+        this.buffer = buffer.slice();
     }
 
     @Override
@@ -35,7 +37,7 @@ public class ByteBufferInputFile implements InputFile {
 
     @Override
     public long length() {
-        return buffer.capacity();
+        return buffer.limit();
     }
 
     @Override

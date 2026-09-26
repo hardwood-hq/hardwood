@@ -69,10 +69,13 @@ public interface InputFile extends Closeable {
 
     /// Creates an [InputFile] backed by an in-memory [ByteBuffer].
     ///
+    /// The file is the buffer's remaining content, from its position to its limit,
+    /// taken when this method is called. The content is not copied, and the buffer's
+    /// position and limit are not changed; later changes to them do not affect the file.
     /// Since the data is already in memory, no resource acquisition is needed
     /// and [#open()] is a no-op.
     ///
-    /// @param buffer the buffer containing Parquet file data
+    /// @param buffer the buffer containing Parquet file data between its position and limit
     /// @return a new InputFile backed by the buffer
     static InputFile of(ByteBuffer buffer) {
         return new ByteBufferInputFile(buffer);
@@ -115,6 +118,7 @@ public interface InputFile extends Closeable {
     }
 
     /// Creates [InputFile] instances for a list of in-memory [ByteBuffer]s.
+    /// Each file is its buffer's remaining content, as described in [#of(ByteBuffer)].
     ///
     /// Since the data is already in memory, no resource acquisition is needed
     /// and [#open()] is a no-op for each instance.
@@ -130,6 +134,7 @@ public interface InputFile extends Closeable {
     }
 
     /// Creates [InputFile] instances for the given in-memory [ByteBuffer]s.
+    /// Each file is its buffer's remaining content, as described in [#of(ByteBuffer)].
     ///
     /// Since the data is already in memory, no resource acquisition is needed
     /// and [#open()] is a no-op for each instance.
