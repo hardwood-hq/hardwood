@@ -1429,8 +1429,7 @@ class PredicatePushDownTest {
              ParquetFileReader parquet = hardwood.openAll(files);
              ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id")).filter(filter).build()) {
 
-            ColumnReader idReader = columns.getColumnReader("id");
-            assertThat(idReader.nextBatch()).isFalse();
+            assertThat(columns.nextBatch()).isFalse();
         }
     }
 

@@ -155,17 +155,17 @@ class FileNameInExceptionTest {
             // each file yields exactly one batch. File-boundary detection in
             // ColumnWorker ensures the first batch is from TEST_FILE and the second
             // from secondFile, each carrying its own file name.
-            assertThat(idReader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThatThrownBy(idReader::getInts)
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage(firstFileError);
 
-            assertThat(idReader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThatThrownBy(idReader::getInts)
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage(secondFileError);
 
-            assertThat(idReader.nextBatch()).isFalse();
+            assertThat(columns.nextBatch()).isFalse();
         }
     }
 }

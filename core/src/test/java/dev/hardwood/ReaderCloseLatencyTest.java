@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Timeout;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -218,10 +217,7 @@ class ReaderCloseLatencyTest {
             ColumnReaders readers = parquet.buildColumnReaders(ColumnProjection.columns(columns))
                     .batchSize(BATCH_SIZE)
                     .build();
-            for (String column : columns) {
-                ColumnReader reader = readers.getColumnReader(column);
-                assertThat(reader.nextBatch()).as("first batch of %s", column).isTrue();
-            }
+            assertThat(readers.nextBatch()).as("first batch").isTrue();
 
             long start = System.nanoTime();
             readers.close();

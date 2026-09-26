@@ -13,6 +13,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
@@ -37,7 +39,7 @@ class ColumnReadersTest {
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
 
-            assertThat(idReader.nextBatch() & valueReader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThat(idReader.getRecordCount()).isEqualTo(3);
             assertThat(valueReader.getRecordCount()).isEqualTo(3);
 
@@ -51,7 +53,7 @@ class ColumnReadersTest {
             assertThat(values[1]).isEqualTo(200L);
             assertThat(values[2]).isEqualTo(300L);
 
-            assertThat(idReader.nextBatch() & valueReader.nextBatch()).isFalse();
+            assertThat(columns.nextBatch()).isFalse();
         }
     }
 
@@ -71,7 +73,7 @@ class ColumnReadersTest {
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
 
-            while (idReader.nextBatch() & valueReader.nextBatch()) {
+            while (columns.nextBatch()) {
                 int count = idReader.getRecordCount();
                 long[] ids = idReader.getLongs();
                 long[] values = valueReader.getLongs();
@@ -170,7 +172,7 @@ class ColumnReadersTest {
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader nameReader = columns.getColumnReader("name");
 
-            assertThat(idReader.nextBatch() & nameReader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
 
             // id column — required, no nulls
             assertThat(idReader.getRecordCount()).isEqualTo(3);
@@ -189,7 +191,7 @@ class ColumnReadersTest {
             assertThat(names[1]).isNull();
             assertThat(names[2]).isEqualTo("charlie");
 
-            assertThat(idReader.nextBatch() & nameReader.nextBatch()).isFalse();
+            assertThat(columns.nextBatch()).isFalse();
         }
     }
 
@@ -208,7 +210,7 @@ class ColumnReadersTest {
             long runningSum = 0;
             int rowCount = 0;
 
-            while (idReader.nextBatch() & valueReader.nextBatch()) {
+            while (columns.nextBatch()) {
                 int count = idReader.getRecordCount();
                 long[] ids = idReader.getLongs();
                 long[] values = valueReader.getLongs();
@@ -238,7 +240,7 @@ class ColumnReadersTest {
              ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
             ColumnReader reader = columns.getColumnReader("id");
-            while (reader.nextBatch()) {
+            while (columns.nextBatch()) {
                 multiFileCount += reader.getRecordCount();
             }
         }
@@ -282,9 +284,7 @@ class ColumnReadersTest {
             int trueCount = 0;
             int rowCount = 0;
 
-            while (intReader.nextBatch() & longReader.nextBatch()
-                    & floatReader.nextBatch() & doubleReader.nextBatch()
-                    & boolReader.nextBatch() & stringReader.nextBatch()) {
+            while (columns.nextBatch()) {
 
                 int count = intReader.getRecordCount();
                 int[] ints = intReader.getInts();
@@ -334,9 +334,7 @@ class ColumnReadersTest {
             ColumnReader boolReader = columns.getColumnReader("bool_col");
             ColumnReader stringReader = columns.getColumnReader("string_col");
 
-            assertThat(intReader.nextBatch() & longReader.nextBatch()
-                    & floatReader.nextBatch() & doubleReader.nextBatch()
-                    & boolReader.nextBatch() & stringReader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
 
             int count = intReader.getRecordCount();
             assertThat(count).isEqualTo(3);
@@ -368,7 +366,7 @@ class ColumnReadersTest {
 
             ColumnReader nameReader = columns.getColumnReader("name");
 
-            while (nameReader.nextBatch()) {
+            while (columns.nextBatch()) {
                 int count = nameReader.getRecordCount();
                 Validity validity = nameReader.getLeafValidity();
 
@@ -400,7 +398,7 @@ class ColumnReadersTest {
 
             ColumnReader idReader = columns.getColumnReader("id");
 
-            while (idReader.nextBatch()) {
+            while (columns.nextBatch()) {
                 int count = idReader.getRecordCount();
                 long[] ids = idReader.getLongs();
                 for (int i = 0; i < count; i++) {
@@ -443,7 +441,7 @@ class ColumnReadersTest {
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
 
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
-            assertThat(reader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThat(reader.getRecordCount()).isEqualTo(4);
 
             Validity listValidity = reader.getLayerValidity(0);
@@ -472,7 +470,7 @@ class ColumnReadersTest {
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
             assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("No batch available. Call nextBatch() first.");
+                    .hasMessage("No batch available. Call ColumnReaders.nextBatch() first.");
         }
     }
 
@@ -485,7 +483,7 @@ class ColumnReadersTest {
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             ColumnReader reader = columns.getColumnReader("id");
-            assertThat(reader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("[plain_uncompressed.parquet] Layer 0 out of range [0, 0)");
@@ -501,7 +499,7 @@ class ColumnReadersTest {
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
 
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
-            assertThat(reader.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isTrue();
             assertThatThrownBy(() -> reader.getLayerOffsets(5))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("[primitive_lists_test.parquet] Layer 5 out of range [0, 1)");
@@ -696,49 +694,47 @@ class ColumnReadersTest {
         }
     }
 
-    @Test
-    void testMembersAdvancedOneAtATimeShareTheGroupAdvance() throws Exception {
-        // Calling nextBatch() on each member of an unfiltered group in turn moves the group
-        // once per turn: the first member advances it, the others take up the same batch.
+    @ParameterizedTest
+    @ValueSource(booleans = { false, true })
+    void testMemberRefusesToAdvanceAndLeavesTheGroupWhereItWas(boolean filtered) throws Exception {
         Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
-        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
-             ColumnReaders columns = parquet.buildColumnReaders(
-                             ColumnProjection.columns("id", "value", "label"))
-                     .batchSize(7).build()) {
-
-            ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
-            ColumnReader labelReader = columns.getColumnReader("label");
-
-            int batches = 0;
-            long totalRows = 0;
-            while (idReader.nextBatch() & valueReader.nextBatch() & labelReader.nextBatch()) {
-                int count = idReader.getRecordCount();
-                assertThat(valueReader.getRecordCount()).isEqualTo(count);
-                assertThat(labelReader.getRecordCount()).isEqualTo(count);
-
-                long[] ids = idReader.getLongs();
-                long[] values = valueReader.getLongs();
-                String[] labels = labelReader.getStrings();
-                for (int i = 0; i < count; i++) {
-                    assertThat(values[i]).isEqualTo(ids[i]);
-                    assertThat(labels[i]).isEqualTo(expectedLabel(ids[i]));
-                }
-
-                batches++;
-                totalRows += count;
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath))) {
+            ParquetFileReader.ColumnReadersBuilder builder = parquet
+                    .buildColumnReaders(ColumnProjection.columns("id", "label"))
+                    .batchSize(7);
+            if (filtered) {
+                builder.filter(FilterPredicate.gt("id", 0L));
             }
-
-            assertThat(batches).isGreaterThan(1);
-            assertThat(totalRows).isEqualTo(300);
+            try (ColumnReaders columns = builder.build()) {
+                assertMemberRefusesToAdvance(columns);
+            }
         }
     }
 
+    private static void assertMemberRefusesToAdvance(ColumnReaders columns) throws Exception {
+        ColumnReader idReader = columns.getColumnReader("id");
+        ColumnReader labelReader = columns.getColumnReader("label");
+
+        assertThatThrownBy(idReader::nextBatch)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("ColumnReader 'id' belongs to a ColumnReaders group: advance the group"
+                        + " with ColumnReaders.nextBatch()");
+
+        assertThat(columns.nextBatch()).isTrue();
+        assertThatThrownBy(labelReader::nextBatch)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("ColumnReader 'label' belongs to a ColumnReaders group: advance the group"
+                        + " with ColumnReaders.nextBatch()");
+
+        assertThat(idReader.getLongs()).containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L);
+        assertThat(labelReader.getStrings())
+                .containsExactly("rg1_1", "rg1_2", "rg1_3", "rg1_4", "rg1_5", "rg1_6", "rg1_7");
+    }
+
     @Test
-    void testMemberAdvancedAloneMovesTheWholeGroup() throws Exception {
-        // A member advanced on its own moves the group, so a sibling called afterwards takes
-        // up the batch that member reached.
+    void testGroupHasNoBatchOnceExhausted() throws Exception {
+        // 300 rows in batches of 7 end on a batch of 6; past the end the group has no batch.
         Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
@@ -746,93 +742,24 @@ class ColumnReadersTest {
                      .batchSize(7).build()) {
 
             ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
+            int lastCount = 0;
+            while (columns.nextBatch()) {
+                assertThat(idReader.getRecordCount()).isEqualTo(columns.getRecordCount());
+                lastCount = columns.getRecordCount();
+            }
+            assertThat(lastCount).isEqualTo(6);
 
-            assertThat(idReader.nextBatch()).isTrue();
-            assertThat(valueReader.nextBatch()).isTrue();
-            assertThat(idReader.nextBatch()).isTrue();
-            assertThat(valueReader.nextBatch()).isTrue();
-
-            assertThat(idReader.getLongs()).containsExactly(8L, 9L, 10L, 11L, 12L, 13L, 14L);
-            assertThat(valueReader.getLongs()).containsExactly(8L, 9L, 10L, 11L, 12L, 13L, 14L);
-        }
-    }
-
-    @Test
-    void testMemberLeftBehindByTheGroupFailsInsteadOfSkipping() throws Exception {
-        // A sibling advanced twice would make this member skip the batch in between.
-        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
-
-        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
-             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
-                     .batchSize(7).build()) {
-
-            ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
-
-            assertThat(idReader.nextBatch()).isTrue();
-            assertThat(idReader.nextBatch()).isTrue();
-
-            assertThatThrownBy(valueReader::nextBatch)
+            assertThatThrownBy(columns::getRecordCount)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("ColumnReader 'value' would skip 1 batch(es): other readers of its group"
-                            + " advanced the group past them. Call nextBatch() on every reader of the"
-                            + " group in turn, or use ColumnReaders.nextBatch()");
-        }
-    }
-
-    @Test
-    void testMemberThatMissedTheLastBatchFailsAtTheEnd() throws Exception {
-        // One member drained to the end before its sibling starts: the sibling would skip
-        // every batch, including the last, and fails instead of reporting an empty read.
-        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
-
-        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
-             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
-                     .batchSize(100).build()) {
-
-            ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
-
-            int batches = 0;
-            while (idReader.nextBatch()) {
-                batches++;
-            }
-            assertThat(batches).isEqualTo(3);
-
-            assertThatThrownBy(valueReader::nextBatch)
+                    .hasMessage("No batch available — call nextBatch() first, and check that it returned true");
+            assertThatThrownBy(idReader::getRecordCount)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("ColumnReader 'value' would skip 3 batch(es): other readers of its group"
-                            + " advanced the group past them. Call nextBatch() on every reader of the"
-                            + " group in turn, or use ColumnReaders.nextBatch()");
+                    .hasMessage("[filter_pushdown_int.parquet] No batch available. Call ColumnReaders.nextBatch() first.");
         }
     }
 
     @Test
-    void testMemberOneStepBehindTakesUpTheEnd() throws Exception {
-        // A member that took up the last batch sees the end a sibling reached.
-        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
-
-        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
-             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
-                     .batchSize(100).build()) {
-
-            ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
-
-            for (int i = 0; i < 3; i++) {
-                assertThat(idReader.nextBatch()).isTrue();
-                assertThat(valueReader.nextBatch()).isTrue();
-            }
-            assertThat(idReader.nextBatch()).isFalse();
-            assertThat(valueReader.nextBatch()).isFalse();
-            assertThat(valueReader.nextBatch()).isFalse();
-            assertThat(idReader.nextBatch()).isFalse();
-        }
-    }
-
-    @Test
-    void testNestedAndFlatMembersAdvancedOneAtATimeStayAligned() throws Exception {
+    void testNestedAndFlatMembersStayAligned() throws Exception {
         // primitive_lists_test.parquet: id 1..4, int_list [1,2,3], [10,20], [], null.
         Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
@@ -846,8 +773,7 @@ class ColumnReadersTest {
 
             int[][] expectedLists = { { 1, 2, 3 }, { 10, 20 }, {}, {} };
             for (int row = 0; row < 4; row++) {
-                assertThat(listReader.nextBatch()).isTrue();
-                assertThat(idReader.nextBatch()).isTrue();
+                assertThat(columns.nextBatch()).isTrue();
 
                 assertThat(idReader.getInts()).containsExactly(row + 1);
                 assertThat(listReader.getRecordCount()).isEqualTo(1);
@@ -856,8 +782,7 @@ class ColumnReadersTest {
                         .containsExactly(expectedLists[row]);
                 assertThat(listReader.getLayerValidity(0).isNull(0)).isEqualTo(row == 3);
             }
-            assertThat(listReader.nextBatch()).isFalse();
-            assertThat(idReader.nextBatch()).isFalse();
+            assertThat(columns.nextBatch()).isFalse();
         }
     }
 
@@ -875,9 +800,7 @@ class ColumnReadersTest {
     }
 
     @Test
-    void testGroupReportsTheStepAMemberAdvancedTo() throws Exception {
-        // The group's record count follows the shared step, whichever reader advanced it:
-        // 300 rows in batches of 7 end on a batch of 6, and past the end there is no batch.
+    void testClosingAMemberLeavesTheGroupOpen() throws Exception {
         Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
@@ -885,41 +808,35 @@ class ColumnReadersTest {
                      .batchSize(7).build()) {
 
             ColumnReader idReader = columns.getColumnReader("id");
+            assertThat(columns.nextBatch()).isTrue();
+
+            idReader.close();
 
             assertThat(columns.nextBatch()).isTrue();
-            assertThat(columns.getRecordCount()).isEqualTo(7);
+            assertThat(idReader.getLongs()).containsExactly(8L, 9L, 10L, 11L, 12L, 13L, 14L);
 
-            int lastCount = 0;
-            while (idReader.nextBatch()) {
-                assertThat(columns.getRecordCount()).isEqualTo(idReader.getRecordCount());
-                lastCount = idReader.getRecordCount();
-            }
-            assertThat(lastCount).isEqualTo(6);
+            columns.close();
 
-            assertThatThrownBy(columns::getRecordCount)
+            assertThatThrownBy(columns::nextBatch)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("No batch available — call nextBatch() first, and check that it returned true");
+                    .hasMessage("The column read is closed");
         }
     }
 
     @Test
-    void testMemberCannotAdvanceOnceASiblingClosedTheGroup() throws Exception {
+    void testSingleReaderCannotAdvanceOnceClosed() throws Exception {
         Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
-             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
-                     .batchSize(7).build()) {
+             ColumnReader idReader = parquet.buildColumnReader("id").batchSize(7).build()) {
 
-            ColumnReader idReader = columns.getColumnReader("id");
-            ColumnReader valueReader = columns.getColumnReader("value");
             assertThat(idReader.nextBatch()).isTrue();
 
             idReader.close();
 
-            assertThatThrownBy(valueReader::nextBatch)
+            assertThatThrownBy(idReader::nextBatch)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("The column read is closed: closing any reader of a group closes every"
-                            + " reader of it");
+                    .hasMessage("The column read is closed");
         }
     }
 

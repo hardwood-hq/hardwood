@@ -53,31 +53,26 @@ class PrunedToEmptyReadTest {
 
             assertThat(cols.getColumnCount()).isEqualTo(3);
             assertThat(cols.nextBatch()).isFalse();
-
-            for (String name : new String[] {"id", "value", "label"}) {
-                assertThat(cols.getColumnReader(name).nextBatch()).isFalse();
-            }
-            assertThat(cols.getColumnReader(0).nextBatch()).isFalse();
+            assertThat(cols.nextBatch()).isFalse();
         }
     }
 
     @Test
-    void membersOfAPrunedReadYieldNoBatchBeforeTheGroupAdvances() throws Exception {
+    void membersOfAPrunedReadHoldNoBatch() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FIXTURE));
              ColumnReaders cols = reader.buildColumnReaders(ColumnProjection.columns("id", "label"))
                      .filter(dropAll(INT_FIXTURE))
                      .build()) {
 
             ColumnReader id = cols.getColumnReader("id");
-            ColumnReader label = cols.getColumnReader("label");
-            assertThat(id.nextBatch()).isFalse();
-            assertThat(label.nextBatch()).isFalse();
             assertThatThrownBy(id::getLongs)
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("No batch available. Call nextBatch() first.");
+                    .hasMessage("No batch available. Call ColumnReaders.nextBatch() first.");
 
             assertThat(cols.nextBatch()).isFalse();
-            assertThat(id.nextBatch()).isFalse();
+            assertThatThrownBy(id::getLongs)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("No batch available. Call ColumnReaders.nextBatch() first.");
         }
     }
 
@@ -104,8 +99,7 @@ class PrunedToEmptyReadTest {
 
             assertThat(cols.getColumnCount()).isEqualTo(2);
             assertThat(cols.nextBatch()).isFalse();
-            assertThat(cols.getColumnReader("id").nextBatch()).isFalse();
-            assertThat(cols.getColumnReader("value").nextBatch()).isFalse();
+            assertThat(cols.nextBatch()).isFalse();
         }
     }
 
@@ -128,7 +122,7 @@ class PrunedToEmptyReadTest {
             assertThat(scores.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
 
             assertThat(cols.nextBatch()).isFalse();
-            assertThat(scores.nextBatch()).isFalse();
+            assertThat(scores.getLayerCount()).isEqualTo(1);
         }
     }
 }

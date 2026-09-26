@@ -125,10 +125,9 @@ class IteratorTrackingTest {
         }
     }
 
-    /// A filtered single-column read is served by the shared filtered-projection
-    /// engine and exposes one of its readers. The enclosing group is never handed
-    /// to the caller, so closing that one reader has to release the iterator the
-    /// group was built around.
+    /// A filtered single-column read decodes its predicate columns through the same
+    /// scan as its payload column, so closing the reader has to release the iterator
+    /// that scan was built around.
     @Test
     void closingAFilteredSingleColumnReaderStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {
@@ -145,16 +144,18 @@ class IteratorTrackingTest {
         }
     }
 
-    /// The readers of an unfiltered group share one pipeline, so closing any one of
-    /// them closes the group and releases its iterator.
+    /// The group owns the pipeline its readers view: closing one of the readers leaves
+    /// the iterator in use, and closing the group releases it.
     @Test
-    void closingOneReaderOfAnUnfilteredGroupStopsTrackingItsIterator() throws Exception {
+    void closingTheGroupNotAReaderStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)));
              ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id", "value"))) {
             assertThat(columns.nextBatch()).isTrue();
 
             columns.getColumnReader("id").close();
+            assertThat(reader.trackedIteratorCount()).isEqualTo(1);
 
+            columns.close();
             assertThat(reader.trackedIteratorCount()).isZero();
         }
     }
@@ -196,9 +197,8 @@ class IteratorTrackingTest {
     }
 
     /// The pruned counterpart of
-    /// [#closingAFilteredSingleColumnReaderStopsTrackingItsIterator]: the caller is
-    /// handed one exhausted reader out of a group it never sees, so closing that
-    /// reader has to release the iterator.
+    /// [#closingAFilteredSingleColumnReaderStopsTrackingItsIterator]: the caller holds
+    /// one exhausted reader, so closing that reader has to release the iterator.
     @Test
     void closingAPrunedFilteredSingleColumnReaderStopsTrackingItsIterator() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(FILE)))) {

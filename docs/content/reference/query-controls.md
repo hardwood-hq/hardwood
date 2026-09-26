@@ -274,7 +274,7 @@ A name is a top-level field or the full path to a nested field. A nested field i
 
 By-index accessors follow the order `columns(...)` names the columns in. The columns one name selects, such as a group's children or every column under `all()`, follow schema order among themselves. The two reader types count positions differently:
 
-- `ColumnReaders.getColumnReader(int)` counts leaf columns name by name: index `i` is the `i`-th leaf column the names select. A column that several names select appears at each of their positions, with a reader of its own at each; `getColumnReader(String)` returns the first. `getColumnCount()` counts every position.
+- `ColumnReaders.getColumnReader(int)` counts leaf columns name by name: index `i` is the `i`-th leaf column the names select. A column that several names select appears at each of their positions, with the same reader at each. `getColumnCount()` counts every position.
 - `RowReader` and `PqStruct` accessors count the nodes of the row: a `RowReader` its top-level fields, a `PqStruct` its projected children. Each node has one position, at the first name that selects anything under it, so repeated and overlapping names add no position.
 
 Over a schema `id, address STRUCT<street, city, zip>`:
