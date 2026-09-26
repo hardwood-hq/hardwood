@@ -6086,6 +6086,27 @@ print("\nGenerated multi_row_group_page_index.parquet:")
 print("  - 3 row groups of 1000 rows, id ascending across the file")
 print("  - column index and offset index per chunk, ~10 pages each")
 
+# A multi-row-group file with a page index and many small pages per row group. A column
+# reader with small batches stays inside the first row group while planning that row
+# group has started the second one's prefetch, which reads through the offset index.
+_prefetch_index_schema = pa.schema([('id', pa.int64(), False)])
+_prefetch_index_writer = pq.ParquetWriter(
+    'core/src/test/resources/prefetch_page_index.parquet',
+    schema=_prefetch_index_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_size=256,
+    write_batch_size=32,
+    write_statistics=False,
+    write_page_index=True,
+)
+for _chunk_start in range(0, 6000, 2000):
+    _prefetch_index_writer.write_table(
+        pa.table({'id': list(range(_chunk_start, _chunk_start + 2000))}, schema=_prefetch_index_schema))
+_prefetch_index_writer.close()
+print("\nGenerated prefetch_page_index.parquet:")
+print("  - 3 row groups of 2000 rows, 32 rows per page, offset index per chunk")
+
 # ---------------------------------------------------------------------------
 # A schema that declares no columns (hardwood-hq/hardwood#1146).
 # Nothing in parquet.thrift requires a leaf, and Arrow writes such a file

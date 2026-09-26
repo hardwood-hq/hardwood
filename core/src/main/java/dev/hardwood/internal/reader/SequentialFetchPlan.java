@@ -12,11 +12,9 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -135,6 +133,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
+    /// Where the one-ahead pre-fetch of each chunk runs.
+    private final PrefetchTasks prefetchTasks;
     /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
     /// that a prefetched chunk is the one the walk reads. Region-backed when cross-column
     /// coalescing (#374) attached a [SharedRegion], created standalone on first use otherwise.
@@ -153,7 +153,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves,
                                  RowRanges matchingRows, long rowGroupRowCount,
-                                 Dictionary preloadedDictionary) {
+                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -176,6 +176,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
+        this.prefetchTasks = prefetchTasks;
     }
 
     @Override
@@ -188,27 +189,24 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         return new SequentialPageIterator();
     }
 
-    /// Fetches the first chunk asynchronously, into the handle a [#pages] walk reads.
+    /// Fetches the first chunk on the calling thread, which is the speculative task that
+    /// planned this row group, into the handle a [#pages] walk reads; waiting for that
+    /// task covers this read.
     @Override
     public void prefetch() {
-        ChunkHandle first = firstChunk();
-        // FetchReason.bind carries the caller's reason (e.g. "prefetch rg=2") to the worker
-        // thread; otherwise the underlying readRange would log as `unattributed`.
-        CompletableFuture.runAsync(FetchReason.bind(() -> {
-            try {
-                first.ensureFetched();
-            }
-            catch (IOException e) {
-                // Speculative: nothing is waiting on this, and a failed prefetch leaves the
-                // handle unfetched, so the demand path fetches it again and reports the
-                // failure to a caller that is waiting for it. DEBUG rather than WARN so a
-                // sustained backend outage does not emit one line per chunk for failures
-                // that are about to be reported properly.
-                LOG.log(System.Logger.Level.DEBUG,
-                        "Prefetch failed for the first chunk of column {0} in row group {1} of {2}",
-                        columnSchema.name(), rowGroupIndex, fileName, e);
-            }
-        }));
+        try {
+            firstChunk().ensureFetched();
+        }
+        catch (IOException e) {
+            // Speculative: nothing is waiting on this, and a failed prefetch leaves the
+            // handle unfetched, so the demand path fetches it again and reports the
+            // failure to a caller that is waiting for it. DEBUG rather than WARN so a
+            // sustained backend outage does not emit one line per chunk for failures
+            // that are about to be reported properly.
+            LOG.log(System.Logger.Level.DEBUG,
+                    "Prefetch failed for the first chunk of column {0} in row group {1} of {2}",
+                    columnSchema.name(), rowGroupIndex, fileName, e);
+        }
     }
 
     /// Returns the handle of the first chunk, creating a standalone one if none is attached.
@@ -216,7 +214,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// may already be walking the plan.
     private synchronized ChunkHandle firstChunk() {
         if (firstChunkHandle == null) {
-            firstChunkHandle = new ChunkHandle(inputFile, columnChunkOffset, chunkSize, chunkPurpose(0));
+            firstChunkHandle = new ChunkHandle(inputFile, columnChunkOffset, chunkSize, chunkPurpose(0),
+                    prefetchTasks);
         }
         return firstChunkHandle;
     }
@@ -318,7 +317,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0);
+                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0, new PrefetchTasks());
     }
 
     /// @param preloadedDictionary the column's dictionary if pruning has read it, which the plan
@@ -326,12 +325,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     ///        otherwise
     /// @param preloadedDictionaryEnd where the preloaded dictionary's page ends, which is where
     ///        the plan starts reading; ignored without a preloaded dictionary
+    /// @param prefetchTasks where the one-ahead pre-fetch of each chunk runs; the overloads
+    ///        without it give the plan tasks of its own that nothing waits for
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount,
-                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd) {
+                                      Dictionary preloadedDictionary, long preloadedDictionaryEnd,
+                                      PrefetchTasks prefetchTasks) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
         if (totalCompressedSize > Integer.MAX_VALUE) {
@@ -356,7 +358,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves,
                 matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
-                preloadedDictionary);
+                preloadedDictionary, prefetchTasks);
     }
 
     /// Computes the per-fetch chunk size.
@@ -548,7 +550,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int remaining = columnChunkLength - relPos;
                 int handleLength = Math.min(remaining, chunkSize);
                 currentHandle = new ChunkHandle(inputFile, columnChunkOffset + relPos, handleLength,
-                        chunkPurpose(relPos));
+                        chunkPurpose(relPos), prefetchTasks);
                 handleStart = relPos;
             }
             handleEnd = handleStart + currentHandle.length();
@@ -560,7 +562,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int nextLength = Math.min(nextRemaining, chunkSize);
                 currentHandle.setNextChunk(
                         new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength,
-                                chunkPurpose(nextStart)));
+                                chunkPurpose(nextStart), prefetchTasks));
             }
         }
 

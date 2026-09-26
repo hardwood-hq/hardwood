@@ -11,10 +11,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.FetchReason;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -78,31 +76,28 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         return neededPages.isEmpty();
     }
 
+    /// Fetches the first chunk on the calling thread, which is the speculative task that
+    /// planned this row group, so waiting for that task covers this read.
     @Override
     public void prefetch() {
         if (!chunkHandles.isEmpty()) {
-            // FetchReason.bind carries the caller's reason (e.g.
-            // "prefetch rg=2") to the worker thread; otherwise the
-            // underlying readRange would log as `unattributed`.
             // The dictionary is read first, and its handle prefetches the first page group.
             ChunkHandle first = dictionaryHandle != null ? dictionaryHandle : chunkHandles.get(0);
-            CompletableFuture.runAsync(FetchReason.bind(() -> {
-                try {
-                    first.ensureFetched();
-                }
-                catch (IOException e) {
-                    // Speculative: nothing is waiting on this, and a failed prefetch
-                    // leaves the handle unfetched, so the demand path fetches it again
-                    // and reports the failure to a caller that is waiting for it.
-                    // DEBUG rather than WARN so a sustained backend outage does not
-                    // emit one line per chunk for failures that are about to be
-                    // reported properly.
-                    LOG.log(System.Logger.Level.DEBUG,
-                            "Prefetch failed for the first chunk of column {0} in row group {1}"
-                                    + " of {2}",
-                            columnSchema.name(), rowGroupIndex, fileName, e);
-                }
-            }));
+            try {
+                first.ensureFetched();
+            }
+            catch (IOException e) {
+                // Speculative: nothing is waiting on this, and a failed prefetch
+                // leaves the handle unfetched, so the demand path fetches it again
+                // and reports the failure to a caller that is waiting for it.
+                // DEBUG rather than WARN so a sustained backend outage does not
+                // emit one line per chunk for failures that are about to be
+                // reported properly.
+                LOG.log(System.Logger.Level.DEBUG,
+                        "Prefetch failed for the first chunk of column {0} in row group {1}"
+                                + " of {2}",
+                        columnSchema.name(), rowGroupIndex, fileName, e);
+            }
         }
     }
 

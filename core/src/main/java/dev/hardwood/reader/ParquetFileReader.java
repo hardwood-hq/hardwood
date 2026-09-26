@@ -10,8 +10,13 @@ package dev.hardwood.reader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.UnaryOperator;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
@@ -64,7 +69,10 @@ import dev.hardwood.schema.FileSchema;
 /// disk. [#getFileMetaData(int)] may have to load a footer, so it throws
 /// [IllegalStateException] once the reader is closed. [#getFileCount()],
 /// [#getFileMetaData()] and [#getFileSchema()] are served from state already in
-/// memory and stay usable.
+/// memory and stay usable. Building a row or column reader throws
+/// [IllegalStateException] once the reader is closed, and so does a build that
+/// is under way on another thread when [#close()] is called; [#close()] waits for
+/// such a build and closes the reader it made.
 ///
 /// **Ownership:** `open` and `openAll` take ownership of every input file. The
 /// files are closed when the reader is closed, or before the exception
@@ -95,13 +103,18 @@ public class ParquetFileReader implements Closeable {
     private final boolean metadataFilteringEnabled;
     private final boolean ownsContext;
     private final boolean ownsInputFiles;
-    /// Iterators handed to child readers that have not been closed yet. Tracking
-    /// them lets [#close()] tear down an iterator whose child reader the caller
-    /// never closed; each iterator drops itself from here once it is closed, so a
-    /// long-lived reader does not accumulate the work lists of finished children.
-    /// Copy-on-write because a child reader may be closed from another thread.
-    private final List<RowGroupIterator> rowGroupIterators = new CopyOnWriteArrayList<>();
-    private boolean closed;
+    /// Child readers that have not been closed yet, keyed by the iterator each reads
+    /// through, so [#close()] can close a child the caller never closed. The value is
+    /// the iterator itself until the child around it is built. Each iterator drops its
+    /// entry once it is closed, so a long-lived reader does not accumulate the work
+    /// lists of finished children. Concurrent because a child reader may be closed
+    /// from another thread.
+    private final Map<RowGroupIterator, Closeable> openChildren = new ConcurrentHashMap<>();
+    /// Held shared for the whole of each child build and exclusively by [#close()], so a
+    /// close waits for the builds under way before it closes anything, and a build that
+    /// finishes after a close began sees `closed` set. See [#buildChild].
+    private final ReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
+    private volatile boolean closed;
 
     private ParquetFileReader(List<InputFile> inputFiles, ReadFooter firstFileFooter,
                               FileSchema schema, HardwoodContextImpl context, boolean fixedListFastPathEnabled,
@@ -328,7 +341,7 @@ public class ParquetFileReader implements Closeable {
     /// @throws IOException if the file cannot be opened or its footer cannot be read
     public FileMetaData getFileMetaData(int fileIndex) throws IOException {
         if (closed) {
-            throw new IllegalStateException("ParquetFileReader is closed");
+            throw closedFailure();
         }
         return fileMetadataCache.getFileMetaData(fileIndex);
     }
@@ -413,6 +426,12 @@ public class ParquetFileReader implements Closeable {
 
     RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                              RowGroupPredicate rowGroupFilter, long maxRows, long skip) throws IOException {
+        return buildChild(() -> buildRowReaderUnderLock(projection, filter, rowGroupFilter, maxRows, skip));
+    }
+
+    private RowReader buildRowReaderUnderLock(ColumnProjection projection, FilterPredicate filter,
+                                              RowGroupPredicate rowGroupFilter, long maxRows, long skip)
+            throws IOException {
         // Apply the row-group predicate (e.g. byte-range) up front so `skip` indexes
         // into the kept sequence — a caller doing split-aware reading can seek inside *its*
         // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
@@ -471,6 +490,11 @@ public class ParquetFileReader implements Closeable {
     }
 
     RowReader buildTailRowReader(ColumnProjection projection, long tailRows)
+            throws IOException {
+        return buildChild(() -> buildTailRowReaderUnderLock(projection, tailRows));
+    }
+
+    private RowReader buildTailRowReaderUnderLock(ColumnProjection projection, long tailRows)
             throws IOException {
         if (isMultiFile()) {
             throw new UnsupportedOperationException(
@@ -596,14 +620,11 @@ public class ParquetFileReader implements Closeable {
         // Both paths size their batches through the one funnel the column readers use, so a
         // projection sizes the same whichever reader reads it.
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
-        if (schema.isFlatSchema()) {
-            return FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows,
-                    batchSize);
-        }
-        else {
-            return NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
-                    filter, maxRows, batchSize);
-        }
+        RowReader reader = schema.isFlatSchema()
+                ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize)
+                : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
+                        filter, maxRows, batchSize);
+        return trackedChild(rowGroupIterator, reader);
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) throws IOException {
@@ -662,6 +683,14 @@ public class ParquetFileReader implements Closeable {
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
             int batchSize) throws IOException {
+        return buildChild(() -> openColumnReadUnderLock(projection, filter, rowGroupFilter, batchSize));
+    }
+
+    private ColumnRead openColumnReadUnderLock(
+            ColumnProjection projection,
+            FilterPredicate filter,
+            RowGroupPredicate rowGroupFilter,
+            int batchSize) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
 
@@ -673,10 +702,10 @@ public class ParquetFileReader implements Closeable {
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
             if (iterator.workItemAt(0) == null) {
-                return new ColumnRead(ColumnScan.empty(iterator), projected);
+                return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected);
             }
-            ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema,
-                    ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups));
+            ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
+                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups)));
             return new ColumnRead(scan, projected);
         }
 
@@ -697,27 +726,80 @@ public class ParquetFileReader implements Closeable {
         // releases the fetch plans and the parent's tracking entry.
         // Asked of the first work item, so a read that has one plans no further.
         if (iterator.workItemAt(0) == null) {
-            return new ColumnRead(ColumnScan.empty(iterator), readProjection.payload());
+            return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), readProjection.payload());
         }
         // Size against the decoded columns — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
-        ColumnScan scan = ColumnScan.open(context, fixedListFastPathEnabled, iterator, schema, readProjection,
-                resolved, resolveBatchSize(batchSize, decoded, rowGroups));
+        ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
+                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups)));
         return new ColumnRead(scan, readProjection.payload());
     }
 
     /// Iterators still tracked for teardown by [#close()]. Visible for testing.
     int trackedIteratorCount() {
-        return rowGroupIterators.size();
+        return openChildren.size();
+    }
+
+    /// Replaces each tracked child with what `wrapper` makes of it. Visible for testing.
+    void wrapTrackedChildren(UnaryOperator<Closeable> wrapper) {
+        openChildren.replaceAll((iterator, child) -> wrapper.apply(child));
     }
 
     /// Creates an iterator over this reader's files and tracks it until it is
-    /// closed. See [#rowGroupIterators].
+    /// closed. See [#openChildren].
     private RowGroupIterator trackedIterator(long maxRows, long tailSkip, long physicalSkip) {
-        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, rowGroupIterators::remove,
+        RowGroupIterator iterator = new RowGroupIterator(fileMetadataCache, openChildren::remove,
                 context, maxRows, tailSkip, physicalSkip);
-        rowGroupIterators.add(iterator);
+        openChildren.put(iterator, iterator);
         return iterator;
+    }
+
+    /// Records `child` as what [#close()] closes in place of `iterator`, whose reader it is.
+    /// A child already closed has dropped its iterator's entry and is not recorded again.
+    /// When a close began while the child was being built, closes the child and fails.
+    ///
+    /// @throws IllegalStateException if this reader is closed
+    private <C extends Closeable> C trackedChild(RowGroupIterator iterator, C child) throws IOException {
+        if (closed) {
+            IllegalStateException failure = closedFailure();
+            try {
+                child.close();
+            }
+            catch (IOException | RuntimeException e) {
+                failure.addSuppressed(e);
+            }
+            throw failure;
+        }
+        openChildren.replace(iterator, child);
+        return child;
+    }
+
+    /// Runs one child build under the shared side of [#lifecycleLock], so [#close()] waits
+    /// for it before closing anything.
+    ///
+    /// @throws IllegalStateException if this reader is closed
+    private <C> C buildChild(ChildBuild<C> build) throws IOException {
+        Lock lock = lifecycleLock.readLock();
+        lock.lock();
+        try {
+            if (closed) {
+                throw closedFailure();
+            }
+            return build.run();
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    private static IllegalStateException closedFailure() {
+        return new IllegalStateException("ParquetFileReader is closed");
+    }
+
+    /// A child reader's build, which may read the files.
+    @FunctionalInterface
+    private interface ChildBuild<C> {
+        C run() throws IOException;
     }
 
     /// Resolves a requested batch size to a concrete record count. A positive
@@ -1118,13 +1200,27 @@ public class ParquetFileReader implements Closeable {
         }
     }
 
+    /// Waits for the child builds under way, which fail and close what they built, then
+    /// closes every child reader still open, which stops its workers and waits for the
+    /// prefetches its read started, then this reader's metadata, an owned context and
+    /// owned input files. A failure to close a child does not stop the rest from being
+    /// closed; the first failure is thrown, later ones suppressed beneath it.
     @Override
     public void close() throws IOException {
+        // Set before the lock is taken, so a build under way closes its own child and fails.
         closed = true;
-        for (RowGroupIterator iterator : rowGroupIterators) {
-            iterator.close();
+        Lock lock = lifecycleLock.writeLock();
+        lock.lock();
+        try {
+            closeOwned();
         }
-        rowGroupIterators.clear();
+        finally {
+            lock.unlock();
+        }
+    }
+
+    private void closeOwned() throws IOException {
+        Exception failure = closeChildren();
 
         fileMetadataCache.close();
 
@@ -1133,7 +1229,38 @@ public class ParquetFileReader implements Closeable {
         }
 
         if (ownsInputFiles) {
-            InputFileCloser.closeAll(inputFiles);
+            failure = InputFileCloser.closeAll(inputFiles, failure);
         }
+        if (failure instanceof IOException e) {
+            throw e;
+        }
+        if (failure instanceof RuntimeException e) {
+            throw e;
+        }
+    }
+
+    /// Closes each child reader still open, returning the first failure, an
+    /// [IOException] or a [RuntimeException], with later ones suppressed beneath it.
+    private Exception closeChildren() {
+        Exception failure = null;
+        for (Closeable child : openChildren.values()) {
+            try {
+                child.close();
+            }
+            catch (IOException | RuntimeException e) {
+                failure = withSuppressed(failure, e);
+            }
+        }
+        openChildren.clear();
+        return failure;
+    }
+
+    /// Returns `first` with `next` suppressed beneath it, or `next` when there is no `first`.
+    private static Exception withSuppressed(Exception first, Exception next) {
+        if (first == null) {
+            return next;
+        }
+        first.addSuppressed(next);
+        return first;
     }
 }
