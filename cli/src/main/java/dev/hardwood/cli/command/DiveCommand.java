@@ -43,8 +43,9 @@ public class DiveCommand implements Command<CommandInvocation> {
 
     @Option(
             name = "max-dict-bytes",
-            description = "Maximum chunk size (in bytes) to auto-load on the Dictionary screen; "
-                    + "larger chunks require a confirm prompt. Default: ${DEFAULT-VALUE} (16 MiB).",
+            description = "Maximum compressed dictionary-page size (in bytes) to auto-load on the "
+                    + "Dictionary screen; larger pages require a confirm prompt. "
+                    + "Default: ${DEFAULT-VALUE} (16 MiB).",
             defaultValue = "16777216")
     int maxDictBytes;
 

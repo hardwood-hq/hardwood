@@ -355,7 +355,7 @@ public final class DictionaryScreen {
 
     private static boolean needsConfirmation(ParquetModel model, ScreenState.DictionaryView state) {
         return !state.loadConfirmed()
-                && model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex())
+                && model.dictionaryPageBytes(state.rowGroupIndex(), state.columnIndex())
                 > model.dictionaryReadCapBytes();
     }
 
@@ -425,13 +425,13 @@ public final class DictionaryScreen {
 
     private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,
                                             ScreenState.DictionaryView state) {
-        long chunkBytes = model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex());
+        long pageBytes = model.dictionaryPageBytes(state.rowGroupIndex(), state.columnIndex());
         int capBytes = model.dictionaryReadCapBytes();
         List<Line> lines = new ArrayList<>();
         lines.add(Line.empty());
-        lines.add(Line.from(Span.raw(" This chunk would need to load "
-                + dev.hardwood.cli.internal.Sizes.format(chunkBytes)
-                + " of dictionary bytes,")));
+        lines.add(Line.from(Span.raw(" This dictionary page is "
+                + dev.hardwood.cli.internal.Sizes.format(pageBytes)
+                + " compressed,")));
         lines.add(Line.from(Span.raw(" exceeding the current "
                 + dev.hardwood.cli.internal.Sizes.format(capBytes) + " cap.")));
         lines.add(Line.empty());
