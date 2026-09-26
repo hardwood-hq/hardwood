@@ -8,6 +8,7 @@
 package dev.hardwood.cli.dive.internal;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
@@ -217,17 +218,19 @@ class PreviewWindowTest {
             PreviewWindow.Slice initial = window.slice(model, 0, 10, true);
             assertThat(initial.rows().get(0).get(0)).isEqualTo("1");
 
-            // Arm the failure for the *next* refill.
-            failing.failOnNextReadRange();
-
-            // Far jump → forces a refill. The wrapped readRange throws,
-            // surfaces as UncheckedIOException.
+            // Far jump → forces a refill. Every read fails while the outage
+            // lasts: the refill also starts speculative prefetches, whose
+            // failures are swallowed and left to the demand path, so a
+            // failure injected into a single read could land on one of
+            // them and the refill would then succeed.
+            failing.startFailing();
             assertThatThrownBy(() -> window.slice(model, 200, 10, true))
-                    .isInstanceOf(java.io.UncheckedIOException.class);
+                    .isInstanceOf(UncheckedIOException.class);
+            failing.stopFailing();
 
-            // Retry. The failure was one-shot, so this refill succeeds
-            // and must yield rows 200..209 → ids 201..210, not stale
-            // 1..10 from the pre-failure buffer.
+            // Retry. The outage is over, so this refill succeeds and must
+            // yield rows 200..209 → ids 201..210, not stale 1..10 from the
+            // pre-failure buffer.
             PreviewWindow.Slice retry = window.slice(model, 200, 10, true);
             assertThat(retry.rows()).hasSize(10);
             assertThat(retry.rows().get(0).get(0)).isEqualTo("201");
@@ -236,14 +239,19 @@ class PreviewWindowTest {
 
     private static final class FailingInputFile implements InputFile {
         private final InputFile delegate;
-        private boolean failNext;
+        /// Read by the reader's worker and prefetch threads.
+        private volatile boolean failing;
 
         FailingInputFile(InputFile delegate) {
             this.delegate = delegate;
         }
 
-        void failOnNextReadRange() {
-            this.failNext = true;
+        void startFailing() {
+            failing = true;
+        }
+
+        void stopFailing() {
+            failing = false;
         }
 
         @Override
@@ -253,8 +261,7 @@ class PreviewWindowTest {
 
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
-            if (failNext) {
-                failNext = false;
+            if (failing) {
                 throw new IOException("simulated transient failure");
             }
             return delegate.readRange(offset, length);
