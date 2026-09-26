@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.writer;
 
+import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -26,6 +28,12 @@ import dev.hardwood.schema.SchemaNode;
 /// — as a relation of no rows — and declines only to produce it. [FileSchema.Builder] already
 /// refuses to build such a schema, so the check here is for one built the other way: the
 /// childless root [FileSchema#fromSchemaElements] reconstructs from that file's footer.
+///
+/// **A column's levels fit in a byte.** The writer buffers each definition and repetition level
+/// in one byte, so a column whose maximum level exceeds [LevelEncoder#MAX_STORABLE_LEVEL] —
+/// one nested more than 255 optional or repeated fields deep — cannot be buffered. The format
+/// admits deeper nesting; the writer declines to produce it. [ColumnChunkBuffer] repeats the
+/// check as a guard, unreachable through the public API once this has run.
 ///
 /// The two rules that follow are about repetition.
 ///
@@ -74,7 +82,26 @@ public final class WriterSchemaShape {
             throw new IllegalArgumentException("Schema " + schema.getName()
                     + " has no columns; the writer requires at least one column");
         }
+        for (ColumnSchema column : schema.getColumns()) {
+            requireStorableLevels(column);
+        }
         walk(schema.getRootNode(), "", false);
+    }
+
+    /// Rejects a column nested too deeply for its levels to fit the writer's byte-wide level store.
+    ///
+    /// @param column the column
+    /// @throws UnsupportedOperationException if either maximum level exceeds
+    ///         [LevelEncoder#MAX_STORABLE_LEVEL]
+    public static void requireStorableLevels(ColumnSchema column) {
+        int maxDefLevel = column.maxDefinitionLevel();
+        int maxRepLevel = column.maxRepetitionLevel();
+        if (maxDefLevel > LevelEncoder.MAX_STORABLE_LEVEL || maxRepLevel > LevelEncoder.MAX_STORABLE_LEVEL) {
+            throw new UnsupportedOperationException("Column " + column.fieldPath() + " nests deeper than the"
+                    + " writer supports: its maximum definition level is " + maxDefLevel
+                    + " and its maximum repetition level is " + maxRepLevel + ", where levels must fit "
+                    + LevelEncoder.MAX_STORABLE_LEVEL);
+        }
     }
 
     /// Walks one group's fields.

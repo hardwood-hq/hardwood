@@ -308,3 +308,5 @@ Every other arrangement of repetition is rejected when the writer is created, si
 - a `MAP` whose entry is a leaf rather than a group.
 
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
+
+A column's maximum definition level and maximum repetition level must each be at most 255. A schema nested deeper is rejected with `UnsupportedOperationException` when the writer is created.

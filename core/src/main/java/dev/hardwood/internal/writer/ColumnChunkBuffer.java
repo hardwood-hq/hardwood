@@ -181,10 +181,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.maxRepLevel = column.maxRepetitionLevel();
         this.defLevelBits = maxDefLevel > 0 ? LevelEncoder.bitWidth(maxDefLevel) : 0;
         this.repLevelBits = maxRepLevel > 0 ? LevelEncoder.bitWidth(maxRepLevel) : 0;
-        if (maxDefLevel > LevelEncoder.MAX_STORABLE_LEVEL || maxRepLevel > LevelEncoder.MAX_STORABLE_LEVEL) {
-            throw new UnsupportedOperationException("Column " + column.name() + " nests deeper than the writer"
-                    + " supports: levels must fit " + LevelEncoder.MAX_STORABLE_LEVEL);
-        }
+        // Settled by WriterSchemaShape before the destination is opened; kept as a guard for
+        // the byte-wide level store below.
+        WriterSchemaShape.requireStorableLevels(column);
         this.levelBitsPerEntry = defLevelBits + repLevelBits;
         this.levelBytesPerEntry = (maxDefLevel > 0 ? 1 : 0) + (maxRepLevel > 0 ? 1 : 0);
         this.pageTargetBits = (long) pageTargetBytes * Byte.SIZE;
