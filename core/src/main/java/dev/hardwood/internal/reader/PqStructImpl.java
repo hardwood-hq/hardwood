@@ -345,8 +345,8 @@ final class PqStructImpl implements PqStruct {
         if (child.schema().type() == PhysicalType.FLOAT) {
             return ((float[]) batch.valueArrays[projCol])[idx];
         }
-        batch.requireFloatAccess(child.schema());
-        return ((BinaryBatchValues) batch.valueArrays[projCol]).float16At(idx);
+        LogicalAccessorKind.requireFloat16(batch.fileName, child.schema());
+        return LeafDecoder.float16At(batch.valueArrays[projCol], idx);
     }
 
     private double readDouble(TopLevelFieldMap.FieldDesc.Primitive child) {
@@ -373,7 +373,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return NestedLeafDecoder.readString(batch, projCol, idx, child.schema());
+        return LeafDecoder.readString(batch, projCol, idx, child.schema());
     }
 
     private byte[] readBinary(TopLevelFieldMap.FieldDesc.Primitive child) {
@@ -394,39 +394,39 @@ final class PqStructImpl implements PqStruct {
 
     private LocalDate readDate(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readDate(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readDate(batch, child.projectedCol(), idx, child.schema());
     }
 
     private LocalTime readTime(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readTime(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readTime(batch, child.projectedCol(), idx, child.schema());
     }
 
     private Instant readTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readTimestamp(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readTimestamp(batch, child.projectedCol(), idx, child.schema());
     }
 
     private LocalDateTime readLocalTimestamp(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
         return idx < 0
                 ? null
-                : NestedLeafDecoder.readLocalTimestamp(batch, child.projectedCol(), idx, child.schema());
+                : LeafDecoder.readLocalTimestamp(batch, child.projectedCol(), idx, child.schema());
     }
 
     private BigDecimal readDecimal(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readDecimal(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readDecimal(batch, child.projectedCol(), idx, child.schema());
     }
 
     private UUID readUuid(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readUuid(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readUuid(batch, child.projectedCol(), idx, child.schema());
     }
 
     private PqInterval readInterval(TopLevelFieldMap.FieldDesc.Primitive child) {
         int idx = valueIndexOrNull(child);
-        return idx < 0 ? null : NestedLeafDecoder.readInterval(batch, child.projectedCol(), idx, child.schema());
+        return idx < 0 ? null : LeafDecoder.readInterval(batch, child.projectedCol(), idx, child.schema());
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {

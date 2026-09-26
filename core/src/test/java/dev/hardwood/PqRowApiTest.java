@@ -487,6 +487,36 @@ public class PqRowApiTest {
         }
     }
 
+    /// A typed accessor asked for a type its column does not hold fails on the cast of the
+    /// column's annotation its decode makes, or on dereferencing an absent annotation, with
+    /// the file named in front of the JVM's own message and the exception type kept.
+    @Test
+    void flatTypedAccessorFailsOnItsCastNamingTheFile() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            // No annotation to cast: the dereference below the cast is what throws.
+            assertFailsWithFileNamed(() -> rowReader.getDecimal("big_int"), NullPointerException.class);
+            assertFailsWithFileNamed(() -> rowReader.getTime("medium_int"), NullPointerException.class);
+            // The wrong annotation: the cast to the expected one throws.
+            assertFailsWithFileNamed(() -> rowReader.getDecimal("birth_date"), ClassCastException.class);
+            assertFailsWithFileNamed(() -> rowReader.getTime("balance"), ClassCastException.class);
+            assertFailsWithFileNamed(() -> rowReader.getTimestamp("wake_time_micros"), ClassCastException.class);
+            assertFailsWithFileNamed(() -> rowReader.getLocalTimestamp("birth_date"), ClassCastException.class);
+        }
+    }
+
+    private static void assertFailsWithFileNamed(Runnable accessor, Class<? extends RuntimeException> type) {
+        assertThatThrownBy(accessor::run)
+                .isExactlyInstanceOf(type)
+                .satisfies(e -> {
+                    assertThat(e.getCause()).isExactlyInstanceOf(type);
+                    assertThat(e).hasMessage("[logical_types_test.parquet] " + e.getCause().getMessage());
+                });
+    }
+
     @Test
     void pqListTypedIteratorOnRightElementTypeStillWorks() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/typed_accessors_issue_445.parquet");

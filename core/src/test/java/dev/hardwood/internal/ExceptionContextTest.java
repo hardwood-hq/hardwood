@@ -109,6 +109,16 @@ class ExceptionContextTest {
     }
 
     @Test
+    void preservesClassCastException() {
+        ClassCastException original = new ClassCastException("class [I cannot be cast to class [J");
+        RuntimeException wrapped = ExceptionContext.addFileContext("file.parquet", original);
+
+        assertThat(wrapped).isExactlyInstanceOf(ClassCastException.class);
+        assertThat(wrapped.getMessage()).isEqualTo("[file.parquet] class [I cannot be cast to class [J");
+        assertThat(wrapped.getCause()).isSameAs(original);
+    }
+
+    @Test
     void preservesUnsupportedOperationException() {
         UnsupportedOperationException original = new UnsupportedOperationException("nope");
         RuntimeException wrapped = ExceptionContext.addFileContext("file.parquet", original);

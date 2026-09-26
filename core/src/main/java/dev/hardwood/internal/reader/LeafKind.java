@@ -15,7 +15,7 @@ import dev.hardwood.schema.SchemaNode;
 /// type and its annotation decide between them.
 ///
 /// Both read paths classify through [#of(PhysicalType, LogicalType)]: `FlatRowReader`
-/// once per column at construction, [NestedLeafDecoder] per leaf. Stating the rules
+/// once per column at construction, [LeafDecoder] per leaf. Stating the rules
 /// here is what keeps them from drifting apart, and it is what lets the string gate
 /// on the recording side ([BatchExchange]) and the one on the consumer side ask the
 /// same question.
