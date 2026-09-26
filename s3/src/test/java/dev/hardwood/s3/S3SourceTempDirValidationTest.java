@@ -8,10 +8,13 @@
 package dev.hardwood.s3;
 
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -37,6 +40,22 @@ class S3SourceTempDirValidationTest {
     }
 
     @Test
+    void rejectedTempDirBuildsNoHttpClient() {
+        Path missing = tempDir.resolve("does-not-exist");
+        Set<String> clientThreadsBefore = httpClientThreads();
+
+        assertThatThrownBy(() -> builder()
+                .rangeBacking(RangeBacking.SPARSE_TEMPFILE)
+                .tempDir(missing)
+                .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("tempDir does not exist or is not a directory: " + missing
+                        + " (required by RangeBacking.SPARSE_TEMPFILE)");
+
+        assertThat(httpClientThreads()).isSubsetOf(clientThreadsBefore);
+    }
+
+    @Test
     void sparseTempFileAcceptsExistingTempDir() {
         assertThatCode(() -> builder()
                 .rangeBacking(RangeBacking.SPARSE_TEMPFILE)
@@ -53,6 +72,14 @@ class S3SourceTempDirValidationTest {
                 .build()
                 .close())
                 .doesNotThrowAnyException();
+    }
+
+    /// Names of the selector threads, one per live [java.net.http.HttpClient].
+    private static Set<String> httpClientThreads() {
+        return Thread.getAllStackTraces().keySet().stream()
+                .map(Thread::getName)
+                .filter(name -> name.startsWith("HttpClient-") && name.endsWith("-SelectorManager"))
+                .collect(Collectors.toSet());
     }
 
     private static S3Source.Builder builder() {
