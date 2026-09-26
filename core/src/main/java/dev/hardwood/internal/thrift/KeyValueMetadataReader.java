@@ -14,28 +14,48 @@ import java.util.Map;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 
 /// Reads a Thrift-encoded `list<KeyValue>` into an unmodifiable `Map<String, String>`.
+///
+/// The field is optional wherever it appears, so a list whose entries are not all key-value
+/// pairs is reported as absent (an empty map) and logged at WARNING. Bytes that are not valid
+/// Thrift, such as an invalid wire type or a list running past the buffer, still fail the read.
 class KeyValueMetadataReader {
+
+    private static final System.Logger LOG = System.getLogger(KeyValueMetadataReader.class.getName());
 
     /// Reads a key-value metadata list from the given reader, which must be positioned
     /// right after the list field header has been consumed (i.e. ready to read the list header).
     ///
-    /// The field is optional wherever it appears, so a list declaring anything but struct
-    /// elements is skipped and reported as an empty map.
-    ///
+    /// A list declaring anything but struct elements, or holding an entry without a `key` of
+    /// wire type `binary`, is reported as an empty map. The reader is left positioned on the
+    /// byte after the list either way.
     static Map<String, String> read(ThriftCompactReader reader) {
         long listHeader = reader.acceptListHeader(Codes.STRUCT);
         if (listHeader == ThriftCompactReader.ABSENT_LIST) {
             return Map.of();
         }
-        Map<String, String> result = new LinkedHashMap<>(ThriftCompactReader.listSize(listHeader));
-        for (int i = 0; i < ThriftCompactReader.listSize(listHeader); i++) {
-            readKeyValue(reader, result);
+        int size = ThriftCompactReader.listSize(listHeader);
+        Map<String, String> result = new LinkedHashMap<>(size);
+        int malformed = 0;
+        for (int i = 0; i < size; i++) {
+            if (!readKeyValue(reader, result)) {
+                malformed++;
+            }
+        }
+        if (malformed > 0) {
+            int dropped = malformed;
+            LOG.log(System.Logger.Level.WARNING, () -> "Ignoring " + reader.fieldHere() + ": "
+                    + dropped + " of " + size + " entries are missing a required field");
+            return Map.of();
         }
         return Collections.unmodifiableMap(result);
     }
 
-    /// Reads a single KeyValue Thrift struct (field 1: key, field 2: value) and puts it into the map.
-    private static void readKeyValue(ThriftCompactReader reader, Map<String, String> target) {
+    /// Reads a single KeyValue Thrift struct (field 1: key, field 2: value) and puts it into the
+    /// map.
+    ///
+    /// Returns `false` for a struct that does not carry its required `key` as `binary`, which is
+    /// then not put. The struct is consumed either way, leaving the reader on the next element.
+    private static boolean readKeyValue(ThriftCompactReader reader, Map<String, String> target) {
         int saved = reader.pushFieldIdContext(ThriftStruct.KEY_VALUE);
         try {
             String key = null;
@@ -64,9 +84,11 @@ class KeyValueMetadataReader {
                 }
             }
 
-            if (key != null) {
-                target.put(key, value);
+            if (key == null) {
+                return false;
             }
+            target.put(key, value);
+            return true;
         }
         finally {
             reader.popFieldIdContext(saved);
