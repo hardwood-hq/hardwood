@@ -187,7 +187,8 @@ class IndexWindowTest {
             BitSet columnIndexColumns) throws Exception {
         List<RowGroup> members = rowGroups().subList(0, count);
         return IndexWindow.plan(Long.MAX_VALUE, file, 0, members.toArray(new RowGroup[0]),
-                indexes(count), repeat(offsetIndexColumns, count), repeat(columnIndexColumns, count))
+                indexes(count), repeat(offsetIndexColumns, count), repeat(columnIndexColumns, count),
+                repeat(new BitSet(), count))
                 .getFirst();
     }
 
@@ -196,7 +197,7 @@ class IndexWindowTest {
         int count = rowGroups.size();
         return IndexWindow.plan(budget, countingFile(InputFile.of(FIXTURE)), 0,
                 rowGroups.toArray(new RowGroup[0]), indexes(count), repeat(offsetIndexColumns, count),
-                repeat(columnIndexColumns, count));
+                repeat(columnIndexColumns, count), repeat(new BitSet(), count));
     }
 
     private static long offsetIndexBytes(RowGroup rowGroup) {

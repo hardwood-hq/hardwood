@@ -164,7 +164,7 @@ Tests: `ColumnIndexReaderTest`, `OffsetIndexReaderTest`, `MalformedMetadataValid
 
 ## Bloom filter
 
-A chunk's bloom filter is a `BloomFilterHeader` Thrift struct followed by `numBytes` of split-block bitset. The internal records `BloomFilterHeader` and `BloomFilter` (`internal.bloomfilter`) hold it; there is no public bloom filter API. `RowGroupBloomFilterSource` fetches it lazily on the first probe ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bloom-filters)).
+A chunk's bloom filter is a `BloomFilterHeader` Thrift struct followed by `numBytes` of split-block bitset. The internal records `BloomFilterHeader` and `BloomFilter` (`internal.bloomfilter`) hold it; there is no public bloom filter API. `RowGroupBloomFilterSource` parses it on the first probe, from the bytes the row group's index window fetched or from a read of its own ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bloom-filters)).
 
 The header and body are validated where they are parsed:
 

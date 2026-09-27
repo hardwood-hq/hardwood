@@ -207,14 +207,16 @@ Tests: `SizeStatisticsMetadataTest`, `MalformedMetadataValidationTest`, `PageFil
 
 ## Row groups
 
-`RowGroupIterator.filterRowGroups` decides every row group of a file when the file is planned, before any of its row groups is read. `RowGroupFilterEvaluator.planRowGroup` folds the predicate; each leaf is decided in two steps:
-
-1. `ChunkStats.of(rowGroup, column, readability).decide(leaf, …)`.
-2. If that is not `CANNOT_MATCH`, the absence switch in `RowGroupFilterEvaluator` probes the chunk's bloom filter. A leaf the statistics drop reaches no probe, so bloom filter I/O happens only where the decision needs it. Untested.
+`RowGroupIterator.filterRowGroups` decides every row group of a file on its statistics when the file is planned, before any of its row groups is read. `RowGroupFilterEvaluator.planRowGroup` folds the predicate and decides each leaf with `ChunkStats.of(rowGroup, column, readability).decide(leaf, …)`. Planning passes a `BloomFilterColumnRecorder`, which reads nothing: where a leaf's statistics leave it `MIGHT_MATCH`, the absence switch asks it for the chunk's bloom filter, and it records the column. A leaf the statistics decide reaches no probe, so the recorded columns are those whose filter the decision may need, and only they are fetched ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-index-windows)).
 
 `GeospatialPredicate` is decided in the fold from `ColumnMetaData.geospatialStatistics().bbox()`, which lives on the chunk alone ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)).
 
-A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES` and the `LeafDecisions` recorded for each leaf. Dictionaries are probed later, in `RowGroupIterator.computeSharedMetadata`, when the read reaches an undecided row group; an `ALWAYS_MATCHES` one is not probed, since a dictionary can only prove absence and so cannot contradict the statistics: `refineWithDictionaries` replays each recorded leaf decision and reads a dictionary only for a leaf left `MIGHT_MATCH`, which re-reads no bloom filter and repeats no statistics warning. A dictionary turns such a leaf into `CANNOT_MATCH` and nothing else, so the replay stops no `AND` or `OR` later than planning did and reaches only leaves planning recorded. The dictionaries read are kept in the row group's shared metadata and handed to its fetch plans, so the dictionary page is read once. The refined decision is used only to drop the row group; the always-match flag comes from planning.
+A `CANNOT_MATCH` row group is dropped; a surviving one carries whether it is `ALWAYS_MATCHES`, the `LeafDecisions` recorded for each leaf and the recorded bloom-filter columns. Bloom filters and dictionaries are probed later, in `RowGroupIterator.computeSharedMetadata`, when the read reaches an undecided row group; an `ALWAYS_MATCHES` one is not probed, since either probe can only prove absence and so cannot contradict the statistics. Two passes each replay the recorded leaf decisions and repeat no statistics warning:
+
+1. `refineWithBloomFilters` probes the bloom filter of each leaf left `MIGHT_MATCH`, and records the leaf decisions it reaches. A row group without recorded columns skips this pass.
+2. `refineWithDictionaries` starts from those decisions and reads a dictionary only for a leaf still `MIGHT_MATCH`, so a leaf its bloom filter dropped reads no dictionary, and a row group its bloom filters dropped reads none at all.
+
+Each probe turns an open leaf into `CANNOT_MATCH` and nothing else, so the replays stop no `AND` or `OR` later than planning did and reach only leaves planning recorded. The dictionaries read are kept in the row group's shared metadata and handed to its fetch plans, so the dictionary page is read once. The refined decisions are used only to drop the row group; the always-match flag comes from planning.
 
 The absence switch names every leaf type, so a new leaf does not compile until it states what proves its literal absent. Only `EQ` and `IN` are probed, and a binary leaf only where its `Comparison` is `byteExact()`, meaning the leaf matches by stored bytes. A value comparison on a `BYTE_ARRAY` `DECIMAL` (`VARIABLE_DECIMAL`) or an `INT96` (`INT96_INSTANT`) is never probed; a `byte[]` literal on such a column resolves to a `STORED_BYTES` leaf, which is. A `BOOLEAN` leaf is never probed; its bounds decide it. Signed and unsigned integer columns probe alike, since both shortcuts test stored bits.
 
@@ -222,7 +224,7 @@ Tests: `DictionaryPushDownTest`, `DictionaryPushDownIoTest`, `BinaryDecimalFilte
 
 ### Bloom filters
 
-`RowGroupBloomFilterSource` reads one chunk's split-block bloom filter lazily on first probe and caches it, absence included, for the row group's evaluation. Hashing is XXH64 with seed 0 over the value's plain encoding: `INT32`/`INT64` little-endian, `FLOAT`/`DOUBLE` their raw IEEE-754 bits, binary its bytes (`XxHash64`). Hash and membership agree with parquet-java's `BlockSplitBloomFilter`.
+`RowGroupBloomFilterSource` parses one chunk's split-block bloom filter on first probe and caches it, absence included, for the row group's evaluation. It parses the bytes the row group's index window fetched where the footer gives the filter's offset and length, and reads the filter from the file otherwise. Hashing is XXH64 with seed 0 over the value's plain encoding: `INT32`/`INT64` little-endian, `FLOAT`/`DOUBLE` their raw IEEE-754 bits, binary its bytes (`XxHash64`). Hash and membership agree with parquet-java's `BlockSplitBloomFilter`.
 
 | Rule | Reason |
 |---|---|
@@ -235,9 +237,9 @@ Tests: `DictionaryPushDownTest`, `DictionaryPushDownIoTest`, `BinaryDecimalFilte
 | an `IOException` reading a declared filter fails the read | a filter the footer declares and the file cannot deliver is corruption. Untested. |
 | a chunk whose data lives in another file (`file_path`) fails | reading its offset in this file would prune on unrelated bytes |
 
-An absent `bloom_filter_length` is handled by probing the header to learn the length.
+An absent `bloom_filter_length` is handled by probing the header to learn the length; such a filter is not part of an index window.
 
-Tests: `BloomFilterPushDownTest`, `BloomFilterParquetJavaOracleTest`.
+Tests: `BloomFilterPushDownTest`, `BloomFilterParquetJavaOracleTest`, `BloomFilterWindowIoTest`.
 
 ### Dictionaries
 
@@ -280,13 +282,14 @@ Tests: `PageDropPredicatesTest`, `PredicatePushDownTest`, `InlineNullPageDropTes
 
 | Event | Emitted | Reports |
 |---|---|---|
-| `RowGroupFilterEvent` | once per file, when its row groups are planned under a predicate | `totalRowGroups`, `rowGroupsKept`, `rowGroupsSkipped` by statistics and bloom filters, `rowGroupsFullyMatching` |
+| `RowGroupFilterEvent` | once per file, when its row groups are planned under a predicate | `totalRowGroups`, `rowGroupsKept`, `rowGroupsSkipped` by statistics, `rowGroupsFullyMatching` |
+| `RowGroupBloomFilterEvent` | once per row group its bloom filters drop, when the read reaches it | `file`, `rowGroupIndex` |
 | `RowGroupDictionaryFilterEvent` | once per row group its dictionaries drop, when the read reaches it | `file`, `rowGroupIndex` |
 | `PageFilterEvent` | once per projected column chunk with an offset index, in a row group whose rows the column index narrowed | `totalPages`, `pagesKept`, `pagesSkipped` |
 
-A row group a dictionary drops counts as kept in `RowGroupFilterEvent`, which is committed before any dictionary is read. `PageFilterEvent` is emitted with `pagesSkipped == 0` when the predicate kept every page, and not at all for an unfiltered read, a chunk without an offset index, a row group the column index did not narrow, a closed mask gate, or pages dropped only by `tail(N)`. Inline-statistics drops emit no page event, because the sequential plan knows no page total without reading the headers it set out to avoid.
+A row group a bloom filter or dictionary drops counts as kept in `RowGroupFilterEvent`, which is committed before any bloom filter or dictionary is read. `PageFilterEvent` is emitted with `pagesSkipped == 0` when the predicate kept every page, and not at all for an unfiltered read, a chunk without an offset index, a row group the column index did not narrow, a closed mask gate, or pages dropped only by `tail(N)`. Inline-statistics drops emit no page event, because the sequential plan knows no page total without reading the headers it set out to avoid.
 
-Tests: `RowGroupDictionaryFilterEventTest`, `RowGroupFilterEventTest`, `PageFilterEventTest`.
+Tests: `RowGroupBloomFilterEventTest`, `RowGroupDictionaryFilterEventTest`, `RowGroupFilterEventTest`, `PageFilterEventTest`.
 
 ## Boundaries
 

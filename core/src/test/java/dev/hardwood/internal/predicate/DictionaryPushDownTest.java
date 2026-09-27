@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterAll;
@@ -181,6 +183,76 @@ class DictionaryPushDownTest {
 
             assertThatThrownBy(() -> RowGroupFilterEvaluator.refineWithDictionaries(eq, rowGroup(),
                     new RowGroupFilterEvaluator.LeafDecisions(), dictionaries()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("No planned decision for leaf " + eq);
+        }
+
+        @Test
+        void planningRecordsTheBloomFilterColumnsOfOpenLeavesOnly() throws IOException {
+            // Statistics prove `id >= 0` for every row and rule out `id == 20000`; only the
+            // `category` leaf is left open and asks for a filter.
+            ResolvedPredicate or = FilterPredicateResolver.resolve(FilterPredicate.and(
+                    FilterPredicate.gtEq("id", 0L),
+                    FilterPredicate.or(FilterPredicate.eq("id", 20_000L), FilterPredicate.eq("category", "cat_5x"))),
+                    schema);
+            BloomFilterColumnRecorder recorder = new BloomFilterColumnRecorder(rowGroup());
+
+            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), recorder, UNNAMED,
+                    BoundsReadability.ALL, new RowGroupFilterEvaluator.LeafDecisions()))
+                    .isEqualTo(FilterDecision.MIGHT_MATCH);
+            assertThat(recorder.columns().stream().toArray()).containsExactly(CATEGORY_COLUMN);
+        }
+
+        @Test
+        void bloomFiltersDecidedOnEntryCarryIntoTheDictionaryPass() throws IOException {
+            // `id` 42 is present, so no dictionary drops its branch; the empty bloom filter does.
+            // "cat_5x" only the dictionary drops. Both passes start from the recorded decisions,
+            // so the dictionary pass has to see the bloom filter's answer to drop the row group.
+            ResolvedPredicate or = FilterPredicateResolver.resolve(FilterPredicate.or(
+                    FilterPredicate.eq("id", 42L), FilterPredicate.eq("category", "cat_5x")), schema);
+            RowGroupFilterEvaluator.LeafDecisions planned = new RowGroupFilterEvaluator.LeafDecisions();
+            assertThat(RowGroupFilterEvaluator.planRowGroup(or, rowGroup(), new BloomFilterColumnRecorder(rowGroup()),
+                    UNNAMED, BoundsReadability.ALL, planned)).isEqualTo(FilterDecision.MIGHT_MATCH);
+            RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
+
+            assertThat(RowGroupFilterEvaluator.refineWithBloomFilters(or, rowGroup(), planned,
+                    columnIndex -> columnIndex == ID_COLUMN ? emptyBloomFilter() : null, refined))
+                    .isEqualTo(FilterDecision.MIGHT_MATCH);
+            assertThat(RowGroupFilterEvaluator.refineWithDictionaries(or, rowGroup(), refined, dictionaries()))
+                    .isEqualTo(FilterDecision.CANNOT_MATCH);
+            assertThat(RowGroupFilterEvaluator.refineWithDictionaries(or, rowGroup(), planned, dictionaries()))
+                    .as("without the bloom filter's answer, the dictionaries keep the `id` branch")
+                    .isEqualTo(FilterDecision.MIGHT_MATCH);
+        }
+
+        @Test
+        void anAndBranchTheBloomFilterDropsLeavesItsLaterChildUnreachedInBothPasses() throws IOException {
+            ResolvedPredicate and = FilterPredicateResolver.resolve(FilterPredicate.and(
+                    FilterPredicate.eq("id", 42L), FilterPredicate.eq("category", "cat_5")), schema);
+            RowGroupFilterEvaluator.LeafDecisions planned = new RowGroupFilterEvaluator.LeafDecisions();
+            RowGroupFilterEvaluator.planRowGroup(and, rowGroup(), new BloomFilterColumnRecorder(rowGroup()),
+                    UNNAMED, BoundsReadability.ALL, planned);
+            List<Integer> bloomReads = new ArrayList<>();
+            BloomFilterSource bloomFilters = columnIndex -> {
+                bloomReads.add(columnIndex);
+                return emptyBloomFilter();
+            };
+            RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
+
+            assertThat(RowGroupFilterEvaluator.refineWithBloomFilters(and, rowGroup(), planned, bloomFilters, refined))
+                    .isEqualTo(FilterDecision.CANNOT_MATCH);
+            assertThat(bloomReads).containsExactly(ID_COLUMN);
+            assertThat(RowGroupFilterEvaluator.refineWithDictionaries(and, rowGroup(), refined, dictionaries()))
+                    .isEqualTo(FilterDecision.CANNOT_MATCH);
+        }
+
+        @Test
+        void refiningWithBloomFiltersALeafPlanningDidNotRecordFails() throws IOException {
+            ResolvedPredicate eq = FilterPredicateResolver.resolve(FilterPredicate.eq("category", "cat_5"), schema);
+
+            assertThatThrownBy(() -> RowGroupFilterEvaluator.refineWithBloomFilters(eq, rowGroup(),
+                    new RowGroupFilterEvaluator.LeafDecisions(), columnIndex -> null,
+                    new RowGroupFilterEvaluator.LeafDecisions()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("No planned decision for leaf " + eq);
         }

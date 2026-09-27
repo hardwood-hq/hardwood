@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Asserts that a row group dropped by its dictionaries is reported by
 /// `dev.hardwood.RowGroupDictionaryFilter`, while `dev.hardwood.RowGroupFilter`, which reports the
-/// statistics and bloom-filter decisions taken before the read reaches it, counts it as kept.
+/// statistics decisions taken before the read reaches it, counts it as kept.
 class RowGroupDictionaryFilterEventTest extends AbstractJfrRecorderTest {
 
     /// One row group, 10 000 rows; `category` cycles ten dictionary-encoded values `"cat_0"`…`"cat_9"`.

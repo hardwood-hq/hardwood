@@ -14,18 +14,17 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/// JFR event emitted when a row group's dictionaries prove that none of its rows matches the
+/// JFR event emitted when a row group's bloom filters prove that none of its rows matches the
 /// filter, once the read reaches the row group.
 ///
 /// [RowGroupFilterEvent] reports the decisions statistics take for all row groups of a file before
-/// it is read, and counts a row group dropped here as kept. A row group its bloom filters drop is
-/// reported by [RowGroupBloomFilterEvent] and reaches no dictionary.
-@Name("dev.hardwood.RowGroupDictionaryFilter")
-@Label("Row Group Dictionary Filter")
+/// it is read, and counts a row group dropped here as kept.
+@Name("dev.hardwood.RowGroupBloomFilter")
+@Label("Row Group Bloom Filter")
 @Category({"Hardwood", "Filter"})
-@Description("Row group skipped by dictionary predicate push-down")
+@Description("Row group skipped by bloom filter predicate push-down")
 @StackTrace(false)
-public class RowGroupDictionaryFilterEvent extends Event {
+public class RowGroupBloomFilterEvent extends Event {
 
     @Label("File")
     @Description("Name of the Parquet file")

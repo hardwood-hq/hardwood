@@ -25,6 +25,7 @@ import java.util.function.Consumer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.predicate.BloomFilterColumnRecorder;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
@@ -42,6 +43,7 @@ import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageFilterEvent;
+import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
@@ -167,12 +169,14 @@ public class RowGroupIterator implements Closeable {
     /// plans. (Filter predicates invalidate this correlation, so callers must
     /// ignore it when a filter is active.)
     ///
-    /// `leafDecisions` holds what statistics and bloom filters decided for each
-    /// leaf of the filter, for the row group's dictionaries to sharpen once the
-    /// read reaches it; `null` when no metadata filtering applies.
+    /// `leafDecisions` holds what statistics decided for each leaf of the filter,
+    /// for the row group's bloom filters and dictionaries to sharpen once the read
+    /// reaches it; `null` when no metadata filtering applies. `bloomFilterColumns`
+    /// holds the file ordinals of the columns whose bloom filter a leaf would probe.
     ///
-    /// `indexWindow` fetches the row group's page-index slices together with those
-    /// of the work items planned beside it; `null` only while its file is planned.
+    /// `indexWindow` fetches the row group's page-index and bloom-filter slices
+    /// together with those of the work items planned beside it; `null` only while
+    /// its file is planned.
     public record WorkItem(
             InputFile inputFile,
             RowGroup rowGroup,
@@ -184,13 +188,14 @@ public class RowGroupIterator implements Closeable {
             long rowsConsumedBefore,
             boolean filterAlwaysMatches,
             RowGroupFilterEvaluator.LeafDecisions leafDecisions,
+            BitSet bloomFilterColumns,
             IndexWindow indexWindow
     ) {
 
         WorkItem withIndexWindow(IndexWindow window) {
             return new WorkItem(inputFile, rowGroup, fileSchema, columnOrdinals, fileIndex,
                     rowGroupIndex, workItemIndex, rowsConsumedBefore, filterAlwaysMatches,
-                    leafDecisions, window);
+                    leafDecisions, bloomFilterColumns, window);
         }
     }
 
@@ -209,14 +214,14 @@ public class RowGroupIterator implements Closeable {
     ///
     /// `dictionaries` holds the dictionaries pruning read for this row group, for
     /// the fetch plans to decode with rather than read them again; `null` when
-    /// pruning read none. A row group they prove holds no match is
-    /// `droppedByDictionary`, and nothing else is read for it.
+    /// pruning read none. A row group its bloom filters or dictionaries prove holds
+    /// no match is `dropped`, and nothing else is read for it.
     public record SharedRowGroupMetadata(
             RowGroupIndexBuffers indexBuffers,
             RowRanges matchingRows,
             LazyMaskCapability maskCapability,
             RowGroupDictionaryFilterSource dictionaries,
-            boolean droppedByDictionary
+            boolean dropped
     ) {}
 
     private List<RowGroup> firstFileRowGroups;
@@ -472,9 +477,19 @@ public class RowGroupIterator implements Closeable {
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 requireSameFile(workItem);
                 RowGroupDictionaryFilterSource dictionaries = null;
-                // A row group statistics proved to match in full is not probed: a dictionary
-                // cannot contradict them, and a filter-only column is not read there at all.
+                // A row group statistics proved to match in full is not probed: neither a bloom
+                // filter nor a dictionary can contradict them, and a filter-only column is not
+                // read there at all.
                 if (workItem.leafDecisions() != null && !workItem.filterAlwaysMatches()) {
+                    RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
+                    if (!workItem.bloomFilterColumns().isEmpty()) {
+                        RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
+                        if (refineWithBloomFilters(workItem, refined) == FilterDecision.CANNOT_MATCH) {
+                            emitBloomFilterDropEvent(workItem);
+                            return droppedMetadata();
+                        }
+                        leafDecisions = refined;
+                    }
                     dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
                             workItem.rowGroup(), workItem.fileSchema(), context);
                     FilterDecision decision;
@@ -482,17 +497,16 @@ public class RowGroupIterator implements Closeable {
                             "rg=" + workItem.rowGroupIndex() + " pruning")) {
                         decision = RowGroupFilterEvaluator.refineWithDictionaries(
                                 workItem.columnOrdinals().filter(), workItem.rowGroup(),
-                                workItem.leafDecisions(), dictionaries);
+                                leafDecisions, dictionaries);
                     }
                     if (decision == FilterDecision.CANNOT_MATCH) {
                         emitDictionaryDropEvent(workItem);
-                        return new SharedRowGroupMetadata(null, RowRanges.ALL,
-                                LazyMaskCapability.of(MaskCapability.YES), null, true);
+                        return droppedMetadata();
                     }
                 }
-                // After the dictionaries: a row group they drop alone in its window costs no
-                // index read. The fetch runs under this entry's bin lock and takes no further
-                // lock but the window's own monitor.
+                // After the bloom filters and dictionaries: a row group they drop alone in its
+                // window costs no index read. The fetch runs under this entry's bin lock and takes
+                // no further lock but the window's own monitor.
                 RowGroupIndexBuffers indexBuffers = workItem.indexWindow().buffersFor(idx);
                 boolean pageFiltering = pageFiltering(workItem);
 
@@ -567,6 +581,34 @@ public class RowGroupIterator implements Closeable {
                     ExceptionContext.filePrefix(workItem.inputFile().name())
                     + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
         }
+    }
+
+    /// Sharpens the work item's planned decision with its bloom filters: those its window fetched,
+    /// and any other a probe reaches, read from the file.
+    ///
+    /// @param refined receives the leaf decisions after the bloom filters
+    private FilterDecision refineWithBloomFilters(WorkItem workItem,
+            RowGroupFilterEvaluator.LeafDecisions refined) throws IOException {
+        RowGroupBloomFilterSource bloomFilters = new RowGroupBloomFilterSource(workItem.inputFile(),
+                workItem.rowGroup(), workItem.indexWindow().bloomFiltersFor(workItem.workItemIndex()));
+        try (FetchReason.Scope pruning = FetchReason.set("rg=" + workItem.rowGroupIndex() + " pruning")) {
+            return RowGroupFilterEvaluator.refineWithBloomFilters(workItem.columnOrdinals().filter(),
+                    workItem.rowGroup(), workItem.leafDecisions(), bloomFilters, refined);
+        }
+    }
+
+    /// The shared metadata of a row group its bloom filters or dictionaries dropped.
+    private static SharedRowGroupMetadata droppedMetadata() {
+        return new SharedRowGroupMetadata(null, RowRanges.ALL,
+                LazyMaskCapability.of(MaskCapability.YES), null, true);
+    }
+
+    /// Reports a row group its bloom filters dropped once the read reached it.
+    private static void emitBloomFilterDropEvent(WorkItem workItem) {
+        RowGroupBloomFilterEvent event = new RowGroupBloomFilterEvent();
+        event.file = workItem.inputFile().name();
+        event.rowGroupIndex = workItem.rowGroupIndex();
+        event.commit();
     }
 
     /// Reports a row group its dictionaries dropped once the read reached it.
@@ -806,7 +848,7 @@ public class RowGroupIterator implements Closeable {
     private FetchPlan[] computeFetchPlans(WorkItem workItem) throws IOException {
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
         int projectedCount = projection.decoded().getProjectedColumnCount();
-        if (shared.droppedByDictionary()) {
+        if (shared.dropped()) {
             FetchPlan[] empty = new FetchPlan[projectedCount];
             Arrays.fill(empty, FetchPlan.EMPTY);
             return empty;
@@ -1480,6 +1522,7 @@ public class RowGroupIterator implements Closeable {
                     plannedRows,
                     decided.alwaysMatches(),
                     decided.leafDecisions(),
+                    decided.bloomFilterColumns(),
                     null));
 
             // maxRows limiting: deduct row count from budget.
@@ -1513,23 +1556,27 @@ public class RowGroupIterator implements Closeable {
         int[] rowGroupIndexes = new int[count];
         BitSet[] offsetIndexColumns = new BitSet[count];
         BitSet[] columnIndexColumns = new BitSet[count];
+        BitSet[] bloomFilterColumns = new BitSet[count];
         for (int i = 0; i < count; i++) {
             WorkItem workItem = planned.get(i);
             rowGroups[i] = workItem.rowGroup();
             rowGroupIndexes[i] = workItem.rowGroupIndex();
             columnIndexColumns[i] = new BitSet();
             offsetIndexColumns[i] = new BitSet();
-            // A row group with a chunk in another file fails before its page index is read
-            // (requireSameFile), so it asks for none: its offsets address that other file.
+            bloomFilterColumns[i] = new BitSet();
+            // A row group with a chunk in another file fails before its page index or bloom
+            // filters are read (requireSameFile), so it asks for none: its offsets address that
+            // other file.
             if (storedInThisFile(workItem.rowGroup())) {
                 columnIndexColumns[i] = columnIndexColumns(workItem, pageFiltering(workItem));
                 offsetIndexColumns[i] = offsetIndexColumns(workItem, columnIndexColumns[i]);
+                bloomFilterColumns[i] = workItem.bloomFilterColumns();
             }
         }
         WorkItem first = planned.getFirst();
         List<IndexWindow> windows = IndexWindow.plan(indexWindowBytes, first.inputFile(),
                 first.workItemIndex(), rowGroups, rowGroupIndexes, offsetIndexColumns,
-                columnIndexColumns);
+                columnIndexColumns, bloomFilterColumns);
         int next = 0;
         for (IndexWindow window : windows) {
             for (int m = 0; m < window.memberCount(); m++) {
@@ -1681,7 +1728,8 @@ public class RowGroupIterator implements Closeable {
     /// position in this list, which pruning makes a different number. Every consumer means
     /// the file's: the fetch log, the JFR events, the row group a failure names.
     private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
-            int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions) {}
+            int fileRowGroupIndex, RowGroupFilterEvaluator.LeafDecisions leafDecisions,
+            BitSet bloomFilterColumns) {}
 
     private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
                                                    FileColumnOrdinals columnOrdinals) throws IOException {
@@ -1691,7 +1739,8 @@ public class RowGroupIterator implements Closeable {
         if (filterPredicate == null || !metadataFilteringEnabled) {
             List<FilteredRowGroup> unpruned = new ArrayList<>(rowGroups.size());
             for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
-                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, null));
+                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex, null,
+                        new BitSet()));
             }
             return unpruned;
         }
@@ -1701,15 +1750,13 @@ public class RowGroupIterator implements Closeable {
             RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision;
             RowGroupFilterEvaluator.LeafDecisions leafDecisions = new RowGroupFilterEvaluator.LeafDecisions();
-            // The bloom-filter reads pruning issues are named as such, so a fetch log tells them
-            // apart from the reads that decode the row group. Dictionaries are read once the read
-            // reaches the row group, in `computeSharedMetadata`, and kept for decoding it.
-            try (FetchReason.Scope ignored = FetchReason.set("rg=" + rgIndex + " pruning")) {
-                decision = RowGroupFilterEvaluator.planRowGroup(columnOrdinals.filter(), rg,
-                        new RowGroupBloomFilterSource(inputFile, rg),
-                        new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability(),
-                        leafDecisions);
-            }
+            // Planning reads nothing: it decides on statistics and records the columns whose
+            // bloom filter a leaf would probe. Bloom filters and dictionaries are read once the
+            // read reaches the row group, in `computeSharedMetadata`.
+            BloomFilterColumnRecorder bloomFilterColumns = new BloomFilterColumnRecorder(rg);
+            decision = RowGroupFilterEvaluator.planRowGroup(columnOrdinals.filter(), rg,
+                    bloomFilterColumns, new LogContext(inputFile.name(), rgIndex),
+                    columnOrdinals.boundsReadability(), leafDecisions);
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }
@@ -1717,7 +1764,10 @@ public class RowGroupIterator implements Closeable {
             if (alwaysMatches) {
                 fullyMatching++;
             }
-            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex, leafDecisions));
+            // A row group statistics proved to match in full is not probed on entry, so it
+            // fetches no bloom filter, although an open leaf before the deciding one asked for one.
+            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex, leafDecisions,
+                    alwaysMatches ? new BitSet() : bloomFilterColumns.columns()));
         }
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();

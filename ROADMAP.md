@@ -508,7 +508,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Predicate pushdown (row group filtering via statistics, page filtering via ColumnIndex)
 - [x] Page-range I/O for filtered reads (only matching pages fetched from remote backends)
 - [x] Coalesced reads for remote backends (`ChunkRange`, `RowGroupIndexBuffers`, cross-column `SharedRegion`)
-- [ ] Bloom filters
+- [x] Bloom filters (read on reaching a row group, fetched with the page index in windows of row groups; see `_designs/FETCH_PLANNING.md`)
 - [x] **Validate**: Performance improvement with filtering
 
 ### Milestone 7: Production Ready (partial)

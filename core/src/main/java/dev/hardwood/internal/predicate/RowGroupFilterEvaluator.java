@@ -65,8 +65,9 @@ public class RowGroupFilterEvaluator {
         return refineWithDictionaries(predicate, rowGroup, leafDecisions, dictionaries);
     }
 
-    /// The decision a row group's statistics and bloom filters reach, which is what the read
-    /// plans with: dictionaries are read only once the read reaches a row group it kept, through
+    /// The decision a row group's statistics and bloom filters reach. The read plans with a
+    /// [BloomFilterColumnRecorder], so on statistics alone, and sharpens the decision once it
+    /// reaches a row group it kept, through [#refineWithBloomFilters] and
     /// [#refineWithDictionaries].
     ///
     /// @param leafDecisions receives the decision of every leaf evaluated, for
@@ -78,12 +79,33 @@ public class RowGroupFilterEvaluator {
             FilterDecision decision = UnitStats.ChunkStats
                     .of(rowGroup, ResolvedPredicate.leafColumnIndex(leaf), readability)
                     .decide(leaf, logContext);
-            // A leaf the statistics already drop reaches no probe, which is what keeps a bloom
-            // filter from being read for a row group that is going anyway.
-            if (decision != FilterDecision.CANNOT_MATCH && absent(leaf, bloomFilters, null)) {
+            // Only a leaf the statistics left open reaches a probe: one they drop keeps a bloom
+            // filter from being read for a row group that is going anyway, and one they prove to
+            // match in full holds its literal in every row, so no filter can prove it absent.
+            if (decision == FilterDecision.MIGHT_MATCH && absent(leaf, bloomFilters, null)) {
                 decision = FilterDecision.CANNOT_MATCH;
             }
             leafDecisions.put(leaf, decision);
+            return decision;
+        });
+    }
+
+    /// Sharpens the decision [#planRowGroup] reached with the row group's bloom filters, for a
+    /// read that planned on statistics alone.
+    ///
+    /// Each leaf starts from the decision recorded for it in `planned`, as in
+    /// [#refineWithDictionaries], and a filter is read only for a leaf that decision leaves open.
+    /// `refined` receives every decision of `planned` and, over it, each leaf's decision after its
+    /// bloom filter, for [#refineWithDictionaries] to start from.
+    public static FilterDecision refineWithBloomFilters(ResolvedPredicate predicate, RowGroup rowGroup,
+            LeafDecisions planned, BloomFilterSource bloomFilters, LeafDecisions refined) throws IOException {
+        refined.putAll(planned);
+        return fold(predicate, rowGroup, leaf -> {
+            FilterDecision decision = planned.get(leaf);
+            if (decision == FilterDecision.MIGHT_MATCH && absent(leaf, bloomFilters, null)) {
+                decision = FilterDecision.CANNOT_MATCH;
+            }
+            refined.put(leaf, decision);
             return decision;
         });
     }
@@ -113,6 +135,10 @@ public class RowGroupFilterEvaluator {
 
         void put(ResolvedPredicate leaf, FilterDecision decision) {
             decisions.put(leaf, decision);
+        }
+
+        void putAll(LeafDecisions other) {
+            decisions.putAll(other.decisions);
         }
 
         /// The decision recorded for `leaf`. The replay reaches only leaves planning reached: a

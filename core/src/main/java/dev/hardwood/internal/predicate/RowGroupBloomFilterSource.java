@@ -23,9 +23,10 @@ import dev.hardwood.metadata.RowGroup;
 
 /// [BloomFilterSource] backed by one `(InputFile, RowGroup)` pair.
 ///
-/// Each column's filter is read lazily — only when [#forColumn] is first called for it — and the
-/// result (including absence) is cached for the lifetime of this source, so an `IN` list probing
-/// the same column reads its filter once. The cache is a pair of arrays indexed by column position;
+/// A filter whose bytes the read has already fetched (see [#hasKnownExtent]) is parsed from them;
+/// any other is read from the file. Each column's filter is read lazily (only when [#forColumn]
+/// is first called for it), and the result (including absence) is cached for the lifetime of
+/// this source, so an `IN` list probing the same column reads its filter once. The cache is a pair of arrays indexed by column position;
 /// a row group is evaluated single-threaded (a sequential `stream().filter(...)`), so it needs no
 /// synchronization.
 public final class RowGroupBloomFilterSource implements BloomFilterSource {
@@ -38,6 +39,9 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
+    /// Per-column filter bytes fetched ahead of this source, or `null` for a column read from the
+    /// file.
+    private final ByteBuffer[] fetched;
     /// Per-column filter cache indexed by column position; `null` entries mean either "not read yet"
     /// or "read, no filter" — `read[i]` disambiguates so absence is cached, not re-fetched.
     private final BloomFilter[] filters;
@@ -47,11 +51,32 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private long fileLength = -1;
 
     public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup) {
+        this(inputFile, rowGroup, new ByteBuffer[rowGroup.columns().size()]);
+    }
+
+    /// @param fetched per column, the bytes `[bloom_filter_offset, bloom_filter_offset +
+    ///        bloom_filter_length)` of its filter where the read fetched them, `null` elsewhere
+    /// @throws IllegalArgumentException if `fetched` does not have one entry per column
+    public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup, ByteBuffer[] fetched) {
+        int columnCount = rowGroup.columns().size();
+        if (fetched.length != columnCount) {
+            throw new IllegalArgumentException("Expected fetched bloom filter bytes for "
+                    + columnCount + " columns, got " + fetched.length);
+        }
         this.inputFile = inputFile;
         this.rowGroup = rowGroup;
-        int columnCount = rowGroup.columns().size();
+        this.fetched = fetched;
         this.filters = new BloomFilter[columnCount];
         this.read = new boolean[columnCount];
+    }
+
+    /// Whether the footer locates the chunk's filter in full: a positive `bloom_filter_offset`
+    /// and a positive `bloom_filter_length`. Only such a filter can be fetched before it is
+    /// probed; any other is read, or declined, by this source.
+    public static boolean hasKnownExtent(ColumnMetaData metaData) {
+        Long offset = metaData.bloomFilterOffset();
+        Integer length = metaData.bloomFilterLength();
+        return offset != null && offset > 0 && length != null && length > 0;
     }
 
     @Override
@@ -90,6 +115,9 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return null;
         }
         try {
+            if (fetched[columnIndex] != null) {
+                return BloomFilterReader.read(new ThriftCompactReader(fetched[columnIndex]));
+            }
             return readFilter(offset, metaData.bloomFilterLength());
         }
         catch (UnsupportedOperationException e) {

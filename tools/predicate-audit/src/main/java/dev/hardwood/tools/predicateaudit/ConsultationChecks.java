@@ -134,9 +134,9 @@ final class ConsultationChecks {
         return rows;
     }
 
-    /// The row groups a read kept: those `dev.hardwood.RowGroupFilter` reports kept by statistics
-    /// and bloom filters, less each one a `dev.hardwood.RowGroupDictionaryFilter` event reports
-    /// dropped by its dictionaries.
+    /// The row groups a read kept: those `dev.hardwood.RowGroupFilter` reports kept by statistics,
+    /// less each one a `dev.hardwood.RowGroupBloomFilter` or `dev.hardwood.RowGroupDictionaryFilter`
+    /// event reports dropped by its bloom filters or dictionaries.
     private static final class RowGroupTally {
 
         private int total;
@@ -163,8 +163,10 @@ final class ConsultationChecks {
         long rows;
         try (RecordingStream stream = new RecordingStream()) {
             stream.enable("dev.hardwood.RowGroupFilter");
+            stream.enable("dev.hardwood.RowGroupBloomFilter");
             stream.enable("dev.hardwood.RowGroupDictionaryFilter");
             stream.onEvent("dev.hardwood.RowGroupFilter", tally::add);
+            stream.onEvent("dev.hardwood.RowGroupBloomFilter", tally::add);
             stream.onEvent("dev.hardwood.RowGroupDictionaryFilter", tally::add);
             stream.startAsync();
             rows = count(file, filter);

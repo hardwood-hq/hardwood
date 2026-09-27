@@ -20,10 +20,6 @@ The fetch sequence, the gap policy and the I/O budget as built are in [FETCH_PLA
 
 A file whose parsed footer is already known is opened without a request (#837).
 
-### Page-index and bloom-filter slices
-
-The page index is fetched as the slices the read needs, in windows of row groups merged per structure ([FETCH_PLANNING.md](../_designs/FETCH_PLANNING.md#page-index-windows)). Bloom filters follow: the bloom filters of columns with an `eq` or `in` leaf that statistics left undecided, merged under the gap policy on `CoalescedRanges` (#735).
-
 ### Gap value
 
 `G` is the serial break-even between a round trip and the bytes fetched to avoid it; the best value depends on the storage and on how many requests run in parallel. #763 and #827 measure it.
@@ -37,4 +33,4 @@ The page index is fetched as the slices the read needs, in windows of row groups
 | 3 | Opening a file in one round trip | #852 (done), #837 | In progress |
 | 4 | Dictionaries read once, on entering the row group | #1259 | Done |
 | 5 | Only surviving data pages fetched | #1037 (done), #1025, #381, #1323 (done) | In progress |
-| 6 | Only needed index and bloom-filter slices, merged | #708 (done), #1113 (done), #735 | In progress |
+| 6 | Only needed index and bloom-filter slices, merged | #708, #1113, #735 | Done |

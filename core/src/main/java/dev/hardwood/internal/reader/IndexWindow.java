@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -15,15 +16,20 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 
-/// The page-index slices of a run of consecutive work items of one file, fetched together: the
-/// ColumnIndex slices of all members merged into one [CoalescedRanges], the OffsetIndex slices
-/// into another.
+/// The page-index and bloom-filter slices of a run of consecutive work items of one file, fetched
+/// together: the ColumnIndex slices of all members merged into one [CoalescedRanges], the
+/// OffsetIndex slices into another, the bloom-filter slices into a third.
 ///
-/// Formed while the file is planned, and fetched by the first [#buffersFor] call for any member,
-/// whether from a column's retriever or from the prefetch of the next row group. The window drops
-/// its fetched bytes once every member has been released, or when the read closes.
+/// Formed while the file is planned. The bloom filters are fetched by the first
+/// [#bloomFiltersFor] call for any member that has one, the page index by the first
+/// [#buffersFor] call for any member, whether from a column's retriever or from the prefetch of
+/// the next row group. The window drops its fetched bytes once every member has been released,
+/// or when the read closes.
 final class IndexWindow {
 
     private final InputFile inputFile;
@@ -31,32 +37,39 @@ final class IndexWindow {
     private final RowGroup[] rowGroups;
     private final BitSet[] offsetIndexColumns;
     private final BitSet[] columnIndexColumns;
-    private final String fetchReason;
+    private final BitSet[] bloomFilterColumns;
+    private final String rowGroupLabel;
     private final boolean[] released;
     private int unreleased;
     private CoalescedRanges offsetIndexes;
     private CoalescedRanges columnIndexes;
+    private CoalescedRanges bloomFilters;
     private RowGroupIndexBuffers[] buffers;
 
     private IndexWindow(InputFile inputFile, int firstWorkItemIndex, RowGroup[] rowGroups,
-            BitSet[] offsetIndexColumns, BitSet[] columnIndexColumns, String fetchReason) {
+            BitSet[] offsetIndexColumns, BitSet[] columnIndexColumns, BitSet[] bloomFilterColumns,
+            String rowGroupLabel) {
         this.inputFile = inputFile;
         this.firstWorkItemIndex = firstWorkItemIndex;
         this.rowGroups = rowGroups;
         this.offsetIndexColumns = offsetIndexColumns;
         this.columnIndexColumns = columnIndexColumns;
-        this.fetchReason = fetchReason;
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.rowGroupLabel = rowGroupLabel;
         this.released = new boolean[rowGroups.length];
         this.unreleased = rowGroups.length;
 
         CoalescedRanges.Builder offsetIndexBuilder = CoalescedRanges.builder();
         CoalescedRanges.Builder columnIndexBuilder = CoalescedRanges.builder();
+        CoalescedRanges.Builder bloomFilterBuilder = CoalescedRanges.builder();
         for (int m = 0; m < rowGroups.length; m++) {
             RowGroupIndexBuffers.addRanges(rowGroups[m], offsetIndexColumns[m], columnIndexColumns[m],
                     offsetIndexBuilder, columnIndexBuilder);
+            addBloomFilterRanges(rowGroups[m], bloomFilterColumns[m], bloomFilterBuilder);
         }
         this.offsetIndexes = offsetIndexBuilder.build();
         this.columnIndexes = columnIndexBuilder.build();
+        this.bloomFilters = bloomFilterBuilder.build();
     }
 
     /// Splits one file's work items into consecutive windows. Each window takes as many of the
@@ -70,14 +83,16 @@ final class IndexWindow {
     /// @param rowGroupIndexes their row-group indexes in the file, for the fetch reason
     /// @param offsetIndexColumns per work item, the columns whose OffsetIndex it needs
     /// @param columnIndexColumns per work item, the columns whose ColumnIndex it needs
+    /// @param bloomFilterColumns per work item, the columns whose bloom filter it may probe
     static List<IndexWindow> plan(long budgetBytes, InputFile inputFile, int firstWorkItemIndex,
             RowGroup[] rowGroups, int[] rowGroupIndexes, BitSet[] offsetIndexColumns,
-            BitSet[] columnIndexColumns) {
+            BitSet[] columnIndexColumns, BitSet[] bloomFilterColumns) {
         List<IndexWindow> windows = new ArrayList<>();
         int from = 0;
         while (from < rowGroups.length) {
             IndexWindow window = largest(budgetBytes, inputFile, firstWorkItemIndex, rowGroups,
-                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, from);
+                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, bloomFilterColumns,
+                    from);
             windows.add(window);
             from += window.memberCount();
         }
@@ -91,16 +106,18 @@ final class IndexWindow {
     /// the window it finds, so planning a file costs time linear in its row groups.
     private static IndexWindow largest(long budgetBytes, InputFile inputFile,
             int firstWorkItemIndex, RowGroup[] rowGroups, int[] rowGroupIndexes,
-            BitSet[] offsetIndexColumns, BitSet[] columnIndexColumns, int from) {
+            BitSet[] offsetIndexColumns, BitSet[] columnIndexColumns, BitSet[] bloomFilterColumns,
+            int from) {
         int remaining = rowGroups.length - from;
         IndexWindow best = window(inputFile, firstWorkItemIndex, rowGroups, rowGroupIndexes,
-                offsetIndexColumns, columnIndexColumns, from, 1);
+                offsetIndexColumns, columnIndexColumns, bloomFilterColumns, from, 1);
         int fits = 1;
         int exceeds = remaining + 1;
         while (fits < remaining) {
             int count = (int) Math.min((long) fits * 2, remaining);
             IndexWindow candidate = window(inputFile, firstWorkItemIndex, rowGroups,
-                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, from, count);
+                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, bloomFilterColumns,
+                    from, count);
             if (candidate.fetchedBytes() > budgetBytes) {
                 exceeds = count;
                 break;
@@ -111,7 +128,8 @@ final class IndexWindow {
         while (exceeds - fits > 1) {
             int mid = (fits + exceeds) >>> 1;
             IndexWindow candidate = window(inputFile, firstWorkItemIndex, rowGroups,
-                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, from, mid);
+                    rowGroupIndexes, offsetIndexColumns, columnIndexColumns, bloomFilterColumns,
+                    from, mid);
             if (candidate.fetchedBytes() <= budgetBytes) {
                 best = candidate;
                 fits = mid;
@@ -125,22 +143,35 @@ final class IndexWindow {
 
     private static IndexWindow window(InputFile inputFile, int firstWorkItemIndex,
             RowGroup[] rowGroups, int[] rowGroupIndexes, BitSet[] offsetIndexColumns,
-            BitSet[] columnIndexColumns, int from, int count) {
+            BitSet[] columnIndexColumns, BitSet[] bloomFilterColumns, int from, int count) {
         int first = rowGroupIndexes[from];
         int last = rowGroupIndexes[from + count - 1];
-        String reason = first == last
-                ? "rg=" + first + " indexes"
-                : "rg=" + first + "-" + last + " indexes";
+        String label = first == last ? "rg=" + first : "rg=" + first + "-" + last;
         return new IndexWindow(inputFile, firstWorkItemIndex + from,
                 Arrays.copyOfRange(rowGroups, from, from + count),
                 Arrays.copyOfRange(offsetIndexColumns, from, from + count),
-                Arrays.copyOfRange(columnIndexColumns, from, from + count), reason);
+                Arrays.copyOfRange(columnIndexColumns, from, from + count),
+                Arrays.copyOfRange(bloomFilterColumns, from, from + count), label);
     }
 
-    /// The bytes fetching the window reads: its slices of both structures plus the gaps the merges
-    /// bridge between them.
+    /// Adds the bloom-filter slices of `columns` whose extent the footer gives. A filter without
+    /// one is read by [RowGroupBloomFilterSource] if a probe reaches it.
+    private static void addBloomFilterRanges(RowGroup rowGroup, BitSet columns,
+            CoalescedRanges.Builder bloomFilters) {
+        List<ColumnChunk> chunks = rowGroup.columns();
+        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+            ColumnMetaData metaData = chunks.get(c).metaData();
+            if (RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
+                bloomFilters.add(metaData.bloomFilterOffset(), metaData.bloomFilterLength());
+            }
+        }
+    }
+
+    /// The bytes fetching the window reads: its slices of the three structures plus the gaps the
+    /// merges bridge between them.
     long fetchedBytes() {
-        return offsetIndexes.fetchedBytes() + columnIndexes.fetchedBytes();
+        return offsetIndexes.fetchedBytes() + columnIndexes.fetchedBytes()
+                + bloomFilters.fetchedBytes();
     }
 
     int memberCount() {
@@ -161,6 +192,35 @@ final class IndexWindow {
             fetch();
         }
         return buffers[member];
+    }
+
+    /// The bloom-filter bytes of the work item at `workItemIndex`, one entry per column of its row
+    /// group: the filter's bytes for a column this window fetched it for, `null` for every other.
+    /// Fetches the window's bloom filters on the first call that needs them. A failed fetch stores
+    /// nothing, so the next call fetches again.
+    ///
+    /// @throws IllegalStateException if the work item is not a member, or was released
+    synchronized ByteBuffer[] bloomFiltersFor(int workItemIndex) throws IOException {
+        int member = member(workItemIndex);
+        if (released[member]) {
+            throw new IllegalStateException("Bloom filters of work item " + workItemIndex
+                    + " requested after their release");
+        }
+        List<ColumnChunk> chunks = rowGroups[member].columns();
+        ByteBuffer[] result = new ByteBuffer[chunks.size()];
+        BitSet columns = bloomFilterColumns[member];
+        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+            ColumnMetaData metaData = chunks.get(c).metaData();
+            if (RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
+                if (!bloomFilters.isFetched()) {
+                    try (FetchReason.Scope ignored = FetchReason.set(rowGroupLabel + " pruning")) {
+                        bloomFilters.fetch(inputFile);
+                    }
+                }
+                result[c] = bloomFilters.slice(metaData.bloomFilterOffset(), metaData.bloomFilterLength());
+            }
+        }
+        return result;
     }
 
     /// Releases the work item at `workItemIndex`, dropping the window's bytes once every member is
@@ -184,7 +244,7 @@ final class IndexWindow {
     }
 
     private void fetch() throws IOException {
-        try (FetchReason.Scope ignored = FetchReason.set(fetchReason)) {
+        try (FetchReason.Scope ignored = FetchReason.set(rowGroupLabel + " indexes")) {
             if (!offsetIndexes.isFetched()) {
                 offsetIndexes.fetch(inputFile);
             }
@@ -204,6 +264,7 @@ final class IndexWindow {
         buffers = null;
         offsetIndexes = null;
         columnIndexes = null;
+        bloomFilters = null;
     }
 
     private int member(int workItemIndex) {

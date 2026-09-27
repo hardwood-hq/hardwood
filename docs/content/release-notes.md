@@ -19,11 +19,14 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - **Behaviour change:** a `ColumnReader` obtained from `ColumnReaders` advances only through `ColumnReaders.nextBatch()`; its own `nextBatch()` throws `IllegalStateException`, and its `close()` has no effect ([#1336](https://github.com/hardwood-hq/hardwood/issues/1336)).
 - **Behaviour change:** a shredded Variant `typed_value` column of a type the Variant shredding specification does not list, `INT96` included, raises `ParquetReadException` when the reader is built ([#1371](https://github.com/hardwood-hq/hardwood/issues/1371)).
 - **Behaviour change:** `InputFile.of(ByteBuffer)` and `InputFile.ofBuffers(...)` read a buffer's remaining content, from its position to its limit, instead of the buffer from index 0 to its capacity, so a buffer wrapping part of an array reads correctly and a buffer filled with `put(...)` must be flipped first ([#1343](https://github.com/hardwood-hq/hardwood/issues/1343)).
+- **Behaviour change:** the `dev.hardwood.RowGroupFilter` JFR event counts row groups dropped by statistics only; a row group dropped by its bloom filters or dictionaries is reported by the new `dev.hardwood.RowGroupBloomFilter` and `dev.hardwood.RowGroupDictionaryFilter` events ([#735](https://github.com/hardwood-hq/hardwood/issues/735), [#1259](https://github.com/hardwood-hq/hardwood/issues/1259)).
 - **Behaviour change:** building an `AvroRowReader` over a schema the Avro binding rejects throws `SchemaIncompatibleException` for a malformed schema and `UnsupportedOperationException` for a valid one it cannot map, instead of `IllegalArgumentException` ([#1370](https://github.com/hardwood-hq/hardwood/issues/1370)).
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
 - `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)`, which span the years 0001 to 9999 at nanosecond precision, are read, filtered and written ([#921](https://github.com/hardwood-hq/hardwood/issues/921)).
+
+- Bloom filters are fetched when the read reaches a row group, together with those of the neighbouring row groups, instead of one request per row group before the first row ([#735](https://github.com/hardwood-hq/hardwood/issues/735)).
 
 - `isNull` and `isNotNull` test whether a struct, `LIST` or `MAP` group is present ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
 
