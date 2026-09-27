@@ -16,10 +16,12 @@ import org.apache.avro.Schema;
 
 import dev.hardwood.avro.internal.AvroPlanNode.Kind;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -216,7 +218,7 @@ public final class AvroSchemaConverter {
     private AvroPlanNode convertList(SchemaNode.GroupNode listGroup, String path) {
         SchemaNode element = listGroup.getListElement();
         if (element == null) {
-            throw new IllegalArgumentException("LIST group '" + path
+            throw new SchemaIncompatibleException("LIST group '" + path
                     + "' has no element");
         }
         // The list column is only reached when it has a projected leaf; prune the
@@ -232,7 +234,7 @@ public final class AvroSchemaConverter {
         SchemaNode keyNode = mapGroup.getMapKey();
         SchemaNode valueNode = mapGroup.getMapValue();
         if (keyNode == null) {
-            throw new IllegalArgumentException("MAP group '" + path
+            throw new SchemaIncompatibleException("MAP group '" + path
                     + "' must contain a repeated key/value group with a key");
         }
         requireAvroStringKey(keyNode, path);
@@ -257,12 +259,14 @@ public final class AvroSchemaConverter {
     ///
     /// "Converts to an Avro `STRING`" is [Kind#STRING], as decided by
     /// [#convertLogicalType] — a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`.
-    /// A `UUID` key also converts to an Avro string but is [Kind#UUID], carrying
-    /// bytes the string accessor would hand back as mojibake, so it is rejected too.
+    /// A `UUID` key also converts to an Avro string but is [Kind#UUID]: the string
+    /// accessor rejects a `UUID` column, which holds no text, so it is rejected too.
+    /// The map is valid Parquet the binding cannot map, hence
+    /// [UnsupportedOperationException].
     private void requireAvroStringKey(SchemaNode keyNode, String path) {
         if (!(keyNode instanceof SchemaNode.PrimitiveNode key)
                 || convertPrimitive(key).kind() != Kind.STRING) {
-            throw new IllegalArgumentException("Map '" + path
+            throw new UnsupportedOperationException("Map '" + path
                     + "' key must be a BYTE_ARRAY annotated as STRING, ENUM or JSON"
                     + " — Avro map keys are strings — but is " + mapKeyType(keyNode));
         }
@@ -436,7 +440,7 @@ public final class AvroSchemaConverter {
         if (("interval".equals(fullName) && containsLogicalType(fileSchema.getRootNode(), LogicalType.IntervalType.class))
                 || ("float16".equals(fullName)
                 && containsLogicalType(fileSchema.getRootNode(), LogicalType.Float16Type.class))) {
-            throw new IllegalArgumentException(
+            throw new UnsupportedOperationException(
                     "Root named '" + fullName + "' conflicts with canonical fixed type '" + fullName + "'");
         }
     }
@@ -459,16 +463,11 @@ public final class AvroSchemaConverter {
 
     /// Resolve the declared byte length of a [PhysicalType#FIXED_LEN_BYTE_ARRAY]
     /// column, looked up from its [dev.hardwood.schema.ColumnSchema] by leaf index.
-    /// A fixed-length column with no `type_length` is malformed; fail early rather
-    /// than emit a bogus zero-width Avro `fixed`, matching the decoders that reject
-    /// the same condition.
+    /// A fixed-length column whose `type_length` is absent or not positive is
+    /// malformed, and is rejected by the check the core readers apply to the same
+    /// column rather than converted to a bogus Avro `fixed`.
     private int fixedByteLength(SchemaNode.PrimitiveNode prim) {
-        Integer typeLength = fileSchema.getColumn(prim.columnIndex()).typeLength();
-        if (typeLength == null) {
-            throw new IllegalArgumentException(
-                    "FIXED_LEN_BYTE_ARRAY column '" + prim.name() + "' is missing its type_length");
-        }
-        return typeLength;
+        return FixedWidthValidator.requireWidth(null, fileSchema.getColumn(prim.columnIndex()));
     }
 
     private static Schema nullable(Schema schema) {

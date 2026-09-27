@@ -86,7 +86,7 @@ final class AvroNames {
     private String localName(SchemaNode node) {
         String local = localNames.get(node);
         if (local == null) {
-            throw new IllegalArgumentException("Unknown schema node: " + node.name());
+            throw new IllegalStateException("Unknown schema node: " + node.name());
         }
         return local;
     }
@@ -243,11 +243,13 @@ final class AvroNames {
         }
     }
 
+    /// Two siblings sharing one raw name are valid Parquet, but an Avro record cannot
+    /// hold two fields of one name, so the binding cannot map the group.
     private static void rejectDuplicateRawNames(List<SchemaNode> members, String valuePath) {
         Set<String> rawNames = new HashSet<>();
         for (SchemaNode member : members) {
             if (!rawNames.add(member.name())) {
-                throw new IllegalArgumentException("Duplicate schema name '" + member.name()
+                throw new UnsupportedOperationException("Duplicate schema name '" + member.name()
                         + "' in value path '" + valuePath + "'");
             }
         }

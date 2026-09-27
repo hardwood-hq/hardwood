@@ -21,6 +21,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
@@ -115,11 +116,11 @@ class AvroSchemaConverterTest {
     void canonicalRootConflictsAreRejected() {
         assertThatThrownBy(() -> convert(canonicalRootSchema("interval", LogicalType.interval(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 12)))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Root named 'interval' conflicts with canonical fixed type 'interval'");
         assertThatThrownBy(() -> convert(canonicalRootSchema("float16", LogicalType.float16(),
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, 2)))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Root named 'float16' conflicts with canonical fixed type 'float16'");
     }
 
@@ -134,7 +135,7 @@ class AvroSchemaConverterTest {
                 primitive("other", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("other")))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Root named 'interval' conflicts with canonical fixed type 'interval'");
     }
 
@@ -457,7 +458,7 @@ class AvroSchemaConverterTest {
     /// or `value` position the message means.
     private static void assertRejectsMap(FileSchema schema, String mapPath, String keyType) {
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Map '" + mapPath + "' key must be a BYTE_ARRAY annotated as STRING,"
                         + " ENUM or JSON \u2014 Avro map keys are strings \u2014 but is " + keyType);
     }
@@ -533,9 +534,47 @@ class AvroSchemaConverterTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, list));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(SchemaIncompatibleException.class)
                 .hasMessage("LIST group 'items' has no element")
                 ;
+    }
+
+    @Test
+    void rejectsMapWithoutKeyDuringPlanning() {
+        SchemaElement rootElement = root("root", 1);
+        SchemaElement map = group("attributes", RepetitionType.OPTIONAL, 1, LogicalType.map());
+        SchemaElement keyValue = group("key_value", RepetitionType.REPEATED, 0);
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, map, keyValue));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
+                .isInstanceOf(SchemaIncompatibleException.class)
+                .hasMessage("MAP group 'attributes' must contain a repeated key/value group with a key");
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY` without a usable width is rejected the way the core
+    /// readers reject it, so the Avro binding reports the same file the same way.
+    @Test
+    void rejectsFixedLengthByteArrayWithoutTypeLength() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                new SchemaElement("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, null, RepetitionType.REQUIRED,
+                        null, null, null, null, null, null)));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
+                .isInstanceOf(SchemaIncompatibleException.class)
+                .hasMessage("Column 'id' is a FIXED_LEN_BYTE_ARRAY that declares no type length");
+    }
+
+    @Test
+    void rejectsFixedLengthByteArrayWithNonPositiveTypeLength() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                new SchemaElement("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 0, RepetitionType.REQUIRED,
+                        null, null, null, null, null, LogicalType.decimal(4, 2))));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
+                .isInstanceOf(SchemaIncompatibleException.class)
+                .hasMessage("Column 'amount' declares a FIXED_LEN_BYTE_ARRAY type length of 0, which must be positive");
     }
 
     @Test
@@ -565,7 +604,7 @@ class AvroSchemaConverterTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, map, keyValue, key));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Map 'attributes' key must be a BYTE_ARRAY annotated as STRING, ENUM or JSON "
                          + "\u2014 Avro map keys are strings \u2014 but is INT32")
                 ;
@@ -581,7 +620,7 @@ class AvroSchemaConverterTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, holder, list));
 
         assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(SchemaIncompatibleException.class)
                 .hasMessage("LIST group 'holder.items' has no element");
     }
 

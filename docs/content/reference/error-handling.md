@@ -20,8 +20,8 @@ it. **Trying again may help for `IOException`, and will not for anything else.**
 |-----------|------|
 | `IOException` | The bytes did not arrive: a local-disk read error, an S3 transport failure (after retry exhaustion; see [Read from S3](../how-to/s3.md)), a file that cannot be opened. Checked, and declared by every method that reaches the file: `ParquetFileReader.open`/`openAll`; the reader factories `rowReader`, `columnReader` and `columnReaders` and their builders' `build()`; `RowReader.hasNext`/`next`/`close`; `ColumnReader.nextBatch`/`close`; `ColumnReaders.nextBatch`/`close` |
 | `ParquetReadException` | They arrived and are not valid Parquet: a bad magic number, a corrupt footer, a malformed page index, a dictionary page the metadata places outside its column chunk, a page whose checksum fails, a page that will not decompress, values that do not decode. Unchecked |
-| `SchemaIncompatibleException` | A `ParquetReadException`. In a multi-file read, a file whose schema cannot be reconciled with the first file's; or one file's footer disagreeing with itself about which leaf a column chunk holds; or a `FIXED_LEN_BYTE_ARRAY` column the read touches that declares no positive width |
-| `UnsupportedOperationException` | The file is correct and Hardwood cannot read it: Parquet Modular Encryption, an encoding not implemented, a compression codec whose library is absent (the message names the dependency to add), a column chunk stored in a separate file (the legacy split-file layout), a column chunk over 2 GB, a file over 2 GB opened with the mmap-backed range cache, or a read of a repeated group annotated `VARIANT` outside a `LIST` or `MAP` group (a list of variants in that form) |
+| `SchemaIncompatibleException` | A `ParquetReadException`. In a multi-file read, a file whose schema cannot be reconciled with the first file's; or one file's footer disagreeing with itself about which leaf a column chunk holds; or a `FIXED_LEN_BYTE_ARRAY` column the read touches that declares no positive width; or, building an `AvroRowReader`, a projected `LIST` group with no element or `MAP` group with no key |
+| `UnsupportedOperationException` | The file is correct and Hardwood cannot read it: Parquet Modular Encryption, an encoding not implemented, a compression codec whose library is absent (the message names the dependency to add), a column chunk stored in a separate file (the legacy split-file layout), a column chunk over 2 GB, a file over 2 GB opened with the mmap-backed range cache, or a read of a repeated group annotated `VARIANT` outside a `LIST` or `MAP` group (a list of variants in that form); or, building an `AvroRowReader`, a schema Avro cannot represent (see [Avro Support](../how-to/avro.md)) |
 
 ## The call was wrong
 
@@ -55,7 +55,8 @@ the row group, column and page, leaving out any part the reader could not determ
 failure before a column chunk's pages are walked names no page, and one while the footer is
 parsed names only the file. A message for a wrong call names at most the file. An `IOException`
 an `InputFile` raises while the first file is opened or its footer read carries only the
-`InputFile`'s own message.
+`InputFile`'s own message. A schema rejection raised while an `AvroRowReader` is built names
+the schema path of the offending group or column, not the file.
 
 ## Writing
 

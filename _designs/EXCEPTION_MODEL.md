@@ -72,6 +72,10 @@ reader could not determine it. A file's fault carries all of it; a caller's erro
 file name alone, since the fix is the same wherever the reader had got to. Because the
 context names the column, the problem does not (#1158 covers the messages that still do).
 
+The Avro binding's schema conversion is the exception. It runs on the `FileSchema` alone,
+before the underlying reader is built, and holds no file name, so the file faults it rejects
+carry no context and name the offending node by its schema path in the problem.
+
 The row group and page are the file's own indexes, not the read's: pruning drops row groups
 and a page filter drops pages before either is read. A byte offset is not carried: it is
 known only deep inside a parse, with no boundary there to hand it to. The context lives in

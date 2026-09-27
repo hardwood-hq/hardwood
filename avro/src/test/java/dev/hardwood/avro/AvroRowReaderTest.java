@@ -98,7 +98,7 @@ class AvroRowReaderTest {
                     // Schema conversion happens while the reader is built.
                 }
             })
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessage("Map '" + column + "' key must be a BYTE_ARRAY annotated as STRING,"
                             + " ENUM or JSON \u2014 Avro map keys are strings \u2014 but is "
                             + keyType);
@@ -316,7 +316,6 @@ class AvroRowReaderTest {
 
         assertThatThrownBy(() -> new AvroRowReader(rows, plan).next())
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageStartingWith("[part-01.parquet] ")
                 .hasMessage("[part-01.parquet] Cannot materialize field 'value' as Avro INT: actual Java "
                          + "value type java.lang.String (required java.lang.Integer)");
     }

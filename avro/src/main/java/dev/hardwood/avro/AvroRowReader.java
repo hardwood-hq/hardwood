@@ -36,11 +36,13 @@ import dev.hardwood.row.StructAccessor;
 /// Wraps a Hardwood [RowReader] and materializes each row into a
 /// `GenericRecord` using the converted Avro schema. Values are stored
 /// in Avro's raw representation (e.g. timestamps as `Long`, `bytes`-backed
-/// decimals as `ByteBuffer`, `fixed`-typed columns as `GenericData.Fixed`),
-/// matching the behavior of parquet-java's `AvroReadSupport`.
+/// decimals as `ByteBuffer`, `fixed`-typed columns as `GenericData.Fixed`).
+/// parquet-java's `AvroReadSupport` uses the same representations, except that it
+/// reads decimals over `INT32` and `INT64` as `Integer` and `Long`, and reads an
+/// `INT96` as a `fixed` only when `parquet.avro.readInt96AsFixed` is set.
 ///
 /// ```java
-/// try (AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+/// try (AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 ///     while (reader.hasNext()) {
 ///         GenericRecord record = reader.next();
 ///         long id = (Long) record.get("id");

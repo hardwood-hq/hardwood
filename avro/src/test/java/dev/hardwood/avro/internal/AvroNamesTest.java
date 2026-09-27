@@ -53,8 +53,20 @@ class AvroNamesTest {
         FileSchema schema = schemaWithChildren("root", "dup", "dup");
 
         assertThatThrownBy(() -> AvroNames.forSchema(schema))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Duplicate schema name 'dup' in value path 'root'");
+    }
+
+    /// A node the resolver never visited has no name to serve. Asking for one means
+    /// the resolver and the converter have drifted apart, not that the file is bad.
+    @Test
+    void rejectsANodeTheResolverDidNotName() {
+        AvroNames names = AvroNames.forSchema(schemaWithChildren("root", "a"));
+        SchemaNode foreign = schemaWithChildren("other", "b").getRootNode().children().getFirst();
+
+        assertThatThrownBy(() -> names.fieldName(foreign))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Unknown schema node: b");
     }
 
     @Test
@@ -107,7 +119,7 @@ class AvroNamesTest {
                 SchemaElement.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
         assertThatThrownBy(() -> AvroNames.forSchema(schema))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Duplicate schema name 'dup' in value path 'schema.holder'")
                 ;
     }

@@ -76,9 +76,9 @@ AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
 
 A projected record's fields, and a projected struct's, follow the order the projection names them in, as a `RowReader`'s fields do (see [Index order](../reference/query-controls.md#index-order)), so `GenericRecord.get(int)` takes that position.
 
-Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`, and ENUM values as `String`. A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` has no Avro counterpart and is a `fixed` of its 12 stored bytes, as an `INT96` is. This matches the behavior of parquet-java's `AvroReadSupport`.
+Values are stored in Avro's standard representations: timestamps as `Long` (millis, micros or nanos since epoch; a nanosecond timestamp is a plain `long` with no Avro logical type), dates as `Integer` (days since epoch), decimals over `INT32`, `INT64` or `BYTE_ARRAY` as `ByteBuffer`, decimals over `FIXED_LEN_BYTE_ARRAY` as `GenericData.Fixed`, binary data as `ByteBuffer`, and ENUM values as `String`. A `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` has no Avro counterpart and is a `fixed` of its 12 stored bytes, as an `INT96` is. parquet-java's `AvroReadSupport` reads the same representations, except that it reads decimals over `INT32` and `INT64` as `Integer` and `Long`, and reads an `INT96` as a 12-byte `fixed` only when `parquet.avro.readInt96AsFixed` is set.
 
-Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type, including an unannotated `BYTE_ARRAY` key whose bytes are not necessarily text, fails with an error naming the map's path and its key type. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
+Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type, including an unannotated `BYTE_ARRAY` key whose bytes are not necessarily text, fails with an error. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
 
 ## Avro names
 
@@ -101,18 +101,18 @@ Projection paths use `.` as the nesting separator. A Parquet group or field name
 
 Two schema shapes have no valid Avro naming, and building a reader over either fails whatever projection is applied:
 
-- A group whose two children carry the same Parquet name. Avro records cannot hold two fields of one name, so the error names the duplicate and the value path it sits at.
+- A group whose two children carry the same Parquet name. Avro records cannot hold two fields of one name.
 - A file whose root is named `interval` or `float16` and that carries a column of that logical type. Those two logical types convert to Avro `fixed` types with exactly those names and no namespace, which is also the root's full name. Excluding the column from the projection does not lift the rejection; read such a file through Hardwood's `RowReader`.
 
 A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field. The usual `union [null, T]` nullable wrap is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.
 
-A `repeated` field outside a `LIST` or `MAP` group is a required list of required elements, and maps to a non-nullable Avro `array` of the field's own type: `repeated int32 foo` becomes `array<int>`, a repeated group becomes an `array` of its record, and a repeated group whose only child is a repeated `MAP_KEY_VALUE` group becomes an `array` of Avro `map`s. Its values are `java.util.List` instances. Such a group converts as the row reader reads it, ignoring any `LIST`, `MAP` or `MAP_KEY_VALUE` annotation of its own (see [Legacy list encodings](../reference/accessors.md#legacy-list-encodings)). Building an `AvroRowReader` whose projection includes a column of such a group annotated `VARIANT` throws `UnsupportedOperationException`; a projection without its columns reads the rest of the file.
+A `repeated` field outside a `LIST` or `MAP` group is a required list of required elements, and maps to a non-nullable Avro `array` of the field's own type: `repeated int32 foo` becomes `array<int>`, a repeated group becomes an `array` of its record, and a repeated group whose only child is a repeated `MAP_KEY_VALUE` group becomes an `array` of Avro `map`s. Its values are `java.util.List` instances. Such a group converts as the row reader reads it, ignoring any `LIST`, `MAP` or `MAP_KEY_VALUE` annotation of its own (see [Legacy list encodings](../reference/accessors.md#legacy-list-encodings)). Building an `AvroRowReader` whose projection includes a column of such a group annotated `VARIANT` fails with an error; a projection without its columns reads the rest of the file.
 
 A group carrying an annotation other than `LIST`, `MAP` or `VARIANT`, such as a `LIST` element group annotated `MAP_KEY_VALUE`, maps to an Avro record of its fields.
 
-Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the group's path when a projected `LIST` group has no element field, or a projected `MAP` group has no key field.
+Building an `AvroRowReader` fails with an error when a projected `LIST` group has no element field, a projected `MAP` group has no key field, or a projected `FIXED_LEN_BYTE_ARRAY` column declares no positive type length.
 
 ## Lifecycle
 
@@ -120,4 +120,4 @@ Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the 
 
 ## Schema overrides
 
-Hardwood derives the Avro schema directly from the Parquet schema via `AvroSchemaConverter`. There is no equivalent of parquet-java's `AvroReadSupport.setRequestedProjection(...)` or `setAvroReadSchema(...)`: supplying an explicit Avro reader schema (for schema-evolution promotions, renames, or alias resolution) is not supported. Column projection (`ColumnProjection.columns(...)`) is the only way to narrow what is read; the Avro schema returned by `getSchema()` always matches the projected Parquet schema's converted form.
+`AvroReaders` derives the Avro schema from the Parquet schema. There is no equivalent of parquet-java's `AvroReadSupport.setRequestedProjection(...)` or `setAvroReadSchema(...)`: supplying an explicit Avro reader schema (for schema-evolution promotions, renames, or alias resolution) is not supported. Column projection (`ColumnProjection.columns(...)`) is the only way to narrow what is read; the Avro schema returned by `getSchema()` always matches the projected Parquet schema's converted form.
