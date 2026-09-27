@@ -471,7 +471,9 @@ public class RowGroupIterator implements Closeable {
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 requireSameFile(workItem);
                 RowGroupDictionaryFilterSource dictionaries = null;
-                if (workItem.leafDecisions() != null) {
+                // A row group statistics proved to match in full is not probed: a dictionary
+                // cannot contradict them, and a filter-only column is not read there at all.
+                if (workItem.leafDecisions() != null && !workItem.filterAlwaysMatches()) {
                     dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
                             workItem.rowGroup(), workItem.fileSchema(), context);
                     FilterDecision decision;

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.IntFunction;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +50,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// `id < 1500` decides the first row group `ALWAYS_MATCHES`, leaves the second to the record
 /// filter, and prunes the third. `id >= 1500` mirrors it: the fully matching row group is the
 /// last, so a consumer that took a filter-only batch for one of its steps would find none left.
+///
+/// `bucket` is `0` below 1500 and `1` from there, so `bucket = 0` decides the three row groups
+/// as `id < 1500` does, through a dictionary-encoded column and an equality the dictionaries probe.
 ///
 /// `500 <= id < 2500` places the fully matching row group between two undecided ones, where the
 /// filter-only column's batches must close at the rows the payload columns' batches close at.
@@ -88,12 +92,13 @@ class FilterOnlyColumnSkipTest {
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(flatFixture), flat, config)) {
             for (int i = 0; i < ROWS; i++) {
                 final long id = i;
                 writer.rowWriter().writeRow(row -> {
-                    row.setLong("id", id).setString("label", label(id));
+                    row.setLong("id", id).setString("label", label(id)).setLong("bucket", id < THRESHOLD ? 0 : 1);
                     if (amountIsNull(id)) {
                         row.setNull("amount");
                     }
@@ -427,6 +432,48 @@ class FilterOnlyColumnSkipTest {
         assertThat(amounts).isEqualTo(expectedAmounts(Math.min(head, THRESHOLD), id -> false));
     }
 
+    // ==================== Dictionaries of the fully matching row group ====================
+
+    @Test
+    void flatRowReaderReadsNoDictionaryOfTheFilterOnlyColumnInTheFullyMatchingRowGroup() throws Exception {
+        List<String> labels = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("label"))
+                     .filter(FilterPredicate.eq("bucket", 0L))
+                     .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                labels.add(rows.getString("label"));
+            }
+        }
+        assertThat(labels).isEqualTo(expectedLabels(THRESHOLD));
+        assertThat(chunkReads(flatFile, "bucket", 1).anyMatch(r -> r.reason().contains("pruning")))
+                .as("dictionary of the filter-only column probed in row group 1").isTrue();
+        assertThat(chunkReads(flatFile, "bucket", 0).toList())
+                .as("reads of the filter-only column in row group 0").isEmpty();
+    }
+
+    @Test
+    void flatRowReaderReadsNoDictionaryForAnUndecidedLeafInAFullyMatchingRowGroup() throws Exception {
+        // In row group 1 statistics leave the `bucket` leaf undecided and prove the `id` leaf,
+        // so the `OR` matches the row group in full with a leaf a dictionary could probe.
+        List<String> labels = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("label"))
+                     .filter(FilterPredicate.or(FilterPredicate.eq("bucket", 0L), FilterPredicate.lt("id", 2000L)))
+                     .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                labels.add(rows.getString("label"));
+            }
+        }
+        assertThat(labels).isEqualTo(expectedLabels(2000));
+        assertThat(chunkReads(flatFile, "bucket", 1).toList())
+                .as("reads of the filter-only column in row group 1").isEmpty();
+    }
+
     // ==================== Column index disagreeing with the chunk statistics ====================
 
     /// Row group 0's `id` chunk statistics claim `[500, 999]` while its column index keeps the
@@ -635,12 +682,17 @@ class FilterOnlyColumnSkipTest {
     /// row group `rowGroupIndex` of `file`. A column's chunk is fetched before any of its rows
     /// is decoded, so every read the reader needed is recorded by the time it returns.
     private boolean chunkRead(CountingInputFile file, String column, int rowGroupIndex) throws IOException {
+        return chunkReads(file, column, rowGroupIndex).anyMatch(r -> !r.reason().contains("pruning"));
+    }
+
+    /// The reads, pruning reads included, that overlapped the chunk of the leaf `column` in row
+    /// group `rowGroupIndex` of `file`.
+    private Stream<CountingInputFile.Read> chunkReads(CountingInputFile file, String column, int rowGroupIndex)
+            throws IOException {
         ColumnMetaData chunk = chunk(file, column, rowGroupIndex);
         long start = chunk.dictionaryPageOffset() != null ? chunk.dictionaryPageOffset() : chunk.dataPageOffset();
         long end = start + chunk.totalCompressedSize();
-        return file.reads().stream()
-                .filter(r -> !r.reason().contains("pruning"))
-                .anyMatch(r -> r.offset() < end && r.end() > start);
+        return file.reads().stream().filter(r -> r.offset() < end && r.end() > start);
     }
 
     private ColumnMetaData chunk(CountingInputFile file, String column, int rowGroupIndex)
