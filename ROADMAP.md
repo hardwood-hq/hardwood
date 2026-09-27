@@ -15,6 +15,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] LIST (nested list support with arbitrary depth)
   - [x] MAP (map<key, value> with nested maps and struct values)
   - [x] INTERVAL
+  - [x] FLOAT16, NULL (the format's `UNKNOWN`)
+  - [x] VARIANT, GEOMETRY, GEOGRAPHY
 - [x] Define repetition types: `REQUIRED`, `OPTIONAL`, `REPEATED`
 
 ### 1.2 Schema Representation
@@ -267,12 +269,12 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] TIMESTAMP (INT64 → Instant for UTC-adjusted, LocalDateTime for local-wall-clock, MILLIS/MICROS/NANOS units)
   - [x] TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) (signed little-endian 96-bit count, years 0001–9999 at every unit; read, filtered, written)
   - [x] TIME (INT32/INT64 → LocalTime with MILLIS/MICROS/NANOS units)
-  - [x] DECIMAL (FIXED_LEN_BYTE_ARRAY → BigDecimal with scale/precision)
+  - [x] DECIMAL (INT32/INT64/BYTE_ARRAY/FIXED_LEN_BYTE_ARRAY → BigDecimal with scale/precision)
   - [x] INT_8, INT_16 (INT32 → narrowed int with validation)
   - [x] INT_32, INT_64 (INT32/INT64 → int/long)
   - [x] UINT_8, UINT_16, UINT_32, UINT_64 (unsigned integers)
-  - [x] Generic getObject() with automatic conversion based on logical type
-- [x] Logical type implementations (code exists, partial test coverage)
+  - [x] Generic getValue() with automatic conversion based on logical type
+- [x] Logical type implementations
   - [x] ENUM (tested; fixture is post-processed to set the ENUM annotation since PyArrow cannot emit it natively)
   - [x] UUID (tested with PyArrow 21+ which writes UUID logical type)
   - [x] JSON (tested with PyArrow 22+ which writes JSON logical type via `pa.json_()`)
@@ -286,13 +288,15 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Maps (map<string, int>, map<string, struct>, etc.)
   - [x] Nested maps (map<string, map<string, int>>)
   - [x] List of maps (list<map<string, int>>)
-- [x] VARIANT (self-describing semi-structured values; see [`_designs-legacy/VARIANT_LOGICAL_TYPE.md`](_designs-legacy/VARIANT_LOGICAL_TYPE.md))
+- [x] VARIANT (self-describing semi-structured values; see [`_designs/LOGICAL_TYPES.md`](_designs/LOGICAL_TYPES.md#variant))
   - [x] `VARIANT` logical-type recognition on group nodes (Phase 1, #74)
   - [x] Variant binary decoder (metadata dictionary + value navigation)
   - [x] `PqVariant` / `PqVariantObject` / `PqVariantArray` row-API
   - [x] Shredded variant reassembly — primitive, object, array, nested (Phase 2, #286)
   - [x] Cross-impl byte-for-byte oracle against `parquet-testing/shredded_variant/*.variant.bin`
 - [x] INTERVAL (FIXED_LEN_BYTE_ARRAY[12] → `PqInterval` via `LogicalTypeConverter`)
+- [x] FLOAT16 (FIXED_LEN_BYTE_ARRAY[2] → float)
+- [x] GEOMETRY / GEOGRAPHY (WKB payload as bytes, `GeospatialStatistics`, row-group pruning by `intersects`; see [`_designs/LOGICAL_TYPES.md`](_designs/LOGICAL_TYPES.md#geospatial))
 
 ---
 
@@ -436,7 +440,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] `AvroRowReader` — wraps `RowReader`, materializes `GenericRecord` per row
   - [x] Recursive nested record materialization
   - [x] List and map materialization into standard Java collections
-- [x] `AvroReaders` factory — overloads for filter pushdown and column projection
+- [x] `AvroReaders` factory — `rowReader` and a builder with projection, filter, `head` and `tail`
 - [ ] Avro `SpecificRecord` / generated class support
 
 ### 11.3 Parquet-Java Compatibility (`hardwood-parquet-java-compat`)

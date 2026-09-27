@@ -177,4 +177,5 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.
 - **Fixed-size list element types** are limited to fixed-width primitives; byte-array-backed leaves (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) and nullable elements take the regular path.
 - **Legacy `BIT_PACKED` levels (#569).** `DataPageV1` level streams are decoded as the RLE / bit-packing hybrid whatever the header's level encoding says, so a page with `BIT_PACKED` levels is misread.
+- **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group keeps its annotation and is refused when a read projects it, rather than read as a list of variants.
 - **Phantom-bearing batches** on `REAL_VIEW` build the full `computeRealView` and gather the leaf values; only all-present batches get the lean view.

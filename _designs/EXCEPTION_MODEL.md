@@ -110,9 +110,11 @@ footer prefetch is different: `FileMetadataCache` keeps its failure and rethrows
 
 A logical annotation that is unknown or that its physical type cannot carry is dropped, and
 the column is read as its physical type — parquet-format PR 606 has readers "ignore both the
-logical type annotation and column order for that column". No check is needed downstream: the
-physical accessors work, a logical accessor fails as on any unannotated column, and
-statistics compare under the physical type's ordering. The two are dropped in different
+logical type annotation and column order for that column". The accessors need no check: the
+physical accessors work and a logical accessor fails as on any unannotated column. Statistics
+need one, because the column's writer ordered its bounds by the dropped annotation:
+`BoundsReadability` reads no bounds for the column
+([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)). The two are dropped in different
 places, `LogicalTypeReader` and `FileSchema`, and warn differently: an unrecognized annotation
 means a newer format version, an unusable one means the writer produced something no version
 defines. Only the second can be shown wrong, so only it could ever be a candidate for

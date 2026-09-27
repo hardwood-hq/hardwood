@@ -39,21 +39,7 @@ Root files extended instead of new design docs:
 
 ### Facts from deleted sources
 
-Areas delete their sources outright. These facts from them belong to targets not yet written and have no other copy. The source is readable at `<commit>:_designs-legacy/<NAME>.md`, with `2cba6f90` for the read path area and the commit given in the row otherwise. Each still holds in the code.
-
-| Target | Fact | Source |
-|---|---|---|
-| `LOGICAL_TYPES.md` | `getDate`, `getUuid`, `getInterval` read nothing from the annotation and check `LogicalAccessorKind.requireDate/requireUuid/requireInterval` first; `getString` is guarded by `requireText` (`TextColumns.holdsText`, the rule the `String` filter literal uses) | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | Every other annotation-decoding accessor casts the annotation it expects (e.g. `(LogicalType.TimeType) leaf.logicalType()`); another or no annotation fails at that cast, and a physical-type mismatch surfaces as the storage array's `ClassCastException` (#971) | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | FLOAT against FLOAT16 and the two TIMESTAMP kinds have their own guards: `LogicalAccessorKind.requireFloat16`, `TimestampAccessorKind.require` | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | A group element against a leaf accessor is rejected by `PqListImpl.requirePrimitiveElement` / `PqMapImpl.requirePrimitiveValue`; without them the accessor would decode the group's first leaf | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | Typed whole-column views (`PqList.dates()` and siblings) resolve and guard the annotation once, when the view is built | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | An unannotated INT96 decodes as an `Instant` by convention; sound because `FileSchema` drops any annotation INT96 cannot carry | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | ENUM over BYTE_ARRAY decodes exactly like a string | NESTED_PRIMITIVE_LEAF_DECODE |
-| `LOGICAL_TYPES.md` | The writer emits every annotation as both the `LogicalType` union and, where one exists, the legacy `converted_type` (with `scale` / `precision` for `DECIMAL`), derived from the one declared `LogicalType` in `FileSchema.toSchemaElements` through `LogicalTypeAnnotations.of` / `ofGroup`, the inverse of `FileSchema.effectiveLogicalType`; a read-then-rewrite keeps a legacy annotation's `scale` / `precision` | WRITER_LOGICAL_TYPES (`b1c8500d`) |
-| `LOGICAL_TYPES.md` | The legacy form of `TIME` / `TIMESTAMP` ignores `isAdjustedToUTC` (parquet-format requires local values annotated with it too); `NANOS` has no legacy counterpart and is union-only | WRITER_LOGICAL_TYPES (`b1c8500d`) |
-| `LOGICAL_TYPES.md` | `INTERVAL` is written as `converted_type` only, union field 9 being reserved; `LogicalTypeReader` accepts field 9 leniently | WRITER_LOGICAL_TYPES (`b1c8500d`) |
-| `LOGICAL_TYPES.md` | `LogicalTypeWriter` writes the `GEOGRAPHY` `algorithm` as an `i32` (a Thrift enum, not a union) and omits a `null` `crs`, which the reader reads back as `OGC:CRS84` | WRITER_LOGICAL_TYPES (`b1c8500d`) |
+Areas delete their sources outright. Facts from them that belonged to a target not yet written were listed here until that target landed; every one has landed.
 
 ## Plans (`_plans/`)
 
@@ -216,5 +202,5 @@ One area per session, with the `hardwood-design-consolidation` skill (`.claude/s
 - [x] Read path (1–5)
 - [x] I/O and metadata (9–13); splits the design part out of `_plans/REMOTE_READ_PATH.md`
 - [x] Writer (16–19); trims `_plans/WRITER_SUPPORT.md` to the open stages of #1291
-- [ ] Types (14–15)
+- [x] Types (14–15)
 - [ ] `ARCHITECTURE.md` pointers; delete `_designs-legacy/`, this plan and the skill
