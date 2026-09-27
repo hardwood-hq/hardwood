@@ -94,10 +94,14 @@ class IndexWindowLifecycleTest {
     @Test
     void aWindowWhosePrefetchFailedIsFetchedByTheDemandPath() throws Exception {
         CountDownLatch prefetchFailed = new CountDownLatch(1);
+        CountDownLatch nextPrefetched = new CountDownLatch(1);
         AtomicBoolean failed = new AtomicBoolean();
         CountingInputFile file = countingFile(new FailingInputFile(InputFile.of(FIXTURE)) {
             @Override
             boolean fails() {
+                if (FetchReason.current().equals("rg=2 indexes")) {
+                    nextPrefetched.countDown();
+                }
                 if (FetchReason.current().equals("rg=1 indexes") && !failed.getAndSet(true)) {
                     prefetchFailed.countDown();
                     return true;
@@ -114,6 +118,8 @@ class IndexWindowLifecycleTest {
                 FetchPlan plan = iterator.getColumnPlan(iterator.workItemAt(1), 0);
 
                 assertThat(plan.isEmpty()).isFalse();
+                // Reaching row group 1 prefetches row group 2; closing at once would race it.
+                assertThat(nextPrefetched.await(10, TimeUnit.SECONDS)).isTrue();
             }
             finally {
                 iterator.close();
@@ -121,7 +127,7 @@ class IndexWindowLifecycleTest {
         }
         // The prefetch's failed attempt, then the demand path's.
         assertThat(indexReasons(file)).containsExactlyInAnyOrder(
-                "rg=0 indexes", "rg=1 indexes", "rg=1 indexes");
+                "rg=0 indexes", "rg=1 indexes", "rg=1 indexes", "rg=2 indexes");
     }
 
     @Test
