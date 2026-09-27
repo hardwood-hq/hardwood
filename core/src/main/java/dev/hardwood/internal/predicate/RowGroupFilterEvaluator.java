@@ -93,12 +93,13 @@ public class RowGroupFilterEvaluator {
     ///
     /// Each leaf starts from the decision recorded for it rather than being evaluated again, so
     /// the bloom filters are not read a second time and a statistics warning is not repeated. A
-    /// dictionary is read only for a leaf that decision leaves open.
+    /// dictionary is read only for a leaf that decision leaves open: one proved to match in full
+    /// holds its literal in every row, so its dictionary cannot prove the literal absent.
     public static FilterDecision refineWithDictionaries(ResolvedPredicate predicate, RowGroup rowGroup,
             LeafDecisions leafDecisions, RowGroupDictionaryFilterSource dictionaries) throws IOException {
         return fold(predicate, rowGroup, leaf -> {
             FilterDecision planned = leafDecisions.get(leaf);
-            return planned != FilterDecision.CANNOT_MATCH && absent(leaf, null, dictionaries)
+            return planned == FilterDecision.MIGHT_MATCH && absent(leaf, null, dictionaries)
                     ? FilterDecision.CANNOT_MATCH
                     : planned;
         });
@@ -114,12 +115,17 @@ public class RowGroupFilterEvaluator {
             decisions.put(leaf, decision);
         }
 
-        /// The decision recorded for `leaf`, or [FilterDecision#MIGHT_MATCH] for a leaf planning
-        /// never reached. An `OR` stops at its first branch that always matches, and a branch
-        /// past it is only reached here when a dictionary contradicts that branch's statistics;
-        /// such a leaf is left undecided rather than guessed at.
+        /// The decision recorded for `leaf`. The replay reaches only leaves planning reached: a
+        /// dictionary turns an open leaf into `CANNOT_MATCH` and nothing else, so no `AND` or `OR`
+        /// runs past the child it stopped at during planning.
+        ///
+        /// @throws IllegalStateException if planning recorded no decision for `leaf`
         FilterDecision get(ResolvedPredicate leaf) {
-            return decisions.getOrDefault(leaf, FilterDecision.MIGHT_MATCH);
+            FilterDecision decision = decisions.get(leaf);
+            if (decision == null) {
+                throw new IllegalStateException("No planned decision for leaf " + leaf);
+            }
+            return decision;
         }
     }
 

@@ -474,6 +474,29 @@ class FilterOnlyColumnSkipTest {
                 .as("reads of the filter-only column in row group 1").isEmpty();
     }
 
+    @Test
+    void flatRowReaderReadsNoDictionaryForALeafStatisticsProvedInAnUndecidedRowGroup() throws Exception {
+        // Row group 0 is undecided through `id`, while statistics prove its `bucket` leaf; row
+        // group 1 is undecided through `bucket`.
+        List<String> labels = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(flatFile);
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("label"))
+                     .filter(FilterPredicate.and(FilterPredicate.eq("bucket", 0L), FilterPredicate.gtEq("id", LOWER)))
+                     .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                labels.add(rows.getString("label"));
+            }
+        }
+        assertThat(labels).isEqualTo(expectedLabels(LOWER, THRESHOLD));
+        assertThat(chunkReads(flatFile, "bucket", 1).anyMatch(r -> r.reason().contains("pruning")))
+                .as("dictionary of the undecided leaf probed in row group 1").isTrue();
+        assertThat(chunkReads(flatFile, "bucket", 0).filter(r -> r.reason().contains("pruning")).toList())
+                .as("pruning reads of the proved leaf's column in row group 0").isEmpty();
+        assertThat(chunkRead(flatFile, "bucket", 0)).as("filter-only column read in row group 0").isTrue();
+    }
+
     // ==================== Column index disagreeing with the chunk statistics ====================
 
     /// Row group 0's `id` chunk statistics claim `[500, 999]` while its column index keeps the

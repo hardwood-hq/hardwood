@@ -36,6 +36,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Dictionary-based row-group pruning, one nested class per single-row-group fixture.
 ///
@@ -172,6 +173,16 @@ class DictionaryPushDownTest {
             assertThat(RowGroupFilterEvaluator.refineWithDictionaries(or, rowGroup(), leafDecisions, dictionaries()))
                     .isEqualTo(FilterDecision.CANNOT_MATCH);
             assertThat(bloomReads.get()).isEqualTo(bloomReadsWhilePlanning);
+        }
+
+        @Test
+        void refiningALeafPlanningDidNotRecordFails() throws IOException {
+            ResolvedPredicate eq = FilterPredicateResolver.resolve(FilterPredicate.eq("category", "cat_5"), schema);
+
+            assertThatThrownBy(() -> RowGroupFilterEvaluator.refineWithDictionaries(eq, rowGroup(),
+                    new RowGroupFilterEvaluator.LeafDecisions(), dictionaries()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("No planned decision for leaf " + eq);
         }
 
         @Test
