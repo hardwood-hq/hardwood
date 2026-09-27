@@ -43,6 +43,8 @@ class VariantLogicalTypeTest {
             Paths.get("src/test/resources/variant_metadata_offset_size2.parquet");
     private static final Path FILE_BAD_METADATA =
             Paths.get("src/test/resources/variant_negative_dict_size.parquet");
+    private static final Path FILE_SHREDDED_IN_STRUCT =
+            Paths.get("src/test/resources/variant_shredded_in_struct_test.parquet");
 
     @Test
     void schemaReportsVariantLogicalType() throws IOException {
@@ -124,6 +126,35 @@ class VariantLogicalTypeTest {
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("[variant_negative_dict_size.parquet] "
                             + "Variant metadata dictionary_size is not a valid unsigned int: -1");
+        }
+    }
+
+    /// A shredded Variant nested in a struct reassembles like a top-level one: a present
+    /// Variant group whose `value` and `typed_value` are both null reads as Variant NULL,
+    /// and only a null Variant group reads as SQL NULL.
+    @Test
+    void shreddedVariantNestedInStructReassembles() throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE_SHREDDED_IN_STRUCT));
+                RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqVariant v1 = rowReader.getStruct("s").getVariant("v");
+            assertThat(v1.type()).isEqualTo(VariantType.INT32);
+            assertThat(v1.asInt()).isEqualTo(7);
+
+            rowReader.next();
+            PqVariant v2 = rowReader.getStruct("s").getVariant("v");
+            assertThat(v2.type()).isEqualTo(VariantType.BOOLEAN_TRUE);
+
+            rowReader.next();
+            PqVariant v3 = rowReader.getStruct("s").getVariant("v");
+            assertThat(v3).isNotNull();
+            assertThat(v3.type()).isEqualTo(VariantType.NULL);
+            assertThat(v3.isNull()).isTrue();
+
+            rowReader.next();
+            assertThat(rowReader.getStruct("s").getVariant("v")).isNull();
+
+            assertThat(rowReader.hasNext()).isFalse();
         }
     }
 }

@@ -17,15 +17,19 @@ import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqVariant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Byte-level regression test for shredded Variant reassembly. Each
 /// `shredded_variant/case-NNN.parquet` fixture has one `.variant.bin` file per
@@ -66,6 +70,37 @@ class VariantShredReassemblerTest {
             }
         }
         return tests;
+    }
+
+    /// The error cases whose `typed_value` has a type the Variant shredding spec does not
+    /// allow are rejected when the row reader is built, whether or not a row populates
+    /// `typed_value`.
+    @Test
+    void unsupportedTypedValueCarriersAreRejected() throws IOException {
+        assertRowReaderRejected("case-127.parquet", "INT32 UINT_32");
+        assertRowReaderRejected("case-137.parquet", "FIXED_LEN_BYTE_ARRAY");
+    }
+
+    /// A column read filtered on the Variant group assembles it to evaluate the predicate,
+    /// and rejects the carrier when the reader is built.
+    @Test
+    void unsupportedTypedValueCarrierIsRejectedByAFilteredColumnRead() throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(fixturesDir.resolve("case-127.parquet")))) {
+            assertThatThrownBy(() -> fileReader.buildColumnReader("id").filter(FilterPredicate.isNotNull("var")).build())
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage("[case-127.parquet] Shredded Variant typed_value has type INT32 UINT_32, "
+                            + "which the Variant shredding specification does not allow");
+        }
+    }
+
+    private void assertRowReaderRejected(String fileName, String carrier) throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixturesDir.resolve(fileName)))) {
+            assertThatThrownBy(fileReader::rowReader)
+                    .isExactlyInstanceOf(ParquetReadException.class)
+                    .hasMessage("[" + fileName + "] Shredded Variant typed_value has type " + carrier
+                            + ", which the Variant shredding specification does not allow");
+        }
     }
 
     private void verifyFile(Path parquetFile) throws IOException {

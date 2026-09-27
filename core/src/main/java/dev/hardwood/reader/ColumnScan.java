@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.io.Closeable;
 import java.io.IOException;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
@@ -79,8 +80,26 @@ final class ColumnScan implements Closeable {
         }
         SelectionEngine engine = filter == null
                 ? null
-                : SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+                : createSelectionEngine(schema, decoded, filter, cursors, batchSize, rowGroupIterator);
         return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
+    }
+
+    /// The engine's predicate view rejects what the reader cannot assemble (a shredded
+    /// Variant `typed_value` of a type the shredding spec does not allow). The cursors'
+    /// workers have started by then and no scan will own them, so a failure closes them
+    /// before it propagates, naming the file whose schema it was found in.
+    private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
+                                                         ResolvedPredicate filter, ColumnCursor[] cursors,
+                                                         int batchSize, RowGroupIterator rowGroupIterator) {
+        try {
+            return SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+        }
+        catch (RuntimeException e) {
+            for (ColumnCursor cursor : cursors) {
+                cursor.close();
+            }
+            throw ExceptionContext.addFileContext(rowGroupIterator.referenceFileName(), e);
+        }
     }
 
     /// A scan for a read in which pruning dropped every row group: it has no

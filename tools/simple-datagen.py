@@ -3448,6 +3448,54 @@ print("  - 4 rows exercising the shredded reassembly paths")
 print("  - typed_value: int64 — shredded (rows 1, 4), unshredded (row 2), Variant NULL (row 3)")
 
 # ============================================================================
+# hardwood-hq/hardwood#1371: shredded Variant nested in a struct
+# ============================================================================
+#
+# Reads through PqStruct.getVariant rather than the top-level accessor. Row 3
+# has `value` and `typed_value` both null under a present Variant group, which
+# reads as Variant NULL like the top-level case; row 4 has the Variant group
+# itself null, which reads as SQL NULL.
+
+variant_shredded_in_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('s', pa.struct([
+        pa.field('v', pa.struct([
+            pa.field('metadata', pa.binary(), False),
+            pa.field('value', pa.binary(), True),
+            pa.field('typed_value', pa.int32(), True),
+        ]), True),
+    ]), True),
+])
+
+variant_shredded_in_struct_table = pa.table({
+    'id': [1, 2, 3, 4],
+    's': [
+        # Row 1: shredded — typed_value = 7 → Variant INT32(7)
+        {'v': {'metadata': _empty_metadata, 'value': None, 'typed_value': 7}},
+        # Row 2: unshredded — value carries BOOLEAN_TRUE
+        {'v': {'metadata': _empty_metadata, 'value': bytes([0x04]), 'typed_value': None}},
+        # Row 3: both null at a non-null Variant group → Variant NULL
+        {'v': {'metadata': _empty_metadata, 'value': None, 'typed_value': None}},
+        # Row 4: the Variant group itself is null → SQL NULL
+        {'v': None},
+    ],
+}, schema=variant_shredded_in_struct_schema)
+
+pq.write_table(
+    variant_shredded_in_struct_table,
+    'core/src/test/resources/variant_shredded_in_struct_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_at_path_as_variant(
+    'core/src/test/resources/variant_shredded_in_struct_test.parquet', ['s', 'v'])
+
+print("\nGenerated variant_shredded_in_struct_test.parquet:")
+print("  - 4 rows of a shredded Variant (typed_value: int32) nested in struct `s`")
+print("  - shredded (row 1), unshredded (row 2), Variant NULL (row 3), SQL NULL (row 4)")
+
+# ============================================================================
 # hardwood-hq/hardwood#464: VARIANT in repeated contexts (map values, list
 # elements). Exercises the unshredded path through PqMap.Entry.getVariantValue,
 # PqList.variants, and RowReader.getVariant(int). Shredded variants in

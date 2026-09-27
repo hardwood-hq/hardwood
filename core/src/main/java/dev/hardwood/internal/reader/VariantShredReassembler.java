@@ -29,27 +29,32 @@ import dev.hardwood.reader.ParquetReadException;
 /// binary via [VariantValueEncoder].
 ///
 /// Follows the spec's per-level decision tree (see `VariantShredding.md`):
-/// value null + typed_value null → SQL NULL, pass-through when value is the
-/// only side populated, typed extraction when typed_value is the only side,
-/// object merge when both are set (object-only per spec).
+/// value null + typed_value null → missing (Variant NULL at the root and as an
+/// array element, an omitted field inside an object), pass-through when value
+/// is the only side populated, typed extraction when typed_value is the only
+/// side, object merge when both are set (object-only per spec).
 ///
-/// One instance per [dev.hardwood.reader.RowReader]; the internal scratch
-/// buffer is reused across rows.
+/// Not thread-safe: the internal scratch buffer is reused across calls.
+/// [NestedBatchDataView] holds one instance for the top-level Variants of a
+/// reader and reuses it across rows; [PqStructImpl] creates one per
+/// struct-nested Variant read.
 public final class VariantShredReassembler {
 
     private byte[] scratch = new byte[256];
     private int pos;
 
-    /// Assemble the `value` bytes for the current row's top-level Variant. The
-    /// caller already established that the variant group itself is non-null
-    /// (metadata def level passes). Returns `null` when the reassembled result
-    /// is a missing variant (both `value` and `typed_value` absent at the top
-    /// level — spec calls this a `None`-valued variant, surfaced as SQL NULL).
+    /// Assemble the `value` bytes for the current row's Variant. The caller
+    /// already established that the variant group itself is non-null (metadata
+    /// def level passes); a null group is SQL NULL and never reaches here. When
+    /// both `value` and `typed_value` are absent at the root level, the result
+    /// is Variant NULL (the one-byte value `0x00`).
     public byte[] reassemble(ShredLevel root, NestedBatchIndex batch, int rowIndex) {
         pos = 0;
         int produced = writeLevel(root, batch, rowIndex);
         if (produced < 0) {
-            return null;
+            pos = 0;
+            ensureCapacity(1);
+            pos = VariantValueEncoder.writeNull(scratch, pos);
         }
         byte[] out = new byte[pos];
         System.arraycopy(scratch, 0, out, 0, pos);
@@ -106,109 +111,71 @@ public final class VariantShredReassembler {
     private void encodePrimitive(Typed.Primitive typed, NestedBatchIndex batch, int idx) {
         ensureCapacity(32);
         Object arr = batch.valueArrays[typed.col()];
-        LogicalType logical = typed.logicalType();
-        switch (typed.physicalType()) {
-            case INT32 -> encodeInt32((int[]) arr, idx, logical);
-            case INT64 -> encodeInt64((long[]) arr, idx, logical);
+        switch (typed.carrier()) {
+            case BOOLEAN -> pos = VariantValueEncoder.writeBoolean(scratch, pos, ((boolean[]) arr)[idx]);
+            case INT8 -> pos = VariantValueEncoder.writeInt8(scratch, pos, ((int[]) arr)[idx]);
+            case INT16 -> pos = VariantValueEncoder.writeInt16(scratch, pos, ((int[]) arr)[idx]);
+            case INT32 -> pos = VariantValueEncoder.writeInt32(scratch, pos, ((int[]) arr)[idx]);
+            case INT64 -> pos = VariantValueEncoder.writeInt64(scratch, pos, ((long[]) arr)[idx]);
             case FLOAT -> pos = VariantValueEncoder.writeFloat(scratch, pos, ((float[]) arr)[idx]);
             case DOUBLE -> pos = VariantValueEncoder.writeDouble(scratch, pos, ((double[]) arr)[idx]);
-            case BOOLEAN -> pos = VariantValueEncoder.writeBoolean(scratch, pos, ((boolean[]) arr)[idx]);
-            case BYTE_ARRAY -> encodeBinary((BinaryBatchValues) arr, idx, logical);
-            case FIXED_LEN_BYTE_ARRAY -> encodeFixedLen((BinaryBatchValues) arr, idx, logical);
-            case INT96 -> encodeInt96(idx);
+            case DECIMAL4 -> pos = VariantValueEncoder.writeDecimal4(scratch, pos, ((int[]) arr)[idx], scale(typed));
+            case DECIMAL8 -> pos = VariantValueEncoder.writeDecimal8(scratch, pos, ((long[]) arr)[idx], scale(typed));
+            case DECIMAL_BYTE_ARRAY -> encodeByteArrayDecimal(((BinaryBatchValues) arr).byteArrayAt(idx), scale(typed));
+            case DECIMAL_FIXED_LEN_BYTE_ARRAY -> encodeFixedLenDecimal(((BinaryBatchValues) arr).byteArrayAt(idx),
+                    (LogicalType.DecimalType) typed.logicalType());
+            case DATE -> pos = VariantValueEncoder.writeDate(scratch, pos, ((int[]) arr)[idx]);
+            case TIME_MICROS -> pos = VariantValueEncoder.writeTimeMicros(scratch, pos, ((long[]) arr)[idx]);
+            case TIMESTAMP_MICROS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos,
+                    ((long[]) arr)[idx], isAdjustedToUtc(typed));
+            case TIMESTAMP_NANOS -> pos = VariantValueEncoder.writeTimestampNanos(scratch, pos,
+                    ((long[]) arr)[idx], isAdjustedToUtc(typed));
+            case BINARY -> encodeBinary(((BinaryBatchValues) arr).byteArrayAt(idx));
+            case STRING -> encodeString(((BinaryBatchValues) arr).byteArrayAt(idx));
+            case UUID -> encodeUuid(((BinaryBatchValues) arr).byteArrayAt(idx));
         }
     }
 
-    private void encodeInt32(int[] values, int idx, LogicalType logical) {
-        int v = values[idx];
-        if (logical instanceof LogicalType.DecimalType d) {
-            pos = VariantValueEncoder.writeDecimal4(scratch, pos, v, d.scale());
-            return;
-        }
-        if (logical instanceof LogicalType.DateType) {
-            pos = VariantValueEncoder.writeDate(scratch, pos, v);
-            return;
-        }
-        if (logical instanceof LogicalType.IntType i) {
-            switch (i.bitWidth()) {
-                case 8 -> { pos = VariantValueEncoder.writeInt8(scratch, pos, v); return; }
-                case 16 -> { pos = VariantValueEncoder.writeInt16(scratch, pos, v); return; }
-                default -> { /* fall through to INT32 */ }
-            }
-        }
-        pos = VariantValueEncoder.writeInt32(scratch, pos, v);
+    private static int scale(Typed.Primitive typed) {
+        return ((LogicalType.DecimalType) typed.logicalType()).scale();
     }
 
-    private void encodeInt64(long[] values, int idx, LogicalType logical) {
-        long v = values[idx];
-        if (logical instanceof LogicalType.DecimalType d) {
-            pos = VariantValueEncoder.writeDecimal8(scratch, pos, v, d.scale());
-            return;
-        }
-        if (logical instanceof LogicalType.TimestampType ts) {
-            boolean adjusted = ts.isAdjustedToUTC();
-            switch (ts.unit()) {
-                case MILLIS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos, Math.multiplyExact(v, 1_000L), adjusted);
-                case MICROS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos, v, adjusted);
-                case NANOS -> pos = VariantValueEncoder.writeTimestampNanos(scratch, pos, v, adjusted);
-            }
-            return;
-        }
-        if (logical instanceof LogicalType.TimeType) {
-            pos = VariantValueEncoder.writeTimeMicros(scratch, pos, v);
-            return;
-        }
-        pos = VariantValueEncoder.writeInt64(scratch, pos, v);
+    private static boolean isAdjustedToUtc(Typed.Primitive typed) {
+        return ((LogicalType.TimestampType) typed.logicalType()).isAdjustedToUTC();
     }
 
-    private void encodeBinary(BinaryBatchValues values, int idx, LogicalType logical) {
-        byte[] raw = values.byteArrayAt(idx);
+    private void encodeBinary(byte[] raw) {
         ensureCapacity(raw.length + 8);
-        if (logical instanceof LogicalType.StringType
-                || logical instanceof LogicalType.JsonType
-                || logical instanceof LogicalType.EnumType) {
-            pos = VariantValueEncoder.writeString(scratch, pos, raw);
-            return;
-        }
-        if (logical instanceof LogicalType.DecimalType d) {
-            // A payload of no bytes is zero, as the column's accessors read it.
-            BigInteger unscaled = raw.length == 0 ? BigInteger.ZERO : new BigInteger(raw);
-            pos = VariantValueEncoder.writeDecimal16(scratch, pos, unscaled, d.scale());
-            return;
-        }
         pos = VariantValueEncoder.writeBinary(scratch, pos, raw);
     }
 
-    private void encodeFixedLen(BinaryBatchValues values, int idx, LogicalType logical) {
-        byte[] raw = values.byteArrayAt(idx);
+    private void encodeString(byte[] raw) {
         ensureCapacity(raw.length + 8);
-        if (logical instanceof LogicalType.UuidType) {
-            long msb = bytesToLongBE(raw, 0);
-            long lsb = bytesToLongBE(raw, 8);
-            pos = VariantValueEncoder.writeUuid(scratch, pos, new UUID(msb, lsb));
-            return;
-        }
-        if (logical instanceof LogicalType.DecimalType d) {
-            BigInteger unscaled = new BigInteger(raw);
-            int width = pickDecimalWidth(d.precision());
-            switch (width) {
-                case 4 -> pos = VariantValueEncoder.writeDecimal4(scratch, pos, unscaled.intValue(), d.scale());
-                case 8 -> pos = VariantValueEncoder.writeDecimal8(scratch, pos, unscaled.longValue(), d.scale());
-                default -> pos = VariantValueEncoder.writeDecimal16(scratch, pos, unscaled, d.scale());
-            }
-            return;
-        }
-        pos = VariantValueEncoder.writeBinary(scratch, pos, raw);
+        pos = VariantValueEncoder.writeString(scratch, pos, raw);
     }
 
-    private void encodeInt96(int idx) {
-        // INT96 is a deprecated legacy timestamp encoding with no direct
-        // Variant equivalent. Writers that want a shredded timestamp should use
-        // INT64 + TIMESTAMP(MICROS/NANOS); silently mistyping an INT96 as
-        // BINARY would corrupt the Variant's type tag.
-        throw new UnsupportedOperationException(
-                "Shredded Variant typed_value with INT96 physical type is not supported; "
-                        + "convert to INT64 TIMESTAMP before writing");
+    private void encodeByteArrayDecimal(byte[] raw, int scale) {
+        ensureCapacity(raw.length + 8);
+        // A payload of no bytes is zero, as the column's accessors read it.
+        BigInteger unscaled = raw.length == 0 ? BigInteger.ZERO : new BigInteger(raw);
+        pos = VariantValueEncoder.writeDecimal16(scratch, pos, unscaled, scale);
+    }
+
+    private void encodeFixedLenDecimal(byte[] raw, LogicalType.DecimalType d) {
+        ensureCapacity(raw.length + 8);
+        BigInteger unscaled = new BigInteger(raw);
+        switch (pickDecimalWidth(d.precision())) {
+            case 4 -> pos = VariantValueEncoder.writeDecimal4(scratch, pos, unscaled.intValue(), d.scale());
+            case 8 -> pos = VariantValueEncoder.writeDecimal8(scratch, pos, unscaled.longValue(), d.scale());
+            default -> pos = VariantValueEncoder.writeDecimal16(scratch, pos, unscaled, d.scale());
+        }
+    }
+
+    private void encodeUuid(byte[] raw) {
+        ensureCapacity(raw.length + 8);
+        long msb = bytesToLongBE(raw, 0);
+        long lsb = bytesToLongBE(raw, 8);
+        pos = VariantValueEncoder.writeUuid(scratch, pos, new UUID(msb, lsb));
     }
 
     private static int pickDecimalWidth(int precision) {

@@ -16,6 +16,7 @@ import java.time.LocalTime;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
@@ -93,7 +94,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     private boolean closed;
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
-                    FileSchema fileSchema, ProjectedSchema payload,
+                    FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
                     long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
                     RecordFilterTally tally, RowGroupIterator rowGroupIterator) {
         this.rowGroupIterator = rowGroupIterator;
@@ -105,7 +106,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
         this.fileSchema = fileSchema;
-        this.dataView = new NestedBatchDataView(fileSchema, payload);
+        this.dataView = dataView;
         this.previousBatches = new NestedBatch[columnCount];
 
         int payloadCount = payload.getProjectedColumnCount();
@@ -154,6 +155,28 @@ public final class NestedRowReader implements FileAwareRowReader {
                             int batchSize) throws IOException {
         ProjectedSchema decoded = projection.decoded();
         int projectedColumnCount = decoded.getProjectedColumnCount();
+
+        // The views and the matcher are built from the schema alone, and the views reject
+        // what the reader cannot assemble (a shredded Variant `typed_value` of a type the
+        // shredding spec does not allow), so all three are built before any worker starts: a failure
+        // here leaves no worker running.
+        NestedBatchDataView dataView;
+        PredicateView predicateView;
+        try {
+            dataView = new NestedBatchDataView(schema, projection.payload());
+            // The matcher is tested against a view of the predicate columns rather than the
+            // reader itself, whose accessors reach the projected columns alone.
+            predicateView = filter != null
+                    ? PredicateView.create(schema, decoded, filter, p -> true, false)
+                    : null;
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(rowGroupIterator.referenceFileName(), e);
+        }
+        RowMatcher recordMatcher = predicateView != null
+                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
+                : null;
+
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // workers still take it — they hold it only while statistics prove every row
         // they assemble matches, and drop it at the first row group that is not proven,
@@ -191,16 +214,8 @@ public final class NestedRowReader implements FileAwareRowReader {
         }
 
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
-        // The matcher is tested against a view of the predicate columns rather than the
-        // reader itself, whose accessors reach the projected columns alone.
-        PredicateView predicateView = filter != null
-                ? PredicateView.create(schema, decoded, filter, p -> true, false)
-                : null;
-        RowMatcher recordMatcher = predicateView != null
-                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
-                : null;
         long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
-        NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projection.payload(),
+        NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projection.payload(), dataView,
                 readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();
         return reader;

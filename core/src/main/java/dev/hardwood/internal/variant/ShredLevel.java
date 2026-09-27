@@ -38,9 +38,20 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         /// @param defLevel def level at or above which typed_value is non-null
         /// @param physicalType Parquet physical type of typed_value
         /// @param logicalType Parquet logical type on typed_value (may be null)
+        /// @param carrier the Variant type typed_value encodes to, resolved from the two types
         record Primitive(int col, int defLevel,
                          PhysicalType physicalType,
-                         LogicalType logicalType) implements Typed {}
+                         LogicalType logicalType,
+                         Carrier carrier) implements Typed {
+
+            /// Resolves the [Carrier] from the physical and logical type.
+            ///
+            /// @throws ParquetReadException if the Variant shredding spec does not allow the
+            ///         pair as a `typed_value`
+            public Primitive(int col, int defLevel, PhysicalType physicalType, LogicalType logicalType) {
+                this(col, defLevel, physicalType, logicalType, Carrier.of(physicalType, logicalType));
+            }
+        }
 
         /// typed_value is a LIST group whose element is itself a shredded level
         /// (so elements may carry their own `value` / `typed_value` pair).
@@ -58,6 +69,104 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         /// @param fieldNames names of the shredded fields, in dictionary order emitted by the schema
         /// @param fields matching shredded levels (indices align with `fieldNames`)
         record Object(int structDefLevel, String[] fieldNames, ShredLevel[] fields) implements Typed {}
+    }
+
+    /// The Parquet carriers a primitive `typed_value` may use, each naming the Variant
+    /// type it encodes to: the carriers the Variant shredding spec defines, with
+    /// `INT(32, signed)` and `INT(64, signed)` read as the unannotated `INT32` and `INT64`
+    /// they are equal to.
+    public enum Carrier {
+        BOOLEAN,
+        INT8,
+        INT16,
+        INT32,
+        INT64,
+        FLOAT,
+        DOUBLE,
+        /// `INT32` `DECIMAL`.
+        DECIMAL4,
+        /// `INT64` `DECIMAL`.
+        DECIMAL8,
+        /// `BYTE_ARRAY` `DECIMAL`.
+        DECIMAL_BYTE_ARRAY,
+        /// `FIXED_LEN_BYTE_ARRAY` `DECIMAL`, encoded at the width its precision selects.
+        DECIMAL_FIXED_LEN_BYTE_ARRAY,
+        DATE,
+        /// `INT64` `TIME(MICROS)`, not adjusted to UTC.
+        TIME_MICROS,
+        TIMESTAMP_MICROS,
+        TIMESTAMP_NANOS,
+        BINARY,
+        /// `BYTE_ARRAY` `STRING`.
+        STRING,
+        UUID;
+
+        /// Resolve the carrier of a `typed_value` column.
+        ///
+        /// @throws ParquetReadException if the Variant shredding spec does not allow the pair
+        ///         as a `typed_value`: shredded values must use the types it lists
+        static Carrier of(PhysicalType physicalType, LogicalType logicalType) {
+            Carrier carrier = switch (physicalType) {
+                case BOOLEAN -> logicalType == null ? BOOLEAN : null;
+                case FLOAT -> logicalType == null ? FLOAT : null;
+                case DOUBLE -> logicalType == null ? DOUBLE : null;
+                case INT32 -> ofInt32(logicalType);
+                case INT64 -> ofInt64(logicalType);
+                case BYTE_ARRAY -> ofByteArray(logicalType);
+                case FIXED_LEN_BYTE_ARRAY -> ofFixedLenByteArray(logicalType);
+                case INT96 -> null;
+            };
+            if (carrier == null) {
+                String type = logicalType == null ? physicalType.name() : physicalType + " " + logicalType;
+                throw new ParquetReadException("Shredded Variant typed_value has type " + type
+                        + ", which the Variant shredding specification does not allow");
+            }
+            return carrier;
+        }
+
+        private static Carrier ofInt32(LogicalType logicalType) {
+            return switch (logicalType) {
+                case null -> INT32;
+                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 8 -> INT8;
+                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 16 -> INT16;
+                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 32 -> INT32;
+                case LogicalType.DecimalType d -> DECIMAL4;
+                case LogicalType.DateType d -> DATE;
+                default -> null;
+            };
+        }
+
+        private static Carrier ofInt64(LogicalType logicalType) {
+            return switch (logicalType) {
+                case null -> INT64;
+                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 64 -> INT64;
+                case LogicalType.DecimalType d -> DECIMAL8;
+                case LogicalType.TimeType t when !t.isAdjustedToUTC() && t.unit() == LogicalType.TimeUnit.MICROS ->
+                        TIME_MICROS;
+                case LogicalType.TimestampType t when t.unit() == LogicalType.TimeUnit.MICROS -> TIMESTAMP_MICROS;
+                case LogicalType.TimestampType t when t.unit() == LogicalType.TimeUnit.NANOS -> TIMESTAMP_NANOS;
+                default -> null;
+            };
+        }
+
+        private static Carrier ofByteArray(LogicalType logicalType) {
+            return switch (logicalType) {
+                case null -> BINARY;
+                case LogicalType.StringType s -> STRING;
+                case LogicalType.DecimalType d -> DECIMAL_BYTE_ARRAY;
+                default -> null;
+            };
+        }
+
+        /// A `FIXED_LEN_BYTE_ARRAY` without a logical type is no Variant binary: the spec
+        /// carries binary as `BYTE_ARRAY` only.
+        private static Carrier ofFixedLenByteArray(LogicalType logicalType) {
+            return switch (logicalType) {
+                case LogicalType.UuidType u -> UUID;
+                case LogicalType.DecimalType d -> DECIMAL_FIXED_LEN_BYTE_ARRAY;
+                case null, default -> null;
+            };
+        }
     }
 
     // ==================== Builders ====================

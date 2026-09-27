@@ -465,9 +465,6 @@ final class PqStructImpl implements PqStruct {
             VariantShredReassembler reassembler = new VariantShredReassembler();
             reassembler.setCurrentMetadata(meta);
             byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
-            if (value == null) {
-                return null;
-            }
             return new PqVariantImpl(meta, value, 0);
         }
 

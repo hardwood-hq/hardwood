@@ -51,7 +51,7 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 **Timestamp tags:** The Variant binary format carries four timestamp tags, split along the same `isAdjustedToUTC` boundary as the Parquet TIMESTAMP logical type. `asTimestamp` returns `Instant` and accepts the UTC-adjusted tags `TIMESTAMP` / `TIMESTAMP_NANOS`; `asLocalTimestamp` returns `LocalDateTime` and accepts the wall-clock tags `TIMESTAMP_NTZ` / `TIMESTAMP_NTZ_NANOS`. `PqVariantObject.getTimestamp` / `getLocalTimestamp` follow the same split.
 
-**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
+**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation. A shredded Variant whose `value` and `typed_value` are both null reads as a `PqVariant` of type `NULL`; only a null Variant column reads as `null`. A `typed_value` column whose Parquet type the [Variant shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) does not list (for example `INT96` or `TIMESTAMP(MILLIS)`) makes building a row reader, or a column reader filtered on the Variant column, fail with an error.
 
 ## Current limitations
 

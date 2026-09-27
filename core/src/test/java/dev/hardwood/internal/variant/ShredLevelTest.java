@@ -8,10 +8,15 @@
 package dev.hardwood.internal.variant;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.LogicalType.TimeUnit;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetReadException;
@@ -90,5 +95,38 @@ class ShredLevelTest {
 
     private static SchemaNode.PrimitiveNode binary(String name) {
         return new SchemaNode.PrimitiveNode(name, PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, null, 0, 1, 0);
+    }
+
+    /// Carriers the Variant shredding spec does not allow as a `typed_value`: a file using
+    /// one is not valid, so each is rejected.
+    static Stream<Arguments> unsupportedTypedValueCarriers() {
+        return Stream.of(
+                Arguments.of(PhysicalType.INT32, LogicalType.time(false, TimeUnit.MILLIS), "INT32 TIME(MILLIS, local)"),
+                Arguments.of(PhysicalType.INT32, LogicalType.intType(8, false), "INT32 UINT_8"),
+                Arguments.of(PhysicalType.INT32, LogicalType.intType(16, false), "INT32 UINT_16"),
+                Arguments.of(PhysicalType.INT32, LogicalType.intType(32, false), "INT32 UINT_32"),
+                Arguments.of(PhysicalType.INT64, LogicalType.time(false, TimeUnit.NANOS), "INT64 TIME(NANOS, local)"),
+                Arguments.of(PhysicalType.INT64, LogicalType.time(true, TimeUnit.MICROS), "INT64 TIME(MICROS, UTC)"),
+                Arguments.of(PhysicalType.INT64, LogicalType.intType(64, false), "INT64 UINT_64"),
+                Arguments.of(PhysicalType.INT64, LogicalType.timestamp(true, TimeUnit.MILLIS),
+                        "INT64 TIMESTAMP(MILLIS, UTC)"),
+                Arguments.of(PhysicalType.INT96, null, "INT96"),
+                Arguments.of(PhysicalType.BYTE_ARRAY, LogicalType.bson(), "BYTE_ARRAY BSON"),
+                Arguments.of(PhysicalType.BYTE_ARRAY, LogicalType.json(), "BYTE_ARRAY JSON"),
+                Arguments.of(PhysicalType.BYTE_ARRAY, LogicalType.enumType(), "BYTE_ARRAY ENUM"),
+                Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.timestamp(true, TimeUnit.NANOS),
+                        "FIXED_LEN_BYTE_ARRAY TIMESTAMP(NANOS, UTC)"),
+                Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16(), "FIXED_LEN_BYTE_ARRAY FLOAT16"),
+                Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, null, "FIXED_LEN_BYTE_ARRAY"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("unsupportedTypedValueCarriers")
+    void typedValueCarrierWithoutAVariantTypeIsRejected(PhysicalType physicalType, LogicalType logicalType,
+                                                        String carrier) {
+        assertThatThrownBy(() -> new ShredLevel.Typed.Primitive(0, 1, physicalType, logicalType))
+                .isExactlyInstanceOf(ParquetReadException.class)
+                .hasMessage("Shredded Variant typed_value has type " + carrier
+                        + ", which the Variant shredding specification does not allow");
     }
 }

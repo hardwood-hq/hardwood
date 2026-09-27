@@ -386,9 +386,10 @@ public class FileSchema {
                 && child.convertedType() == ConvertedType.MAP_KEY_VALUE;
     }
 
-    /// Validate a Variant-annotated group's shape: required `metadata` binary
-    /// child, required `value` binary child, and at most one optional `typed_value`
-    /// sibling (the shredded representation, reassembled at read time).
+    /// Validate a Variant-annotated group's shape: a `metadata` child and a `value`
+    /// child, both `BYTE_ARRAY`, followed by at most one `typed_value` child (the
+    /// shredded representation, reassembled at read time). Only names, order and
+    /// physical types are checked; the children's repetition is not.
     private static void validateVariantGroup(SchemaNode.GroupNode group) {
         List<SchemaNode> kids = group.children();
         if (kids.size() < 2 || kids.size() > 3) {

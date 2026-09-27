@@ -644,9 +644,6 @@ public final class NestedBatchDataView {
 
     private final VariantShredReassembler variantReassembler = new VariantShredReassembler();
 
-    /// Single-byte Variant NULL value ("basic_type=primitive, primitive_header=null").
-    private static final byte[] VARIANT_NULL_VALUE = new byte[] { 0x00 };
-
     private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
         // Variant bytes are decoded lazily here, so a malformed `metadata`/`value`
         // surfaces as a decode error from deep inside the variant codec. Enrich it
@@ -676,12 +673,6 @@ public final class NestedBatchDataView {
             VariantMetadata meta = new VariantMetadata(metadataBytes);
             variantReassembler.setCurrentMetadata(meta);
             byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
-            if (value == null) {
-                // The variant group is non-null (checked above) but both `value`
-                // and `typed_value` are absent — parquet-java convention surfaces
-                // this as Variant NULL rather than SQL NULL.
-                value = VARIANT_NULL_VALUE;
-            }
             return new PqVariantImpl(meta, value, 0);
         }
 

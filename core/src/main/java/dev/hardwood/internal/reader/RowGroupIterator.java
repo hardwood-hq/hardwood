@@ -1731,6 +1731,12 @@ public class RowGroupIterator implements Closeable {
         return filtered;
     }
 
+    /// The name of the first file, whose schema is the reference schema of the read: what a
+    /// failure found in that schema, before any row group is read, names.
+    public String referenceFileName() {
+        return inputFiles.get(0).name();
+    }
+
     /// Validates the reference schema's own statement of the columns this read touches,
     /// before any of them is planned for or decoded.
     ///
@@ -1746,7 +1752,7 @@ public class RowGroupIterator implements Closeable {
     /// @throws UnsupportedOperationException if a touched column lies below a list of
     ///         variants in the bare repeated form ([BareRepeatedGroups#refuseTouchedVariants])
     private void validateReferenceColumns() {
-        String fileName = inputFiles.get(0).name();
+        String fileName = referenceFileName();
         for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
