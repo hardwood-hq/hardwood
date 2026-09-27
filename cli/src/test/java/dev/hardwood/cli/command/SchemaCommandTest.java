@@ -158,6 +158,46 @@ class SchemaCommandTest implements SchemaCommandContract {
                 .isEqualTo(Schema.Type.NULL);
     }
 
+    /// A repeated field outside a `LIST` or `MAP` group is a list of its own elements:
+    /// a primitive, a record, a record below a struct (`s.bar`), and a group holding a
+    /// `MAP_KEY_VALUE` group, which is a list of maps.
+    @Test
+    void rendersBareRepeatedFieldsAsArraysInAvroSchema() throws Exception {
+        Schema primitive = avroSchemaOf("/unannotated_repeated_primitive_test.parquet");
+        assertThat(primitive.getField("foo").schema().toString()).isEqualTo("{\"type\":\"array\",\"items\":\"int\"}");
+
+        Schema group = avroSchemaOf("/unannotated_repeated_group_empty_test.parquet");
+        Schema foo = group.getField("foo").schema();
+        assertThat(foo.getType()).isEqualTo(Schema.Type.ARRAY);
+        assertThat(foo.getElementType().getType()).isEqualTo(Schema.Type.RECORD);
+        assertThat(foo.getElementType().getFields()).extracting(Schema.Field::name).containsExactly("a");
+        Schema bar = nonNullBranch(group.getField("s").schema()).getField("bar").schema();
+        assertThat(bar.getType()).isEqualTo(Schema.Type.ARRAY);
+        assertThat(bar.getElementType().getType()).isEqualTo(Schema.Type.RECORD);
+
+        Schema legacyMap = avroSchemaOf("/repeated_legacy_map_test.parquet");
+        Schema attrs = legacyMap.getField("attrs").schema();
+        assertThat(attrs.getType()).isEqualTo(Schema.Type.ARRAY);
+        assertThat(attrs.getElementType().getType()).isEqualTo(Schema.Type.MAP);
+    }
+
+    /// The element record of a legacy two-level list is itself the repeated group; its
+    /// repeated child `num` is a bare repeated field inside that record.
+    @Test
+    void rendersRepeatedFieldOfTwoLevelListElementAsArrayInAvroSchema() throws Exception {
+        Schema parsed = avroSchemaOf("/list_of_lists_legacy_two_level_test.parquet");
+
+        Schema element = nonNullBranch(parsed.getField("mylist").schema()).getElementType();
+        assertThat(element.getType()).isEqualTo(Schema.Type.RECORD);
+        assertThat(element.getField("num").schema().toString()).isEqualTo("{\"type\":\"array\",\"items\":\"int\"}");
+    }
+
+    private Schema avroSchemaOf(String resource) throws Exception {
+        Cli.Result result = Cli.launch("schema", "-f", getClass().getResource(resource).getPath(), "--format", "AVRO");
+        assertThat(result.exitCode()).isZero();
+        return parseAndCreateFileHeader(result.output());
+    }
+
     @Test
     void rejectsUnsupportedAvroMapKeys(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
@@ -540,6 +580,38 @@ class SchemaCommandTest implements SchemaCommandContract {
                 .contains("repeated EntriesElement entries = 1;")
                 .contains("message EntriesElement {\n    map<string, int32> element = 1;\n  }");
         assertProtocAccepts(tempDir, "list-of-map", result.output());
+    }
+
+    /// A repeated field outside a `LIST` or `MAP` group is a `repeated` field of its
+    /// element; a list of maps wraps each map in an element message, since proto3 has no
+    /// repeated map.
+    @Test
+    void rendersBareRepeatedFieldsAsRepeatedInProtoSchema(@TempDir Path tempDir) throws Exception {
+        Cli.Result primitive = protoSchemaOf("/unannotated_repeated_primitive_test.parquet");
+        assertThat(primitive.output()).contains("  repeated int32 foo = 1;\n");
+        assertProtocAccepts(tempDir, "bare-repeated-primitive", primitive.output());
+
+        Cli.Result group = protoSchemaOf("/unannotated_repeated_group_empty_test.parquet");
+        assertThat(group.output())
+                .contains("  repeated Foo foo = 1;\n")
+                .contains("    repeated Bar bar = 1;\n");
+        assertProtocAccepts(tempDir, "bare-repeated-group", group.output());
+
+        Cli.Result legacyMap = protoSchemaOf("/repeated_legacy_map_test.parquet");
+        assertThat(legacyMap.output())
+                .contains("  repeated AttrsElement attrs = 2;\n")
+                .contains("message AttrsElement {\n    map<string, AttrsValue> element = 1;\n");
+        assertProtocAccepts(tempDir, "bare-repeated-legacy-map", legacyMap.output());
+
+        Cli.Result twoLevel = protoSchemaOf("/list_of_lists_legacy_two_level_test.parquet");
+        assertThat(twoLevel.output()).contains("    repeated int32 num = 1;\n");
+        assertProtocAccepts(tempDir, "two-level-list-repeated-child", twoLevel.output());
+    }
+
+    private Cli.Result protoSchemaOf(String resource) {
+        Cli.Result result = Cli.launch("schema", "-f", getClass().getResource(resource).getPath(), "--format", "PROTO");
+        assertThat(result.exitCode()).isZero();
+        return result;
     }
 
     @Test

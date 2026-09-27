@@ -306,8 +306,19 @@ public final class NestedLevelComputer {
             }
             case SchemaNode.GroupNode group -> {
                 boolean isListOrMap = group.isList() || group.isMap();
-                LayerKind addedKind = null;
+                int added = 0;
 
+                if (!parentWasListMap && group.repetitionType() == RepetitionType.REPEATED) {
+                    // Repeated group outside LIST/MAP scaffolding, at any depth: a list
+                    // of its own elements. As for the repeated primitive, the threshold
+                    // is the container's def level, one below the group's; the group's
+                    // own level marks an element. A group that also reads as a LIST/MAP
+                    // (a legacy MAP inferred from a sole MAP_KEY_VALUE child) is that
+                    // list's element and adds its own layer below.
+                    kinds.add(LayerKind.REPEATED);
+                    thresholds.add(group.maxDefinitionLevel() - 1);
+                    added++;
+                }
                 if (isListOrMap) {
                     // A LIST/MAP-annotated node always contributes its own
                     // `REPEATED` layer, even when its parent was also a
@@ -317,30 +328,17 @@ public final class NestedLevelComputer {
                     // synthetic wrapper of `A` — checking the annotation
                     // first is what distinguishes "element-is-itself-a-list"
                     // from "synthetic single-field element wrapper".
-                    addedKind = LayerKind.REPEATED;
-                    kinds.add(addedKind);
+                    kinds.add(LayerKind.REPEATED);
                     thresholds.add(group.maxDefinitionLevel());
+                    added++;
                 }
-                else if (parentWasListMap) {
-                    // Inside the LIST/MAP scaffolding — synthetic
-                    // `repeated group` wrapper. Don't contribute; the outer
-                    // LIST/MAP already added its REPEATED layer.
-                }
-                else if (group.repetitionType() == RepetitionType.OPTIONAL) {
-                    addedKind = LayerKind.STRUCT;
-                    kinds.add(addedKind);
+                else if (!parentWasListMap && group.repetitionType() == RepetitionType.OPTIONAL) {
+                    kinds.add(LayerKind.STRUCT);
                     thresholds.add(group.maxDefinitionLevel());
+                    added++;
                 }
-                else if (group.repetitionType() == RepetitionType.REPEATED) {
-                    // Unannotated repeated group outside LIST/MAP scaffolding, at
-                    // any depth: a list of its own elements. As for the repeated
-                    // primitive, the threshold is the container's def level, one
-                    // below the group's; the group's own level marks an element.
-                    addedKind = LayerKind.REPEATED;
-                    kinds.add(addedKind);
-                    thresholds.add(group.maxDefinitionLevel() - 1);
-                }
-                // REQUIRED: no layer
+                // REQUIRED, and the synthetic `repeated group` inside LIST/MAP
+                // scaffolding: no layer; the outer LIST/MAP already added its own.
 
                 boolean found = false;
                 for (SchemaNode child : group.children()) {
@@ -350,9 +348,11 @@ public final class NestedLevelComputer {
                     }
                 }
 
-                if (!found && addedKind != null) {
-                    kinds.remove(kinds.size() - 1);
-                    thresholds.remove(thresholds.size() - 1);
+                if (!found) {
+                    for (int k = 0; k < added; k++) {
+                        kinds.remove(kinds.size() - 1);
+                        thresholds.remove(thresholds.size() - 1);
+                    }
                 }
 
                 yield found;

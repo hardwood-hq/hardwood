@@ -102,15 +102,7 @@ final class PqListImpl implements PqList {
         }
         // Leaf level: check if element is a nested type (struct/list/map/variant within a leaf-level list)
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            if (group.isVariant()) {
-                return createInnerVariant(index);
-            } else if (group.isStruct()) {
-                return createInnerStruct(index);
-            } else if (group.isList()) {
-                return createInnerGenericList(index);
-            } else if (group.isMap()) {
-                return createInnerMap(index);
-            }
+            return createInnerGroup(group, index);
         }
         return getLeafValue(index);
     }
@@ -153,15 +145,7 @@ final class PqListImpl implements PqList {
             return getNestedElement(index);
         }
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            if (group.isVariant()) {
-                return createInnerVariant(index);
-            } else if (group.isStruct()) {
-                return createInnerStruct(index);
-            } else if (group.isList()) {
-                return createInnerGenericList(index);
-            } else if (group.isMap()) {
-                return createInnerMap(index);
-            }
+            return createInnerGroup(group, index);
         }
         int projCol = listDesc.firstLeafProjCol();
         int valueIdx = start + index;
@@ -392,6 +376,20 @@ final class PqListImpl implements PqList {
             return null;
         }
         return batch.decodeLeaf(projCol, valueIdx, elementSchema);
+    }
+
+    /// The element flyweight for a group element, chosen as [TopLevelFieldMap] chose the
+    /// element's descriptor: a variant, list or map by the group's annotation, and a struct
+    /// for any other group.
+    private Object createInnerGroup(SchemaNode.GroupNode group, int index) {
+        if (group.isVariant()) {
+            return createInnerVariant(index);
+        } else if (group.isList()) {
+            return createInnerGenericList(index);
+        } else if (group.isMap()) {
+            return createInnerMap(index);
+        }
+        return createInnerStruct(index);
     }
 
     private Object getNestedElement(int index) {

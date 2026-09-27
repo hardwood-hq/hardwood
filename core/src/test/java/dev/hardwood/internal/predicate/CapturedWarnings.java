@@ -21,19 +21,19 @@ import org.junit.jupiter.api.extension.AfterEachCallback;
 import org.junit.jupiter.api.extension.BeforeEachCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 
-/// Collects the `WARNING` lines a test provokes, for the cases that assert what the filter
-/// layer says about a file rather than what it decides about one.
+/// Collects the `WARNING` lines a test provokes, for the cases that assert what the reader
+/// says about a file rather than what it decides about one.
 ///
 /// Register it with `@RegisterExtension`; it attaches to the root logger for the duration of
 /// each test and detaches afterwards, so the messages of one case never reach another.
-final class CapturedWarnings implements BeforeEachCallback, AfterEachCallback {
+public final class CapturedWarnings implements BeforeEachCallback, AfterEachCallback {
 
     private final CapturingAppender appender = new CapturingAppender();
 
     private LoggerConfig loggerConfig;
 
     /// The formatted text of every warning logged since the current test started.
-    List<String> messages() {
+    public List<String> messages() {
         return appender.messages;
     }
 

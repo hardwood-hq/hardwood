@@ -21,6 +21,7 @@ Supported annotations:
 - JSON       — `annotate_element_at_path_as_json`
 - TIMESTAMP  — `annotate_element_at_path_as_timestamp` (FIXED_LEN_BYTE_ARRAY(12) carrier)
 - VARIANT    — `annotate_group_as_variant`
+- Group annotations (`converted_type` / LIST / MAP) — `annotate_group_at_path`
 
 Modern-only fixture helpers (strip legacy annotations so only `logicalType` remains):
 - `strip_converted_type` — for LIST / MAP outer groups.
@@ -710,6 +711,31 @@ def annotate_group_at_path_as_variant(path: str, name_path, spec_version: int = 
         raise ValueError(f"Path {name_path!r} resolves to a leaf, expected a group")
     el.logicalType = _parquet.LogicalType(
         VARIANT=_parquet.VariantType(specification_version=spec_version))
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_group_at_path(path: str, name_path, *, converted_type: str = None,
+                           logical_type: str = None) -> None:
+    """Set the annotation of the group SchemaElement at `name_path` in place.
+
+    `converted_type` names a `ConvertedType` member (e.g. `'MAP_KEY_VALUE'`),
+    `logical_type` a group logical type (`'LIST'` or `'MAP'`); either may be
+    `None`, which clears that field. Only the annotation changes, so the
+    group's levels, the column paths and the data pages stay valid.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    if el.num_children is None:
+        raise ValueError(f"Path {name_path!r} resolves to a leaf, expected a group")
+    el.converted_type = (getattr(_parquet.ConvertedType, converted_type)
+                         if converted_type is not None else None)
+    logical_types = {
+        None: None,
+        'LIST': lambda: _parquet.LogicalType(LIST=_parquet.ListType()),
+        'MAP': lambda: _parquet.LogicalType(MAP=_parquet.MapType()),
+    }
+    factory = logical_types[logical_type]
+    el.logicalType = factory() if factory is not None else None
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 

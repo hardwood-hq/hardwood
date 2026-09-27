@@ -114,6 +114,14 @@ means a newer format version, an unusable one means the writer produced somethin
 defines. Only the second can be shown wrong, so only it could ever be a candidate for
 refusing the read.
 
+The same holds for a group: an annotation on a repeated group outside a `LIST` or `MAP` group
+has no reading there, so `BareRepeatedGroups` drops it, with one warning per file, and the
+group reads as the unannotated list it is in structure. A `VARIANT` annotation there is not
+dropped: it makes the field a list of variants, which the reader does not serve. Like the
+missing width below, a read that projects the group's columns is refused when the reader is built,
+here with `UnsupportedOperationException`, rather than answered as something else, and the
+file's other columns stay readable.
+
 A missing width is not in that class. A `FIXED_LEN_BYTE_ARRAY` without one cannot be decoded
 at all — the width sizes the buffer and spaces the offsets — so `FixedWidthValidator` refuses
 it when the reader is built, over the columns the read touches.

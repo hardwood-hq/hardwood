@@ -103,7 +103,7 @@ Decimals are always plain strings: `0.0000001`, never `1E-7`.
 Nested values are native JSON: a struct is an object, a list or repeated field
 an array, and a map an object keyed by each map key's text. Values inside them
 follow the same rules as top-level fields. CSV has no nested structure, so a
-list, map, or Variant in a CSV cell is the same JSON as text.
+list, repeated field, map, or Variant in a CSV cell is the same JSON as text.
 
 Finite floating-point values are JSON numbers. `NaN`, `Infinity`, and
 `-Infinity` are JSON strings, because JSON has no non-finite number values.
@@ -191,6 +191,12 @@ message in Protobuf; a list inside a list, a list inside a map value, a map insi
 a list, and a map inside a map value become wrapper messages in Protobuf. A map whose
 `key_value` group carries no value renders with bare `null` values in
 Avro and an empty value message in Protobuf.
+
+A repeated field outside a list or map, such as `repeated int32 ids` or a
+repeated group, is a list of its own elements: a non-nullable Avro `array`
+of the element type, and a `repeated` field in Protobuf. A repeated group
+that holds a map renders as an array of maps in Avro and as a repeated
+wrapper message in Protobuf.
 
 Fixed-width columns keep their physical size: `fixed_len_byte_array(n)`
 and `int96` become named Avro `fixed` types of `n` and 12 bytes, and the

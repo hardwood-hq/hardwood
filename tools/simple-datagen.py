@@ -23,6 +23,7 @@ from pathlib import Path
 from parquet_annotators import (
     annotate_column_as_bson,
     annotate_group_as_variant,
+    annotate_group_at_path,
     annotate_group_at_path_as_variant,
     annotate_column_as_interval,
     annotate_element_at_path_as_float16,
@@ -623,6 +624,140 @@ os.remove('core/src/test/resources/unannotated_repeated_group_empty_intermediate
 
 print("\nGenerated unannotated_repeated_group_empty_annotated_list_test.parquet + unannotated_repeated_group_empty_test.parquet:")
 print("  - Data: foo=[{a:1}],[],[{a:2},{a:3}]; s={bar:[{a:4}]},null,{bar:[]}; bare REPEATED groups at top level and below an optional struct")
+
+# ---------------------------------------------------------------------------
+# Annotated bare repeated groups (hardwood-hq/hardwood#1375).
+#
+# A repeated group outside a LIST or MAP group reads as a list of its own
+# elements; an annotation it carries there is ignored. Each column below is a
+# required list of required structs collapsed into a bare REPEATED group, as in
+# unannotated_repeated_group_test.parquet, then given an annotation of its own:
+# `foo` none (the control), `foo_mkv` MAP_KEY_VALUE, `foo_list` LIST (converted
+# and logical), `foo_list_lt` the LIST logical type only, `foo_map` MAP
+# (converted and logical), `foo_map_ct` the MAP converted type only. `s.bar` is
+# the same below an optional struct, annotated LIST. Only the annotation differs
+# from the control, so levels, paths and data pages are those of the bare form.
+#   row 0: foo*=[{a:1,b:x},{a:2,b:y}]  s={bar:[{a:4}]}
+#   row 1: foo*=[]                     s=null
+#   row 2: foo*=[{a:3,b:null}]         s={bar:[]}
+annotated_bare_struct = pa.struct([
+    pa.field('a', pa.int32(), nullable=True),
+    pa.field('b', pa.string(), nullable=True),
+])
+annotated_bare_list = pa.list_(pa.field('element', annotated_bare_struct, nullable=False))
+annotated_bare_bar = pa.list_(pa.field('element', pa.struct([pa.field('a', pa.int32(), nullable=False)]),
+                                       nullable=False))
+annotated_bare_s = pa.struct([pa.field('bar', annotated_bare_bar, nullable=False)])
+annotated_bare_names = ['foo', 'foo_mkv', 'foo_list', 'foo_list_lt', 'foo_map', 'foo_map_ct']
+annotated_bare_rows = [[{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}], [], [{'a': 3, 'b': None}]]
+annotated_bare_table = pa.table(
+    {**{name: pa.array(annotated_bare_rows, type=annotated_bare_list) for name in annotated_bare_names},
+     's': pa.array([{'bar': [{'a': 4}]}, None, {'bar': []}], type=annotated_bare_s)},
+    schema=pa.schema([pa.field(name, annotated_bare_list, nullable=False) for name in annotated_bare_names]
+                     + [pa.field('s', annotated_bare_s, nullable=True)])
+)
+annotated_bare_path = 'core/src/test/resources/annotated_repeated_group_test.parquet'
+pq.write_table(annotated_bare_table, annotated_bare_path + '.0', use_dictionary=False, compression=None,
+               data_page_version='1.0', store_schema=False)
+annotated_bare_step = 0
+for field_path in annotated_bare_names + ['s.bar']:
+    collapse_list_of_structs_to_unannotated_repeated_group(
+        f'{annotated_bare_path}.{annotated_bare_step}', f'{annotated_bare_path}.{annotated_bare_step + 1}',
+        field_path)
+    os.remove(f'{annotated_bare_path}.{annotated_bare_step}')
+    annotated_bare_step += 1
+os.replace(f'{annotated_bare_path}.{annotated_bare_step}', annotated_bare_path)
+annotate_group_at_path(annotated_bare_path, ['foo_mkv'], converted_type='MAP_KEY_VALUE')
+annotate_group_at_path(annotated_bare_path, ['foo_list'], converted_type='LIST', logical_type='LIST')
+annotate_group_at_path(annotated_bare_path, ['foo_list_lt'], logical_type='LIST')
+annotate_group_at_path(annotated_bare_path, ['foo_map'], converted_type='MAP', logical_type='MAP')
+annotate_group_at_path(annotated_bare_path, ['foo_map_ct'], converted_type='MAP')
+annotate_group_at_path(annotated_bare_path, ['s', 'bar'], converted_type='LIST', logical_type='LIST')
+
+print("\nGenerated annotated_repeated_group_test.parquet:")
+print("  - Bare REPEATED groups annotated MAP_KEY_VALUE / LIST / MAP beside an unannotated control, and s.bar annotated LIST")
+
+# A bare repeated group whose only child is a MAP_KEY_VALUE group: a list whose
+# element is a legacy map. Derived from a required list of required maps by
+# collapsing the LIST scaffolding and the element's MAP annotation away and
+# annotating the `key_value` group MAP_KEY_VALUE, the form parquet-java writes
+# for `repeated group attrs { repeated group key_value (MAP_KEY_VALUE) { ... } }`.
+# `attrs_map` is the same group annotated MAP (converted and logical), an
+# annotation the reader drops and then infers again from the `key_value` child.
+#   row 0: id=1 attrs*=[{a:1,b:2},{c:3}]
+#   row 1: id=2 attrs*=[]
+repeated_legacy_map_list = pa.list_(pa.field('element', pa.map_(pa.string(), pa.int32()), nullable=False))
+repeated_legacy_map_rows = [[[('a', 1), ('b', 2)], [('c', 3)]], []]
+repeated_legacy_map_table = pa.table(
+    {'id': pa.array([1, 2], type=pa.int32()),
+     'attrs': pa.array(repeated_legacy_map_rows, type=repeated_legacy_map_list),
+     'attrs_map': pa.array(repeated_legacy_map_rows, type=repeated_legacy_map_list)},
+    schema=pa.schema([pa.field('id', pa.int32(), nullable=False),
+                      pa.field('attrs', repeated_legacy_map_list, nullable=False),
+                      pa.field('attrs_map', repeated_legacy_map_list, nullable=False)])
+)
+repeated_legacy_map_path = 'core/src/test/resources/repeated_legacy_map_test.parquet'
+pq.write_table(repeated_legacy_map_table, repeated_legacy_map_path + '.0', use_dictionary=False,
+               compression=None, data_page_version='1.0', store_schema=False)
+collapse_list_of_structs_to_unannotated_repeated_group(repeated_legacy_map_path + '.0',
+                                                       repeated_legacy_map_path + '.1', 'attrs')
+os.remove(repeated_legacy_map_path + '.0')
+collapse_list_of_structs_to_unannotated_repeated_group(repeated_legacy_map_path + '.1',
+                                                       repeated_legacy_map_path, 'attrs_map')
+os.remove(repeated_legacy_map_path + '.1')
+for legacy_map_name in ['attrs', 'attrs_map']:
+    annotate_group_at_path(repeated_legacy_map_path, [legacy_map_name, 'key_value'], converted_type='MAP_KEY_VALUE')
+annotate_group_at_path(repeated_legacy_map_path, ['attrs_map'], converted_type='MAP', logical_type='MAP')
+
+print("\nGenerated repeated_legacy_map_test.parquet:")
+print("  - Data: attrs*=[{a:1,b:2},{c:3}], []; bare REPEATED group holding a MAP_KEY_VALUE group, unannotated and annotated MAP")
+
+# A bare repeated group annotated VARIANT: by the format's rule a list of
+# variants, `foo=[42, 7]` as int8 variants, beside a plain `id` column.
+# `repeated_variant_group_plain_test.parquet` is the same file with `foo` left
+# unannotated, a list of structs whose leaves match the annotated file's.
+repeated_variant_list = pa.list_(pa.field('element', pa.struct([
+    pa.field('metadata', pa.binary(), nullable=False),
+    pa.field('value', pa.binary(), nullable=False),
+]), nullable=False))
+repeated_variant_table = pa.table(
+    {'id': pa.array([1], type=pa.int32()),
+     'foo': pa.array([[{'metadata': b'\x01\x00\x00', 'value': b'\x0c\x2a'},
+                       {'metadata': b'\x01\x00\x00', 'value': b'\x0c\x07'}]], type=repeated_variant_list)},
+    schema=pa.schema([pa.field('id', pa.int32(), nullable=False),
+                      pa.field('foo', repeated_variant_list, nullable=False)])
+)
+repeated_variant_path = 'core/src/test/resources/repeated_variant_group_test.parquet'
+repeated_variant_plain_path = 'core/src/test/resources/repeated_variant_group_plain_test.parquet'
+pq.write_table(repeated_variant_table, repeated_variant_path + '.0', use_dictionary=False,
+               compression=None, data_page_version='1.0', store_schema=False)
+collapse_list_of_structs_to_unannotated_repeated_group(repeated_variant_path + '.0', repeated_variant_plain_path,
+                                                       'foo')
+os.remove(repeated_variant_path + '.0')
+shutil.copyfile(repeated_variant_plain_path, repeated_variant_path)
+annotate_group_at_path_as_variant(repeated_variant_path, ['foo'])
+
+print("\nGenerated repeated_variant_group_test.parquet + repeated_variant_group_plain_test.parquet:")
+print("  - Data: id=1, foo=[42, 7] as variants; bare REPEATED group annotated VARIANT, and unannotated")
+
+# A LIST whose element group carries MAP_KEY_VALUE, an annotation a list
+# element cannot use: the element reads as a struct.
+#   row 0: l=[{a:1,b:x},{a:2,b:y}]
+#   row 1: l=null
+#   row 2: l=[{a:3,b:null}]
+annotated_element_list = pa.list_(pa.field('element', annotated_bare_struct, nullable=True))
+annotated_element_table = pa.table(
+    {'l': pa.array([[{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}], None, [{'a': 3, 'b': None}]],
+                   type=annotated_element_list)},
+    schema=pa.schema([pa.field('l', annotated_element_list, nullable=True)])
+)
+annotated_element_path = 'core/src/test/resources/annotated_list_element_group_test.parquet'
+pq.write_table(annotated_element_table, annotated_element_path, use_dictionary=False, compression=None,
+               data_page_version='1.0', store_schema=False)
+annotate_group_at_path(annotated_element_path, ['l', 'list', 'element'], converted_type='MAP_KEY_VALUE')
+
+print("\nGenerated annotated_list_element_group_test.parquet:")
+print("  - Data: l=[{a:1,b:x},{a:2,b:y}], null, [{a:3,b:null}]; LIST element group annotated MAP_KEY_VALUE")
 
 # 3. List of structs test
 list_struct_schema = pa.schema([

@@ -81,7 +81,15 @@ final class AvroSchemaEmitter {
             sb.append(doc).append(" ");
         }
         sb.append("\"type\": ");
-        appendAvroType(sb, node, optional, indent, names);
+        if (node.repetitionType() == RepetitionType.REPEATED) {
+            // A repeated field outside a list or map is a list of its own elements.
+            sb.append("{\"type\": \"array\", \"items\": ");
+            appendAvroType(sb, node, false, indent + 1, names);
+            sb.append("}");
+        }
+        else {
+            appendAvroType(sb, node, optional, indent, names);
+        }
         if (optional) {
             sb.append(", \"default\": null");
         }

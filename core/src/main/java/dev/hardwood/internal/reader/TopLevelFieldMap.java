@@ -231,16 +231,17 @@ final class TopLevelFieldMap {
                 nullDefLevel, elementDefLevel, elementDesc);
     }
 
-    /// Builds a list descriptor for an unannotated `REPEATED` field. Per the
-    /// Parquet format spec, a repeated field that is neither contained by a
-    /// `LIST`/`MAP`-annotated group nor itself `LIST`/`MAP`-annotated is a
-    /// required list of required elements whose element type is the type of the
-    /// field (see
+    /// Builds a list descriptor for a `REPEATED` field outside `LIST`/`MAP`
+    /// scaffolding. Per the Parquet format spec, a repeated field that is neither
+    /// contained by a `LIST`/`MAP`-annotated group nor itself `LIST`/`MAP`-annotated
+    /// is a required list of required elements whose element type is the type of
+    /// the field (see
     /// [Nested Types](https://parquet.apache.org/docs/file-format/types/logicaltypes/#nested-types)).
     /// The field is wrapped in a synthetic required `LIST` group and surfaced
     /// through the same machinery as an explicitly annotated list. The element is
     /// the field itself — a repeated primitive yields list-of-scalar, a repeated
-    /// group yields list-of-struct — and is never unwrapped the way the
+    /// group list-of-struct, or list-of-map where the group reads as a legacy `MAP`
+    /// — and is never unwrapped the way the
     /// `LIST`-annotated backward-compatibility rules in
     /// [SchemaNode.GroupNode#getListElement()] unwrap a single-field repeated group.
     ///
@@ -266,9 +267,14 @@ final class TopLevelFieldMap {
         int lastProjCol = range[1];
         int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
 
+        // A group that reads as a MAP (a legacy MAP inferred from a sole MAP_KEY_VALUE
+        // child) is a list of maps; any other group, its annotation dropped at footer
+        // read (BareRepeatedGroups), a list of structs.
         FieldDesc elementDesc = null;
         if (node instanceof SchemaNode.GroupNode group) {
-            elementDesc = buildStructDesc(group, schema, projectedSchema);
+            elementDesc = group.isMap()
+                    ? buildMapDesc(group, schema, projectedSchema)
+                    : buildStructDesc(group, schema, projectedSchema);
         }
 
         return new FieldDesc.ListOf(listGroup, node, firstProjCol, leafCount,

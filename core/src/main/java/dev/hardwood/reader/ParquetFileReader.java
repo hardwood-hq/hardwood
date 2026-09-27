@@ -31,6 +31,7 @@ import dev.hardwood.internal.reader.InputFileCloser;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
@@ -273,7 +274,7 @@ public class ParquetFileReader implements Closeable {
         try {
             firstFileFooter = ParquetMetadataReader.readFooter(first);
             firstFileMetaData = firstFileFooter.metaData();
-            schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
+            schema = FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(firstFileMetaData.schema()));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));

@@ -21,9 +21,9 @@ The leading magic is never read. Every page is located through the footer, so th
 
 Both encryption modes raise the same `UnsupportedOperationException` (`ParquetMetadataReader.ENCRYPTED_MESSAGE`): the file is correct and this library does not decrypt it. How the plaintext-footer case leaves the Thrift parse is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#the-table-above-is-the-whole-list).
 
-The footer is read once per file per `ParquetFileReader`: at `open`/`openAll` for the first file, and through the per-file cache for the rest ([Per-file metadata](#per-file-metadata)). `FileSchema.fromSchemaElements` derives the schema from the parsed footer in the same step; a failure there is a read failure of that file, raised as `ParquetReadException`.
+The footer is read once per file per `ParquetFileReader`: at `open`/`openAll` for the first file, and through the per-file cache for the rest ([Per-file metadata](#per-file-metadata)). `FileSchema.fromSchemaElements` derives the schema from the parsed footer in the same step, after `BareRepeatedGroups` has dropped the annotation of every repeated group outside a `LIST`/`MAP` group, other than `VARIANT`, from the elements ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)); a failure in either is a read failure of that file, raised as `ParquetReadException`. The drop runs at these two sites rather than in `fromSchemaElements`, which also builds the schemas declared for the writer, where `WriterSchemaShape` refuses the same groups.
 
-Tests: `ParquetMetadataReaderTest`, `EncryptedFileTest`, `ParquetFileReaderFooterFailureTest`, `ParquetFileReaderOpenFailureTest`. The "File too small" check and a footer length that reaches into the leading magic are untested.
+Tests: `ParquetMetadataReaderTest`, `EncryptedFileTest`, `ParquetFileReaderFooterFailureTest`, `ParquetFileReaderOpenFailureTest`, `AnnotatedBareRepeatedGroupTest`. The "File too small" check and a footer length that reaches into the leading magic are untested.
 
 ## Thrift parse policy
 

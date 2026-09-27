@@ -19,6 +19,7 @@ import java.util.concurrent.CompletionException;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.BoundsReadability;
+import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -164,7 +165,7 @@ public final class FileMetadataCache {
         try {
             ReadFooter footer = ParquetMetadataReader.readFooter(inputFile);
             FileMetaData metaData = footer.metaData();
-            FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+            FileSchema schema = FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(metaData.schema()));
 
             event.file = inputFile.name();
             event.fileSize = inputFile.length();

@@ -75,6 +75,10 @@ final class ProtoSchemaEmitter {
                                         int fieldNum, int indent, ProtoScope scope) {
         String p = "  ".repeat(indent);
         appendProtoComment(sb, p, node.name());
+        if (node.repetitionType() == RepetitionType.REPEATED) {
+            appendBareRepeatedField(sb, node, protoName, fieldNum, p, indent, scope);
+            return fieldNum + 1;
+        }
         switch (node) {
             case SchemaNode.PrimitiveNode prim -> {
                 String mod = prim.repetitionType() == RepetitionType.OPTIONAL ? "optional " : "";
@@ -123,6 +127,22 @@ final class ProtoSchemaEmitter {
             }
         }
         return fieldNum + 1;
+    }
+
+    /// A repeated field outside a list or map is a list of its own elements. The element
+    /// is the node itself; a map element needs a wrapper, since proto3 has no repeated map.
+    private static void appendBareRepeatedField(StringBuilder sb, SchemaNode node, String protoName,
+                                                int fieldNum, String p, int indent, ProtoScope scope) {
+        String protoType;
+        if (needsProtoWrapper(node)) {
+            protoType = scope.registerMessageName(SchemaNames.sanitize(node.name()) + "Element");
+            scope.declarations.add(wrapperMessage(node, "element", indent, protoType));
+        }
+        else {
+            protoType = directProtoType(node, indent, scope);
+        }
+        sb.append(p).append("repeated ").append(protoType)
+                .append(" ").append(protoName).append(" = ").append(fieldNum).append(";\n");
     }
 
     /// A wrapped position: nullability or a nested container that proto3 cannot place

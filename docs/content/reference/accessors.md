@@ -212,7 +212,16 @@ forms. Hardwood reads both as lists, so `getList` returns a `PqList` with no cal
 - **Unannotated repeated field.** A `REPEATED` field carrying no `LIST`/`MAP` annotation is a required
   list of required elements whose element type is the field itself. A repeated primitive reads as a
   list of scalars (`getList("foo").ints()`); a repeated group reads as a list of structs
-  (`getList("foo").structs()`).
+  (`getList("foo").structs()`). A repeated group whose only child is a repeated `MAP_KEY_VALUE`
+  group reads as a list of maps (`getList("attrs").maps()`), and `getFileSchema()` reports the group
+  as a map. A repeated group outside a `LIST` or `MAP` group that carries an annotation of its own,
+  such as `MAP_KEY_VALUE`, `LIST` or `MAP`, reads as the same group without that annotation:
+  Hardwood drops the annotation, logging a warning, and `getFileSchema()` reports the group as it
+  would the unannotated one. Such a group annotated `VARIANT` keeps its annotation in
+  `getFileSchema()`; building a reader whose projection includes one of its columns raises an
+  `UnsupportedOperationException` naming the group, and reads of the other columns succeed. A
+  filter on the group or its columns is rejected as on any repeated column (see
+  [Query Controls](query-controls.md)).
 - **Two-level `LIST` group.** A `LIST`-annotated group whose repeated child is the element directly,
   with no intermediate `list` wrapper. Hardwood applies the parquet-format
   [backward-compatibility rules](https://parquet.apache.org/docs/file-format/types/logicaltypes/#backward-compatibility-rules)

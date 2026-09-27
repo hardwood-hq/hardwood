@@ -28,6 +28,7 @@ import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
@@ -210,9 +211,12 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     /// A group is flattened into one CSV column per leaf only when it is a plain
-    /// struct; lists, maps and Variants render into a single cell.
+    /// struct; lists, maps and Variants render into a single cell. A repeated group
+    /// outside a `LIST` or `MAP` group is a list of its own elements, which the reader
+    /// serves as a `PqList`, so it is not a struct either.
     private static boolean isStruct(SchemaNode.GroupNode group) {
-        return !group.isList() && !group.isMap() && !group.isVariant();
+        return group.repetitionType() != RepetitionType.REPEATED
+                && !group.isList() && !group.isMap() && !group.isVariant();
     }
 
     // ==================== JSON ====================

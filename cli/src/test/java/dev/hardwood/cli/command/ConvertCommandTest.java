@@ -178,6 +178,39 @@ class ConvertCommandTest implements ConvertCommandContract {
                 ]""");
     }
 
+    /// A repeated group outside a `LIST` or `MAP` group is a list, as the row reader serves it,
+    /// so CSV writes it into one cell as a JSON array rather than flattening it as a struct, at
+    /// the top level (`foo`) and below a struct (`s.bar`).
+    @Test
+    void csvWritesBareRepeatedGroupAsOneListCell() {
+        Cli.Result result = Cli.launch("convert", "-f",
+                getClass().getResource("/unannotated_repeated_group_empty_test.parquet").getPath(),
+                "--format", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output().lines()).containsExactly(
+                "foo,s.bar",
+                "\"[{\"\"a\"\": 1}]\",\"[{\"\"a\"\": 4}]\"",
+                "[],",
+                "\"[{\"\"a\"\": 2}, {\"\"a\"\": 3}]\",[]");
+    }
+
+    /// The same holds for a bare repeated group whose annotation the reader drops.
+    @Test
+    void csvWritesAnnotatedBareRepeatedGroupAsOneListCell() {
+        Cli.Result result = Cli.launch("convert", "-f",
+                getClass().getResource("/annotated_repeated_group_test.parquet").getPath(),
+                "--format", "csv", "--columns", "foo_mkv,foo_list");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output().lines()).containsExactly(
+                "foo_mkv,foo_list",
+                "\"[{\"\"a\"\": 1, \"\"b\"\": \"\"x\"\"}, {\"\"a\"\": 2, \"\"b\"\": \"\"y\"\"}]\","
+                        + "\"[{\"\"a\"\": 1, \"\"b\"\": \"\"x\"\"}, {\"\"a\"\": 2, \"\"b\"\": \"\"y\"\"}]\"",
+                "[],[]",
+                "\"[{\"\"a\"\": 3, \"\"b\"\": null}]\",\"[{\"\"a\"\": 3, \"\"b\"\": null}]\"");
+    }
+
     @Test
     void csvFlattenRejectsStructFieldThatIsNotAStruct() {
         SchemaNode.PrimitiveNode child = new SchemaNode.PrimitiveNode("id", PhysicalType.INT32,

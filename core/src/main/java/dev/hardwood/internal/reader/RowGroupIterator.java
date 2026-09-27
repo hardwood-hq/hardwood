@@ -35,6 +35,7 @@ import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
+import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
@@ -1742,12 +1743,15 @@ public class RowGroupIterator implements Closeable {
     ///
     /// @throws SchemaIncompatibleException if a touched column cannot be decoded under
     ///         the schema the file declares for it
+    /// @throws UnsupportedOperationException if a touched column lies below a list of
+    ///         variants in the bare repeated form ([BareRepeatedGroups#refuseTouchedVariants])
     private void validateReferenceColumns() {
         String fileName = inputFiles.get(0).name();
         for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
         }
+        BareRepeatedGroups.refuseTouchedVariants(fileName, referenceSchema, touchedColumns);
     }
 
     /// The reference leaf ordinals a read with this projection and filter touches.
@@ -1777,10 +1781,13 @@ public class RowGroupIterator implements Closeable {
         int[] fileOrdinals = new int[referenceColumnCount];
         Arrays.fill(fileOrdinals, -1);
 
+        BitSet touchedInFile = new BitSet(fileSchema.getColumnCount());
         for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             fileOrdinals[originalIndex] = validateColumn(inputFile, fileSchema, originalIndex);
+            touchedInFile.set(fileOrdinals[originalIndex]);
         }
+        BareRepeatedGroups.refuseTouchedVariants(inputFile.name(), fileSchema, touchedInFile);
         return fileOrdinals;
     }
 
