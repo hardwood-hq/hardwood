@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import dev.hardwood.internal.schema.SchemaNames;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -45,7 +46,7 @@ final class AvroNames {
         names.localNames.put(rootNode, rootType.name());
         names.namespaces.put(rootNode, rootType.namespace());
         names.recordRewrite(rootNode, fileSchema.getName(), rootType);
-        names.visitGroup(rootNode, rootType.fullName(), rootNode.name());
+        names.visitStruct(rootNode, rootType.fullName(), rootNode.name());
         return names;
     }
 
@@ -107,12 +108,34 @@ final class AvroNames {
             visitSingleton(group.getMapValue(), fullName, valuePath);
             return;
         }
-        if (!group.isStruct()) {
-            return;
-        }
+        visitStruct(group, fullName, valuePath);
+    }
+
+    /// Resolve and visit the fields of a record: the root, a struct, or the element
+    /// of a bare repeated group. A `repeated` field is a bare repeated field here,
+    /// since no `LIST` or `MAP` group contains it. A repeated group in that position
+    /// is named as a map when it reads as a legacy `MAP`, is skipped when it is a
+    /// `VARIANT` (conversion refuses it), and is otherwise its element's record
+    /// whatever else it is annotated with — the classification [AvroSchemaConverter]
+    /// applies.
+    private void visitStruct(SchemaNode.GroupNode group, String fullName, String valuePath) {
         localNames.putAll(resolveScope(group.children(), valuePath));
         for (SchemaNode child : group.children()) {
-            visitNode(child, fullName + "." + localNames.get(child), valuePath + "." + child.name());
+            String childFullName = fullName + "." + localNames.get(child);
+            String childValuePath = valuePath + "." + child.name();
+            if (child.repetitionType() == RepetitionType.REPEATED
+                    && child instanceof SchemaNode.GroupNode repeatedGroup) {
+                recordNamespace(child, childFullName);
+                if (repeatedGroup.isMap() || repeatedGroup.isVariant()) {
+                    visitGroup(repeatedGroup, childFullName, childValuePath);
+                }
+                else {
+                    visitStruct(repeatedGroup, childFullName, childValuePath);
+                }
+            }
+            else {
+                visitNode(child, childFullName, childValuePath);
+            }
         }
     }
 
@@ -132,12 +155,16 @@ final class AvroNames {
     }
 
     private void visitNode(SchemaNode node, String fullName, String valuePath) {
+        recordNamespace(node, fullName);
+        if (node instanceof SchemaNode.GroupNode group) {
+            visitGroup(group, fullName, valuePath);
+        }
+    }
+
+    private void recordNamespace(SchemaNode node, String fullName) {
         TypeName type = new TypeName(localNames.get(node), namespaceOf(fullName));
         namespaces.put(node, type.namespace());
         recordRewrite(node, node.name(), type);
-        if (node instanceof SchemaNode.GroupNode group) {
-            visitGroup(group, type.fullName(), valuePath);
-        }
     }
 
     private String namespaceOf(String fullName) {

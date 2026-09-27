@@ -476,6 +476,299 @@ class AvroRowReaderTest {
         }
     }
 
+    /// A `repeated` field outside a `LIST` or `MAP` group is a required list of
+    /// required elements whose element is the field itself.
+    @Test
+    void readBareRepeatedPrimitiveAsArray() throws Exception {
+        // unannotated_repeated_primitive_test.parquet: repeated int32 foo; one row foo = [42, 7]
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unannotated_repeated_primitive_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema foo = reader.getSchema().getField("foo").schema();
+            assertThat(foo).isEqualTo(Schema.createArray(Schema.create(Schema.Type.INT)));
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(1);
+            assertThat(records.getFirst().get("foo")).isEqualTo(List.of(42, 7));
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    @Test
+    void readBareRepeatedGroupAsArrayOfRecords() throws Exception {
+        // unannotated_repeated_group_test.parquet: repeated group foo { a; b }; one row
+        // foo = [{a:1, b:"x"}, {a:2, b:"y"}]
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unannotated_repeated_group_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema foo = reader.getSchema().getField("foo").schema();
+            assertThat(foo.getType()).isEqualTo(Schema.Type.ARRAY);
+            Schema element = foo.getElementType();
+            assertThat(element.getType()).isEqualTo(Schema.Type.RECORD);
+            assertThat(element.getFullName()).isEqualTo(reader.getSchema().getFullName() + ".foo");
+            assertThat(element.getFields()).extracting(Schema.Field::name).containsExactly("a", "b");
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(1);
+            @SuppressWarnings("unchecked")
+            List<GenericRecord> fooList = (List<GenericRecord>) records.getFirst().get("foo");
+            assertThat(fooList).hasSize(2);
+            assertThat(fooList.get(0).get("a")).isEqualTo(1);
+            assertThat(fooList.get(0).get("b")).isEqualTo("x");
+            assertThat(fooList.get(1).get("a")).isEqualTo(2);
+            assertThat(fooList.get(1).get("b")).isEqualTo("y");
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    /// A bare repeated group below an optional struct reads as an array field of
+    /// that struct, and an empty list stays distinct from an absent struct.
+    @Test
+    void readBareRepeatedGroupsAtTopLevelAndInsideAStruct() throws Exception {
+        // unannotated_repeated_group_empty_test.parquet: repeated group foo { a },
+        // optional group s { repeated group bar { a } }; rows
+        // (foo=[{a:1}], s={bar:[{a:4}]}), (foo=[], s=null), (foo=[{a:2},{a:3}], s={bar:[]})
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unannotated_repeated_group_empty_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            String root = reader.getSchema().getFullName();
+            Schema s = resolveNullable(reader.getSchema().getField("s").schema());
+            Schema bar = s.getField("bar").schema();
+            assertThat(bar.getType()).isEqualTo(Schema.Type.ARRAY);
+            assertThat(bar.getElementType().getFullName()).isEqualTo(root + ".s.bar");
+            assertThat(reader.getSchema().getField("foo").schema().getElementType().getFullName())
+                    .isEqualTo(root + ".foo");
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+
+            assertThat(fieldsOf(records.get(0).get("foo"), "a")).containsExactly(1);
+            assertThat(fieldsOf(((GenericRecord) records.get(0).get("s")).get("bar"), "a")).containsExactly(4);
+
+            assertThat(fieldsOf(records.get(1).get("foo"), "a")).isEmpty();
+            assertThat(records.get(1).get("s")).isNull();
+
+            assertThat(fieldsOf(records.get(2).get("foo"), "a")).containsExactly(2, 3);
+            assertThat(fieldsOf(((GenericRecord) records.get(2).get("s")).get("bar"), "a")).isEmpty();
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    /// A projection that reaches into a bare repeated group narrows its element
+    /// record to the projected fields, as it does for an annotated list.
+    @Test
+    void readBareRepeatedGroupSubFieldProjection() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unannotated_repeated_group_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("foo.b")).build()) {
+
+            Schema element = reader.getSchema().getField("foo").schema().getElementType();
+            assertThat(element.getFields()).extracting(Schema.Field::name).containsExactly("b");
+
+            List<GenericRecord> records = readAll(reader);
+            @SuppressWarnings("unchecked")
+            List<GenericRecord> fooList = (List<GenericRecord>) records.getFirst().get("foo");
+            assertThat(fooList).extracting(r -> r.get("b")).containsExactly("x", "y");
+        }
+    }
+
+    /// A bare repeated field inside the record of a bare repeated group, or inside
+    /// the element record of a `LIST`, reads as an array field of that record.
+    @Test
+    void readBareRepeatedPrimitivesNestedInRecords() throws Exception {
+        // unannotated_repeated_nested_test.parquet: repeated group outer { repeated int32 inner },
+        // optional group items (LIST) { repeated group list { optional group element {
+        // repeated int32 inner } } }; rows
+        // (outer=[{inner:[1,2]},{inner:[]}], items=[{inner:[3]}]), (outer=[], items=null)
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unannotated_repeated_nested_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema intArray = Schema.createArray(Schema.create(Schema.Type.INT));
+            Schema outerElement = reader.getSchema().getField("outer").schema().getElementType();
+            assertThat(outerElement.getField("inner").schema()).isEqualTo(intArray);
+            Schema items = resolveNullable(reader.getSchema().getField("items").schema());
+            Schema itemsElement = resolveNullable(items.getElementType());
+            assertThat(itemsElement.getField("inner").schema()).isEqualTo(intArray);
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+
+            assertThat(fieldsOf(records.get(0).get("outer"), "inner"))
+                    .containsExactly(List.of(1, 2), List.of());
+            assertThat(fieldsOf(records.get(0).get("items"), "inner")).containsExactly(List.of(3));
+
+            assertThat(fieldsOf(records.get(1).get("outer"), "inner")).isEmpty();
+            assertThat(records.get(1).get("items")).isNull();
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    /// The element of a legacy two-level `LIST` whose repeated group has a single
+    /// repeated field is that group, so its field is a bare repeated field and reads
+    /// as an array field of the element record.
+    @Test
+    void readLegacyTwoLevelListOfListsAsArrayOfRecordsWithArrayField() throws Exception {
+        // list_of_lists_legacy_two_level_test.parquet: optional group mylist (LIST) {
+        // repeated group bag { repeated int32 num } }; one row mylist = [{num:[1,2]}, {num:[3]}]
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("list_of_lists_legacy_two_level_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema mylist = resolveNullable(reader.getSchema().getField("mylist").schema());
+            Schema bag = mylist.getElementType();
+            assertThat(bag.getType()).isEqualTo(Schema.Type.RECORD);
+            assertThat(bag.getField("num").schema())
+                    .isEqualTo(Schema.createArray(Schema.create(Schema.Type.INT)));
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(1);
+            assertThat(fieldsOf(records.getFirst().get("mylist"), "num"))
+                    .containsExactly(List.of(1, 2), List.of(3));
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    /// A bare repeated group carrying an annotation reads as though unannotated, so
+    /// each converts to an array of its record, at the top level and inside a struct.
+    @Test
+    void readAnnotatedBareRepeatedGroupsAsArraysOfRecords() throws Exception {
+        // annotated_repeated_group_test.parquet: bare repeated groups foo (unannotated),
+        // foo_mkv (MAP_KEY_VALUE), foo_list, foo_list_lt (LIST), foo_map, foo_map_ct (MAP),
+        // each { optional int32 a; optional binary b (STRING) }, and optional group s {
+        // repeated group bar (LIST) { required int32 a } }; rows
+        // (foo*=[{a:1,b:x},{a:2,b:y}], s={bar:[{a:4}]}), (foo*=[], s=null),
+        // (foo*=[{a:3,b:null}], s={bar:[]})
+        List<String> columns = List.of("foo", "foo_mkv", "foo_list", "foo_list_lt", "foo_map", "foo_map_ct");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("annotated_repeated_group_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema root = reader.getSchema();
+            for (String column : columns) {
+                Schema field = root.getField(column).schema();
+                assertThat(field.getType()).as(column).isEqualTo(Schema.Type.ARRAY);
+                assertThat(field.getElementType().getFullName()).as(column)
+                        .isEqualTo(root.getFullName() + "." + column);
+                assertThat(field.getElementType().getFields()).extracting(Schema.Field::name)
+                        .containsExactly("a", "b");
+            }
+            Schema bar = resolveNullable(root.getField("s").schema()).getField("bar").schema();
+            assertThat(bar.getType()).isEqualTo(Schema.Type.ARRAY);
+            assertThat(bar.getElementType().getField("a").schema().getType()).isEqualTo(Schema.Type.INT);
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+            for (String column : columns) {
+                assertThat(fieldsOf(records.get(0).get(column), "a")).as(column).containsExactly(1, 2);
+                assertThat(fieldsOf(records.get(0).get(column), "b")).as(column).containsExactly("x", "y");
+                assertThat(fieldsOf(records.get(1).get(column), "a")).as(column).isEmpty();
+                assertThat(fieldsOf(records.get(2).get(column), "a")).as(column).containsExactly(3);
+                assertThat(fieldsOf(records.get(2).get(column), "b")).as(column).containsExactly((Object) null);
+            }
+            assertThat(fieldsOf(((GenericRecord) records.get(0).get("s")).get("bar"), "a")).containsExactly(4);
+            assertThat(records.get(1).get("s")).isNull();
+            assertThat(fieldsOf(((GenericRecord) records.get(2).get("s")).get("bar"), "a")).isEmpty();
+            serialize(root, records);
+        }
+    }
+
+    /// A bare repeated group whose only child is a `MAP_KEY_VALUE` group is a list
+    /// whose element is a legacy map, whether it carries no annotation or `MAP`.
+    @Test
+    void readBareRepeatedLegacyMapsAsArraysOfMaps() throws Exception {
+        // repeated_legacy_map_test.parquet: required int32 id; bare repeated groups attrs
+        // (unannotated) and attrs_map (MAP), each { repeated group key_value (MAP_KEY_VALUE)
+        // { required binary key (STRING); optional int32 value } }; rows
+        // (id=1, attrs*=[{a:1,b:2},{c:3}]), (id=2, attrs*=[])
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("repeated_legacy_map_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema expected = Schema.createArray(Schema.createMap(
+                    Schema.createUnion(Schema.create(Schema.Type.NULL), Schema.create(Schema.Type.INT))));
+            assertThat(reader.getSchema().getField("attrs").schema()).isEqualTo(expected);
+            assertThat(reader.getSchema().getField("attrs_map").schema()).isEqualTo(expected);
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+            for (String column : List.of("attrs", "attrs_map")) {
+                assertThat(records.get(0).get(column)).as(column)
+                        .isEqualTo(List.of(Map.of("a", 1, "b", 2), Map.of("c", 3)));
+                assertThat(records.get(1).get(column)).as(column).isEqualTo(List.of());
+            }
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    /// A bare repeated group annotated `VARIANT` is a list of variants, which is not
+    /// supported: projecting it is refused as the row reader refuses it, and a
+    /// projection that leaves it out reads.
+    @Test
+    void refuseBareRepeatedVariantGroupUnlessProjectedAway() throws Exception {
+        // repeated_variant_group_test.parquet: required int32 id; repeated group foo (VARIANT)
+        // { required binary metadata; required binary value }; one row id=1
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("repeated_variant_group_test.parquet")))) {
+
+            assertThatThrownBy(() -> AvroReaders.rowReader(fileReader))
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("Repeated group 'foo' is annotated VARIANT(1) outside a LIST or MAP group;"
+                            + " a list of variants in this form is not supported");
+            assertThatThrownBy(() -> AvroReaders.buildRowReader(fileReader)
+                    .projection(ColumnProjection.columns("foo.value")).build())
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("Repeated group 'foo' is annotated VARIANT(1) outside a LIST or MAP group;"
+                            + " a list of variants in this form is not supported");
+
+            try (AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                    .projection(ColumnProjection.columns("id")).build()) {
+                List<GenericRecord> records = readAll(reader);
+                assertThat(records).hasSize(1);
+                assertThat(records.getFirst().get("id")).isEqualTo(1);
+            }
+        }
+    }
+
+    /// A `LIST` element group carrying an annotation a group cannot use there
+    /// (`MAP_KEY_VALUE`) is read as a struct, so it converts to a record.
+    @Test
+    void readListElementGroupCarryingAnUnrecognisedAnnotationAsRecords() throws Exception {
+        // annotated_list_element_group_test.parquet: optional group l (LIST) { repeated group
+        // list { optional group element (MAP_KEY_VALUE) { optional int32 a; optional binary b
+        // (STRING) } } }; rows l=[{a:1,b:x},{a:2,b:y}], null, [{a:3,b:null}]
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("annotated_list_element_group_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema list = resolveNullable(reader.getSchema().getField("l").schema());
+            Schema element = resolveNullable(list.getElementType());
+            assertThat(element.getType()).isEqualTo(Schema.Type.RECORD);
+            assertThat(element.getFields()).extracting(Schema.Field::name).containsExactly("a", "b");
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+            assertThat(fieldsOf(records.get(0).get("l"), "a")).containsExactly(1, 2);
+            assertThat(fieldsOf(records.get(0).get("l"), "b")).containsExactly("x", "y");
+            assertThat(records.get(1).get("l")).isNull();
+            assertThat(fieldsOf(records.get(2).get("l"), "a")).containsExactly(3);
+            serialize(reader.getSchema(), records);
+        }
+    }
+
+    private static List<Object> fieldsOf(Object list, String field) {
+        assertThat(list).isInstanceOf(List.class);
+        List<Object> values = new ArrayList<>();
+        for (Object element : (List<?>) list) {
+            values.add(((GenericRecord) element).get(field));
+        }
+        return values;
+    }
+
     @Test
     void readMap() throws Exception {
         // simple_map_test.parquet: id INT32, attributes map<string, string>

@@ -281,22 +281,59 @@ class AvroSchemaConverterTest {
         assertThat(plan.child(0).kind()).isEqualTo(AvroPlanNode.Kind.VARIANT);
     }
 
-    /// A group is a struct to the converter only when the row reader agrees it is one.
-    /// An annotation neither side recognises would otherwise convert to an Avro RECORD
-    /// that the reader cannot fill, since the list accessors serve the group's leaf.
+    /// A group carrying an annotation that is neither `LIST`, `MAP` nor `VARIANT` is
+    /// read as a struct, so it converts to a record of its fields.
     @Test
-    void rejectsGroupCarryingAnUnrecognisedAnnotation() {
-        SchemaElement rootElement = root("root", 1);
+    void groupCarryingAnUnrecognisedAnnotationBecomesARecord() {
         SchemaElement legacy = new SchemaElement("legacy", null, null, RepetitionType.OPTIONAL,
                 1, ConvertedType.MAP_KEY_VALUE, null, null, null, null);
-        SchemaElement leaf = primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED);
-        FileSchema schema = FileSchema.fromSchemaElements(List.of(rootElement, legacy, leaf));
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                legacy,
+                primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)));
 
-        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.all()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Group 'legacy' carries an annotation Avro conversion does not recognise: "
-                         + "converted type MAP_KEY_VALUE")
-                ;
+        AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
+
+        Schema record = pickRecordBranch(plan.avro().getField("legacy").schema());
+        assertThat(record.getFullName()).isEqualTo("root.legacy");
+        assertThat(record.getField("v").schema().getType()).isEqualTo(Schema.Type.INT);
+        assertThat(plan.child(0).kind()).isEqualTo(AvroPlanNode.Kind.STRUCT);
+    }
+
+    /// A bare repeated group is an array of its record, and the fields of that record
+    /// are named like those of any other record, so an illegal name is sanitized.
+    @Test
+    void bareRepeatedGroupBecomesArrayOfItsRecord() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                group("legacy", RepetitionType.REPEATED, 1),
+                primitive("a-b", PhysicalType.INT32, RepetitionType.REQUIRED)));
+
+        Schema parsed = new Schema.Parser().parse(convert(schema).toString());
+
+        Schema field = parsed.getField("legacy").schema();
+        assertThat(field.getType()).isEqualTo(Schema.Type.ARRAY);
+        Schema element = field.getElementType();
+        assertThat(element.getFullName()).isEqualTo("root.legacy");
+        Schema.Field ab = element.getField("a_b");
+        assertThat(ab.schema().getType()).isEqualTo(Schema.Type.INT);
+        assertThat(ab.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("a-b");
+    }
+
+    /// A bare repeated field inside the record of a bare repeated group is itself
+    /// an array, of its required element.
+    @Test
+    void bareRepeatedFieldInsideABareRepeatedGroupIsANestedArray() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                group("outer", RepetitionType.REPEATED, 1),
+                primitive("inner", PhysicalType.INT32, RepetitionType.REPEATED)));
+
+        Schema converted = convert(schema);
+
+        Schema element = converted.getField("outer").schema().getElementType();
+        assertThat(element.getField("inner").schema())
+                .isEqualTo(Schema.createArray(Schema.create(Schema.Type.INT)));
     }
 
     @Test

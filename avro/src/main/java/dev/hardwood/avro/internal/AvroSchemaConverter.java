@@ -8,12 +8,14 @@
 package dev.hardwood.avro.internal;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 
 import dev.hardwood.avro.internal.AvroPlanNode.Kind;
+import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -85,18 +87,38 @@ public final class AvroSchemaConverter {
 
     private AvroPlanNode convertRoot() {
         rejectCanonicalRootConflict();
+        refuseProjectedRepeatedVariants();
         return convertGroup(fileSchema.getRootNode(), "");
     }
 
-    /// Convert a struct group (or the schema root) to an Avro record, retaining
-    /// only children that contain a projected leaf when a projection is active,
-    /// in the order the projection requests them.
+    /// Refuse a projection reaching into a bare repeated `VARIANT` group, a list of
+    /// variants the row reader does not serve, with the refusal the row reader raises.
+    /// Conversion runs before the row reader is built, so it meets the group first.
+    private void refuseProjectedRepeatedVariants() {
+        BitSet projectedColumns = new BitSet(fileSchema.getColumnCount());
+        if (projected == null) {
+            projectedColumns.set(0, fileSchema.getColumnCount());
+        }
+        else {
+            for (int i = 0; i < projected.getProjectedColumnCount(); i++) {
+                projectedColumns.set(projected.toOriginalIndex(i));
+            }
+        }
+        BareRepeatedGroups.refuseTouchedVariants(null, fileSchema, projectedColumns);
+    }
+
+    /// Convert a struct group, the schema root or a bare repeated group's element to
+    /// an Avro record, retaining only children that contain a projected leaf when a
+    /// projection is active, in the order the projection requests them.
     private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String path) {
         List<Schema.Field> fields = new ArrayList<>();
         List<AvroPlanNode> children = new ArrayList<>();
         List<SchemaNode> retained = projected != null ? projected.projectedChildren(group) : group.children();
         for (SchemaNode child : retained) {
-            AvroPlanNode childNode = convertNode(child, childPath(path, child.name()));
+            String childPath = childPath(path, child.name());
+            AvroPlanNode childNode = child.repetitionType() == RepetitionType.REPEATED
+                    ? convertBareRepeated(child, childPath)
+                    : convertNode(child, childPath);
             Schema.Field field = new Schema.Field(names.fieldName(child), fieldSchema(childNode, child), null, null);
             applyParquetName(field, child);
             fields.add(field);
@@ -106,6 +128,24 @@ public final class AvroSchemaConverter {
         Schema record = Schema.createRecord(typeName.name(), null, typeName.namespace(), false, fields);
         applyParquetName(record, group);
         return AvroPlanNode.record(record, group, children);
+    }
+
+    /// Convert a `repeated` field that no `LIST` or `MAP` group contains. Per the
+    /// Parquet format spec it is a required list of required elements whose element
+    /// is the field itself, which is how the row reader serves it. A repeated
+    /// primitive becomes an array of its type. A repeated group that reads as a
+    /// legacy `MAP` (its only child a repeated `MAP_KEY_VALUE` group) becomes an array
+    /// of that map, and any other repeated group an array of its record: the reader
+    /// drops any other annotation such a group carries when the file is opened, and
+    /// [#refuseProjectedRepeatedVariants] has refused a `VARIANT` one. The element is
+    /// never unwrapped the way a `LIST` group's single-field repeated child can be.
+    private AvroPlanNode convertBareRepeated(SchemaNode node, String path) {
+        AvroPlanNode element = switch (node) {
+            case SchemaNode.PrimitiveNode prim -> convertPrimitive(prim);
+            case SchemaNode.GroupNode group when group.isMap() -> convertMap(group, path);
+            case SchemaNode.GroupNode group -> convertGroup(group, path);
+        };
+        return AvroPlanNode.container(Schema.createArray(element.avro()), Kind.LIST, node, element);
     }
 
     /// The dotted path a converted node is reported under when conversion rejects
@@ -135,11 +175,9 @@ public final class AvroSchemaConverter {
         };
     }
 
-    /// Classify a group the way the row reader does. [SchemaNode.GroupNode#isStruct]
-    /// is narrower than "not a Variant, list or map": a group carrying some other
-    /// annotation is a struct to neither. Converting it to an Avro RECORD anyway
-    /// would yield a record the reader cannot fill, since the accessors would serve
-    /// the group's leaf instead — so reject it here, once, rather than per value.
+    /// Classify a group the way the row reader does: a Variant, list or map by its
+    /// annotation, and a struct otherwise, including a group carrying an annotation
+    /// that is none of those three (such as `MAP_KEY_VALUE` on a list element).
     private AvroPlanNode convertGroupNode(SchemaNode.GroupNode group, String path) {
         if (group.isVariant()) {
             return convertVariant(group);
@@ -150,20 +188,8 @@ public final class AvroSchemaConverter {
         if (group.isMap()) {
             return convertMap(group, path);
         }
-        if (!group.isStruct()) {
-            throw new IllegalArgumentException("Group '" + path
-                    + "' carries an annotation Avro conversion does not recognise: "
-                    + groupAnnotation(group));
-        }
-        // Plain struct — prune unprojected children recursively.
+        // Struct — prune unprojected children recursively.
         return convertGroup(group, path);
-    }
-
-    private static String groupAnnotation(SchemaNode.GroupNode group) {
-        if (group.logicalType() != null) {
-            return "logical type " + group.logicalType();
-        }
-        return "converted type " + group.convertedType();
     }
 
     /// Emit a two-field Avro RECORD carrying the canonical Variant bytes.

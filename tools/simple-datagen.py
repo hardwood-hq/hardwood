@@ -759,6 +759,51 @@ annotate_group_at_path(annotated_element_path, ['l', 'list', 'element'], convert
 print("\nGenerated annotated_list_element_group_test.parquet:")
 print("  - Data: l=[{a:1,b:x},{a:2,b:y}], null, [{a:3,b:null}]; LIST element group annotated MAP_KEY_VALUE")
 
+# ---------------------------------------------------------------------------
+# Bare repeated primitives nested in records (hardwood-hq/hardwood#1369).
+#
+# `outer.inner` is a bare repeated primitive inside the record of a bare
+# repeated group; `items.list.element.inner` is one inside the element record of
+# an annotated LIST. Derived by collapsing required LIST scaffolding as above.
+#   row 0: outer=[{inner:[1,2]},{inner:[]}]   items=[{inner:[3]}]
+#   row 1: outer=[]                           items=null
+nested_repeated_inner = pa.list_(pa.field('element', pa.int32(), nullable=False))
+nested_repeated_element = pa.struct([pa.field('inner', nested_repeated_inner, nullable=False)])
+nested_repeated_outer = pa.list_(pa.field('element', nested_repeated_element, nullable=False))
+nested_repeated_items = pa.list_(pa.field('element', nested_repeated_element, nullable=True))
+nested_repeated_table = pa.table(
+    {
+        'outer': pa.array([[{'inner': [1, 2]}, {'inner': []}], []], type=nested_repeated_outer),
+        'items': pa.array([[{'inner': [3]}], None], type=nested_repeated_items),
+    },
+    schema=pa.schema([
+        pa.field('outer', nested_repeated_outer, nullable=False),
+        pa.field('items', nested_repeated_items, nullable=True),
+    ])
+)
+nested_repeated_steps = [
+    'core/src/test/resources/unannotated_repeated_nested_annotated_list_test.parquet',
+    'core/src/test/resources/unannotated_repeated_nested_intermediate_1.parquet',
+    'core/src/test/resources/unannotated_repeated_nested_intermediate_2.parquet',
+    'core/src/test/resources/unannotated_repeated_nested_test.parquet',
+]
+pq.write_table(
+    nested_repeated_table,
+    nested_repeated_steps[0],
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    store_schema=False
+)
+collapse_list_of_structs_to_unannotated_repeated_group(nested_repeated_steps[0], nested_repeated_steps[1], 'outer')
+collapse_list_to_unannotated_repeated(nested_repeated_steps[1], nested_repeated_steps[2], 'outer.inner')
+collapse_list_to_unannotated_repeated(nested_repeated_steps[2], nested_repeated_steps[3], 'items.list.element.inner')
+for intermediate in nested_repeated_steps[:3]:
+    os.remove(intermediate)
+
+print("\nGenerated unannotated_repeated_nested_test.parquet:")
+print("  - Data: outer=[{inner:[1,2]},{inner:[]}],[]; items=[{inner:[3]}],null; bare REPEATED int32 inside a bare repeated group and inside a LIST element")
+
 # 3. List of structs test
 list_struct_schema = pa.schema([
     ('id', pa.int32(), False),

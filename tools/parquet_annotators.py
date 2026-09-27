@@ -859,7 +859,7 @@ def strip_converted_type(src: str, dst: str, field_name: str) -> None:
     _write_parquet_footer(dst, data, md)
 
 
-def collapse_list_to_unannotated_repeated(src: str, dst: str, field_name: str) -> None:
+def collapse_list_to_unannotated_repeated(src: str, dst: str, field_path: str) -> None:
     """Copy `src` to `dst`, rewriting a three-level required `LIST` of required
     primitive elements into a bare unannotated `REPEATED` field.
 
@@ -873,22 +873,24 @@ def collapse_list_to_unannotated_repeated(src: str, dst: str, field_name: str) -
 
     Only the footer schema is restructured; the data pages are left byte for
     byte unchanged. A required list of required elements and a bare repeated
-    field share the same maximum definition and repetition levels (both 1), so
+    field share the same maximum definition and repetition levels, so
     the encoded level streams are already correct against the collapsed
-    single-leaf schema. The three nodes — `field_name` (the LIST group), its
+    single-leaf schema. The three nodes — the LIST group at `field_path`, its
     repeated child group, and the element leaf — are replaced by a single
-    `REPEATED` primitive named `field_name` carrying the element's physical type.
+    `REPEATED` primitive of the LIST group's name carrying the element's
+    physical type.
+
+    `field_path` is dot-separated, so the LIST group may sit below enclosing
+    groups (e.g. `outer.inner`); those groups are left untouched.
     """
     shutil.copy2(src, dst)
     data, md = _read_parquet_footer(dst)
 
-    outer_idx = None
-    for i, el in enumerate(md.schema):
-        if el.name == field_name and el.num_children is not None:
-            outer_idx = i
-            break
-    if outer_idx is None:
-        raise ValueError(f"Top-level group '{field_name}' not found in schema")
+    names = field_path.split('.')
+    outer_idx = _find_schema_element_index(md.schema, names)
+    if outer_idx is None or md.schema[outer_idx].num_children is None:
+        raise ValueError(f"Group '{field_path}' not found in schema")
+    field_name = names[-1]
 
     repeated_group = md.schema[outer_idx + 1]
     element = md.schema[outer_idx + 2]
@@ -902,8 +904,8 @@ def collapse_list_to_unannotated_repeated(src: str, dst: str, field_name: str) -
 
     for row_group in md.row_groups:
         for column in row_group.columns:
-            if column.meta_data.path_in_schema[0] == field_name:
-                column.meta_data.path_in_schema = [field_name]
+            if column.meta_data.path_in_schema[:len(names)] == names:
+                column.meta_data.path_in_schema = names
 
     _write_parquet_footer(dst, data, md)
 

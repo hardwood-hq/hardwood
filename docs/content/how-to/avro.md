@@ -108,6 +108,10 @@ A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.
 
+A `repeated` field outside a `LIST` or `MAP` group is a required list of required elements, and maps to a non-nullable Avro `array` of the field's own type: `repeated int32 foo` becomes `array<int>`, a repeated group becomes an `array` of its record, and a repeated group whose only child is a repeated `MAP_KEY_VALUE` group becomes an `array` of Avro `map`s. Its values are `java.util.List` instances. Such a group converts as the row reader reads it, ignoring any `LIST`, `MAP` or `MAP_KEY_VALUE` annotation of its own (see [Legacy list encodings](../reference/accessors.md#legacy-list-encodings)). Building an `AvroRowReader` whose projection includes a column of such a group annotated `VARIANT` throws `UnsupportedOperationException`; a projection without its columns reads the rest of the file.
+
+A group carrying an annotation other than `LIST`, `MAP` or `VARIANT`, such as a `LIST` element group annotated `MAP_KEY_VALUE`, maps to an Avro record of its fields.
+
 Building an `AvroRowReader` fails with an `IllegalArgumentException` naming the group's path when a projected `LIST` group has no element field, or a projected `MAP` group has no key field.
 
 ## Lifecycle
