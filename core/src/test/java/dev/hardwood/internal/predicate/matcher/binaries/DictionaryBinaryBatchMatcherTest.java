@@ -315,7 +315,7 @@ class DictionaryBinaryBatchMatcherTest {
             data.put(value);
         }
         return (Dictionary.ByteArrayDictionary) Dictionary.parse(
-                data.array(), values.length, PhysicalType.BYTE_ARRAY, null);
+                data.array(), data.array().length, values.length, PhysicalType.BYTE_ARRAY, null);
     }
 
     private static byte[] utf8(String value) {
