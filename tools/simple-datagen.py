@@ -6210,6 +6210,29 @@ print("\nGenerated dict_flba_pushdown.parquet:")
 print("  - 4096 rows, dictionary-encoded FIXED_LEN_BYTE_ARRAY(4) 'code'")
 print("  - values {aa00, aa03, aa06, aa09}; 'aa05' / 'aa07' are in-range but absent")
 
+# A single FLBA column chunk that starts with dictionary-encoded pages and
+# falls back to PLAIN after its deliberately tiny dictionary budget fills.
+# The repeated prefix ensures useful dictionary pages are emitted before the
+# distinct suffix forces the transition.
+_mixed_flba_prefix = [b'aa00', b'aa03', b'aa06', b'aa09'] * 256
+_mixed_flba_suffix = [f'{i:04x}'.encode() for i in range(2048)]
+_mixed_flba_table = pa.table({
+    'code': pa.array(_mixed_flba_prefix + _mixed_flba_suffix, type=pa.binary(4)),
+})
+pq.write_table(
+    _mixed_flba_table,
+    'core/src/test/resources/dict_mixed_encoding_flba.parquet',
+    use_dictionary=True,
+    compression='NONE',
+    data_page_size=512,
+    dictionary_pagesize_limit=64,
+    write_batch_size=128,
+    row_group_size=len(_mixed_flba_prefix) + len(_mixed_flba_suffix),
+)
+print("\nGenerated dict_mixed_encoding_flba.parquet:")
+print("  - 3072 rows in one FIXED_LEN_BYTE_ARRAY(4) chunk")
+print("  - dictionary-encoded repeated prefix followed by a PLAIN distinct suffix")
+
 # A dictionary-encoded FLOAT16 column. FLOAT16 is FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type,
 # so it shares the ByteArrayDictionary arm with the other binary types but is probed through the
 # float-valued predicate factories. float16_logical_type_test.parquet is written plain, so it

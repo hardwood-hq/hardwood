@@ -1,7 +1,5 @@
 # Dictionary-Space Predicate Evaluation
 
-**Status: Implemented**
-
 ## Context
 
 A dictionary-encoded Parquet data page stores one dictionary entry ID per
@@ -136,44 +134,3 @@ dictionary resets the wrapper's state by dictionary identity.
 
 This preserves exact results without assuming that one dictionary covers a
 whole batch or column chunk.
-
-## Validation
-
-Matcher tests cover every binary operator and membership comparison across:
-
-- referenced and unreferenced dictionary entries;
-- repeated IDs, proving one decision per entry per dictionary;
-- interleaved dictionary and packed rows, proving first-use decisions happen
-  during output traversal;
-- null rows;
-- mixed dictionary and packed-value rows;
-- dictionary identity changes;
-- small and large dictionaries; and
-- row counts crossing a 64-bit output-word boundary.
-
-Compiler tests prove that all eligible binary leaves request dictionary-index
-retention, including leaves inside same-column `And` and `Or` composites.
-
-End-to-end row-reader and exact column-reader tests compare string predicates
-with an unfiltered reference across dictionary changes and verify non-string
-`FIXED_LEN_BYTE_ARRAY` ID retention. Delegate-versus-wrapper oracle tests cover
-all binary operators under byte-string, stored-byte, fixed-decimal, and
-variable-decimal comparison, including packed fallback rows.
-
-Performance validation has two layers:
-
-- `RecordFilterBenchmarkTest` measures end-to-end binary equality, ordering,
-  membership, and negated membership before and after dictionary evaluation;
-  and
-- a single-threaded JMH benchmark compares packed matching with eager and lazy
-  dictionary tables, measuring cold initialization and hot cross-batch reuse
-  for equality, ordering, and membership across sparse/early-stop and full
-  scans.
-
-## Documentation and roadmap
-
-This is an internal execution optimization and does not change the public
-reader or predicate API. `ROADMAP.md` marks binary dictionary-space equality,
-ranges, and membership complete when the implementation and performance
-validation land. Fixed-width primitive dictionary evaluation remains tracked
-separately under #859.
