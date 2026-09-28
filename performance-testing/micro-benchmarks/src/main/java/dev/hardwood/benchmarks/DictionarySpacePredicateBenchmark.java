@@ -32,6 +32,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.Dictionary;
@@ -114,7 +115,8 @@ public class DictionarySpacePredicateBenchmark {
         }
         Dictionary.ByteArrayDictionary dictionary =
                 (Dictionary.ByteArrayDictionary) Dictionary.parse(
-                        encoded.array(), entries.length, PhysicalType.BYTE_ARRAY, null);
+                        encoded.array(), encoded.array().length,
+                        entries.length, PhysicalType.BYTE_ARRAY, null);
 
         int referencedEntries = access == Access.SPARSE ? Math.min(4, cardinality) : cardinality;
         int packedSize = 0;
@@ -143,12 +145,16 @@ public class DictionarySpacePredicateBenchmark {
 
         int middle = referencedEntries / 2;
         byte[] literal = entries[middle];
+        byte[][] members = {entries[0], entries[middle], entries[referencedEntries - 1]};
         packedMatcher = switch (predicateKind) {
-            case EQ -> new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING);
+            case EQ -> BinaryShortInBatchMatcher.supports(Comparison.BYTE_STRING, literal)
+                    ? new BinaryShortInBatchMatcher(
+                            new byte[][]{literal}, Comparison.BYTE_STRING, false)
+                    : new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING);
             case LT -> new BinaryLtBatchMatcher(literal, Comparison.BYTE_STRING);
-            case IN -> new BinaryInBatchMatcher(
-                    new byte[][]{entries[0], entries[middle], entries[referencedEntries - 1]},
-                    Comparison.BYTE_STRING);
+            case IN -> BinaryShortInBatchMatcher.supports(Comparison.BYTE_STRING, members)
+                    ? new BinaryShortInBatchMatcher(members, Comparison.BYTE_STRING, false)
+                    : new BinaryInBatchMatcher(members, Comparison.BYTE_STRING);
         };
         outWords = new long[(rows + 63) >>> 6];
         verifyEquivalentResults();

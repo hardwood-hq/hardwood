@@ -84,11 +84,13 @@ The mechanism has three parts:
 |---|---|---|
 | Per-chunk cache | `ByteArrayDictionary.internedString(i)` | A lazily allocated `String[]` parallel to the entries; entry `i` is decoded as UTF-8 on first request and cached. |
 | Index on the page | `Page.ByteArrayPage.dictionary()` / `dictIndices()` | A dictionary-decoded byte-array page carries its `ByteArrayDictionary` and one entry index per value (`-1` at a null). A `PLAIN` page carries `null` for both. |
-| Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the packed bytes otherwise. |
+| Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | When string interning or a dictionary-aware binary matcher needs IDs, the batch records the entry index or `-1` per value. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the packed bytes otherwise. A dictionary-aware matcher reads the same index to reuse its cached predicate outcome. |
 
 The packed bytes are written for every value whatever its encoding, so `getBinary` and raw-byte access are unaffected and the fallback in `stringAt` is always available.
 
-**Which columns.** A column is a string column when `LeafKind.of(type, annotation) == STRING`: a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`. `BatchExchange` sets `BinaryBatchValues.internStrings` from that answer when it allocates the batch; the consumer side asks the same `LeafKind` question before routing a value through `stringAt`. Both sides classify through one method, so the side that records indices and the side that reads them cannot disagree. A non-string column never records indices.
+**Which columns.** A column is a string column when `LeafKind.of(type, annotation) == STRING`: a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`. `BatchExchange` sets `BinaryBatchValues.internStrings` from that answer when it allocates the batch; the consumer side asks the same `LeafKind` question before routing a value through `stringAt`. Both sides classify through one method, so the side that records indices and the side that reads them cannot disagree.
+
+A compiled binary matcher independently advertises `requiresDictionaryIndices()`. The row-reader and exact column-reader paths compile the predicate before allocating flat batches and set `BinaryBatchValues.retainDictionaryIndices` for each matcher that requires it. This second reason applies to eligible `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves whether or not their logical value is a string. A non-string column without such a matcher does not record indices.
 
 **Batch rules.** A batch starts with no dictionary. The first dictionary page that contributes switches it on: the batch adopts that page's dictionary, allocates `dictIndices` at the batch's value capacity, and backfills `-1` over the values already written (`ensureDictionary`). After that, a `PLAIN` page's values record `-1`. A column whose chunk is entirely `PLAIN` never allocates `dictIndices` and pays one `null` check per `stringAt`. The worker clears the batch's dictionary slot when it takes the batch for reuse, keeping the array.
 
@@ -98,7 +100,7 @@ The packed bytes are written for every value whatever its encoding, so `getBinar
 
 **Lifetime and threading.** The cache lives on the `ByteArrayDictionary`, which lives as long as the pages and batches that reference it: one column chunk's worth of reading. The returned `String`s are immutable, so handing one instance to many rows, and letting callers keep it past `next()`, is safe; the flyweight reuse contract concerns the mutable batch buffers, not immutable values. The cache is filled on the consumer thread through `stringAt`. A concurrent fill of the same entry could at worst decode it twice and never yields a wrong value, since entries are immutable. Untested.
 
-Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`.
+Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`, `DictionarySpaceEvaluationTest`.
 
 ## Leaf kinds and nested primitive leaves
 

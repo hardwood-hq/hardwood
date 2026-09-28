@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -33,6 +34,11 @@ class DictionarySpaceEvaluationTest {
     /// `aa00`, `aa03`, `aa06`, `aa09`.
     private static final Path FLBA = Path.of("src/test/resources/dict_flba_pushdown.parquet");
 
+    /// One FLBA column chunk whose repeated prefix is dictionary encoded and
+    /// whose distinct suffix falls back to PLAIN.
+    private static final Path MIXED_ENCODING =
+            Path.of("src/test/resources/dict_mixed_encoding_flba.parquet");
+
     /// Two row groups with disjoint dictionary pools. The file is smaller than
     /// the row-reader batch floor, so one unfiltered batch crosses the chunk
     /// boundary.
@@ -51,6 +57,43 @@ class DictionarySpaceEvaluationTest {
             assertThat(values.dictionary).isNotNull();
             assertThat(values.dictIndices).hasSize(1024);
             assertThat(codes.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void fixedLengthRowPredicateBatchRetainsDictionaryIds() throws Exception {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FLBA));
+             RowReader rows = file.buildRowReader()
+                     .filter(FilterPredicate.eq("code", new byte[]{'a', 'a', '0', '6'}))
+                     .build()) {
+            assertThat(rows.hasNext()).isTrue();
+
+            BinaryBatchValues values = (BinaryBatchValues) currentFlatBatch(rows).values;
+            assertThat(values.dictionary).isNotNull();
+            assertThat(values.dictIndices).isNotNull();
+        }
+    }
+
+    @Test
+    void dictionaryToPlainTransitionRecordsPackedFallbackIds() throws Exception {
+        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(MIXED_ENCODING));
+             RowReader rows = file.buildRowReader()
+                     .filter(FilterPredicate.eq("code", new byte[]{'a', 'a', '0', '6'}))
+                     .build()) {
+            assertThat(rows.hasNext()).isTrue();
+
+            BatchExchange.Batch batch = currentFlatBatch(rows);
+            BinaryBatchValues values = (BinaryBatchValues) batch.values;
+            int[] activeIndices = Arrays.copyOf(values.dictIndices, batch.recordCount);
+            assertThat(activeIndices).contains(-1);
+            assertThat(Arrays.stream(activeIndices).anyMatch(index -> index >= 0)).isTrue();
+
+            int matches = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                matches++;
+            }
+            assertThat(matches).isEqualTo(256);
         }
     }
 
@@ -136,5 +179,12 @@ class DictionarySpaceEvaluationTest {
         Field field = ColumnReader.class.getDeclaredField("currentFlatBatch");
         field.setAccessible(true);
         return (BatchExchange.Batch) field.get(reader);
+    }
+
+    private static BatchExchange.Batch currentFlatBatch(RowReader reader)
+            throws ReflectiveOperationException {
+        Field field = reader.getClass().getDeclaredField("previousBatches");
+        field.setAccessible(true);
+        return ((BatchExchange.Batch[]) field.get(reader))[0];
     }
 }
