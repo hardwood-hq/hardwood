@@ -94,7 +94,7 @@ The mechanism has three parts:
 |---|---|---|
 | Per-chunk cache | `ByteArrayDictionary.internedString(i)` | A lazily allocated `String[]` parallel to the entries; entry `i` is decoded as UTF-8 on first request and cached. |
 | Index on the page | `Page.DictionaryByteArrayPage.dictionary()` / `dictIndices()` | A dictionary-decoded byte-array page carries its `ByteArrayDictionary` and one entry index per value (`-1` at a null), and these are its only representation of the values. A `ByteArrayPage` (`PLAIN`, delta) has neither. |
-| Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the value's bytes otherwise. |
+| Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the value's bytes otherwise. A dictionary-aware binary matcher reads the same index to reuse its cached predicate outcome. |
 
 Every value has a byte view in the batch whatever its encoding (a dictionary value's view points into the batch's copy of the dictionary, see [COLUMN_READER.md](COLUMN_READER.md#variable-length)), so `getBinary` and raw-byte access are unaffected and the fallback in `stringAt` is always available.
 
@@ -108,7 +108,7 @@ Every value has a byte view in the batch whatever its encoding (a dictionary val
 
 **Lifetime and threading.** The cache lives on the `ByteArrayDictionary`, which lives as long as the pages and batches that reference it: one column chunk's worth of reading. The returned `String`s are immutable, so handing one instance to many rows, and letting callers keep it past `next()`, is safe; the flyweight reuse contract concerns the mutable batch buffers, not immutable values. The cache is filled on the consumer thread through `stringAt`. A concurrent fill of the same entry could at worst decode it twice and never yields a wrong value, since entries are immutable. Untested.
 
-Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`.
+Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`, `DictionarySpaceEvaluationTest`.
 
 ## Leaf kinds and nested primitive leaves
 

@@ -43,11 +43,16 @@ public final class BinaryLtBatchMatcher implements BinaryBatchMatcher {
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
                 if ((present & (1L << b)) != 0L
-                        && BinaryComparator.compare(bytes, starts[i], ends[i], literal, order) < 0) {
+                        && testValue(bytes, starts[i], ends[i])) {
                     word |= 1L << b;
                 }
             }
             outWords[w] = word;
         }
+    }
+
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
+        return BinaryComparator.compare(bytes, from, to, literal, order) < 0;
     }
 }

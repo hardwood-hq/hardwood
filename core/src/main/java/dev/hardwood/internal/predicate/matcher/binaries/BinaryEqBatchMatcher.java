@@ -44,7 +44,7 @@ public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                if ((present & (1L << b)) != 0L && matches(bytes, starts[i], ends[i])) {
+                if ((present & (1L << b)) != 0L && testValue(bytes, starts[i], ends[i])) {
                     word |= 1L << b;
                 }
             }
@@ -55,7 +55,8 @@ public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
     /// Byte equality where the column holds a value as exactly one byte string, and the ordering
     /// comparison where it does not: a `BYTE_ARRAY` `DECIMAL` may pad, so `0x7F` and `0x00 0x7F`
     /// are the same number and byte equality would miss the padded spelling.
-    private boolean matches(byte[] bytes, int from, int to) {
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
         return byteExact
                 ? BinaryComparator.sliceEquals(bytes, from, to, literal)
                 : BinaryComparator.compare(bytes, from, to, literal, order) == 0;
