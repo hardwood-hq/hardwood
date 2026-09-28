@@ -64,6 +64,22 @@ class DictionaryBinaryBatchMatcherTest {
     }
 
     @Test
+    void decidesUnknownEntriesInlineWithRowTraversal() throws Exception {
+        Dictionary.ByteArrayDictionary dictionary =
+                dictionary(utf8("dictionary-a"), utf8("match"));
+        CountingMatcher delegate = new CountingMatcher();
+        DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
+
+        long[] out = run(matcher, binaryBatch(
+                dictionary, new int[]{0, -1, 1}, null,
+                utf8("dictionary-a"), utf8("packed"), utf8("match")));
+
+        assertThat(out).containsExactly(1L << 2);
+        assertThat(delegate.valuesInCallOrder())
+                .containsExactly("dictionary-a", "packed", "match");
+    }
+
+    @Test
     void resetsEntryStatesForANewDictionaryObject() throws Exception {
         CountingMatcher delegate = new CountingMatcher();
         DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
@@ -312,6 +328,7 @@ class DictionaryBinaryBatchMatcherTest {
 
     private static final class CountingMatcher implements BinaryBatchMatcher {
         private final Map<String, Integer> calls = new HashMap<>();
+        private final List<String> valuesInCallOrder = new ArrayList<>();
         private int batchCalls;
         private int valueCalls;
 
@@ -326,11 +343,16 @@ class DictionaryBinaryBatchMatcherTest {
             valueCalls++;
             String value = new String(bytes, from, to - from, StandardCharsets.UTF_8);
             calls.merge(value, 1, Integer::sum);
+            valuesInCallOrder.add(value);
             return value.equals("match");
         }
 
         int callsFor(String value) {
             return calls.getOrDefault(value, 0);
+        }
+
+        List<String> valuesInCallOrder() {
+            return valuesInCallOrder;
         }
     }
 }
