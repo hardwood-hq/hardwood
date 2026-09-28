@@ -37,8 +37,8 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
-/// Compares eager and lazy dictionary-space predicates with the ordinary
-/// packed-value loop.
+/// Compares eager, original two-pass lazy, and production one-pass lazy
+/// dictionary-space predicates with the ordinary packed-value loop.
 ///
 /// The cold arms install fresh eager and lazy wrappers for every invocation, so
 /// dictionary preparation and entry decisions occur inside the measured
@@ -86,12 +86,12 @@ public class DictionarySpacePredicateBenchmark {
 
     private BatchExchange.Batch batch;
     private BinaryBatchMatcher packedMatcher;
-    private BinaryBatchMatcher coldLazyMatcher;
-    private BinaryBatchMatcher hotLazyMatcher;
+    private BinaryBatchMatcher coldTwoPassLazyMatcher;
+    private BinaryBatchMatcher hotTwoPassLazyMatcher;
     private BinaryBatchMatcher coldEagerMatcher;
     private BinaryBatchMatcher hotEagerMatcher;
-    private BinaryBatchMatcher coldInlineLazyMatcher;
-    private BinaryBatchMatcher hotInlineLazyMatcher;
+    private BinaryBatchMatcher coldOnePassLazyMatcher;
+    private BinaryBatchMatcher hotOnePassLazyMatcher;
     private long[] outWords;
 
     @Setup(Level.Trial)
@@ -152,30 +152,30 @@ public class DictionarySpacePredicateBenchmark {
         };
         outWords = new long[(rows + 63) >>> 6];
         verifyEquivalentResults();
-        hotLazyMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
-        hotLazyMatcher.test(batch, outWords);
+        hotTwoPassLazyMatcher = new TwoPassLazyDictionaryMatcher(packedMatcher);
+        hotTwoPassLazyMatcher.test(batch, outWords);
         hotEagerMatcher = new EagerDictionaryMatcher(packedMatcher);
         hotEagerMatcher.test(batch, outWords);
-        hotInlineLazyMatcher = new InlineLazyDictionaryMatcher(packedMatcher);
-        hotInlineLazyMatcher.test(batch, outWords);
+        hotOnePassLazyMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
+        hotOnePassLazyMatcher.test(batch, outWords);
     }
 
     @Setup(Level.Invocation)
     public void setupInvocation() {
-        coldLazyMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
+        coldTwoPassLazyMatcher = new TwoPassLazyDictionaryMatcher(packedMatcher);
         coldEagerMatcher = new EagerDictionaryMatcher(packedMatcher);
-        coldInlineLazyMatcher = new InlineLazyDictionaryMatcher(packedMatcher);
+        coldOnePassLazyMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
     }
 
     @Benchmark
-    public long lazyCold() {
-        coldLazyMatcher.test(batch, outWords);
+    public long twoPassLazyCold() {
+        coldTwoPassLazyMatcher.test(batch, outWords);
         return checksum();
     }
 
     @Benchmark
-    public long lazyHot() {
-        hotLazyMatcher.test(batch, outWords);
+    public long twoPassLazyHot() {
+        hotTwoPassLazyMatcher.test(batch, outWords);
         return checksum();
     }
 
@@ -192,14 +192,14 @@ public class DictionarySpacePredicateBenchmark {
     }
 
     @Benchmark
-    public long inlineLazyCold() {
-        coldInlineLazyMatcher.test(batch, outWords);
+    public long onePassLazyCold() {
+        coldOnePassLazyMatcher.test(batch, outWords);
         return checksum();
     }
 
     @Benchmark
-    public long inlineLazyHot() {
-        hotInlineLazyMatcher.test(batch, outWords);
+    public long onePassLazyHot() {
+        hotOnePassLazyMatcher.test(batch, outWords);
         return checksum();
     }
 
@@ -221,10 +221,10 @@ public class DictionarySpacePredicateBenchmark {
         long[] expected = new long[outWords.length];
         packedMatcher.test(batch, expected);
         verifyEquivalentResults(
-                "two-pass lazy", new DictionaryBinaryBatchMatcher(packedMatcher), expected);
+                "two-pass lazy", new TwoPassLazyDictionaryMatcher(packedMatcher), expected);
         verifyEquivalentResults("eager", new EagerDictionaryMatcher(packedMatcher), expected);
         verifyEquivalentResults(
-                "one-pass lazy", new InlineLazyDictionaryMatcher(packedMatcher), expected);
+                "one-pass lazy", new DictionaryBinaryBatchMatcher(packedMatcher), expected);
     }
 
     private void verifyEquivalentResults(
@@ -314,10 +314,10 @@ public class DictionarySpacePredicateBenchmark {
         }
     }
 
-    /// Benchmark-only one-pass lazy strategy. The first row referencing an
-    /// unknown ID decides that entry and immediately consumes the outcome, so
-    /// sparse dictionaries avoid eager work without a separate discovery pass.
-    private static final class InlineLazyDictionaryMatcher implements BinaryBatchMatcher {
+    /// Benchmark-only copy of the original two-pass lazy strategy. It first
+    /// discovers referenced unknown entries, then writes matches in a second
+    /// row pass.
+    private static final class TwoPassLazyDictionaryMatcher implements BinaryBatchMatcher {
 
         private static final byte UNKNOWN = 0;
         private static final byte NO_MATCH = 1;
@@ -326,8 +326,9 @@ public class DictionarySpacePredicateBenchmark {
         private final BinaryBatchMatcher delegate;
         private Dictionary.ByteArrayDictionary cachedDictionary;
         private byte[] entryStates;
+        private int undecidedEntries;
 
-        private InlineLazyDictionaryMatcher(BinaryBatchMatcher delegate) {
+        private TwoPassLazyDictionaryMatcher(BinaryBatchMatcher delegate) {
             this.delegate = delegate;
         }
 
@@ -353,6 +354,11 @@ public class DictionarySpacePredicateBenchmark {
                 else {
                     Arrays.fill(entryStates, 0, size, UNKNOWN);
                 }
+                undecidedEntries = size;
+            }
+            if (undecidedEntries != 0) {
+                decideReferencedEntries(
+                        dictionaryIndices, batch.validity, batch.recordCount);
             }
             writeMatches(values, dictionaryIndices, batch.validity, batch.recordCount, outWords);
         }
@@ -362,8 +368,30 @@ public class DictionarySpacePredicateBenchmark {
             return delegate.testValue(bytes, from, to);
         }
 
+        private void decideReferencedEntries(
+                int[] dictionaryIndices, long[] validity, int recordCount) {
+            byte[][] entries = cachedDictionary.values();
+            for (int row = 0; row < recordCount; row++) {
+                if (validity != null && (validity[row >>> 6] & (1L << row)) == 0L) {
+                    continue;
+                }
+                int dictionaryIndex = dictionaryIndices[row];
+                if (dictionaryIndex >= 0 && entryStates[dictionaryIndex] == UNKNOWN) {
+                    byte[] entry = entries[dictionaryIndex];
+                    entryStates[dictionaryIndex] =
+                            delegate.testValue(entry, 0, entry.length) ? MATCH : NO_MATCH;
+                    undecidedEntries--;
+                    if (undecidedEntries == 0) {
+                        return;
+                    }
+                }
+            }
+        }
+
         private void writeMatches(BinaryBatchValues values, int[] dictionaryIndices,
                                   long[] validity, int recordCount, long[] outWords) {
+            byte[] bytes = values.bytes;
+            int[] offsets = values.offsets;
             int activeWords = (recordCount + 63) >>> 6;
             for (int wordIndex = 0; wordIndex < activeWords; wordIndex++) {
                 int base = wordIndex << 6;
@@ -376,20 +404,9 @@ public class DictionarySpacePredicateBenchmark {
                     }
                     int row = base + bit;
                     int dictionaryIndex = dictionaryIndices[row];
-                    boolean matches;
-                    if (dictionaryIndex < 0) {
-                        matches = delegate.testValue(
-                                values.bytes, values.offsets[row], values.offsets[row + 1]);
-                    }
-                    else {
-                        byte state = entryStates[dictionaryIndex];
-                        if (state == UNKNOWN) {
-                            byte[] entry = cachedDictionary.values()[dictionaryIndex];
-                            state = delegate.testValue(entry, 0, entry.length) ? MATCH : NO_MATCH;
-                            entryStates[dictionaryIndex] = state;
-                        }
-                        matches = state == MATCH;
-                    }
+                    boolean matches = dictionaryIndex >= 0
+                            ? entryStates[dictionaryIndex] == MATCH
+                            : delegate.testValue(bytes, offsets[row], offsets[row + 1]);
                     if (matches) {
                         word |= 1L << bit;
                     }

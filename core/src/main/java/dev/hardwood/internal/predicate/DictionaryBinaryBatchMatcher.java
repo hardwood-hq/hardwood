@@ -29,7 +29,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     private final BinaryBatchMatcher delegate;
     private Dictionary.ByteArrayDictionary cachedDictionary;
     private byte[] entryStates;
-    private int undecidedEntries;
 
     public DictionaryBinaryBatchMatcher(BinaryBatchMatcher delegate) {
         this.delegate = delegate;
@@ -56,9 +55,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         }
 
         prepareDictionary(dictionary);
-        if (undecidedEntries != 0) {
-            decideReferencedEntries(values, dictionaryIndices, batch.validity, batch.recordCount);
-        }
         writeMatches(values, dictionaryIndices, batch.validity, batch.recordCount, outWords);
     }
 
@@ -83,33 +79,13 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         else {
             Arrays.fill(entryStates, 0, size, UNKNOWN);
         }
-        undecidedEntries = size;
-    }
-
-    private void decideReferencedEntries(BinaryBatchValues values, int[] dictionaryIndices,
-                                         long[] validity, int recordCount) {
-        byte[][] entries = cachedDictionary.values();
-        for (int row = 0; row < recordCount; row++) {
-            if (validity != null && (validity[row >>> 6] & (1L << row)) == 0L) {
-                continue;
-            }
-            int dictionaryIndex = dictionaryIndices[row];
-            if (dictionaryIndex >= 0 && entryStates[dictionaryIndex] == UNKNOWN) {
-                byte[] entry = entries[dictionaryIndex];
-                entryStates[dictionaryIndex] =
-                        delegate.testValue(entry, 0, entry.length) ? MATCH : NO_MATCH;
-                undecidedEntries--;
-                if (undecidedEntries == 0) {
-                    return;
-                }
-            }
-        }
     }
 
     private void writeMatches(BinaryBatchValues values, int[] dictionaryIndices,
                               long[] validity, int recordCount, long[] outWords) {
         byte[] bytes = values.bytes;
         int[] offsets = values.offsets;
+        byte[][] entries = cachedDictionary.values();
         int activeWords = (recordCount + 63) >>> 6;
         for (int wordIndex = 0; wordIndex < activeWords; wordIndex++) {
             int base = wordIndex << 6;
@@ -122,9 +98,19 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
                 }
                 int row = base + bit;
                 int dictionaryIndex = dictionaryIndices[row];
-                boolean matches = dictionaryIndex >= 0
-                        ? entryStates[dictionaryIndex] == MATCH
-                        : delegate.testValue(bytes, offsets[row], offsets[row + 1]);
+                boolean matches;
+                if (dictionaryIndex < 0) {
+                    matches = delegate.testValue(bytes, offsets[row], offsets[row + 1]);
+                }
+                else {
+                    byte state = entryStates[dictionaryIndex];
+                    if (state == UNKNOWN) {
+                        byte[] entry = entries[dictionaryIndex];
+                        state = delegate.testValue(entry, 0, entry.length) ? MATCH : NO_MATCH;
+                        entryStates[dictionaryIndex] = state;
+                    }
+                    matches = state == MATCH;
+                }
                 if (matches) {
                     word |= 1L << bit;
                 }

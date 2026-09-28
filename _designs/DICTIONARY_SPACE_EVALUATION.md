@@ -83,18 +83,17 @@ key. Each entry has one primitive byte state:
 - `NO_MATCH` — the entry does not satisfy the delegate.
 
 When a batch arrives with a new dictionary, the wrapper resets the active
-state range to `UNKNOWN`. Before producing the row bitmap, it walks the batch's
-present dictionary IDs while undecided entries remain. Each referenced
-`UNKNOWN` entry is evaluated once through the delegate's per-value operation
-and its outcome is retained for later rows and batches from the same chunk.
-The discovery pass stops permanently for that dictionary once every entry has
-an outcome.
+state range to `UNKNOWN`. The output traversal evaluates a referenced
+`UNKNOWN` entry through the delegate's per-value operation, stores its outcome,
+and immediately uses that outcome for the current row. Later rows and batches
+from the same chunk reuse the stored outcome.
 
 This makes comparison work proportional to the distinct dictionary entries
 the read actually touches. Page-index pruning, row masks, and early termination
 can leave most entries undecided without paying to compare them. A full scan
-still compares every entry once and pays an additional ID discovery pass only
-until all entries are decided.
+still compares every entry at most once. Every encoded row performs one state
+check, avoiding a separate discovery pass when only part of a dictionary is
+referenced.
 
 The output row pass observes validity first. A null row never reaches either
 the cached-outcome lookup or the packed-value fallback and always has an unset
@@ -144,6 +143,8 @@ Matcher tests cover every binary operator and membership comparison across:
 
 - referenced and unreferenced dictionary entries;
 - repeated IDs, proving one decision per entry per dictionary;
+- interleaved dictionary and packed rows, proving first-use decisions happen
+  during output traversal;
 - null rows;
 - mixed dictionary and packed-value rows;
 - dictionary identity changes;
