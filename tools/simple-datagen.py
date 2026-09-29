@@ -3030,6 +3030,15 @@ print("\nGenerated inline_page_stats.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
 print("  - Parquet v1 with inline DataPageHeader.statistics (no ColumnIndex)")
 
+# The reproducer from #1380, verbatim: pyarrow copies the longest value of a page into the inline
+# `statistics.max_value` of its data page header, so a 1100-byte value makes the header longer than
+# the reader's initial 1024-byte peek.
+pq.write_table(pa.table({"moves": ["a", "b" * 1100]}), "core/src/test/resources/long_page_header_statistics.parquet",
+               compression="none", write_page_index=False)
+
+print("\nGenerated long_page_header_statistics.parquet:")
+print("  - 2 rows in one string column; the data page header carries an 1100-byte max_value bound")
+
 
 # ============================================================================
 # Variant logical type
