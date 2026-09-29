@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BatchFilterCompilerTest {
 
@@ -195,6 +196,7 @@ class BatchFilterCompilerTest {
         assertNotNull(result);
         assertEquals(1, result.length);
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+        assertTrue(result[0].requiresDictionaryIndices());
     }
 
     @Test
@@ -209,6 +211,7 @@ class BatchFilterCompilerTest {
         assertNotNull(result);
         assertEquals(1, result.length);
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+        assertTrue(result[0].requiresDictionaryIndices());
     }
 
     /// Every order a slice comparison implements is eligible, decimals included — the matcher takes
@@ -234,7 +237,27 @@ class BatchFilterCompilerTest {
 
                 assertNotNull(result, "no batch matcher for binary " + comparison + " " + op);
                 assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+                assertTrue(result[0].requiresDictionaryIndices());
             }
+        }
+    }
+
+    @Test
+    void sameColumnBinaryCompoundsPropagateDictionaryRetention() {
+        FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
+        ResolvedPredicate lower = new ResolvedPredicate.BinaryPredicate(
+                0, Operator.GT_EQ, new byte[]{'a'}, Comparison.BYTE_STRING);
+        ResolvedPredicate upper = new ResolvedPredicate.BinaryPredicate(
+                0, Operator.LT, new byte[]{'m'}, Comparison.BYTE_STRING);
+
+        for (ResolvedPredicate predicate : List.of(
+                new ResolvedPredicate.And(List.of(lower, upper)),
+                new ResolvedPredicate.Or(List.of(lower, upper)))) {
+            ColumnBatchMatcher[] result = compileMatchers(
+                    predicate, schema, IntUnaryOperator.identity());
+
+            assertNotNull(result);
+            assertTrue(result[0].requiresDictionaryIndices());
         }
     }
 

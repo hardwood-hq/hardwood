@@ -42,7 +42,7 @@ public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                if ((present & (1L << b)) != 0L && !equalsLiteral(bytes, offsets[i], offsets[i + 1])) {
+                if ((present & (1L << b)) != 0L && testValue(bytes, offsets[i], offsets[i + 1])) {
                     word |= 1L << b;
                 }
             }
@@ -50,11 +50,13 @@ public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {
         }
     }
 
-    /// Byte equality where the column holds a value as exactly one byte string, and the ordering
-    /// comparison where it does not — see [BinaryEqBatchMatcher].
-    private boolean equalsLiteral(byte[] bytes, int from, int to) {
-        return byteExact
+    /// Negates byte equality where the column holds a value as exactly one byte
+    /// string, and the ordering comparison where it does not — see
+    /// [BinaryEqBatchMatcher].
+    @Override
+    public boolean testValue(byte[] bytes, int from, int to) {
+        return !(byteExact
                 ? BinaryComparator.sliceEquals(bytes, from, to, literal)
-                : BinaryComparator.compare(bytes, from, to, literal, signed) == 0;
+                : BinaryComparator.compare(bytes, from, to, literal, signed) == 0);
     }
 }

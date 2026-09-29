@@ -10,6 +10,9 @@ package dev.hardwood.reader;
 import java.io.Closeable;
 import java.io.IOException;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
@@ -72,14 +75,23 @@ final class ColumnScan implements Closeable {
                 : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
         ProjectedSchema decoded = projection.decoded();
         int columnCount = decoded.getProjectedColumnCount();
+        CompiledBatchFilter compiled = filter == null
+                ? null
+                : BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
+        ColumnBatchMatcher[] matchers =
+                compiled == null ? null : compiled.columnMatchers();
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
+            boolean retainDictionaryIndices = matchers != null
+                    && matchers[i] != null
+                    && matchers[i].requiresDictionaryIndices();
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
+                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode,
+                    retainDictionaryIndices);
         }
         SelectionEngine engine = filter == null
                 ? null
-                : SelectionEngine.create(schema, decoded, filter, cursors, batchSize);
+                : SelectionEngine.create(schema, decoded, filter, compiled, cursors, batchSize);
         return new ColumnScan(cursors, projection.payloadColumnCount(), engine, rowGroupIterator);
     }
 

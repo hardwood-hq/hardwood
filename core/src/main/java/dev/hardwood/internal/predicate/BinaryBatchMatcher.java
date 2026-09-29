@@ -20,4 +20,10 @@ package dev.hardwood.internal.predicate;
 /// The literal's [ResolvedPredicate.BinaryPredicate.Comparison] decides both the order the bytes
 /// compare in and whether equality may be byte equality; implementations take it at construction.
 public non-sealed interface BinaryBatchMatcher extends ColumnBatchMatcher {
+
+    /// Tests one non-null value in `bytes[from, to)` with the same semantics as
+    /// [#test]. Dictionary-aware evaluation uses this operation once per
+    /// referenced entry; rows without a dictionary entry use it on their packed
+    /// batch slice.
+    boolean testValue(byte[] bytes, int from, int to);
 }

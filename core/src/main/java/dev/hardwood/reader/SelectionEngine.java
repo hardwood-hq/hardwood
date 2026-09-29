@@ -87,14 +87,13 @@ final class SelectionEngine {
 
     /// Builds an engine for `resolved` over the decoded projection, reading
     /// predicate values from the current batches of `cursorsByProjectedIndex` (indexed
-    /// by the decoded column index).
+    /// by the decoded column index). `compiled` is resolved before cursor
+    /// allocation so dictionary-aware matchers can request retained entry IDs.
     static SelectionEngine create(FileSchema schema, ProjectedSchema decoded,
-                                  ResolvedPredicate resolved,
+                                  ResolvedPredicate resolved, CompiledBatchFilter compiled,
                                   ColumnCursor[] cursorsByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
-        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, decoded::toProjectedIndex);
 
         if (compiled != null) {
             // Owning mode: no column workers ran the matchers, so the merger runs

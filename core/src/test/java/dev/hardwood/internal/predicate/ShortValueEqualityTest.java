@@ -170,7 +170,8 @@ class ShortValueEqualityTest {
     private static ColumnBatchMatcher compile(ResolvedPredicate predicate, FileSchema schema) {
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity());
         assertThat(compiled).isNotNull();
-        return compiled.columnMatchers()[0];
+        assertThat(compiled.columnMatchers()[0]).isInstanceOf(DictionaryBinaryBatchMatcher.class);
+        return ((DictionaryBinaryBatchMatcher) compiled.columnMatchers()[0]).delegate();
     }
 
     private interface RowTest {
