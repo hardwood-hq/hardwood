@@ -13,6 +13,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -46,6 +47,7 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
@@ -60,6 +62,10 @@ class UnreadableSortOrderTest {
 
     @TempDir
     Path tempDir;
+
+    private static final String UNREADABLE_BOUNDS_WARNING = "Ignoring the min/max statistics of every "
+            + "row group and page for pruning: the order they were written in is one this reader cannot "
+            + "read. Rows they could have skipped are read and filtered instead.";
 
     @RegisterExtension
     final CapturedWarnings warnings = new CapturedWarnings();
@@ -211,6 +217,45 @@ class UnreadableSortOrderTest {
                 RowReader rows = reader.buildRowReader().filter(FilterPredicate.eq("g", bytes("M"))).build()) {
             assertThat(values(rows)).containsExactly(1, 2);
         }
+        assertThat(warnings.messages()).containsExactly(
+                "[g-then-v.parquet: column 'g'] " + UNREADABLE_BOUNDS_WARNING,
+                "[v-then-g.parquet: column 'g'] " + UNREADABLE_BOUNDS_WARNING);
+    }
+
+    /// An order this reader cannot read is a property of the column throughout the file, so an
+    /// opened file reports it once for the column, not once per row group and page its reads
+    /// prune. The fixture holds four row groups of `INTERVAL` bounds with a page index. Two reads
+    /// through one reader report it once; the same file opened again reports it again.
+    @Test
+    void unreadableBoundsAreReportedOncePerColumnAndOpenedFile() throws Exception {
+        Path file = Paths.get("src/test/resources/predicate/predicate_opaque_dict.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(4);
+            assertThat(countIntervalMatches(reader)).isEqualTo(1);
+            assertThat(countIntervalMatches(reader)).isEqualTo(1);
+        }
+        assertThat(warnings.messages()).containsExactly(
+                "[predicate_opaque_dict.parquet: column 'iv'] " + UNREADABLE_BOUNDS_WARNING);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(countIntervalMatches(reader)).isEqualTo(1);
+        }
+        assertThat(warnings.messages()).containsExactly(
+                "[predicate_opaque_dict.parquet: column 'iv'] " + UNREADABLE_BOUNDS_WARNING,
+                "[predicate_opaque_dict.parquet: column 'iv'] " + UNREADABLE_BOUNDS_WARNING);
+    }
+
+    private static long countIntervalMatches(ParquetFileReader reader) throws IOException {
+        FilterPredicate onInterval = FilterPredicate.eq("iv", new PqInterval(200 % 13, 200 % 29, 200 * 1000));
+        try (RowReader rows = reader.buildRowReader().filter(onInterval).build()) {
+            long matched = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                matched++;
+            }
+            return matched;
+        }
     }
 
     /// The ordered column of the same pair is readable in both files, so nothing is reported
@@ -249,9 +294,7 @@ class UnreadableSortOrderTest {
                 "Ignoring 1 logical type annotation(s) the column's physical type cannot carry; those "
                         + "columns are read as their physical type: ts (TIMESTAMP over a FIXED_LEN_BYTE_ARRAY "
                         + "is 12 bytes, but the column declares 16)",
-                "[dropped-timestamp.parquet: row group 0, column 'ts'] Ignoring the min/max statistics "
-                        + "for pruning: the order they were written in is one this reader cannot read. "
-                        + "Rows they could have skipped are read and filtered instead.");
+                "[dropped-timestamp.parquet: column 'ts'] " + UNREADABLE_BOUNDS_WARNING);
     }
 
     /// The column reader plans its row groups through the same bounds.
@@ -293,9 +336,7 @@ class UnreadableSortOrderTest {
                 "Ignoring unrecognized LogicalType union field 20; the column will be read as its "
                         + "physical type. The file may have been written against a newer version of the "
                         + "format.",
-                "[unrecognized-type.parquet: row group 0, column 'ts'] Ignoring the min/max statistics "
-                        + "for pruning: the order they were written in is one this reader cannot read. "
-                        + "Rows they could have skipped are read and filtered instead.");
+                "[unrecognized-type.parquet: column 'ts'] " + UNREADABLE_BOUNDS_WARNING);
     }
 
     /// The unannotated column beside a leaf of unrecognized logical type keeps its bounds.

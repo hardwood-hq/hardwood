@@ -117,7 +117,7 @@ class MinMaxStatsTest {
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
-        stats.reportIfDiscarded(chunk());
+        stats.reportIfDiscarded(chunk(), BoundsReadability.ALL, 0);
 
         assertThat(warnings.messages()).containsExactly(
                 "[orders.parquet: row group 3, column 'order.price'] Ignoring the min/max "
@@ -130,7 +130,7 @@ class MinMaxStatsTest {
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
-        stats.reportIfDiscarded(chunk().withPageIndex(7));
+        stats.reportIfDiscarded(chunk().withPageIndex(7), BoundsReadability.ALL, 0);
 
         assertThat(warnings.messages()).singleElement().asString()
                 .startsWith("[orders.parquet: row group 3, column 'order.price', page 7] ");
@@ -141,19 +141,19 @@ class MinMaxStatsTest {
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(10), intBytes(20), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
 
-        stats.reportIfDiscarded(chunk());
+        stats.reportIfDiscarded(chunk(), BoundsReadability.ALL, 0);
 
         assertThat(warnings.messages()).isEmpty();
     }
 
     @Test
-    void everyDiscardIsReported() {
-        // Repeats are not collapsed: statistics that will not compare are rare, and a reader
-        // who finds the volume unhelpful can raise the level on this logger.
+    void everyDiscardOfAUnitsOwnPairIsReported() {
+        // An inverted pair is a fault of each unit's own statistics, so repeats are not collapsed,
+        // as they are for a column whose bounds are unreadable throughout the file.
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(20), intBytes(10), 0L, null, false), GT_MINUS_FIVE, BoundsReadability.ALL);
-        stats.reportIfDiscarded(chunk().withPageIndex(0));
-        stats.reportIfDiscarded(chunk().withPageIndex(1));
+        stats.reportIfDiscarded(chunk().withPageIndex(0), BoundsReadability.ALL, 0);
+        stats.reportIfDiscarded(chunk().withPageIndex(1), BoundsReadability.ALL, 0);
 
         assertThat(warnings.messages()).hasSize(2);
     }

@@ -41,6 +41,12 @@ public record LogContext(String fileName, int rowGroupIndex, FieldPath columnPat
         return new LogContext(fileName, rowGroupIndex, columnPath, pageIndex);
     }
 
+    /// The same column, throughout the file rather than in one row group or page of it.
+    public LogContext throughoutFile() {
+        return new LogContext(fileName, ExceptionContext.UNKNOWN_ROW_GROUP, columnPath,
+                ExceptionContext.UNKNOWN_PAGE);
+    }
+
     /// The `[file: row group N, column 'X', page P] ` prefix for this position, dropping
     /// whichever parts are unknown, as the read pipeline marks its failures.
     String prefix() {

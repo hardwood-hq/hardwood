@@ -62,7 +62,7 @@ A pair the filter layer cannot compare against never becomes a typed variant. It
 | `INVERTED` | `min` sorts above `max` in the column's order |
 | `NOT_THE_COLUMN_WIDTH` | a `FIXED_LEN_BYTE_ARRAY(12)` timestamp bound of another width |
 
-A discarded pair is reported per unit through `reportIfDiscarded`, naming the file, row group, column and page. Deciding usability where the bounds are sourced keeps every comparator free of the question.
+A discard is reported through `reportIfDiscarded`. A pair discarded for a fault of its own is reported per unit, naming the file, row group, column and page. `UNKNOWN_SORT_ORDER` holds for the column throughout the file, so it is reported once per column and read, naming the file and column (see below). Deciding usability where the bounds are sourced keeps every comparator free of the question.
 
 An unsigned integer column (`INT(bitWidth, isSigned = false)`) biases bounds and literal by `Integer.MIN_VALUE` / `Long.MIN_VALUE` before the signed comparisons, the same reordering the writer applies when it records them; `IN` probes compare with `compareUnsigned` in place. A binary column compares in the order its `Comparison` names, so a signed decimal is not read as an inverted pair.
 
@@ -152,6 +152,8 @@ Comparing a literal against `min`/`max` is sound only in the order the bounds we
 - the reader dropped the column's annotation, because this build does not recognize it or the physical type cannot carry it. The column reads as its physical type, but the writer ordered the bounds by the annotation.
 
 Readability is a property of the file that wrote the bounds. `BoundsReadability.of(schema, footer)` is built once per file when the file is prepared (`FileMetadataCache`), indexed by that file's own leaf ordinals, and carried on `FileColumnOrdinals` beside the predicate translated to the same ordinals. An ordinal outside the file's schema is a wiring error and throws `IllegalStateException`.
+
+The readability also records which unreadable columns have been reported. `claimReport` grants one report per column, so an opened file names each unreadable column once, however many row groups and pages its reads prune.
 
 `MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` then passes `BoundsReadability.ALL`. Untested.
 

@@ -77,14 +77,28 @@ sealed interface MinMaxStats {
     /// Reporting only; the discard itself already took effect when the unit was sourced, since
     /// unusable bounds become [NoBounds], which drops nothing.
     ///
-    /// Every discard is reported, with no attempt to collapse repeats. Statistics that will
-    /// not compare are rare, and a reader who finds the volume unhelpful can raise the level
-    /// on this logger — neither is worth carrying state through the evaluators to pre-empt.
+    /// Bounds in an order this reader cannot read ([#UNKNOWN_SORT_ORDER]) are unreadable in every
+    /// unit of the column, so their discard names the column throughout the file and is reported
+    /// only where `readability` grants the claim, once per column of an opened file
+    /// ([BoundsReadability#claimReport]). Every other discard is a fault of this unit's own pair, and is
+    /// reported for each unit with no attempt to collapse repeats. Such pairs are rare, and a
+    /// reader who finds the volume unhelpful can raise the level on this logger.
     ///
     /// @param logContext where these statistics were read from, for the message to name
-    default void reportIfDiscarded(LogContext logContext) {
+    /// @param readability the readability the unit was sourced under
+    /// @param columnIndex the leaf column these statistics belong to
+    default void reportIfDiscarded(LogContext logContext, BoundsReadability readability, int columnIndex) {
         String discardReason = discardReason();
         if (discardReason == null) {
+            return;
+        }
+        if (discardReason.equals(UNKNOWN_SORT_ORDER)) {
+            if (readability.claimReport(columnIndex)) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "{0}Ignoring the min/max statistics of every row group and page for pruning: {1}. "
+                                + "Rows they could have skipped are read and filtered instead.",
+                        logContext.throughoutFile().prefix(), discardReason);
+            }
             return;
         }
         LOG.log(System.Logger.Level.WARNING,

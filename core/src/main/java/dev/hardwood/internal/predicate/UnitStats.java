@@ -51,6 +51,9 @@ sealed interface UnitStats {
     /// Narrows `enclosing`, the position of whatever holds this unit, to the unit itself.
     LogContext locate(LogContext enclosing);
 
+    /// Which of the file's columns carry bounds in an order this reader can read.
+    BoundsReadability readability();
+
     /// What this unit's statistics prove about one leaf predicate.
     ///
     /// A null predicate on a group that a definition level separates from the leaf — an optional
@@ -124,7 +127,7 @@ sealed interface UnitStats {
             return FilterDecision.CANNOT_MATCH;
         }
         MinMaxStats minMax = minMax(leaf);
-        minMax.reportIfDiscarded(locate(logContext));
+        minMax.reportIfDiscarded(locate(logContext), readability(), ResolvedPredicate.leafColumnIndex(leaf));
         return minMax.decideLeaf(leaf, nulls.noNulls());
     }
 

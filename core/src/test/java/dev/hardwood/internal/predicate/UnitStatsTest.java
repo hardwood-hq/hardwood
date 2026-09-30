@@ -23,15 +23,18 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate.Operator;
+import dev.hardwood.schema.FileSchema;
 
 import static dev.hardwood.internal.predicate.FilterDecision.ALWAYS_MATCHES;
 import static dev.hardwood.internal.predicate.FilterDecision.CANNOT_MATCH;
@@ -191,7 +194,11 @@ class UnitStatsTest {
         // (#1179). The null count needs no ordering, so the unit still answers a null predicate
         // from it, and only the value predicate is left undecided.
         RowGroup rowGroup = new RowGroup(List.of(chunkWith(0L, null)), 1000, ROWS);
-        UnitStats unreadable = UnitStats.ChunkStats.of(rowGroup, 0, columnIndex -> false);
+        // An INT32 column under a column order this build does not recognize.
+        BoundsReadability readability = BoundsReadability.of(
+                FileSchema.builder("s").addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED).build(),
+                List.of(ColumnOrder.UNKNOWN), ordinal -> false);
+        UnitStats unreadable = UnitStats.ChunkStats.of(rowGroup, 0, readability);
 
         assertThat(unreadable.decide(new ResolvedPredicate.IsNotNullPredicate(0, 1), UNNAMED))
                 .isEqualTo(ALWAYS_MATCHES);
