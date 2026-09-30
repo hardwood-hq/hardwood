@@ -14,14 +14,16 @@ Related documents:
 
 ## Flat and nested readers
 
-`ParquetFileReader.createRowReader` builds one of two readers:
+`ParquetFileReader.createRowReader` builds one of two readers from the decoded projection, resolved against the reference schema (the first file's, in a multi-file read). The decoded projection is the columns the read exposes plus any column the predicate references and the projection does not:
 
-| Schema | Reader | Accessors served by |
+| Decoded projection | Reader | Accessors served by |
 |---|---|---|
-| `FileSchema.isFlatSchema()`: every top-level field is a primitive and no column has a repetition level above zero | `FlatRowReader` | Typed arrays of the current batch, read directly |
+| Every column has `maxRepetitionLevel == 0`, and every top-level field is a primitive | `FlatRowReader` | Typed arrays of the current batch, read directly |
 | Anything else | `NestedRowReader` | `NestedBatchDataView` over a `NestedBatchIndex`, and flyweights for nested values |
 
-The test is asked of the file schema (the first file's, in a multi-file read), not of the projection. Projecting only primitive top-level columns from a file that has a struct anywhere yields a `NestedRowReader`.
+Both clauses are required. An unannotated repeated primitive is a top-level primitive whose column still has a repetition level above zero. A non-repeated leaf under a group, such as `account.id`, has repetition level zero and still fails the primitive-field clause, because flat accessors address a column by its leaf name and report leaf columns where the nested reader reports top-level fields.
+
+A file that contains a struct or a repeated column reads through `FlatRowReader` when the decoded projection leaves those columns out. A scalar payload filtered on a list or a struct stays on `NestedRowReader`: `FlatRowReader.create` builds a `FlatColumnWorker` for every decoded column, and its predicate view reads flat batches. `FileSchema.isFlatSchema()` stays the file-wide test.
 
 Both are `final`, implement `RowReader` through the internal `FileAwareRowReader`, and share no base class, though their iteration code is similar. `FlatRowReader` keeps every hot method in one concrete class so the JIT sees monomorphic call sites and inlines `hasNext`, `next` and the primitive accessors into the caller's loop; a base class carrying the nested path's delegation would put that indirection on the flat path. A change that pulls shared behaviour up into a superclass needs that trade-off argued again.
 
@@ -152,6 +154,6 @@ Tests: `ParquetReaderTest`, `BuilderCombinationTest`, `MultiFilePlanningTest`, `
 - **`tail` over several files.** Rejected at `build()` with `UnsupportedOperationException`; the tail plan and its mask probe are single-file.
 - **`tail` with a filter (#542).** Rejected at `build()`; see [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation).
 - **Row-layer overhead (#1045).** Reading a file through `RowReader` costs measurably more CPU and allocation than reading the same columns through `ColumnReaders`.
-- **Reader choice per file (#732).** The flat/nested choice is made from the file schema, so one repeated or group column puts every column of the read on the nested path, projected or not.
+- **Reader choice per file (#732).** The flat/nested choice is one decision for the read, taken from the decoded projection against the reference schema. A decoded column that repeats, or whose top-level field is a group, puts every column of that read on the nested path. A column neither projected nor referenced by the predicate does not.
 - **File name in nested caller-mistake messages (#1156).** `TopLevelFieldMap` and the nested flyweights raise their caller-mistake messages without the file name, which in a multi-file read leaves the file unidentified.
 - **Forward-only.** A `RowReader` has no backward step, reset or reposition; a new position is a new reader.
