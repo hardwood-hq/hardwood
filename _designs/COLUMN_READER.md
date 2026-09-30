@@ -1,6 +1,15 @@
 # Column reader
 
-What `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed offsets, the `Validity` bitmap, fixed-width and variable-length leaf values, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline. How pages become published batches (row-group iteration, `PageSource`, `ColumnWorker`, `BatchExchange`, threading, batch sizing, `ReaderConfig`) is in [READ_PIPELINE.md](READ_PIPELINE.md); how definition and repetition levels become nested batches (index modes, the drain-side real view, bulk copy, the fixed-size-list fast path) is in [NESTED_DECODE.md](NESTED_DECODE.md); value decoders and dictionaries are in [VALUE_DECODE.md](VALUE_DECODE.md); exact filtering on the column readers (selection and compaction) is in [RECORD_FILTERING.md](RECORD_FILTERING.md). The row readers are in [ROW_READER.md](ROW_READER.md). User-facing semantics are in [docs/content/how-to/column-reader.md](../docs/content/how-to/column-reader.md), [docs/content/concepts/nested-columns.md](../docs/content/concepts/nested-columns.md) and [docs/content/concepts/reader-models.md](../docs/content/concepts/reader-models.md).
+Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed offsets, the `Validity` bitmap, fixed-width and variable-length leaf values, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
+
+Related documents:
+
+- [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (row-group iteration, `PageSource`, `ColumnWorker`, `BatchExchange`, threading, batch sizing, `ReaderConfig`)
+- [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (index modes, the drain-side real view, bulk copy, the fixed-size-list fast path)
+- [VALUE_DECODE.md](VALUE_DECODE.md): value decoders and dictionaries
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): exact filtering on the column readers (selection and compaction)
+- [ROW_READER.md](ROW_READER.md): the row readers
+- [docs/content/how-to/column-reader.md](../docs/content/how-to/column-reader.md), [docs/content/concepts/nested-columns.md](../docs/content/concepts/nested-columns.md) and [docs/content/concepts/reader-models.md](../docs/content/concepts/reader-models.md): user-facing semantics
 
 ## Batch model and layers
 

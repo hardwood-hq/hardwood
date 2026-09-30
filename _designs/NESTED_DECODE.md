@@ -1,6 +1,15 @@
 # Nested decode
 
-How the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding and its pooled scratch, the drain's per-batch assembly, what each `IndexMode` derives, the real-items view built on the drain, and the two fast paths that skip per-element work (the all-present page bulk copy and the fixed-size-list fast path). The worker pipeline, threading, reorder buffer and batch sizing are in [READ_PIPELINE.md](READ_PIPELINE.md); what `ColumnReader` exposes (layers, offsets, `Validity`, variable-length leaves, the cursor and scan) is in [COLUMN_READER.md](COLUMN_READER.md); how `NestedRowReader` reads the all-items batch is in [ROW_READER.md](ROW_READER.md); value decoders, dictionaries and leaf kinds are in [VALUE_DECODE.md](VALUE_DECODE.md). Record selection on a filtered column read is in [RECORD_FILTERING.md](RECORD_FILTERING.md). The user-facing layer model is in [docs/content/concepts/nested-columns.md](../docs/content/concepts/nested-columns.md).
+Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding and its pooled scratch, the drain's per-batch assembly, what each `IndexMode` derives, the real-items view built on the drain, and the two fast paths that skip per-element work (the all-present page bulk copy and the fixed-size-list fast path).
+
+Related documents:
+
+- [READ_PIPELINE.md](READ_PIPELINE.md): the worker pipeline, threading, reorder buffer and batch sizing
+- [COLUMN_READER.md](COLUMN_READER.md): what `ColumnReader` exposes (layers, offsets, `Validity`, variable-length leaves, the cursor and scan)
+- [ROW_READER.md](ROW_READER.md): how `NestedRowReader` reads the all-items batch
+- [VALUE_DECODE.md](VALUE_DECODE.md): value decoders, dictionaries and leaf kinds
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): record selection on a filtered column read
+- [docs/content/concepts/nested-columns.md](../docs/content/concepts/nested-columns.md): the user-facing layer model
 
 ## Which columns are nested
 

@@ -1,6 +1,12 @@
 # Predicate model
 
-This document covers the public `FilterPredicate`, the rule that decides which predicates a column takes and which rows they match, the resolution into the internal `ResolvedPredicate` tree that every evaluator reads, and the translation of parquet-java `filter2` predicates in `parquet-java-compat`. How metadata decides whether a row group or page can match is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md), and how the readers evaluate a resolved predicate row by row is in [RECORD_FILTERING.md](RECORD_FILTERING.md). The user-facing statement of the rule, with its examples and per-type prose, is [reference/query-controls.md](../docs/content/reference/query-controls.md).
+Covers the public `FilterPredicate`, the rule that decides which predicates a column takes and which rows they match, the resolution into the internal `ResolvedPredicate` tree that every evaluator reads, and the translation of parquet-java `filter2` predicates in `parquet-java-compat`.
+
+Related documents:
+
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): how metadata decides whether a row group or page can match
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): how the readers evaluate a resolved predicate row by row
+- [docs/content/reference/query-controls.md](../docs/content/reference/query-controls.md): the user-facing statement of the rule, with its examples and per-type prose
 
 ## Surface
 

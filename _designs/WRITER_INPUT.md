@@ -1,6 +1,15 @@
 # Writer input
 
-How values enter the writer: the schema builder and which schema shapes the writer can produce, the `ColumnBatch` contract (column-by-column input, nulls, nested layers and the rules a batch must satisfy), the shredding of that input into repetition and definition levels, which logical-type annotations are legal on which physical types and the value ranges they impose, and the row-oriented `RowWriter` layered over the columnar path. The write model, `OutputFile`, row-group lifecycle and threading are in [WRITER.md](WRITER.md); page and chunk layout, dictionary selection, codecs and statistics are in [WRITER_ENCODING.md](WRITER_ENCODING.md); the interop gate and coverage assertion are in [WRITER_VALIDATION.md](WRITER_VALIDATION.md). The annotation model, including how an annotation is emitted as both `LogicalType` and `converted_type`, is in [LOGICAL_TYPES.md](LOGICAL_TYPES.md); the read-side inverse of shredding is in [NESTED_DECODE.md](NESTED_DECODE.md). User-facing semantics are in [docs/content/how-to/write-column-by-column.md](../docs/content/how-to/write-column-by-column.md), [docs/content/how-to/write-row-by-row.md](../docs/content/how-to/write-row-by-row.md) and [docs/content/reference/writer.md](../docs/content/reference/writer.md).
+Describes how values enter the writer: the schema builder and which schema shapes the writer can produce, the `ColumnBatch` contract (column-by-column input, nulls, nested layers and the rules a batch must satisfy), the shredding of that input into repetition and definition levels, which logical-type annotations are legal on which physical types and the value ranges they impose, and the row-oriented `RowWriter` layered over the columnar path.
+
+Related documents:
+
+- [WRITER.md](WRITER.md): the write model, `OutputFile`, row-group lifecycle and threading
+- [WRITER_ENCODING.md](WRITER_ENCODING.md): page and chunk layout, dictionary selection, codecs and statistics
+- [WRITER_VALIDATION.md](WRITER_VALIDATION.md): the interop gate and coverage assertion
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): the annotation model, including how an annotation is emitted as both `LogicalType` and `converted_type`
+- [NESTED_DECODE.md](NESTED_DECODE.md): the read-side inverse of shredding
+- [docs/content/how-to/write-column-by-column.md](../docs/content/how-to/write-column-by-column.md), [docs/content/how-to/write-row-by-row.md](../docs/content/how-to/write-row-by-row.md) and [docs/content/reference/writer.md](../docs/content/reference/writer.md): user-facing semantics
 
 ## Schema construction
 

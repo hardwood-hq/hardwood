@@ -1,6 +1,16 @@
 # File metadata
 
-How the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, and the per-file cache that holds each parsed footer for one `ParquetFileReader`. It does not cover which byte ranges a read fetches, including the page-index and bloom-filter slices ([FETCH_PLANNING.md](FETCH_PLANNING.md)), how the `InputFile` backends serve a range ([INPUT_FILES.md](INPUT_FILES.md), [S3_STORAGE.md](S3_STORAGE.md)), what pruning concludes from the parsed statistics ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)), or the exception types and how a failure is placed in the file ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md)). How the read pipeline plans files and prefetches the next footer is in [READ_PIPELINE.md](READ_PIPELINE.md). The user-facing pages are [metadata.md](../docs/content/how-to/metadata.md), [error-handling.md](../docs/content/reference/error-handling.md) and [parquet-layout.md](../docs/content/concepts/parquet-layout.md).
+Describes how the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, and the per-file cache that holds each parsed footer for one `ParquetFileReader`.
+
+Related documents:
+
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): which byte ranges a read fetches, including the page-index and bloom-filter slices
+- [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract and how the mapped and in-memory backends serve a range
+- [S3_STORAGE.md](S3_STORAGE.md): how the S3 backend serves a range
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): what pruning concludes from the parsed statistics
+- [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md): the exception types and how a failure is placed in the file
+- [READ_PIPELINE.md](READ_PIPELINE.md): how the read pipeline plans files and prefetches the next footer
+- [docs/content/how-to/metadata.md](../docs/content/how-to/metadata.md), [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md) and [docs/content/concepts/parquet-layout.md](../docs/content/concepts/parquet-layout.md): the user-facing pages
 
 ## Footer read
 

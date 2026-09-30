@@ -1,6 +1,13 @@
 # Build infrastructure
 
-This document covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM. It does not cover the test suites and how they are split between Surefire and Failsafe ([TESTING.md](../TESTING.md)), the performance tests ([PERFORMANCE.md](../PERFORMANCE.md)), the GraalVM native CLI build ([NATIVE_BUILD.md](../NATIVE_BUILD.md)), or the documentation site, the prose check and the API change reports ([DOCUMENTATION.md](DOCUMENTATION.md)).
+Covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM.
+
+Related documents:
+
+- [TESTING.md](../TESTING.md): the test suites and how they are split between Surefire and Failsafe
+- [PERFORMANCE.md](../PERFORMANCE.md): the performance tests
+- [NATIVE_BUILD.md](../NATIVE_BUILD.md): the GraalVM native CLI build
+- [DOCUMENTATION.md](DOCUMENTATION.md): the documentation site, the prose check and the API change reports
 
 ## Module layout
 

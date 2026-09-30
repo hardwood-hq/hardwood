@@ -1,6 +1,6 @@
 # Avro binding
 
-How the `hardwood-avro` module reads Parquet rows as Avro `GenericRecord`s: its public surface, the mapping from a Parquet schema to an Avro schema, the decode plan that carries every per-value decision from the Parquet schema to materialization, and how Parquet names become legal, unique Avro names.
+Describes how the `hardwood-avro` module reads Parquet rows as Avro `GenericRecord`s: its public surface, the mapping from a Parquet schema to an Avro schema, the decode plan that carries every per-value decision from the Parquet schema to materialization, and how Parquet names become legal, unique Avro names.
 
 Related documents:
 

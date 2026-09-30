@@ -1,6 +1,14 @@
 # Fetch planning
 
-Which bytes a read requests from its `InputFile`, and in which requests: the fetch sequence per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages, chunk handles and their prefetch, cross-column coalescing, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to. The `InputFile` contract and what a `readRange` costs on each backend are in [INPUT_FILES.md](INPUT_FILES.md) and [S3_STORAGE.md](S3_STORAGE.md); parsing the footer and the page index is in [FILE_METADATA.md](FILE_METADATA.md). How the pipeline drains the plans (`PageSource`, `ColumnWorker`, the work list, row-group transitions) is in [READ_PIPELINE.md](READ_PIPELINE.md), and the CANNOT/MIGHT/ALWAYS decisions that choose rows and pages are in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md).
+Describes which bytes a read requests from its `InputFile`, and in which requests: the fetch sequence per file and per row group, the gap policy every merge applies, the fetch plans that locate a column's pages, chunk handles and their prefetch, cross-column coalescing, per-page row masks and the gate that allows them, row limits on the fetch side, and the I/O budget tests hold reads to.
+
+Related documents:
+
+- [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract and what a `readRange` costs on the mapped and in-memory backends
+- [S3_STORAGE.md](S3_STORAGE.md): the S3 backend and what a `readRange` costs there
+- [FILE_METADATA.md](FILE_METADATA.md): parsing the footer and the page index
+- [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline drains the plans (`PageSource`, `ColumnWorker`, the work list, row-group transitions)
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decisions that choose rows and pages
 
 ## Fetch sequence
 

@@ -1,6 +1,12 @@
 # Dive UI rules
 
-The rules every pane of the `hardwood dive` TUI follows: how content is styled, how the navigation keys and the `▶` marker behave, and how list-shaped screens bound per-keystroke work to the viewport. A new screen, pane or modal is reviewed against these three sections. The screen stack, the state/handler/render split, `ParquetModel` and the data preview's `PreviewWindow` are in [DIVE_ARCHITECTURE.md](DIVE_ARCHITECTURE.md); how values and figures are spelled is in [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md). The user-facing keys are listed in [the `dive` section of the CLI reference](../docs/content/reference/cli.md#interactive-exploration-dive).
+States the rules every pane of the `hardwood dive` TUI follows: how content is styled, how the navigation keys and the `▶` marker behave, and how list-shaped screens bound per-keystroke work to the viewport. A new screen, pane or modal is reviewed against these three sections.
+
+Related documents:
+
+- [DIVE_ARCHITECTURE.md](DIVE_ARCHITECTURE.md): the screen stack, the state/handler/render split, `ParquetModel` and the data preview's `PreviewWindow`
+- [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md): how values and figures are spelled
+- [docs/content/reference/cli.md](../docs/content/reference/cli.md#interactive-exploration-dive): the user-facing keys
 
 All classes named here live in `dev.hardwood.cli.dive.internal`.
 

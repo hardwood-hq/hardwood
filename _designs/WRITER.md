@@ -1,6 +1,14 @@
 # Writer
 
-How the writer turns caller data into a Parquet file: the forward-only write model, the `OutputFile` sink and its publish/discard contract, the writer's lifecycle on failure, the components and where they live, how row groups are accumulated, sized and flushed, what bounds the writer's memory, what the footer carries, and the threading model. What the caller hands the writer (the schema builder, the `ColumnBatch` contract, shredding, annotation ranges, the `RowWriter` layer) is in [WRITER_INPUT.md](WRITER_INPUT.md); how a buffered column chunk becomes pages (page layout and cuts, the `AUTO` dictionary decision and its probes, named encoding policies, codecs, statistics) is in [WRITER_ENCODING.md](WRITER_ENCODING.md); how produced files are checked against independent readers is in [WRITER_VALIDATION.md](WRITER_VALIDATION.md). The user-facing account of the same model is [write-model.md](../docs/content/concepts/write-model.md), and the options and rejections are listed in [writer.md](../docs/content/reference/writer.md).
+Describes how the writer turns caller data into a Parquet file: the forward-only write model, the `OutputFile` sink and its publish/discard contract, the writer's lifecycle on failure, the components and where they live, how row groups are accumulated, sized and flushed, what bounds the writer's memory, what the footer carries, and the threading model.
+
+Related documents:
+
+- [WRITER_INPUT.md](WRITER_INPUT.md): what the caller hands the writer (the schema builder, the `ColumnBatch` contract, shredding, annotation ranges, the `RowWriter` layer)
+- [WRITER_ENCODING.md](WRITER_ENCODING.md): how a buffered column chunk becomes pages (page layout and cuts, the `AUTO` dictionary decision and its probes, named encoding policies, codecs, statistics)
+- [WRITER_VALIDATION.md](WRITER_VALIDATION.md): how produced files are checked against independent readers
+- [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing account of the same model
+- [docs/content/reference/writer.md](../docs/content/reference/writer.md): the options and rejections
 
 ## Write model
 

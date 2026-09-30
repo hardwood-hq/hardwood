@@ -1,6 +1,13 @@
 # S3 Storage
 
-This document covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind. The `InputFile` contract every backend implements, including ownership and the local mapped and in-memory backends, is in [INPUT_FILES.md](INPUT_FILES.md). Which byte ranges a read asks for, how they are coalesced and prefetched, is in [FETCH_PLANNING.md](FETCH_PLANNING.md); how the footer bytes are parsed and cached is in [FILE_METADATA.md](FILE_METADATA.md). User-facing configuration is documented in [Reading from S3](../docs/content/how-to/s3.md) and the [S3 reference](../docs/content/reference/s3.md).
+Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+
+Related documents:
+
+- [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract every backend implements, including ownership and the local mapped and in-memory backends
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): which byte ranges a read asks for, how they are coalesced and prefetched
+- [FILE_METADATA.md](FILE_METADATA.md): how the footer bytes are parsed and cached
+- [docs/content/how-to/s3.md](../docs/content/how-to/s3.md) and [docs/content/reference/s3.md](../docs/content/reference/s3.md): user-facing configuration
 
 ## Module boundary
 

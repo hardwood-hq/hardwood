@@ -1,6 +1,12 @@
 # Dive architecture
 
-How `hardwood dive`, the interactive terminal UI in the `cli` module, is put together: the navigation stack of screen states, the split between state records, key handlers and renderers, the `ParquetModel` that owns the open file and its caches, the Data preview row window, the guard that turns a failed read into an overlay, and the test layers. The visual tiers, the navigation keys and `▶`, the `CursorPane`/`ScrollPane` panes and viewport virtualization with `RowWindow` are in [DIVE_UI_RULES.md](DIVE_UI_RULES.md); how values and figures are spelled on every screen is in [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md). Screens, keys and user-visible behaviour are listed in [docs/content/reference/cli.md](../docs/content/reference/cli.md#interactive-exploration-dive).
+Describes how `hardwood dive`, the interactive terminal UI in the `cli` module, is put together: the navigation stack of screen states, the split between state records, key handlers and renderers, the `ParquetModel` that owns the open file and its caches, the Data preview row window, the guard that turns a failed read into an overlay, and the test layers.
+
+Related documents:
+
+- [DIVE_UI_RULES.md](DIVE_UI_RULES.md): the visual tiers, the navigation keys and `▶`, the `CursorPane`/`ScrollPane` panes and viewport virtualization with `RowWindow`
+- [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md): how values and figures are spelled on every screen
+- [docs/content/reference/cli.md](../docs/content/reference/cli.md#interactive-exploration-dive): screens, keys and user-visible behaviour
 
 ## Structure
 

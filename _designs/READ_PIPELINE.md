@@ -1,6 +1,16 @@
 # Read pipeline
 
-How a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the threads that run it, back-pressure, batch sizing, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`. Which bytes a read requests and how they are fetched (fetch plans, chunk handles, coalescing, page masks) is in [FETCH_PLANNING.md](FETCH_PLANNING.md); what a batch holds and how a reader exposes it is in [COLUMN_READER.md](COLUMN_READER.md) and [ROW_READER.md](ROW_READER.md); how pages become values and nested batches is in [VALUE_DECODE.md](VALUE_DECODE.md) and [NESTED_DECODE.md](NESTED_DECODE.md). Filter evaluation over the published batches is in [RECORD_FILTERING.md](RECORD_FILTERING.md), and the user-facing model in [concurrency-model.md](../docs/content/concepts/concurrency-model.md).
+Describes how a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the threads that run it, back-pressure, batch sizing, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`.
+
+Related documents:
+
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): which bytes a read requests and how they are fetched (fetch plans, chunk handles, coalescing, page masks)
+- [COLUMN_READER.md](COLUMN_READER.md): what a batch holds and how the column reader exposes it
+- [ROW_READER.md](ROW_READER.md): how the row reader presents batches as rows
+- [VALUE_DECODE.md](VALUE_DECODE.md): how pages become values
+- [NESTED_DECODE.md](NESTED_DECODE.md): how pages become nested batches
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): filter evaluation over the published batches
+- [docs/content/concepts/concurrency-model.md](../docs/content/concepts/concurrency-model.md): the user-facing model
 
 ## Components and threading
 

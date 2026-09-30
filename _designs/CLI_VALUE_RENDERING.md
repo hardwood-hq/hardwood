@@ -1,6 +1,15 @@
 # CLI value rendering
 
-This document covers how the `hardwood` CLI and the `dive` TUI turn Parquet values and metadata figures into text: the shared value renderer for row values, dictionary entries and min/max statistics; the spelling of sizes, counts, percentages and absent values; and how chunk-level `SizeStatistics` (unencoded byte-array size, repetition and definition level histograms) are derived and presented. It does not cover colour and visual tiers, navigation or viewport virtualization, which are in [DIVE_UI_RULES.md](DIVE_UI_RULES.md), nor the dive screen model, which is in [DIVE_ARCHITECTURE.md](DIVE_ARCHITECTURE.md). How size statistics are parsed is in [FILE_METADATA.md](FILE_METADATA.md), and how they are used for pruning in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md); logical-type decoding itself belongs to [LOGICAL_TYPES.md](LOGICAL_TYPES.md). The user-facing rules are in `docs/content/reference/cli.md` (sections "Convert output", "Value rendering", "Absent values", "Binary values").
+Covers how the `hardwood` CLI and the `dive` TUI turn Parquet values and metadata figures into text: the shared value renderer for row values, dictionary entries and min/max statistics; the spelling of sizes, counts, percentages and absent values; and how chunk-level `SizeStatistics` (unencoded byte-array size, repetition and definition level histograms) are derived and presented.
+
+Related documents:
+
+- [DIVE_UI_RULES.md](DIVE_UI_RULES.md): colour and visual tiers, navigation and viewport virtualization
+- [DIVE_ARCHITECTURE.md](DIVE_ARCHITECTURE.md): the dive screen model
+- [FILE_METADATA.md](FILE_METADATA.md): how size statistics are parsed
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): how size statistics are used for pruning
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): logical-type decoding
+- [docs/content/reference/cli.md](../docs/content/reference/cli.md): the user-facing rules (sections "Convert output", "Value rendering", "Absent values", "Binary values")
 
 ## The rule
 

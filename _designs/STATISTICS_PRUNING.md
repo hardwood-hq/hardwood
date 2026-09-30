@@ -1,6 +1,13 @@
 # Statistics pruning
 
-How a file's metadata decides, for a row group or a page, whether no row, some rows or every row can match a resolved predicate. It covers the three statistics a unit carries (min/max, null count, definition level histogram), how bounds are judged readable, the row-group absence probes (bloom filters and dictionaries), and page pruning through the column index and inline page statistics. It does not cover the predicate itself or its resolution ([PREDICATE_MODEL.md](PREDICATE_MODEL.md)), per-row evaluation and how an always-matching row group is consumed ([RECORD_FILTERING.md](RECORD_FILTERING.md)), page fetch mechanics ([FETCH_PLANNING.md](FETCH_PLANNING.md)), or the Thrift parse rules for the metadata structures ([FILE_METADATA.md](FILE_METADATA.md)).
+Describes how a file's metadata decides, for a row group or a page, whether no row, some rows or every row can match a resolved predicate. It covers the three statistics a unit carries (min/max, null count, definition level histogram), how bounds are judged readable, the row-group absence probes (bloom filters and dictionaries), and page pruning through the column index and inline page statistics.
+
+Related documents:
+
+- [PREDICATE_MODEL.md](PREDICATE_MODEL.md): the predicate itself and its resolution
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): per-row evaluation and how an always-matching row group is consumed
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): page fetch mechanics
+- [FILE_METADATA.md](FILE_METADATA.md): the Thrift parse rules for the metadata structures
 
 ## Decisions
 

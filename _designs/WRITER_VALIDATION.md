@@ -1,6 +1,13 @@
 # Writer validation
 
-How the writer's output is shown to be readable by implementations other than Hardwood: the strict-reader interop gate, the DuckDB differential, the writer's own round-trip tests, and the coverage assertion that holds the gate to everything the writer can produce. The write path itself is in [WRITER.md](WRITER.md), the input contract in [WRITER_INPUT.md](WRITER_INPUT.md), and the encodings, codecs and statistics under test in [WRITER_ENCODING.md](WRITER_ENCODING.md). The read-direction differential harness and the integration-test wiring are in [TESTING.md](../TESTING.md#differential-testing).
+Describes how the writer's output is shown to be readable by implementations other than Hardwood: the strict-reader interop gate, the DuckDB differential, the writer's own round-trip tests, and the coverage assertion that holds the gate to everything the writer can produce.
+
+Related documents:
+
+- [WRITER.md](WRITER.md): the write path itself
+- [WRITER_INPUT.md](WRITER_INPUT.md): the input contract
+- [WRITER_ENCODING.md](WRITER_ENCODING.md): the encodings, codecs and statistics under test
+- [TESTING.md](../TESTING.md#differential-testing): the read-direction differential harness and the integration-test wiring
 
 ## Reader tiers
 

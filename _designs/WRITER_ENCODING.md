@@ -1,6 +1,15 @@
 # Writer encoding
 
-How the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, and the statistics written into the footer. The write model, the row-group lifecycle and sizing, memory and threading are in [WRITER.md](WRITER.md); schema construction, `ColumnBatch`, shredding into levels and `RowWriter` are in [WRITER_INPUT.md](WRITER_INPUT.md); the interop gate and coverage assertion are in [WRITER_VALIDATION.md](WRITER_VALIDATION.md). How a reader consumes the statistics written here is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md), and the read-side decoders these encoders invert are in [VALUE_DECODE.md](VALUE_DECODE.md). The user-facing options and tables are in the [writer reference](../docs/content/reference/writer.md) and the [write model](../docs/content/concepts/write-model.md).
+Describes how the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, and the statistics written into the footer.
+
+Related documents:
+
+- [WRITER.md](WRITER.md): the write model, the row-group lifecycle and sizing, memory and threading
+- [WRITER_INPUT.md](WRITER_INPUT.md): schema construction, `ColumnBatch`, shredding into levels and `RowWriter`
+- [WRITER_VALIDATION.md](WRITER_VALIDATION.md): the interop gate and coverage assertion
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): how a reader consumes the statistics written here
+- [VALUE_DECODE.md](VALUE_DECODE.md): the read-side decoders these encoders invert
+- [docs/content/reference/writer.md](../docs/content/reference/writer.md) and [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing options and tables
 
 ## Chunk and page layout
 

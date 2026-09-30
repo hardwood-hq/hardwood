@@ -1,6 +1,16 @@
 # Row reader
 
-How `RowReader` presents the published batches of the read pipeline as rows: the two reader implementations and how one is chosen, how an accessor addresses a value, how rows are iterated across batches and files, and how `head`, `tail` and `skip` position the read when no filter is present. The pipeline that produces the batches (workers, exchanges, batch sizing, multi-file planning, `ReaderConfig`) is in [READ_PIPELINE.md](READ_PIPELINE.md); how levels become nested batches is in [NESTED_DECODE.md](NESTED_DECODE.md); leaf decoding is in [VALUE_DECODE.md](VALUE_DECODE.md), and annotation, timestamp and Variant accessor semantics are in [LOGICAL_TYPES.md](LOGICAL_TYPES.md). A filtered row read (augmented projection, matchers, and `head`/`skip` over the matching rows) is in [RECORD_FILTERING.md](RECORD_FILTERING.md); the column-oriented API is in [COLUMN_READER.md](COLUMN_READER.md). The user-facing API is in [docs/content/how-to/row-reader.md](../docs/content/how-to/row-reader.md) and [docs/content/reference/accessors.md](../docs/content/reference/accessors.md).
+Describes how `RowReader` presents the published batches of the read pipeline as rows: the two reader implementations and how one is chosen, how an accessor addresses a value, how rows are iterated across batches and files, and how `head`, `tail` and `skip` position the read when no filter is present.
+
+Related documents:
+
+- [READ_PIPELINE.md](READ_PIPELINE.md): the pipeline that produces the batches (workers, exchanges, batch sizing, multi-file planning, `ReaderConfig`)
+- [NESTED_DECODE.md](NESTED_DECODE.md): how levels become nested batches
+- [VALUE_DECODE.md](VALUE_DECODE.md): leaf decoding
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): annotation, timestamp and Variant accessor semantics
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): a filtered row read (augmented projection, matchers, and `head`/`skip` over the matching rows)
+- [COLUMN_READER.md](COLUMN_READER.md): the column-oriented API
+- [docs/content/how-to/row-reader.md](../docs/content/how-to/row-reader.md) and [docs/content/reference/accessors.md](../docs/content/reference/accessors.md): the user-facing API
 
 ## Flat and nested readers
 

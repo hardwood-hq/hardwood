@@ -1,6 +1,16 @@
 # Value decode
 
-How the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the choice of value decoder per encoding, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernels with their scalar fallback. It does not cover where pages come from or which thread decodes them ([READ_PIPELINE.md](READ_PIPELINE.md)), how levels become nested layers, the level scratch or the fixed-size-list fast path ([NESTED_DECODE.md](NESTED_DECODE.md)), the batch layout the column reader exposes ([COLUMN_READER.md](COLUMN_READER.md)), row-reader accessor addressing ([ROW_READER.md](ROW_READER.md)), or the annotation model and per-type conversions ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)). Dictionary-based row-group pruning and the location of the dictionary page are in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md); the page hierarchy itself is described for users in [docs/content/concepts/parquet-layout.md](../docs/content/concepts/parquet-layout.md).
+Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the choice of value decoder per encoding, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernels with their scalar fallback.
+
+Related documents:
+
+- [READ_PIPELINE.md](READ_PIPELINE.md): where pages come from and which thread decodes them
+- [NESTED_DECODE.md](NESTED_DECODE.md): how levels become nested layers, the level scratch and the fixed-size-list fast path
+- [COLUMN_READER.md](COLUMN_READER.md): the batch layout the column reader exposes
+- [ROW_READER.md](ROW_READER.md): row-reader accessor addressing
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): the annotation model and per-type conversions
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): dictionary-based row-group pruning and the location of the dictionary page
+- [docs/content/concepts/parquet-layout.md](../docs/content/concepts/parquet-layout.md): the page hierarchy, described for users
 
 ## Page decode
 

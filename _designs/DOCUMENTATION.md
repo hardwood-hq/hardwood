@@ -1,6 +1,11 @@
 # Documentation
 
-This document covers how Hardwood's user-facing documentation is organised, checked, built and published: the Diátaxis structure of `docs/content/`, the prose rules and the script that enforces their mechanical part, the MkDocs site, the two-repository publish flow that deploys the site and the JavaDoc to `hardwood.dev`, and the API change reports published beside the JavaDoc. It does not cover the content of individual pages, or the Markdown JavaDoc conventions and the Error Prone checks that enforce them ([BUILD_INFRASTRUCTURE.md](BUILD_INFRASTRUCTURE.md)). The rules contributors follow when writing a page are stated in the "Documentation" section of [CLAUDE.md](../CLAUDE.md); this document gives the structure those rules serve and the reasoning behind it.
+Covers how Hardwood's user-facing documentation is organised, checked, built and published: the Diátaxis structure of `docs/content/`, the prose rules and the script that enforces their mechanical part, the MkDocs site, the two-repository publish flow that deploys the site and the JavaDoc to `hardwood.dev`, and the API change reports published beside the JavaDoc. It gives the structure that the contributor rules for writing a page serve and the reasoning behind that structure; the content of individual pages is out of scope.
+
+Related documents:
+
+- [BUILD_INFRASTRUCTURE.md](BUILD_INFRASTRUCTURE.md): the Markdown JavaDoc conventions and the Error Prone checks that enforce them
+- [CLAUDE.md](../CLAUDE.md): the rules contributors follow when writing a page, in its "Documentation" section
 
 ## Audiences
 

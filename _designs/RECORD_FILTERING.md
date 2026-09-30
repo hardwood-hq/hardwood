@@ -1,6 +1,14 @@
 # Record filtering
 
-How a filtered read tests the rows that survive statistics pruning and returns exactly the matching ones, on the row readers (`FlatRowReader`, `NestedRowReader`) and the column readers (`ColumnReader`, `ColumnReaders`). It covers the augmented projection, the per-row matcher, the drain-side batch matchers, record selection and compaction on the column path, the consumption of row groups statistics proved to match in full, and how `head`, `skip` and `tail` count over the filtered relation. The public predicate, its literal rules and its resolution to `ResolvedPredicate` are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md); the CANNOT/MIGHT/ALWAYS decision for row groups and pages is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md). Pipeline mechanics shared with unfiltered reads (page row masks, fetch plans, worker flush rules, the reorder buffer) are in [READ_PIPELINE.md](READ_PIPELINE.md) and [FETCH_PLANNING.md](FETCH_PLANNING.md). The user-facing semantics of row selection are in [docs/content/concepts/row-selection.md](../docs/content/concepts/row-selection.md).
+Describes how a filtered read tests the rows that survive statistics pruning and returns exactly the matching ones, on the row readers (`FlatRowReader`, `NestedRowReader`) and the column readers (`ColumnReader`, `ColumnReaders`). It covers the augmented projection, the per-row matcher, the drain-side batch matchers, record selection and compaction on the column path, the consumption of row groups statistics proved to match in full, and how `head`, `skip` and `tail` count over the filtered relation.
+
+Related documents:
+
+- [PREDICATE_MODEL.md](PREDICATE_MODEL.md): the public predicate, its literal rules and its resolution to `ResolvedPredicate`
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decision for row groups and pages
+- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (worker flush rules, the reorder buffer)
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): fetch plans and page row masks, shared with unfiltered reads
+- [docs/content/concepts/row-selection.md](../docs/content/concepts/row-selection.md): the user-facing semantics of row selection
 
 ## Contract
 

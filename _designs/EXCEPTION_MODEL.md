@@ -1,5 +1,17 @@
 # Exception model
 
+Describes which exceptions Hardwood raises and what each tells a caller: the exception types and the two axes that sort them, the rule that no internal type reaches a caller, where an `IOException` may be declared or wrapped, the context an error message carries, how failures cross the read pipeline's threads, and why an annotation the reader cannot use is dropped rather than raised.
+
+Related documents:
+
+- [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline's threads hand a failure to the consumer
+- [FILE_METADATA.md](FILE_METADATA.md): the malformed-input policy of the footer parser
+- [LOGICAL_TYPES.md](LOGICAL_TYPES.md): which annotations `FileSchema` drops
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): why a column with a dropped annotation has no readable bounds
+- [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md): the user-facing table
+
+## Exception types
+
 Exception handling is organized along two separate axes: retriability, and whether the
 problem is with a file or with the API invocation.
 
@@ -131,5 +143,3 @@ file's other columns stay readable.
 A missing width is not in that class. A `FIXED_LEN_BYTE_ARRAY` without one cannot be decoded
 at all — the width sizes the buffer and spaces the offsets — so `FixedWidthValidator` refuses
 it when the reader is built, over the columns the read touches.
-
-`docs/content/reference/error-handling.md` carries the user-facing table.

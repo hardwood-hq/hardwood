@@ -1,6 +1,14 @@
 # Input files
 
-How the reader gets at a file's bytes: the `InputFile` contract, who opens and closes an `InputFile`, the memory-mapped local backend, the in-memory backend, the backend-agnostic range cache in core, and the size limits each imposes. Which byte ranges a read requests and how they are coalesced is in [FETCH_PLANNING.md](FETCH_PLANNING.md); the S3 backend, its client and its choice of range backing are in [S3_STORAGE.md](S3_STORAGE.md); reading and caching the footer is in [FILE_METADATA.md](FILE_METADATA.md); how transport failures are typed is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md). The threads that call into an `InputFile` are described in [READ_PIPELINE.md](READ_PIPELINE.md).
+Describes how the reader gets at a file's bytes: the `InputFile` contract, who opens and closes an `InputFile`, the memory-mapped local backend, the in-memory backend, the backend-agnostic range cache in core, and the size limits each imposes.
+
+Related documents:
+
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): which byte ranges a read requests and how they are coalesced
+- [S3_STORAGE.md](S3_STORAGE.md): the S3 backend, its client and its choice of range backing
+- [FILE_METADATA.md](FILE_METADATA.md): reading and caching the footer
+- [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md): how transport failures are typed
+- [READ_PIPELINE.md](READ_PIPELINE.md): the threads that call into an `InputFile`
 
 ## Contract
 

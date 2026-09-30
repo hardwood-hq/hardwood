@@ -1,6 +1,6 @@
 # Logical types
 
-How Hardwood models Parquet's logical-type annotations on read and write: how `FileSchema` derives the one `LogicalType` a column carries from the footer, which annotations it drops, how each annotation decodes to a Java value and which accessors a column admits, the timestamp kinds and carriers, Variant groups and their shredded form, the geospatial types and their statistics, and how the writer emits an annotation.
+Describes how Hardwood models Parquet's logical-type annotations on read and write: how `FileSchema` derives the one `LogicalType` a column carries from the footer, which annotations it drops, how each annotation decodes to a Java value and which accessors a column admits, the timestamp kinds and carriers, Variant groups and their shredded form, the geospatial types and their statistics, and how the writer emits an annotation.
 
 Related documents:
 
