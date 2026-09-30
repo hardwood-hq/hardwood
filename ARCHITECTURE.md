@@ -8,6 +8,69 @@ Hardwood reads and writes Parquet files without Hadoop or parquet-java. It imple
 
 ## Design Documents
 
+Solid arrows follow data through a read or a write; dotted arrows mark a document that constrains or checks another.
+
+```mermaid
+flowchart LR
+    subgraph storage["Storage"]
+        INPUT_FILES
+        S3_STORAGE
+    end
+
+    subgraph read["Read path"]
+        FILE_METADATA --> STATISTICS_PRUNING
+        STATISTICS_PRUNING --> FETCH_PLANNING
+        FETCH_PLANNING --> READ_PIPELINE
+        READ_PIPELINE --> NESTED_DECODE
+        READ_PIPELINE --> VALUE_DECODE
+        NESTED_DECODE --> ROW_READER
+        NESTED_DECODE --> COLUMN_READER
+        VALUE_DECODE --> ROW_READER
+        VALUE_DECODE --> COLUMN_READER
+    end
+
+    subgraph filtering["Filtering"]
+        PREDICATE_MODEL --> RECORD_FILTERING
+    end
+
+    subgraph write["Write path"]
+        WRITER_INPUT --> WRITER
+        WRITER --> WRITER_ENCODING
+        WRITER_VALIDATION
+    end
+
+    subgraph consumers["Consumers"]
+        AVRO_BINDING
+        CLI_VALUE_RENDERING
+        DIVE_ARCHITECTURE
+        DIVE_UI_RULES
+    end
+
+    subgraph crosscutting["Cross-cutting"]
+        LOGICAL_TYPES
+        EXCEPTION_MODEL
+    end
+
+    subgraph project["Project"]
+        DOCUMENTATION
+        BUILD_INFRASTRUCTURE
+    end
+
+    S3_STORAGE -. implements .-> INPUT_FILES
+    INPUT_FILES --> FILE_METADATA
+    INPUT_FILES --> FETCH_PLANNING
+    PREDICATE_MODEL --> STATISTICS_PRUNING
+    RECORD_FILTERING -. runs inside .-> READ_PIPELINE
+    ROW_READER --> AVRO_BINDING
+    ROW_READER --> CLI_VALUE_RENDERING
+    FILE_METADATA --> DIVE_ARCHITECTURE
+    ROW_READER --> DIVE_ARCHITECTURE
+    DIVE_UI_RULES -. constrains .-> DIVE_ARCHITECTURE
+    WRITER_VALIDATION -. checks .-> WRITER_ENCODING
+    LOGICAL_TYPES -. annotations .-> read
+    LOGICAL_TYPES -. annotations .-> write
+```
+
 | Area | Documents |
 |---|---|
 | Read path | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) (row groups to published batches, threading, batch sizing, multi-file planning), [ROW_READER.md](_designs/ROW_READER.md), [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) (levels to nested batches), [VALUE_DECODE.md](_designs/VALUE_DECODE.md) (page values to Java values) |
