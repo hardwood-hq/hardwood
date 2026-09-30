@@ -477,7 +477,7 @@ public final class ColumnChunkDetailScreen {
         return qualifier(Fmt.fmt("%,d entries for %,d values", entries, values));
     }
 
-    /// A section caption. Tier 2 of the [DIVE_UI_RULES](../../../../../../../_designs/DIVE_UI_RULES.md)
+    /// A section caption. Tier 2 of the `_designs/DIVE_UI_RULES.md` visual
     /// hierarchy: structural, so the eye can find the group holding the fact
     /// it wants instead of reading twenty-five uniform rows.
     private static Line group(String name) {

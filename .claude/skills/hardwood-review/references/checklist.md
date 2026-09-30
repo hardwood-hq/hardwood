@@ -120,7 +120,7 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 
 ### C2a. Behaviour change updates its design doc
 - **Rule:** A PR that changes behaviour a design doc describes updates that doc in the same PR.
-- **How:** For each changed subsystem, find the design doc that covers it (`grep -l` the touched class names in `_designs/`). A subsystem covered only by `_designs-legacy/` needs no doc update; its consolidation is tracked in `_plans/DESIGN_DOC_CONSOLIDATION.md`. If the diff changes a contract, invariant, gate or supported set it states, and the doc is not in the diff → flag it, quoting the stale sentence.
+- **How:** For each changed subsystem, find the design doc that covers it (`grep -l` the touched class names in `_designs/`). If the diff changes a contract, invariant, gate or supported set it states, and the doc is not in the diff → flag it, quoting the stale sentence.
 
 ### C3. Doc/code drift on load-bearing claims
 - **Rule:** If a design doc states a gate condition, eligibility rule, or supported set, the code must match.

@@ -91,12 +91,12 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 
 | Document | Purpose |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture and module layout. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture, key design decisions, module layout, and a map of the design documents in `_designs/`. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: workflow, commit format, PR expectations. |
 | [ROADMAP.md](ROADMAP.md) | Implementation status, roadmap, and milestones. |
 | [NATIVE_BUILD.md](NATIVE_BUILD.md) | How the GraalVM native CLI build works. |
 | [PERFORMANCE.md](PERFORMANCE.md) | Benchmark results and how to run performance tests. |
-| [TESTING.md](TESTING.md) | Manual testing recipes (e.g. S3 via s3proxy). |
+| [TESTING.md](TESTING.md) | How the automated tests are organised and run, plus manual testing recipes (e.g. S3 via s3proxy). |
 | [RELEASING.md](RELEASING.md) | Release process. |
 
 ---
