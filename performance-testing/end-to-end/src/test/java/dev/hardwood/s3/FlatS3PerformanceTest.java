@@ -19,10 +19,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
-import org.testcontainers.containers.BindMode;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
@@ -36,9 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Performance test for Hardwood reading NYC Yellow Taxi Trip Records from S3.
 ///
-/// Uses [S3Proxy](https://github.com/gaul/s3proxy) in a testcontainer with its
-/// `filesystem` backend. The local NYC taxi data directory is bind-mounted as
-/// the bucket root, so files appear as S3 objects with no upload step.
+/// Serves the local NYC taxi data files as objects of an [S3Proxy] bucket.
 ///
 /// **Caveat:** loopback HTTP to a local proxy. This measures Hardwood's S3
 /// client + HTTP overhead vs local files; it is not representative of WAN
@@ -47,7 +41,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// File range defaults to the last 6 months of the data set
 /// (`2025-07`..`2025-12`), and can be widened via `-Dperf.start=YYYY-MM`
 /// and `-Dperf.end=YYYY-MM`. Run count via `-Dperf.runs=N`.
-@Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlatS3PerformanceTest {
 
@@ -59,13 +52,7 @@ class FlatS3PerformanceTest {
     private static final String END_PROPERTY = "perf.end";
     private static final String RUNS_PROPERTY = "perf.runs";
 
-    @Container
-    static GenericContainer<?> s3proxy = S3ProxyContainers.filesystemBacked()
-            .withFileSystemBind(
-                    DATA_DIR.toAbsolutePath().normalize().toString(),
-                    "/data/" + S3ProxyContainers.BUCKET,
-                    BindMode.READ_ONLY);
-
+    private static TestBucket bucket;
     private static S3Source source;
     private static List<String> availableKeys;
 
@@ -77,12 +64,6 @@ class FlatS3PerformanceTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        source = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3proxy))
-                .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
-                .build();
-
         YearMonth start = getStartMonth();
         YearMonth end = getEndMonth();
         if (start.isAfter(end)) {
@@ -90,6 +71,7 @@ class FlatS3PerformanceTest {
                     "perf.start (%s) is after perf.end (%s); did you set only one of them?", start, end));
         }
 
+        bucket = S3Proxy.get().bucketFor(FlatS3PerformanceTest.class);
         availableKeys = new ArrayList<>();
         long totalBytes = 0;
         for (YearMonth ym = start; !ym.isAfter(end); ym = ym.plusMonths(1)) {
@@ -97,18 +79,29 @@ class FlatS3PerformanceTest {
             Path file = DATA_DIR.resolve(filename);
             if (Files.exists(file) && Files.size(file) > 0) {
                 availableKeys.add(filename);
+                bucket.withObject(filename, file);
                 totalBytes += Files.size(file);
             }
         }
+        bucket.create();
+        source = S3Source.builder()
+                .endpoint(bucket.endpoint())
+                .pathStyle(true)
+                .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
+                .build();
+
         System.out.println(String.format("S3Proxy serving %d files (%,.1f MB) from %s as s3://%s/ (range %s..%s)",
                 availableKeys.size(), totalBytes / (1024.0 * 1024.0),
-                DATA_DIR.toAbsolutePath().normalize(), S3ProxyContainers.BUCKET, start, end));
+                DATA_DIR.toAbsolutePath().normalize(), bucket.name(), start, end));
     }
 
     @AfterAll
     static void tearDown() {
         if (source != null) {
             source.close();
+        }
+        if (bucket != null) {
+            bucket.delete();
         }
     }
 
@@ -216,7 +209,7 @@ class FlatS3PerformanceTest {
         java.util.Map<String, Boolean> pcIsLongBySchema = new java.util.HashMap<>();
 
         for (String key : keys) {
-            try (ParquetFileReader reader = ParquetFileReader.open(source.inputFile(S3ProxyContainers.BUCKET, key))) {
+            try (ParquetFileReader reader = ParquetFileReader.open(source.inputFile(bucket.name(), key))) {
                 StringBuilder fp = new StringBuilder();
                 for (dev.hardwood.schema.ColumnSchema col : reader.getFileSchema().getColumns()) {
                     fp.append(col.name()).append(':').append(col.type()).append(';');
@@ -228,7 +221,7 @@ class FlatS3PerformanceTest {
                         && pn.type() == PhysicalType.INT64;
 
                 bySchema.computeIfAbsent(fingerprint, k -> new ArrayList<>())
-                        .add(source.inputFile(S3ProxyContainers.BUCKET, key));
+                        .add(source.inputFile(bucket.name(), key));
                 pcIsLongBySchema.putIfAbsent(fingerprint, pcIsLong);
             }
             catch (IOException e) {

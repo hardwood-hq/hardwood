@@ -15,11 +15,6 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.images.builder.Transferable;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.reader.ColumnReader;
@@ -52,7 +47,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The lazy fetch tests override `hardwood.internal.sequentialChunkSize` to a small value
 /// so that the generated test files stay small while still exercising multi-chunk
 /// behaviour.
-@Testcontainers
 public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
 
     private static final System.Logger LOG = System.getLogger(S3SelectiveReadJfrIT.class.getName());
@@ -98,10 +92,9 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
-    @Container
-    static GenericContainer<?> s3 = buildContainer();
+    static TestBucket bucket = buildBucket();
 
-    /// File sizes as written to the container. Used as the full-read baseline
+    /// File sizes as written to the bucket. Used as the full-read baseline
     /// in byte-comparison assertions — a full read downloads essentially the
     /// whole object, so the file size is a reliable upper bound and avoids an
     /// extra JFR-instrumented read per test.
@@ -110,7 +103,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     private static long lazyPageFileSize;
     private static long largeRgFileSize;
 
-    private static GenericContainer<?> buildContainer() {
+    private static TestBucket buildBucket() {
         byte[] lazyRg = TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS);
         lazyRowGroupFileSize = lazyRg.length;
 
@@ -120,28 +113,19 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         byte[] largeRg = TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE);
         largeRgFileSize = largeRg.length;
 
-        return S3ProxyContainers.filesystemBacked()
-                .withCopyFileToContainer(
-                        MountableFile.forHostPath(TEST_RESOURCES.resolve(PAGE_INDEX_FILE)),
-                        S3ProxyContainers.objectPath(PAGE_INDEX_FILE))
-                .withCopyFileToContainer(
-                        MountableFile.forHostPath(TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)),
-                        S3ProxyContainers.objectPath(FILTER_PUSHDOWN_FILE))
-                .withCopyToContainer(
-                        Transferable.of(lazyRg),
-                        S3ProxyContainers.objectPath(LAZY_ROWGROUP_FILE))
-                .withCopyToContainer(
-                        Transferable.of(lazyPage),
-                        S3ProxyContainers.objectPath(LAZY_PAGE_FILE))
-                .withCopyToContainer(
-                        Transferable.of(largeRg),
-                        S3ProxyContainers.objectPath(LARGE_RG_FILE));
+        return S3Proxy.get().bucketFor(S3SelectiveReadJfrIT.class)
+                .withObject(PAGE_INDEX_FILE, TEST_RESOURCES.resolve(PAGE_INDEX_FILE))
+                .withObject(FILTER_PUSHDOWN_FILE, TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE))
+                .withObject(LAZY_ROWGROUP_FILE, lazyRg)
+                .withObject(LAZY_PAGE_FILE, lazyPage)
+                .withObject(LARGE_RG_FILE, largeRg);
     }
 
     static S3Source source;
 
     @BeforeAll
     static void setup() throws Exception {
+        bucket.create();
         pageIndexFileSize = Files.size(TEST_RESOURCES.resolve(PAGE_INDEX_FILE));
 
         // Override sequential chunk size for this test class. Every assertion below
@@ -150,9 +134,9 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         System.setProperty("hardwood.internal.sequentialChunkSize", String.valueOf(TEST_CHUNK_SIZE));
 
         source = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3))
+                .endpoint(bucket.endpoint())
                 .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
+                .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .build();
     }
 
@@ -160,6 +144,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     static void tearDown() {
         System.clearProperty("hardwood.internal.sequentialChunkSize");
         source.close();
+        bucket.delete();
     }
 
     @Test
@@ -169,7 +154,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         long lastC0 = -1;
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
+                source.inputFile(bucket.name(), LAZY_ROWGROUP_FILE))) {
             try (RowReader rows = reader.rowReader()) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -202,7 +187,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     @Test
     void projectionScansOnlyRequestedColumns() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", PAGE_INDEX_FILE))) {
+                source.inputFile(bucket.name(), PAGE_INDEX_FILE))) {
 
             try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id", "value")).build()) {
                 while (rows.hasNext()) {
@@ -226,7 +211,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
     void projectionTransfersFewerBytes() throws Exception {
         // page_index_test.parquet is 170 KB (> 64 KB tail cache), so column chunks
         // reads go to the network.
-        S3InputFile s3File = source.inputFile("test-bucket", PAGE_INDEX_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), PAGE_INDEX_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File);
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
             while (rows.hasNext()) {
@@ -255,7 +240,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
+                source.inputFile(bucket.name(), FILTER_PUSHDOWN_FILE))) {
             try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -288,7 +273,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
+                source.inputFile(bucket.name(), FILTER_PUSHDOWN_FILE))) {
             try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -316,7 +301,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         // is needed (first RG has 50K rows > 10).
         long fullReadBytes = lazyRowGroupFileSize;
 
-        S3InputFile s3File = source.inputFile("test-bucket", LAZY_ROWGROUP_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), LAZY_ROWGROUP_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File)) {
             try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).head(10L).build()) {
                 int count = 0;
@@ -359,7 +344,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         long firstC0 = -1;
         long lastC0 = -1;
         int count = 0;
-        S3InputFile s3File = source.inputFile("test-bucket", LAZY_ROWGROUP_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), LAZY_ROWGROUP_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File)) {
             try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).tail(10L).build()) {
                 while (rows.hasNext()) {
@@ -417,7 +402,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         // cancellation on close() to avoid fetching the entire file.
         long fullReadBytes = lazyPageFileSize;
 
-        S3InputFile s3File = source.inputFile("test-bucket", LAZY_PAGE_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), LAZY_PAGE_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File)) {
             try (RowReader rows = reader.rowReader()) {
                 int count = 0;
@@ -455,7 +440,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         // the partial read should be well under 25%.
         long fullReadBytes = largeRgFileSize;
 
-        S3InputFile s3File = source.inputFile("test-bucket", LARGE_RG_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), LARGE_RG_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File)) {
             try (RowReader rows = reader.rowReader()) {
                 int count = 0;
@@ -494,7 +479,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         // lazy fetching rather than the (adaptive, width-derived) default batch
         // size — a single INT64 column would otherwise byte-budget to 524K rows,
         // i.e. ~11 of the 50K-row row groups, just to fill one batch.
-        S3InputFile s3File = source.inputFile("test-bucket", LAZY_ROWGROUP_FILE);
+        S3InputFile s3File = source.inputFile(bucket.name(), LAZY_ROWGROUP_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File);
              ColumnReader col = reader.buildColumnReader("c0").batchSize(LAZY_RG_ROWS).build()) {
             assertThat(col.nextBatch()).isTrue();

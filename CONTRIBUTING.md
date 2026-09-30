@@ -16,10 +16,10 @@ Every change should be linked to a GitHub issue. If one doesn't exist for what y
 
 ## Making changes
 
-- Run `./mvnw clean verify` locally before pushing. Docker must be running (the integration tests use Testcontainers); without it, `./mvnw clean verify -DskipITs` runs the unit test suite on its own.
+- Run `./mvnw clean verify` locally before pushing. The integration tests need an s3proxy server: inside the dev container (`docker-compose.yaml`) that is its `s3proxy` service, elsewhere Docker must be running for Testcontainers (see [TESTING.md](TESTING.md#s3-tests)). Without either, `./mvnw clean verify -DskipITs` runs the unit test suite on its own.
 - Every build without `-Dquick` sorts the imports as per the project's conventions; `./mvnw process-sources` does so without building.
 - Cover behavior changes with tests. Bug fixes should start with a failing test that reproduces the bug.
-- Name a test `*Test` if it needs nothing beyond the JVM and the checkout, and `*IT` if it needs a Docker daemon, a compiled native binary, or the packaged JAR. The name is what puts it in the right phase, and what lets `-DskipITs` skip it; see [TESTING.md](TESTING.md#what-counts-as-an-integration-test).
+- Name a test `*Test` if it needs nothing beyond the JVM and the checkout, and `*IT` if it needs an s3proxy server, a compiled native binary, or the packaged JAR. The name is what puts it in the right phase, and what lets `-DskipITs` skip it; see [TESTING.md](TESTING.md#what-counts-as-an-integration-test).
 - If your change adds or modifies a user-facing API (factory method, record, enum, configuration option, CLI option), update the documentation under `docs/content/` in the same PR.
 - Keep the public API surface small. Put anything that doesn't need to be user-facing in an `internal` package.
 

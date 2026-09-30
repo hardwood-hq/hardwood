@@ -13,10 +13,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
@@ -28,17 +24,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// proxy backend. Asserts that repeat reads against the same logical
 /// file hit the local mmap-backed cache instead of issuing fresh HTTP
 /// GETs to S3.
-@Testcontainers
 class S3RangeBackingIT {
 
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
-    @Container
-    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve("column_index_pushdown.parquet")),
-                    S3ProxyContainers.objectPath("column_index_pushdown.parquet"));
+    static TestBucket bucket = S3Proxy.get().bucketFor(S3RangeBackingIT.class)
+            .withObject("column_index_pushdown.parquet", TEST_RESOURCES.resolve("column_index_pushdown.parquet"));
 
     @TempDir
     static Path cacheDir;
@@ -47,10 +39,11 @@ class S3RangeBackingIT {
 
     @BeforeAll
     static void setup() {
+        bucket.create();
         backedSource = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3))
+                .endpoint(bucket.endpoint())
                 .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
+                .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .rangeBacking(RangeBacking.SPARSE_TEMPFILE)
                 .tempDir(cacheDir)
                 .build();
@@ -59,11 +52,12 @@ class S3RangeBackingIT {
     @AfterAll
     static void tearDown() {
         backedSource.close();
+        bucket.delete();
     }
 
     @Test
     void repeatReadAgainstSameRangeReducesHttpGets() throws Exception {
-        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile cached = backedSource.inputFile(bucket.name(), "column_index_pushdown.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(cached);
                 ColumnReader col = reader.columnReader("id")) {
@@ -99,7 +93,7 @@ class S3RangeBackingIT {
     void exactSameRangeReadTwiceHitsCache() throws Exception {
         // Direct readRange() against the cached file: same offset/length
         // twice, the second goes to the mmap, no network call.
-        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile cached = backedSource.inputFile(bucket.name(), "column_index_pushdown.parquet");
         cached.open();
 
         // Pick an offset that is outside the 64 KB tail cache so the
@@ -120,7 +114,7 @@ class S3RangeBackingIT {
 
     @Test
     void rowReaderRereadReducesHttpGets() throws Exception {
-        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile cached = backedSource.inputFile(bucket.name(), "column_index_pushdown.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(cached);
                 RowReader rows = reader.rowReader()) {

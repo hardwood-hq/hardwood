@@ -8,16 +8,13 @@
 package dev.hardwood.s3;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.Container.ExecResult;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,9 +26,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// 2 GB cap [RangeBackedInputFile] enforces only kicks in under
 /// [RangeBacking#SPARSE_TEMPFILE], which this test does *not* opt into.
 ///
-/// The test object is sparse-truncated inside the s3proxy container so the
-/// 2 GB file costs kilobytes on disk and milliseconds to create.
-@Testcontainers
+/// The test object is a sparse file written straight into the bucket's
+/// directory, so the 2 GB file costs kilobytes on disk and milliseconds to
+/// create.
 class S3InputFileLargeFileIT {
 
     private static final long TWO_GB = (long) Integer.MAX_VALUE + 1; // 2_147_483_648
@@ -48,35 +45,36 @@ class S3InputFileLargeFileIT {
     private static final long FILE_SIZE = TWO_GB + 256 * 1024L + 16;
     private static final String KEY = "large.bin";
 
-    @Container
-    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked();
+    static TestBucket bucket = S3Proxy.get().bucketFor(S3InputFileLargeFileIT.class);
 
     static S3Source source;
 
     @BeforeAll
     static void setup() throws Exception {
-        execOrFail("mkdir", "-p", "/data/" + S3ProxyContainers.BUCKET);
-        String objectPath = S3ProxyContainers.objectPath(KEY);
-        execOrFail("truncate", "-s", String.valueOf(FILE_SIZE), objectPath);
-        writeSentinel(objectPath, 0, AT_ZERO);
-        writeSentinel(objectPath, STRADDLE_OFFSET, STRADDLE);
-        writeSentinel(objectPath, BEYOND_OFFSET, BEYOND);
+        bucket.create();
+        try (RandomAccessFile file = new RandomAccessFile(bucket.objectPath(KEY).toFile(), "rw")) {
+            file.setLength(FILE_SIZE);
+            writeSentinel(file, 0, AT_ZERO);
+            writeSentinel(file, STRADDLE_OFFSET, STRADDLE);
+            writeSentinel(file, BEYOND_OFFSET, BEYOND);
+        }
 
         source = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3))
+                .endpoint(bucket.endpoint())
                 .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
+                .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .build();
     }
 
     @AfterAll
     static void tearDown() {
         source.close();
+        bucket.delete();
     }
 
     @Test
     void readsRegionsBeyondTwoGigabytes() throws Exception {
-        try (S3InputFile inputFile = source.inputFile(S3ProxyContainers.BUCKET, KEY)) {
+        try (S3InputFile inputFile = source.inputFile(bucket.name(), KEY)) {
             inputFile.open();
 
             // Whole-file length surfaces unchanged past Integer.MAX_VALUE.
@@ -101,23 +99,8 @@ class S3InputFileLargeFileIT {
         return out;
     }
 
-    private static void writeSentinel(String objectPath, long offset, byte[] bytes) throws Exception {
-        // dd's `seek` is in blocks of `bs`; with bs=1 it's a byte offset, and
-        // `conv=notrunc` preserves the surrounding sparse holes.
-        execOrFail("sh", "-c",
-                "printf '%s' '" + new String(bytes, StandardCharsets.US_ASCII) + "'"
-                        + " | dd of=" + objectPath
-                        + " bs=1 seek=" + offset
-                        + " count=" + bytes.length
-                        + " conv=notrunc status=none");
-    }
-
-    private static void execOrFail(String... command) throws Exception {
-        ExecResult result = s3.execInContainer(command);
-        if (result.getExitCode() != 0) {
-            throw new IllegalStateException("Command failed: " + String.join(" ", command)
-                    + "\nstdout: " + result.getStdout()
-                    + "\nstderr: " + result.getStderr());
-        }
+    private static void writeSentinel(RandomAccessFile file, long offset, byte[] bytes) throws IOException {
+        file.seek(offset);
+        file.write(bytes);
     }
 }

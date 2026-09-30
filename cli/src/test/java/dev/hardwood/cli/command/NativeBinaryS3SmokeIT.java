@@ -17,10 +17,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.utility.MountableFile;
 
-import dev.hardwood.s3.S3ProxyContainers;
+import dev.hardwood.s3.S3Proxy;
+import dev.hardwood.s3.TestBucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,23 +34,21 @@ class NativeBinaryS3SmokeIT {
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
-    private static GenericContainer<?> s3;
+    private static TestBucket bucket;
     private static String emptyFile;
 
     @BeforeAll
-    static void startS3Proxy() throws IOException {
-        s3 = S3ProxyContainers.filesystemBacked()
-                .withCopyFileToContainer(
-                        MountableFile.forHostPath(TEST_RESOURCES.resolve("plain_uncompressed.parquet")),
-                        S3ProxyContainers.objectPath("plain_uncompressed.parquet"));
-        s3.start();
+    static void createBucket() throws IOException {
+        bucket = S3Proxy.get().bucketFor(NativeBinaryS3SmokeIT.class)
+                .withObject("plain_uncompressed.parquet", TEST_RESOURCES.resolve("plain_uncompressed.parquet"));
+        bucket.create();
         emptyFile = Files.createTempFile("hardwood-test-aws", "").toString();
     }
 
     @AfterAll
-    static void stopS3Proxy() {
-        if (s3 != null) {
-            s3.stop();
+    static void deleteBucket() {
+        if (bucket != null) {
+            bucket.delete();
         }
     }
 
@@ -59,14 +56,14 @@ class NativeBinaryS3SmokeIT {
     void readsFileFromS3() throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(
                 nativeBinary,
-                "schema", "-f", "s3://test-bucket/plain_uncompressed.parquet")
+                "schema", "-f", bucket.uri("plain_uncompressed.parquet"))
                 .redirectErrorStream(false);
 
         // Pass AWS connection properties as environment variables
-        pb.environment().put("AWS_ACCESS_KEY_ID", S3ProxyContainers.ACCESS_KEY);
-        pb.environment().put("AWS_SECRET_ACCESS_KEY", S3ProxyContainers.SECRET_KEY);
+        pb.environment().put("AWS_ACCESS_KEY_ID", S3Proxy.ACCESS_KEY);
+        pb.environment().put("AWS_SECRET_ACCESS_KEY", S3Proxy.SECRET_KEY);
         pb.environment().put("AWS_REGION", "us-east-1");
-        pb.environment().put("AWS_ENDPOINT_URL", S3ProxyContainers.endpoint(s3));
+        pb.environment().put("AWS_ENDPOINT_URL", bucket.endpoint());
         pb.environment().put("AWS_PATH_STYLE", "true");
         pb.environment().put("AWS_CONFIG_FILE", emptyFile);
         pb.environment().put("AWS_SHARED_CREDENTIALS_FILE", emptyFile);

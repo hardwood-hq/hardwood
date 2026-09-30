@@ -19,7 +19,7 @@ The split is carried by the standard Maven naming convention: `*Test` for Surefi
 
 Three prerequisites put a test in the `integration-test` phase:
 
-- **A Docker daemon.** Anything that starts a Testcontainers container, which here means anything reaching S3 through the s3proxy container built by `S3ProxyContainers` (in `test-support`).
+- **An s3proxy server.** Anything reaching S3, through a bucket from `S3Proxy` (in `test-support`); see [S3 tests](#s3-tests).
 - **A compiled native binary.** The `cli` tests that spawn the GraalVM binary as a subprocess.
 - **The packaged artifact.** The `core` decompressor ITs, which run against the built JAR rather than `target/classes`, so that multi-release class selection is exercised the way a consumer sees it.
 
@@ -28,7 +28,7 @@ Everything else is a unit test. Reading a fixture from `src/test/resources` is n
 Two sets of tests meet one of those prerequisites and are still named `*Test`, because they are separated by module rather than by phase:
 
 - `integration-test` (`hardwood-integration-test`) tests `hardwood-core` as a dependency. It is part of the default reactor, so `./mvnw verify` runs it on the build JDK. CI runs it on its own, against `hardwood-core` installed from an earlier step, on the Java 21 baseline the JAR claims to support and across libdeflate and Vector API availability. It needs no daemon and no binary, and `-DskipITs` does not skip it.
-- `performance-testing/end-to-end` reaches S3 through a container in `FlatS3PerformanceTest`. The module builds only under `-Pperformance-test`, and the `performance.yml` workflow picks the benchmarks to run with `-Dtest=` filters, which Surefire honours and Failsafe does not. Under that profile `-DskipITs` therefore leaves this container-backed test running.
+- `performance-testing/end-to-end` reaches S3 through s3proxy in `FlatS3PerformanceTest`. The module builds only under `-Pperformance-test`, and the `performance.yml` workflow picks the benchmarks to run with `-Dtest=` filters, which Surefire honours and Failsafe does not. Under that profile `-DskipITs` therefore leaves this S3-backed test running.
 
 ### Build wiring
 
@@ -45,14 +45,31 @@ The JVM `*CommandTest` and `*S3CommandIT` classes in `cli` carry the behavioural
 | Test | What it runs |
 |------|--------------|
 | `NativeBinarySmokeIT` | The binary against a local Parquet file, including `dive --smoke-render`; pins the reported build version against the JVM it was compiled from. |
-| `NativeBinaryS3SmokeIT` | The binary against a file served by the s3proxy container. |
+| `NativeBinaryS3SmokeIT` | The binary against a file served by s3proxy. |
 | `NativeCompressionCodecIT` | One fixture per supported compression codec, with `LZ4` and `LZ4_RAW` separately because they use different decompressors. |
 
 The ITs run on the JVM and drive the binary through `ProcessBuilder`, so configuration flows one way: fixture files are resolved as classpath resources and passed as absolute paths, and settings reach the subprocess as environment variables. The JVM S3 command tests configure AWS through `System.setProperty()` instead, which works only because they run the CLI in the test's own JVM.
 
+### S3 tests
+
+Every S3 test works in a `TestBucket` from `S3Proxy.get().bucketFor(...)`, served by s3proxy's `filesystem` provider: an object is the file `<data dir>/<bucket>/<key>`, and s3proxy serves what is on disk at request time. Each test class owns a bucket named after the class plus a random suffix, created before its first test and deleted after its last; the CLI S3 command tests share one bucket per JVM (`AbstractS3CommandIT`), deleted at JVM exit. `S3Proxy.get()` returns one server per JVM, chosen by the environment:
+
+| Environment | Server | Data dir |
+|-------------|--------|----------|
+| `HARDWOOD_S3PROXY_ENDPOINT` and `HARDWOOD_S3PROXY_DATA_DIR` set | `SharedS3Proxy`: the running server at that endpoint | the directory that server serves |
+| neither set | `ContainerS3Proxy`: one Testcontainers container per test JVM; with `-DforkCount=4` from `.mvn/maven.config`, up to four per module | `target/s3proxy/` of the module, bind-mounted read-only |
+
+The dev container (`docker-compose.yaml`) sets both variables: its `s3proxy` service serves `.s3proxy-data/` in the repository root, which the `claude` service sees under `/workspace`. The tests there start no containers, and the `claude` container has no access to a Docker daemon. The service's port is published on `localhost` (`8080`, or `S3PROXY_PORT`), so a build on the host can use the same server while the stack is up:
+
+```bash
+HARDWOOD_S3PROXY_ENDPOINT=http://localhost:8080 HARDWOOD_S3PROXY_DATA_DIR=$PWD/.s3proxy-data ./mvnw verify
+```
+
+`HARDWOOD_S3PROXY_DATA_DIR` must be absolute, since each module's tests run in the module directory. Any number of builds can share the server at once, as each test class works in its own bucket. The first `S3Proxy.get()` in a JVM deletes buckets older than a day, left behind by runs that did not finish.
+
 ### The s3proxy image
 
-Every S3 test uses `ghcr.io/hardwood-hq/s3proxy`, a mirror of `andrewgaul/s3proxy` maintained to avoid Docker Hub rate limits. The pinned tag lives in `S3ProxyContainers.IMAGE` and in the `S3PROXY_IMAGE` environment variable of the `pr-build.yml` and `main-build.yml` workflows, which pre-pull the image. These and the `docker run` command of the [manual S3 recipe](#manual-s3-testing) must name the same tag.
+Every S3 test uses `ghcr.io/hardwood-hq/s3proxy`, a mirror of `andrewgaul/s3proxy` maintained to avoid Docker Hub rate limits. The pinned tag lives in `S3Proxy.IMAGE`, in the `s3proxy` service of `docker-compose.yaml`, and in the `S3PROXY_IMAGE` environment variable of the `pr-build.yml` and `main-build.yml` workflows, which pre-pull the image. These and the `docker run` command of the [manual S3 recipe](#manual-s3-testing) must name the same tag.
 
 ## Tagged and opt-in tests
 
@@ -171,29 +188,4 @@ curl -T performance-testing/test-data-setup/target/overture-maps-data/overture_p
 
 ```bash
 cli/target/hardwood-cli-early-access-macos-aarch64/bin/hardwood info -f s3://test-bucket/yellow_tripdata_2025-01.parquet
-```
-
-
-## Running the native build check locally
-
-The `native-build-check` job of `pr-build.yml` can be run with [act](https://github.com/nektos/act) (`brew install act`), which executes workflow jobs in Docker:
-
-```bash
-act pull_request -j native-build-check \
-  --container-architecture linux/amd64 \
-  -P ubuntu-latest=catthehacker/ubuntu:act-latest \
-  --container-options "-v $HOME/.m2:/root/.m2 -v /tmp/act-certs.pem:/tmp/act-certs.pem" \
-  --env NODE_EXTRA_CA_CERTS=/tmp/act-certs.pem \
-  --env TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
-```
-
-- `catthehacker/ubuntu:act-latest` replaces `act`'s default minimal image with one that has the Node.js that JavaScript-based actions need; GitHub-hosted runners ship it pre-installed.
-- `TESTCONTAINERS_HOST_OVERRIDE` makes Testcontainers reach mapped ports via `host.docker.internal` instead of the Docker bridge IP, which is unreachable from inside the `act` container on macOS.
-- Mounting `~/.m2` reuses the local Maven cache.
-
-On macOS the container also needs the system CA bundle to trust corporate or self-signed certificates, exported beforehand to the path mounted above:
-
-```bash
-security find-certificate -a -p /Library/Keychains/System.keychain > /tmp/act-certs.pem
-security find-certificate -a -p ~/Library/Keychains/login.keychain-db >> /tmp/act-certs.pem
 ```

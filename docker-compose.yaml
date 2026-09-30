@@ -7,36 +7,25 @@
 #
 
 services:
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy:0.3.0
+  # Serves the S3 integration tests (see S3Proxy in test-support), so the claude
+  # container needs no access to a Docker daemon. Tests write objects into
+  # .s3proxy-data/, one bucket directory per test class. The port is published
+  # on localhost so builds on the host can use this server as well. Keep the
+  # image tag in sync with S3Proxy.IMAGE.
+  s3proxy:
+    image: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
     restart: unless-stopped
-    privileged: true
+    ports:
+      - "127.0.0.1:${S3PROXY_PORT:-8080}:80"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./.s3proxy-data:/data:ro
     environment:
-      # --- Allowed (Testcontainers needs these) ---
-      CONTAINERS: 1
-      IMAGES: 1
-      NETWORKS: 1
-      EXEC: 1
-      POST: 1
-      INFO: 1
-      VERSION: 1
-      PING: 1
-      # --- Denied ---
-      VOLUMES: 0     # block volume create/rm
-      BUILD: 0       # no `docker build` from inside the claude container
-      COMMIT: 0
-      SYSTEM: 0      # blocks /system/prune
-      SWARM: 0
-      NODES: 0
-      TASKS: 0
-      SERVICES: 0
-      PLUGINS: 0
-      CONFIGS: 0
-      SECRETS: 0
-      SESSION: 0
-      DISTRIBUTION: 0
+      S3PROXY_AUTHORIZATION: aws-v2-or-v4
+      S3PROXY_IDENTITY: access
+      S3PROXY_CREDENTIAL: secret
+      S3PROXY_ENDPOINT: http://0.0.0.0:80
+      JCLOUDS_PROVIDER: filesystem
+      JCLOUDS_FILESYSTEM_BASEDIR: /data
     networks:
       - claude-net
 
@@ -46,7 +35,7 @@ services:
     stdin_open: true  # -i
     tty: true         # -t
     depends_on:
-      - docker-proxy
+      - s3proxy
     volumes:
       - .:/workspace
       - claude-config:/claude-config
@@ -55,12 +44,8 @@ services:
       - GH_TOKEN
       - COLORTERM=truecolor
       - CLAUDE_CONFIG_DIR=/claude-config
-      # Testcontainers: talk to the proxy instead of the host socket
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      - TESTCONTAINERS_RYUK_DISABLED=true
-      - TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - HARDWOOD_S3PROXY_ENDPOINT=http://s3proxy
+      - HARDWOOD_S3PROXY_DATA_DIR=/workspace/.s3proxy-data
     networks:
       - claude-net
 

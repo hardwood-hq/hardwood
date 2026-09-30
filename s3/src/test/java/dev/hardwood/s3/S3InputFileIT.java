@@ -15,10 +15,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
@@ -29,44 +25,39 @@ import dev.hardwood.reader.RowReader;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Testcontainers
 class S3InputFileIT {
 
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
-    @Container
-    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve("plain_uncompressed.parquet")),
-                    S3ProxyContainers.objectPath("plain_uncompressed.parquet"))
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")),
-                    S3ProxyContainers.objectPath("plain_uncompressed_with_nulls.parquet"))
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve("column_index_pushdown.parquet")),
-                    S3ProxyContainers.objectPath("column_index_pushdown.parquet"));
+    static TestBucket bucket = S3Proxy.get().bucketFor(S3InputFileIT.class)
+            .withObject("plain_uncompressed.parquet", TEST_RESOURCES.resolve("plain_uncompressed.parquet"))
+            .withObject("plain_uncompressed_with_nulls.parquet",
+                    TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet"))
+            .withObject("column_index_pushdown.parquet", TEST_RESOURCES.resolve("column_index_pushdown.parquet"));
 
     static S3Source source;
 
     @BeforeAll
     static void setup() {
+        bucket.create();
         source = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3))
+                .endpoint(bucket.endpoint())
                 .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
+                .credentials(S3Credentials.of(S3Proxy.ACCESS_KEY, S3Proxy.SECRET_KEY))
                 .build();
     }
 
     @AfterAll
     static void tearDown() {
         source.close();
+        bucket.delete();
     }
 
     @Test
     void readMetadata() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile(bucket.name(), "plain_uncompressed.parquet"))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
         }
     }
@@ -74,7 +65,7 @@ class S3InputFileIT {
     @Test
     void readRows() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile(bucket.name(), "plain_uncompressed.parquet"))) {
             try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
@@ -89,7 +80,7 @@ class S3InputFileIT {
     @Test
     void readRowValues() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile(bucket.name(), "plain_uncompressed.parquet"))) {
             try (RowReader rows = reader.rowReader()) {
                 assertThat(rows.hasNext()).isTrue();
                 rows.next();
@@ -114,7 +105,7 @@ class S3InputFileIT {
     @Test
     void readWithNulls() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "plain_uncompressed_with_nulls.parquet"))) {
+                source.inputFile(bucket.name(), "plain_uncompressed_with_nulls.parquet"))) {
             try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
@@ -130,7 +121,7 @@ class S3InputFileIT {
     void fileNotFound() {
         assertThatThrownBy(() ->
                 ParquetFileReader.open(
-                        source.inputFile("test-bucket", "nonexistent.parquet")))
+                        source.inputFile(bucket.name(), "nonexistent.parquet")))
                 .isInstanceOf(IOException.class);
     }
 
@@ -142,7 +133,7 @@ class S3InputFileIT {
         FilterPredicate filter = FilterPredicate.lt("id", 1000L);
 
         ByteCountingInputFile unfilteredFile = new ByteCountingInputFile(
-                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+                source.inputFile(bucket.name(), "column_index_pushdown.parquet"));
         long unfilteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
              ColumnReader col = reader.columnReader("id")) {
@@ -152,7 +143,7 @@ class S3InputFileIT {
         }
 
         ByteCountingInputFile filteredFile = new ByteCountingInputFile(
-                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+                source.inputFile(bucket.name(), "column_index_pushdown.parquet"));
         long filteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
              ColumnReader col = reader.buildColumnReader("id").filter(filter).build()) {
@@ -216,7 +207,7 @@ class S3InputFileIT {
         FilterPredicate filter = FilterPredicate.eq("id", 500L);
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+                source.inputFile(bucket.name(), "column_index_pushdown.parquet"));
              RowReader rows = reader.buildRowReader().filter(filter).build()) {
 
             int totalRows = 0;
@@ -233,7 +224,7 @@ class S3InputFileIT {
     void openingAFileLargerThanTheTailCacheTakesOneRequest() throws Exception {
         // column_index_pushdown.parquet is larger than the 64 KB tail cache, so a read of its
         // first bytes would be a request of its own; the footer comes from the tail read.
-        S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(10_000);
             assertThat(file.networkRequestCount()).isEqualTo(1);
@@ -247,7 +238,7 @@ class S3InputFileIT {
         // network — proving the counters increase past the open() baseline.
         // (A tiny fixture would fit entirely inside the tail cache and the
         // counters would correctly stay at 1.)
-        S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {
             long openRequests = file.networkRequestCount();
             long openBytes = file.networkBytesFetched();
@@ -267,11 +258,11 @@ class S3InputFileIT {
 
     @Test
     void readRangeBeforeOpenIsRejected() {
-        S3InputFile file = source.inputFile("test-bucket", "plain_uncompressed.parquet");
+        S3InputFile file = source.inputFile(bucket.name(), "plain_uncompressed.parquet");
 
         assertThatThrownBy(() -> file.readRange(0, 10))
                 .isExactlyInstanceOf(IllegalStateException.class)
-                .hasMessage("File not opened: s3://test-bucket/plain_uncompressed.parquet");
+                .hasMessage("File not opened: " + bucket.uri("plain_uncompressed.parquet"));
         assertThat(file.networkRequestCount()).isZero();
     }
 
@@ -279,7 +270,7 @@ class S3InputFileIT {
     /// including a range the tail cache would otherwise have answered.
     @Test
     void readRangeOutsideTheFileIsRejectedBeforeAnyRequest() throws Exception {
-        try (S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet")) {
+        try (S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet")) {
             file.open();
             long length = file.length();
             long openRequests = file.networkRequestCount();
@@ -298,7 +289,7 @@ class S3InputFileIT {
     /// tail cache and at the end of the object.
     @Test
     void zeroLengthReadIssuesNoRequest() throws Exception {
-        try (S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet")) {
+        try (S3InputFile file = source.inputFile(bucket.name(), "column_index_pushdown.parquet")) {
             file.open();
             long length = file.length();
             long openRequests = file.networkRequestCount();
@@ -315,7 +306,7 @@ class S3InputFileIT {
         long fileLength = file.length();
         assertThatThrownBy(() -> file.readRange(offset, length))
                 .isExactlyInstanceOf(IndexOutOfBoundsException.class)
-                .hasMessage("[s3://test-bucket/column_index_pushdown.parquet] readRange(" + offset + ", "
+                .hasMessage("[" + bucket.uri("column_index_pushdown.parquet") + "] readRange(" + offset + ", "
                         + length + ") out of bounds (" + fileLength + " bytes)");
     }
 

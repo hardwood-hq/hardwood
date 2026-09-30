@@ -17,18 +17,16 @@ import org.apache.parquet.hadoop.GroupReadSupport;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.MountableFile;
 
-import dev.hardwood.s3.S3ProxyContainers;
+import dev.hardwood.s3.S3Proxy;
+import dev.hardwood.s3.TestBucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Tests S3 support via the parquet-java compatible API.
-@Testcontainers
 class ParquetReaderS3CompatIT {
 
     private static final java.nio.file.Path TEST_RESOURCES = java.nio.file.Path.of("").toAbsolutePath()
@@ -36,20 +34,25 @@ class ParquetReaderS3CompatIT {
 
     private static final java.nio.file.Path FIXTURE = TEST_RESOURCES.resolve("plain_uncompressed.parquet");
 
-    // Note: a fresh MountableFile per copy — Testcontainers rejects the same
-    // instance being attached to two destinations.
-    @Container
-    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
-            .withCopyFileToContainer(MountableFile.forHostPath(FIXTURE),
-                    S3ProxyContainers.objectPath("plain_uncompressed.parquet"))
-            .withCopyFileToContainer(MountableFile.forHostPath(FIXTURE),
-                    S3ProxyContainers.objectPath("subdir/nested.parquet"));
+    static TestBucket bucket = S3Proxy.get().bucketFor(ParquetReaderS3CompatIT.class)
+            .withObject("plain_uncompressed.parquet", FIXTURE)
+            .withObject("subdir/nested.parquet", FIXTURE);
+
+    @BeforeAll
+    static void createBucket() {
+        bucket.create();
+    }
+
+    @AfterAll
+    static void deleteBucket() {
+        bucket.delete();
+    }
 
     private Configuration s3Config() {
         Configuration conf = new Configuration();
-        conf.set("fs.s3a.access.key", S3ProxyContainers.ACCESS_KEY);
-        conf.set("fs.s3a.secret.key", S3ProxyContainers.SECRET_KEY);
-        conf.set("fs.s3a.endpoint", S3ProxyContainers.endpoint(s3));
+        conf.set("fs.s3a.access.key", S3Proxy.ACCESS_KEY);
+        conf.set("fs.s3a.secret.key", S3Proxy.SECRET_KEY);
+        conf.set("fs.s3a.endpoint", bucket.endpoint());
         conf.set("fs.s3a.endpoint.region", "us-east-1");
         conf.setBoolean("fs.s3a.path.style.access", true);
         return conf;
@@ -57,7 +60,7 @@ class ParquetReaderS3CompatIT {
 
     @Test
     void readViaPathAndConfiguration() throws Exception {
-        Path path = new Path("s3a://test-bucket/plain_uncompressed.parquet");
+        Path path = new Path("s3a://" + bucket.name() + "/plain_uncompressed.parquet");
         Configuration conf = s3Config();
 
         try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
@@ -79,7 +82,7 @@ class ParquetReaderS3CompatIT {
 
     @Test
     void readViaHadoopInputFile() throws Exception {
-        Path path = new Path("s3a://test-bucket/plain_uncompressed.parquet");
+        Path path = new Path("s3a://" + bucket.name() + "/plain_uncompressed.parquet");
         Configuration conf = s3Config();
 
         InputFile inputFile = HadoopInputFile.fromPath(path, conf);
@@ -98,7 +101,7 @@ class ParquetReaderS3CompatIT {
 
     @Test
     void readFromSubdirectory() throws Exception {
-        Path path = new Path("s3a://test-bucket/subdir/nested.parquet");
+        Path path = new Path("s3a://" + bucket.name() + "/subdir/nested.parquet");
         Configuration conf = s3Config();
 
         try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)

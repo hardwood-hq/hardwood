@@ -13,7 +13,7 @@ on:
     branches: [ main ]
 
 env:
-  # Kept in sync with S3ProxyContainers.IMAGE; see cli/s3/parquet-java-compat tests.
+  # Kept in sync with S3Proxy.IMAGE; see cli/s3/parquet-java-compat tests.
   S3PROXY_IMAGE: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
 
 concurrency:

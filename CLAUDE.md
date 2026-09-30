@@ -21,7 +21,7 @@ Worktrees live under `.claude/worktrees/`, which `.gitignore` excludes. They mus
 
 To run Maven, always run ./mvnw (Maven wrapper).
 Run ./mvnw verify to build the project.
-While iterating, run `./mvnw verify -DskipITs`. The integration tests are the bulk of the wall clock (~40s of ~130s), they need a Docker daemon, and they say nothing about most changes. Run the full `./mvnw verify` once before pushing, and immediately whenever the change touches what they cover: the S3 read path, the CLI's S3 commands, parquet-java compatibility, or anything that depends on the packaged JAR rather than `target/classes`. A `-DskipITs` run is not evidence that a change is ready to push.
+While iterating, run `./mvnw verify -DskipITs`. The integration tests are the bulk of the wall clock (~40s of ~130s), they need an s3proxy server (the dev container's `s3proxy` service, or a Docker daemon for Testcontainers), and they say nothing about most changes. Run the full `./mvnw verify` once before pushing, and immediately whenever the change touches what they cover: the S3 read path, the CLI's S3 commands, parquet-java compatibility, or anything that depends on the packaged JAR rather than `target/classes`. A `-DskipITs` run is not evidence that a change is ready to push.
 When doing changes in hardwood-core, install that module before running the performance tests or any other module.
 When running Maven commands, always apply a timeout of 180 seconds to detect deadlocks early on.
 Enable -Pperformance-test to run performance tests.

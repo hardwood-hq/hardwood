@@ -52,7 +52,7 @@ URI construction lives in `S3Api.objectUri`:
 
 The key is URI-encoded per path segment with the SigV4 rules, keeping `/` as the separator. `s3://` URIs are split at the first `/` after the bucket; a URI without a key is rejected.
 
-Tests: `S3SourceNullValidationTest` (s3), `S3SourceTempDirValidationTest` (s3). Region defaulting, the credentials requirement and virtual-hosted URI construction are untested; the ITs run path-style against an s3proxy container ([TESTING.md](../TESTING.md#the-s3proxy-image)).
+Tests: `S3SourceNullValidationTest` (s3), `S3SourceTempDirValidationTest` (s3). Region defaulting, the credentials requirement and virtual-hosted URI construction are untested; the ITs run path-style against s3proxy ([TESTING.md](../TESTING.md#s3-tests)).
 
 ## Credentials
 

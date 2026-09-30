@@ -9,6 +9,9 @@ release.properties
 .flattened-pom.xml
 .surefire-*/
 
+# Objects served by the s3proxy compose service
+.s3proxy-data/
+
 # Eclipse
 .project
 .classpath
