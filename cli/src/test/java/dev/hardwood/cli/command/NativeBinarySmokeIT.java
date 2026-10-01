@@ -64,6 +64,21 @@ class NativeBinarySmokeIT {
         assertThat(result.stdout()).isEqualTo("hardwood " + Version.getVersion());
     }
 
+    /// Hardwood's records reach `java.util.logging` through the JDK's own `System.LoggerFinder`
+    /// provider, which the JDK looks up through `ServiceLoader`. Should the binary not find it,
+    /// they would print in the JDK's two-line fallback format instead of the CLI's.
+    @Test
+    void printsAHardwoodWarningAsOneLine() throws IOException, InterruptedException {
+        String annotated = getClass().getResource("/annotated_repeated_group_test.parquet").getPath();
+
+        NativeResult result = exec(nativeBinary, "schema", "-f", annotated);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stderr()).isEqualTo("WARNING: Ignoring 6 annotation(s) on repeated groups outside"
+                + " a LIST or MAP group; those groups are read as though unannotated: foo_mkv (MAP_KEY_VALUE);"
+                + " foo_list (LIST); foo_list_lt (LIST); foo_map (MAP); foo_map_ct (MAP); s.bar (LIST)");
+    }
+
     @Test
     void diveSmokeRenderExitsZero() throws IOException, InterruptedException {
         NativeResult result = exec(nativeBinary, "dive", "-f", plainFile, "--smoke-render");

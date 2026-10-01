@@ -6,6 +6,7 @@ Related documents:
 
 - [DIVE_UI_RULES.md](DIVE_UI_RULES.md): the visual tiers, the navigation keys and `▶`, the `CursorPane`/`ScrollPane` panes and viewport virtualization with `RowWindow`
 - [CLI_VALUE_RENDERING.md](CLI_VALUE_RENDERING.md): how values and figures are spelled on every screen
+- [CLI_LOGGING.md](CLI_LOGGING.md): where log records go while dive runs
 - [docs/content/reference/cli.md](../docs/content/reference/cli.md#interactive-exploration-dive): screens, keys and user-visible behaviour
 
 ## Structure
@@ -184,7 +185,7 @@ What dive shares with the commands lives in `dev.hardwood.cli.internal`: value a
 `DiveCommand` adds what an interactive session needs:
 
 - It refuses to start without a console (`System.console() == null`), since a TUI on a redirected stream renders nothing usable.
-- It detaches the `dev.hardwood` logger from its parent handlers for the session, since a log line on the terminal would garble the frame; `--log-file` routes `FINE` records to a file instead.
+- It takes every log record off the terminal for the session, since a log line there would garble the frame; `--log-file` routes them to a file instead ([CLI_LOGGING.md](CLI_LOGGING.md#dive)).
 - `--max-dict-bytes` sets the model's dictionary read cap.
 - The hidden `--smoke-render` renders one 120×40 frame into a memory buffer and exits 0, bypassing the console check, so the native binary can be checked for classes lost in the image build.
 

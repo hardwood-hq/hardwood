@@ -85,7 +85,7 @@ public class DecompressorFactory {
     private static void logGzipDecompressor(String name) {
         if (!gzipLogged) {
             gzipLogged = true;
-            LOG.log(Level.INFO, "Using GZIP decompressor: {0}", name);
+            LOG.log(Level.DEBUG, "Using GZIP decompressor: {0}", name);
         }
     }
 }

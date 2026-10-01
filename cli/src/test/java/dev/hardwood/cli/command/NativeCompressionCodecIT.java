@@ -66,8 +66,7 @@ class NativeCompressionCodecIT {
                 .withFailMessage("print failed for %s: stdout=%s stderr=%s", resource, result.stdout(), result.stderr())
                 .isZero();
         // The binary runs without HARDWOOD_LIB_PATH, so this also covers extracting the embedded
-        // codec libraries. The loader reports any problem as a `WARNING:` line on stderr, which
-        // otherwise carries only INFO-level log output.
+        // codec libraries. The loader reports any problem as a `WARNING:` line on stderr.
         assertThat(result.stderr().lines())
                 .withFailMessage("warnings on stderr for %s: %s", resource, result.stderr())
                 .noneMatch(line -> line.startsWith("WARNING:"));

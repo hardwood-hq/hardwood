@@ -234,13 +234,14 @@
       <artifactId>readline-api</artifactId>
     </dependency>
 
-    <!-- The AWS SDK logs through SLF4J. Without a binding on the (native-image)
-         classpath, SLF4J prints a "Failed to load StaticLoggerBinder" warning on
-         first use (e.g. any s3:// operation). slf4j-nop provides a no-op binding
-         so the CLI stays quiet; version tracks the slf4j-api the AWS SDK pulls in. -->
+    <!-- The AWS SDK logs through SLF4J. slf4j-jdk14 hands its records to
+         java.util.logging, where CliLogging gives them the same format and threshold
+         as Hardwood's (_designs/CLI_LOGGING.md). A 1.7 binding is a static class, which
+         the native image needs no ServiceLoader registration to find; the version
+         tracks the slf4j-api the AWS SDK pulls in. -->
     <dependency>
       <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-nop</artifactId>
+      <artifactId>slf4j-jdk14</artifactId>
       <version>1.7.36</version>
     </dependency>
 

@@ -42,6 +42,7 @@ flowchart LR
     subgraph consumers["Consumers"]
         AVRO_BINDING
         CLI_VALUE_RENDERING
+        CLI_LOGGING
         DIVE_ARCHITECTURE
         DIVE_UI_RULES
     end
@@ -66,6 +67,7 @@ flowchart LR
     FILE_METADATA --> DIVE_ARCHITECTURE
     ROW_READER --> DIVE_ARCHITECTURE
     DIVE_UI_RULES -. constrains .-> DIVE_ARCHITECTURE
+    CLI_LOGGING -. constrains .-> DIVE_ARCHITECTURE
     WRITER_VALIDATION -. checks .-> WRITER_ENCODING
     LOGICAL_TYPES -. annotations .-> read
     LOGICAL_TYPES -. annotations .-> write
@@ -78,7 +80,7 @@ flowchart LR
 | I/O and metadata | [INPUT_FILES.md](_designs/INPUT_FILES.md), [S3_STORAGE.md](_designs/S3_STORAGE.md), [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) (which bytes a read requests), [FILE_METADATA.md](_designs/FILE_METADATA.md) (footer, Thrift parsing, page index), [EXCEPTION_MODEL.md](_designs/EXCEPTION_MODEL.md) |
 | Writer | [WRITER.md](_designs/WRITER.md) (write model, row-group lifecycle, memory), [WRITER_INPUT.md](_designs/WRITER_INPUT.md) (schema builder, `ColumnBatch`, shredding, `RowWriter`), [WRITER_ENCODING.md](_designs/WRITER_ENCODING.md) (page layout, dictionary selection, codecs, statistics), [WRITER_VALIDATION.md](_designs/WRITER_VALIDATION.md) (interop gate) |
 | Types | [LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md) (annotations, timestamps, Variant, geospatial), [AVRO_BINDING.md](_designs/AVRO_BINDING.md) (`hardwood-avro`) |
-| CLI | [DIVE_ARCHITECTURE.md](_designs/DIVE_ARCHITECTURE.md), [DIVE_UI_RULES.md](_designs/DIVE_UI_RULES.md), [CLI_VALUE_RENDERING.md](_designs/CLI_VALUE_RENDERING.md) |
+| CLI | [DIVE_ARCHITECTURE.md](_designs/DIVE_ARCHITECTURE.md), [DIVE_UI_RULES.md](_designs/DIVE_UI_RULES.md), [CLI_VALUE_RENDERING.md](_designs/CLI_VALUE_RENDERING.md), [CLI_LOGGING.md](_designs/CLI_LOGGING.md) (stdout, stderr and log records) |
 | Project | [DOCUMENTATION.md](_designs/DOCUMENTATION.md), [BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), [TESTING.md](TESTING.md), [PERFORMANCE.md](PERFORMANCE.md), [NATIVE_BUILD.md](NATIVE_BUILD.md), [FORMAT_COVERAGE.md](FORMAT_COVERAGE.md) |
 
 Implementation plans for work spanning several PRs are in `_plans/`.

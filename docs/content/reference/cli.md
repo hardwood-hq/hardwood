@@ -13,6 +13,8 @@
 
 The `hardwood` CLI inspects and converts Parquet files from the command line. Its commands run non-interactively, for use in scripts and by [AI coding agents](#use-with-ai-coding-agents), and [`hardwood dive`](#interactive-exploration-dive) opens an interactive terminal UI for exploring a file by hand. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
 
+A command writes its result to standard output and any warning or error to standard error, so its output can be piped or redirected to a file as is.
+
 Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}). You can also
 run the CLI via Docker without installing it locally; see the [Docker section below](#docker).
 
@@ -318,6 +320,8 @@ hardwood dive -f data.parquet
 ```
 
 `dive` requires an interactive terminal. When stdin or stdout is not a TTY (e.g., a `docker run` without `-it`, or output piped to a file), it exits with an error instead of launching the UI.
+
+`dive` writes no warnings to the terminal while it runs. `--log-file <path>` writes them to `<path>` instead, together with a trace of the session's reads, replacing the file's contents; `dive` exits with an error when it cannot create the file.
 
 <script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
 

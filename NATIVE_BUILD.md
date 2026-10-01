@@ -70,9 +70,10 @@ The solution differs by codec:
 | `-march=compatibility` | Produces a binary targeting a generic x86\_64/arm64 baseline rather than the build machine's specific CPU generation. Without this, the binary may crash with `SIGILL` on older hardware. |
 | `--gc=serial` | Replaces the default G1 garbage collector with the serial GC, removing GC infrastructure code from the binary. Appropriate for a short-lived CLI process and meaningfully reduces binary size. |
 | `-J--enable-native-access=ALL-UNNAMED` | Passed to the JVM _running the Mandrel build process_ (not the native image itself). Required because GraalVM's image builder uses native access internally on JDK 21+. |
-| `--initialize-at-run-time=...YamlConfiguration` | Prevents log4j's YAML configuration class from initializing at image build time, where it would attempt to load SnakeYAML and fail. |
 
 ### Logging dependencies
+
+`slf4j-jdk14` binds the AWS SDK's SLF4J logging to `java.util.logging`, where the CLI configures every log record's format and level ([CLI_LOGGING.md](_designs/CLI_LOGGING.md)). It is an SLF4J 1.7 binding, which SLF4J finds as a static class rather than through `ServiceLoader`, and the native image is built with `-H:-UseServiceLoaderFeature`.
 
 `netty-buffer` (an optional dependency of `brotli4j`) is declared explicitly at compile scope so that GraalVM can resolve the `ByteBufUtil` reference in `brotli4j`'s `DirectDecompress` class during image analysis.
 

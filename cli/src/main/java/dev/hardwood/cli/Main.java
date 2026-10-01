@@ -16,6 +16,7 @@ import org.aesh.AeshRuntimeRunner;
 import org.aesh.command.CommandResult;
 
 import dev.hardwood.cli.command.HardwoodCommand;
+import dev.hardwood.cli.internal.CliLogging;
 import dev.hardwood.cli.internal.NativeLibraryLoader;
 
 public class Main {
@@ -31,6 +32,7 @@ public class Main {
     /// tests can assert the exit code without terminating the test JVM.
     public static int run(String[] args) {
         forceUtf8Output();
+        CliLogging.configure();
         NativeLibraryLoader.loadZstd();
         NativeLibraryLoader.loadLz4();
         NativeLibraryLoader.loadSnappy();

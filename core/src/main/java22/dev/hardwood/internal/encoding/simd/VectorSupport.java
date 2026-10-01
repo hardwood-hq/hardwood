@@ -42,14 +42,14 @@ public final class VectorSupport {
                 ops = new VectorOperations();
                 available = true;
                 implName = "simd-" + species.vectorBitSize() + "bit";
-                LOG.log(System.Logger.Level.INFO, "SIMD support: enabled ({0}-bit vectors)", species.vectorBitSize());
+                LOG.log(System.Logger.Level.DEBUG, "SIMD support: enabled ({0}-bit vectors)", species.vectorBitSize());
             }
             else {
-                LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (vector length {0} too small)", vectorLength);
+                LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (vector length {0} too small)", vectorLength);
             }
         }
         catch (Throwable t) {
-            LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (Vector API not available: {0})", t.getMessage());
+            LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (Vector API not available: {0})", t.getMessage());
         }
 
         AVAILABLE = available;

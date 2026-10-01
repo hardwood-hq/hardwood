@@ -8,12 +8,9 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.util.logging.FileHandler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
 
 import org.aesh.command.Command;
 import org.aesh.command.CommandDefinition;
@@ -26,7 +23,7 @@ import org.aesh.command.option.OptionVisibility;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.DiveApp;
 import dev.hardwood.cli.dive.ParquetModel;
-import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.CliLogging;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.s3.RangeBacking;
 import dev.tamboui.buffer.Buffer;
@@ -58,8 +55,9 @@ public class DiveCommand implements Command<CommandInvocation> {
 
     @Option(
             name = "log-file",
-            description = "Write FINE-level dev.hardwood logs (including per-fetch entries from S3InputFile) "
-                    + "to the given path. The file is truncated on each invocation. Off by default.")
+            description = "Write the session's log records to the given path: Hardwood's from FINE, including "
+                    + "per-fetch entries from S3InputFile, and other libraries' warnings. The file is truncated "
+                    + "on each invocation. Off by default.")
     Path logFile;
 
     @Override
@@ -76,8 +74,15 @@ public class DiveCommand implements Command<CommandInvocation> {
             return CommandResult.FAILURE;
         }
 
-        FileHandler logHandler = installLogFileHandler();
-        try (ParquetModel model = ParquetModel.open(inputFile, fileMixin.file)) {
+        CliLogging.TuiSession logging;
+        try {
+            logging = CliLogging.forTui(logFile);
+        }
+        catch (IOException e) {
+            System.err.println("Error: cannot write log file " + logFile + ": " + logFileFailure(e));
+            return CommandResult.FAILURE;
+        }
+        try (logging; ParquetModel model = ParquetModel.open(inputFile, fileMixin.file)) {
             model.setDictionaryReadCapBytes(maxDictBytes);
             DiveApp app = new DiveApp(model);
             if (smokeRender) {
@@ -96,11 +101,16 @@ public class DiveCommand implements Command<CommandInvocation> {
             System.err.println("Error running dive TUI: " + e.getMessage());
             return CommandResult.FAILURE;
         }
-        finally {
-            if (logHandler != null) {
-                logHandler.close();
-            }
-        }
+    }
+
+    /// Why the log file could not be opened. The two common causes carry only the path as their
+    /// message, which the caller already prints.
+    private static String logFileFailure(IOException e) {
+        return switch (e) {
+            case NoSuchFileException ignored -> "its directory does not exist";
+            case AccessDeniedException ignored -> "permission denied";
+            default -> e.getMessage();
+        };
     }
 
     /// Reports whether stdin or stdout is not attached to a terminal.
@@ -108,42 +118,5 @@ public class DiveCommand implements Command<CommandInvocation> {
     /// the native image.
     private static boolean interactiveTerminalUnavailable() {
         return System.console() == null;
-    }
-
-    /// Configures JUL logging for an interactive dive session.
-    ///
-    /// Always detaches the `dev.hardwood` logger from parent handlers so
-    /// nothing leaks to stdout/stderr while the TUI owns the terminal —
-    /// otherwise log records would garble the rendered frames.
-    ///
-    /// When `--log-file` is set, also attaches a [FileHandler] writing
-    /// one record per line to the given path, truncated per session.
-    /// Returns the handler so it can be closed at shutdown, or `null`
-    /// when no log file is requested.
-    private FileHandler installLogFileHandler() {
-        Logger logger = Logger.getLogger("dev.hardwood");
-        logger.setUseParentHandlers(false);
-        if (logFile == null) {
-            return null;
-        }
-        try {
-            FileHandler handler = new FileHandler(logFile.toString(), false);
-            handler.setLevel(Level.FINE);
-            handler.setFormatter(new SimpleFormatter() {
-                @Override
-                public String format(LogRecord record) {
-                    return Fmt.fmt("%1$tFT%1$tT.%1$tL %2$s [%3$s] %4$s%n",
-                            record.getMillis(), record.getLevel(), record.getLoggerName(),
-                            formatMessage(record));
-                }
-            });
-            logger.setLevel(Level.FINE);
-            logger.addHandler(handler);
-            return handler;
-        }
-        catch (IOException e) {
-            System.err.println("Failed to open log file " + logFile + ": " + e.getMessage());
-            return null;
-        }
     }
 }

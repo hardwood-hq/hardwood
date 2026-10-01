@@ -22,7 +22,7 @@ public final class VectorSupport {
 
     static {
         INSTANCE = new ScalarOperations();
-        LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (requires Java 22+ and the multi-release JAR)");
+        LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (requires Java 22+ and the multi-release JAR)");
     }
 
     private VectorSupport() {
