@@ -119,11 +119,17 @@ class ConversionFaultTest {
                 .isEqualTo("DECIMAL(39, 0) has 39 digits, but FIXED_LEN_BYTE_ARRAY(16) holds at most 38");
     }
 
-    /// Geometry and geography payloads are carried through untouched, so no physical type
-    /// is imposed on them.
+    /// A geospatial payload is WKB in a `BYTE_ARRAY`, which parquet-format allows no other
+    /// physical type to carry. The payload being opaque says what the reader does with the bytes,
+    /// not which column may hold them.
     @Test
-    void anOpaquePayloadImposesNoPhysicalType() {
-        assertThat(fault(PhysicalType.INT32, null, LogicalType.geometry(null))).isNull();
+    void aGeospatialAnnotationIsFaultedOnAnyOtherPhysicalType() {
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.geometry(null))).isNull();
+        assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.geography(null, null))).isNull();
+        assertThat(fault(PhysicalType.INT32, null, LogicalType.geometry(null)))
+                .isEqualTo("GEOMETRY is read from BYTE_ARRAY, but the column is INT32");
+        assertThat(fault(PhysicalType.INT64, null, LogicalType.geography(null, null)))
+                .isEqualTo("GEOGRAPHY is read from BYTE_ARRAY, but the column is INT64");
     }
 
     /// `JSON`, `BSON` and `ENUM` all carry a `BYTE_ARRAY` payload, so each is faulted on

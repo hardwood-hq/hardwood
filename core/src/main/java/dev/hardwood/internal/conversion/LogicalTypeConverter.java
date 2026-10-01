@@ -55,7 +55,7 @@ public final class LogicalTypeConverter {
     /// `DECIMAL` with more digits than its carrier holds. [LogicalTypeValidator] refuses the
     /// same pairings to the writer. The two differ only where a file on disk leaves nothing to
     /// prove wrong: a `FIXED_LEN_BYTE_ARRAY` without a usable width, which `FixedWidthValidator`
-    /// refuses by name, an opaque `GEOMETRY` or `GEOGRAPHY` payload, and `NULL`.
+    /// refuses by name, and `NULL`, which no physical type contradicts.
     ///
     /// @param physicalType the column's physical type
     /// @param typeLength its `FIXED_LEN_BYTE_ARRAY` byte length, `null` for any other type
@@ -81,9 +81,10 @@ public final class LogicalTypeConverter {
             case LogicalType.UuidType ignored -> requiresFixed(physicalType, typeLength, "UUID", 16);
             case LogicalType.IntervalType ignored -> requiresFixed(physicalType, typeLength, "INTERVAL", 12);
             case LogicalType.Float16Type ignored -> requiresFixed(physicalType, typeLength, "FLOAT16", 2);
-            // Carried through as opaque payloads, so no physical type is imposed.
-            case LogicalType.GeometryType ignored -> null;
-            case LogicalType.GeographyType ignored -> null;
+            // WKB in a BYTE_ARRAY, which parquet-format allows no other physical type to carry.
+            // The payload is opaque to the reader, which says nothing about the column holding it.
+            case LogicalType.GeometryType ignored -> requires(physicalType, "GEOMETRY", PhysicalType.BYTE_ARRAY);
+            case LogicalType.GeographyType ignored -> requires(physicalType, "GEOGRAPHY", PhysicalType.BYTE_ARRAY);
             // LIST, MAP and VARIANT annotate a group. On a primitive leaf the pairing is
             // one no version of the format defines, so it is dropped like any other.
             case LogicalType.ListType ignored -> structural("LIST");

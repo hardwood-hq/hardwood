@@ -141,6 +141,21 @@ class UnreadableSortOrderTest {
         assertThat(MinMaxStats.of(beforeTheLiteral, leaf, BoundsReadability.ALL).canDrop(leaf)).isFalse();
     }
 
+    /// An annotation the reader drops takes its column's bounds with it: parquet-format has a reader
+    /// "ignore both the logical type annotation and column order for that column". The dropped flag
+    /// is the only thing that can say so, since such a column reads as a physical type whose own
+    /// order is defined — a `GEOMETRY` over an `INT64` reads as a plain `INT64` (#1406).
+    @Test
+    void theBoundsOfADroppedAnnotationAreNotRead() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.group("root", RepetitionType.REQUIRED, 1),
+                new SchemaElement("g", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, LogicalType.geometry(null))));
+
+        assertThat(BoundsReadability.of(schema, List.of(), ordinal -> true).readable(0)).isFalse();
+        assertThat(BoundsReadability.of(schema, List.of(), ordinal -> false).readable(0)).isTrue();
+    }
+
     /// `parquet.thrift` on the `ColumnOrder` union: "If the reader does not support the value of
     /// this union, min and max stats for this column should be ignored." Every physical type is
     /// affected, not only the binary ones.

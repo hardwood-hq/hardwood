@@ -1171,6 +1171,23 @@ class FilterPredicateResolverTest {
                 ;
     }
 
+    /// A `GEOMETRY` annotation on a column no physical type allows it on is dropped when the
+    /// footer is read, so the column reaches resolution as the physical type it is and
+    /// `intersects` on it is refused like any other non-geospatial column.
+    @Test
+    void resolveIntersectsOnAColumnWhoseGeospatialAnnotationWasDroppedThrows() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 1),
+                new SchemaElement("loc", PhysicalType.INT64, null, RepetitionType.OPTIONAL,
+                        null, null, null, null, null, LogicalType.geometry(null))));
+
+        assertThat(schema.getColumn("loc").logicalType()).isNull();
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'loc' is an unannotated INT64; intersects takes a GEOMETRY or GEOGRAPHY column");
+    }
+
     /// A bounding-box overlap has no inverse, so `not` over one is refused where every other
     /// predicate the rule does not admit is: at reader creation, naming the column.
     @Test
