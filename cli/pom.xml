@@ -21,7 +21,7 @@
       <!-- Both test phases run CLI code in the test JVM — the S3 ITs drive the same
            commands the unit tests do, only against a bucket — so both need the same
            JVM configuration. Kept in one property so the two cannot drift apart. -->
-      <cli.test.argLine>--add-modules jdk.incubator.vector --add-opens java.base/java.lang=ALL-UNNAMED</cli.test.argLine>
+      <cli.test.argLine>${test.argLine} --add-opens java.base/java.lang=ALL-UNNAMED</cli.test.argLine>
       <!-- Tracks the brotli4j version managed by the hardwood-bom; the per-platform
            native jar (native-<platform>) shares this version. -->
       <brotli4j.version>1.23.0</brotli4j.version>

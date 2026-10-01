@@ -1,6 +1,6 @@
 # Build infrastructure
 
-Covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM.
+Covers the quality and packaging infrastructure of Hardwood's Maven build: the `qa` profile and the checks it runs, the project-local Error Prone checks in `error-prone-checks/`, how the CI jobs resolve and cache what they build against, the JVM arguments every test runs with, the build metadata stamped into every JAR, and the rule that keeps plugin versions in the parent POM.
 
 Related documents:
 
@@ -177,6 +177,10 @@ Tests: `BuildInfoTest`, `WriterFooterMetadataTest`, `HardwoodCommandTest` (cli).
 - `revisionDirty` is `false` for a clean checkout of a release tag, and the manifest does not carry it.
 
 A rebuild from a source archive without `.git` resolves `revision` to `unknown` and does not reproduce a released JAR; reproduction is from a checkout of the release tag. No CI job rebuilds and compares artifacts: reproducibility rests on the fixed timestamp, `check-buildplan` and the deterministic manifest. Untested.
+
+## Test JVM arguments
+
+Every test JVM runs with the parent POM's `test.argLine` (the Vector API module and native access). A module that needs more appends to the property; one that sets its own `argLine` silently loses both flags. A configured `argLine` also wins over `-DargLine`, so a run that needs other flags, such as the PR build's scalar integration-test run, overrides `-Dtest.argLine`.
 
 ## Plugin version management
 

@@ -76,6 +76,10 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <compilerArgs combine.self="override">
+            <!-- Without the release flag javac compiles against the build JDK's classes and warns
+                 that nothing ties them to the target version. The checks also run inside JDK 21's
+                 javac in the Java 21 CI job, which is where a newer API would fail. -->
+            <arg>-Xlint:-options</arg>
             <arg>--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
             <arg>--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
             <arg>--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>

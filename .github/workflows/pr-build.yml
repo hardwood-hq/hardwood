@@ -254,11 +254,11 @@ jobs:
 
       - name: 'Run integration tests (Java 25, libdeflate)'
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: ./mvnw -B clean verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED"
+        run: ./mvnw -B clean verify -pl :hardwood-integration-test -Dlibdeflate.required=true -Dtest.argLine="--enable-native-access=ALL-UNNAMED"
 
       - name: 'Run integration tests (Java 25, libdeflate, incubating APIs)'
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: ./mvnw -B clean verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
+        run: ./mvnw -B clean verify -pl :hardwood-integration-test -Dlibdeflate.required=true
 
       - name: 'Set up Java 21'
         if: ${{ !cancelled() }}

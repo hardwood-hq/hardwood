@@ -179,15 +179,6 @@
         </executions>
       </plugin>
 
-      <!-- Run unit tests with Vector API module -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <argLine>--add-modules jdk.incubator.vector</argLine>
-        </configuration>
-      </plugin>
-
       <!-- Create multi-release JAR. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -208,7 +199,6 @@
         <artifactId>maven-failsafe-plugin</artifactId>
         <configuration>
           <classesDirectory>${project.build.directory}/${project.build.finalName}.jar</classesDirectory>
-          <argLine>--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector</argLine>
         </configuration>
       </plugin>
     </plugins>

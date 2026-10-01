@@ -81,6 +81,12 @@
          exists under the `native` profile. That profile clears this exclusion, so a
          native build runs every IT and an ordinary one runs every IT it can. -->
     <failsafe.excludedGroups>native</failsafe.excludedGroups>
+    <!-- Every test JVM runs Hardwood code: the Vector API module enables the SIMD decode paths
+         of core's multi-release JAR, and native access lets libdeflate (FFM) and the JNI codec
+         libraries load without a restricted-method warning, which a later JDK turns into a
+         failure. A module needing more appends to this property; CI overrides it to run the
+         integration tests without the Vector API as well. -->
+    <test.argLine>--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector</test.argLine>
   </properties>
 
   <build>
@@ -192,6 +198,7 @@
           <artifactId>maven-failsafe-plugin</artifactId>
           <version>3.5.4</version>
           <configuration>
+            <argLine>${test.argLine}</argLine>
             <excludedGroups>${failsafe.excludedGroups}</excludedGroups>
           </configuration>
           <executions>
@@ -267,6 +274,9 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>3.5.4</version>
+          <configuration>
+            <argLine>${test.argLine}</argLine>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

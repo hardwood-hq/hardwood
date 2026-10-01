@@ -23,7 +23,10 @@
   <description>Comparison tests between Hardwood and parquet-java reference implementation</description>
 
   <properties>
+    <!-- Tests only: the JAR would be empty, so none is built, and there is nothing to install
+         or deploy. -->
     <maven.deploy.skip>true</maven.deploy.skip>
+    <maven.install.skip>true</maven.install.skip>
   </properties>
 
   <profiles>
@@ -226,6 +229,13 @@
   <build>
     <plugins>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <skipIfEmpty>true</skipIfEmpty>
+        </configuration>
+      </plugin>
+      <plugin>
         <!--
           The write-path coverage observations are emptied here rather than by the test JVM that
           writes them. Surefire may fork per class, and every fork runs the same listener: a
@@ -256,10 +266,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <!-- Required for libdeflate FFM integration -->
-          <argLine>--enable-native-access=ALL-UNNAMED</argLine>
-        </configuration>
         <executions>
           <!--
             The write-path coverage verdict asserts what the whole run produced, so it cannot sit
