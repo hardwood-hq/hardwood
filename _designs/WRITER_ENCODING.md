@@ -224,7 +224,7 @@ A column's order is its logical type's where it has one, and its physical type's
 | Boolean (`false < true`) | `BOOLEAN` | `BooleanStatisticsCollector` |
 | Undefined | `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST`, `MAP` | `NullCountStatistics` for binary; bounds dropped at flush otherwise |
 
-`StatisticsOrder.supportsBounds` is the single table of which columns have defined bounds, an exhaustive switch over `LogicalType`. An undefined-order column writes `null_count` without bounds: parquet-format says so directly for `INTERVAL`, and a bound in an order the reader cannot know would prune away live rows. A binary column of undefined order does not accumulate bounds at all, so a `GEOMETRY` chunk does not copy a blob out on every bound extension only for flush to discard it. The read side mirrors this table in `BoundsReadability` ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)).
+`StatisticsOrder.supportsBounds` asks `AnnotationPairings.namesAnOrder`, which the read side reads too. An undefined-order column writes `null_count` without bounds: parquet-format says so directly for `INTERVAL`, and a bound in an order the reader cannot know would prune away live rows. A binary column of undefined order does not accumulate bounds at all, so a `GEOMETRY` chunk does not copy a blob out on every bound extension only for flush to discard it. `BoundsReadability` reads the same answer ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)).
 
 ### Floating point
 

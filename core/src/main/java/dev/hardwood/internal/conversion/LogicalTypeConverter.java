@@ -18,9 +18,12 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.temporal.Temporal;
+import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.schema.Pairing;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
@@ -63,107 +66,72 @@ public final class LogicalTypeConverter {
     /// @return the reason, or `null` if the annotation can be read from the column
     public static String conversionFault(PhysicalType physicalType, Integer typeLength,
                                          LogicalType logicalType) {
-        if (logicalType == null) {
+        Pairing pairing = AnnotationPairings.check(physicalType, typeLength, logicalType);
+        if (!(pairing instanceof Pairing.Illegal illegal)) {
             return null;
         }
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> requires(physicalType, "STRING", PhysicalType.BYTE_ARRAY);
-            case LogicalType.JsonType ignored -> requires(physicalType, "JSON", PhysicalType.BYTE_ARRAY);
-            case LogicalType.EnumType ignored -> requires(physicalType, "ENUM", PhysicalType.BYTE_ARRAY);
-            case LogicalType.BsonType ignored -> requires(physicalType, "BSON", PhysicalType.BYTE_ARRAY);
-            case LogicalType.DateType ignored -> requires(physicalType, "DATE", PhysicalType.INT32);
-            case LogicalType.TimestampType ignored -> timestampFault(physicalType, typeLength);
-            case LogicalType.TimeType time -> requires(physicalType, "TIME(" + time.unit() + ")",
-                    time.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64);
-            case LogicalType.IntType integer -> requires(physicalType, "INT(" + integer.bitWidth() + ")",
-                    integer.bitWidth() == 64 ? PhysicalType.INT64 : PhysicalType.INT32);
-            case LogicalType.DecimalType decimal -> decimalFault(physicalType, typeLength, decimal);
-            case LogicalType.UuidType ignored -> requiresFixed(physicalType, typeLength, "UUID", 16);
-            case LogicalType.IntervalType ignored -> requiresFixed(physicalType, typeLength, "INTERVAL", 12);
-            case LogicalType.Float16Type ignored -> requiresFixed(physicalType, typeLength, "FLOAT16", 2);
-            // WKB in a BYTE_ARRAY, which parquet-format allows no other physical type to carry.
-            // The payload is opaque to the reader, which says nothing about the column holding it.
-            case LogicalType.GeometryType ignored -> requires(physicalType, "GEOMETRY", PhysicalType.BYTE_ARRAY);
-            case LogicalType.GeographyType ignored -> requires(physicalType, "GEOGRAPHY", PhysicalType.BYTE_ARRAY);
-            // LIST, MAP and VARIANT annotate a group. On a primitive leaf the pairing is
-            // one no version of the format defines, so it is dropped like any other.
-            case LogicalType.ListType ignored -> structural("LIST");
-            case LogicalType.MapType ignored -> structural("MAP");
-            case LogicalType.VariantType ignored -> structural("VARIANT");
-            // NULL is legal over any physical type — it says every value is null. Only the
-            // values can contradict it, and this answers from the schema alone.
-            case LogicalType.NullType ignored -> null;
+        return switch (illegal.fault()) {
+            case Pairing.Fault.WrongPhysicalType wrong ->
+                    readsFrom(token(logicalType), wrong.allowed(), physicalType);
+            case Pairing.Fault.WrongWidth wrong -> widthFault(logicalType, wrong.expected(), typeLength);
+            case Pairing.Fault.PrecisionTooLarge tooLarge -> precisionFault(physicalType, typeLength,
+                    logicalType, tooLarge.precision(), tooLarge.maxPrecision());
+            case Pairing.Fault.GroupAnnotation ignored -> structural(token(logicalType));
         };
     }
 
-    private static String structural(String annotation) {
-        return annotation + " annotates a group, but the column is a primitive";
+    /// The annotation as a fault message names it: the format's token, with the parameters that
+    /// decide which column carries it.
+    private static String token(LogicalType logicalType) {
+        return switch (logicalType) {
+            case LogicalType.StringType ignored -> "STRING";
+            case LogicalType.JsonType ignored -> "JSON";
+            case LogicalType.EnumType ignored -> "ENUM";
+            case LogicalType.BsonType ignored -> "BSON";
+            case LogicalType.DateType ignored -> "DATE";
+            case LogicalType.TimestampType ignored -> "TIMESTAMP";
+            case LogicalType.TimeType time -> "TIME(" + time.unit() + ")";
+            case LogicalType.IntType integer -> "INT(" + integer.bitWidth() + ")";
+            case LogicalType.DecimalType ignored -> "DECIMAL";
+            case LogicalType.UuidType ignored -> "UUID";
+            case LogicalType.IntervalType ignored -> "INTERVAL";
+            case LogicalType.Float16Type ignored -> "FLOAT16";
+            case LogicalType.GeometryType ignored -> "GEOMETRY";
+            case LogicalType.GeographyType ignored -> "GEOGRAPHY";
+            case LogicalType.ListType ignored -> "LIST";
+            case LogicalType.MapType ignored -> "MAP";
+            case LogicalType.VariantType ignored -> "VARIANT";
+            case LogicalType.NullType ignored -> "NULL";
+        };
     }
 
-    private static String requires(PhysicalType actual, String annotation, PhysicalType... allowed) {
-        for (PhysicalType candidate : allowed) {
-            if (actual == candidate) {
-                return null;
-            }
-        }
+    private static String readsFrom(String annotation, List<PhysicalType> allowed, PhysicalType actual) {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < allowed.length; i++) {
-            sb.append(i == 0 ? "" : i == allowed.length - 1 ? " or " : ", ").append(allowed[i]);
+        for (int i = 0; i < allowed.size(); i++) {
+            sb.append(i == 0 ? "" : i == allowed.size() - 1 ? " or " : ", ").append(allowed.get(i));
         }
         return annotation + " is read from " + sb + ", but the column is " + actual;
     }
 
-    /// A `TIMESTAMP` is stored in an `INT64` or in a `FIXED_LEN_BYTE_ARRAY(12)`.
-    private static String timestampFault(PhysicalType actual, Integer typeLength) {
-        if (actual == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            // An absent width is FixedWidthValidator's to refuse, as in requiresFixed.
-            return typeLength == null || typeLength == Flba12Timestamps.WIDTH
-                    ? null
-                    : "TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is " + Flba12Timestamps.WIDTH
-                            + " bytes, but the column declares " + typeLength;
+    /// A `TIMESTAMP` names the physical type beside the width, being read from an `INT64` as well;
+    /// every other width-fixing annotation is read from a `FIXED_LEN_BYTE_ARRAY` alone.
+    private static String widthFault(LogicalType logicalType, int expected, Integer typeLength) {
+        if (logicalType instanceof LogicalType.TimestampType) {
+            return "TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is " + expected
+                    + " bytes, but the column declares " + typeLength;
         }
-        return requires(actual, "TIMESTAMP", PhysicalType.INT64, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        return token(logicalType) + " is exactly " + expected + " bytes, but the column declares " + typeLength;
     }
 
-    /// A `DECIMAL` is stored in one of four physical types, and its precision must fit the
-    /// digits that type holds.
-    private static String decimalFault(PhysicalType actual, Integer typeLength,
-                                       LogicalType.DecimalType decimal) {
-        String wrongType = requires(actual, "DECIMAL", PhysicalType.INT32, PhysicalType.INT64,
-                PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
-        if (wrongType != null) {
-            return wrongType;
-        }
+    private static String precisionFault(PhysicalType actual, Integer typeLength, LogicalType annotation,
+                                         int precision, long maxPrecision) {
         boolean fixed = actual == PhysicalType.FIXED_LEN_BYTE_ARRAY;
-        // A width that is absent or not positive is FixedWidthValidator's to refuse, and it has
-        // no digits to count. requiresFixed keeps only the absent case, because a declared
-        // width it can still compare against the one its annotation fixes.
-        if (fixed && (typeLength == null || typeLength <= 0)) {
-            return null;
-        }
-        long maxPrecision = LogicalTypeValidator.maxDecimalPrecision(actual, typeLength);
-        if (decimal.precision() <= maxPrecision) {
-            return null;
-        }
-        return decimal + " has " + decimal.precision() + " digits, but "
+        return annotation + " has " + precision + " digits, but "
                 + (fixed ? actual + "(" + typeLength + ")" : actual) + " holds at most " + maxPrecision;
     }
 
-    private static String requiresFixed(PhysicalType actual, Integer typeLength, String annotation,
-                                        int width) {
-        String wrongType = requires(actual, annotation, PhysicalType.FIXED_LEN_BYTE_ARRAY);
-        if (wrongType != null) {
-            return wrongType;
-        }
-        // A footer that omits type_length states no width to contradict the annotation, so
-        // there is nothing here that can be proven wrong. That column cannot be decoded at
-        // all and FixedWidthValidator refuses it by name; reporting it as a bad annotation
-        // would drop a sound annotation and describe the wrong defect.
-        if (typeLength != null && typeLength != width) {
-            return annotation + " is exactly " + width + " bytes, but the column declares "
-                    + typeLength;
-        }
-        return null;
+    private static String structural(String annotation) {
+        return annotation + " annotates a group, but the column is a primitive";
     }
 
     /// Convert a physical value to its logical type representation.

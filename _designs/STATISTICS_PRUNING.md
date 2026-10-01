@@ -157,7 +157,7 @@ The readability also records which unreadable columns have been reported. `claim
 
 `MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` then passes `BoundsReadability.ALL`. Untested.
 
-`BoundsReadability.namesAnOrder` is an exhaustive switch over `LogicalType`. It mirrors `StatisticsOrder#supportsBounds` on the write side without delegating to it: the writer asks whether to record bounds, the reader whether to trust recorded ones, and both fail to compile on a new annotation until each states its answer. `FilterPredicateResolver` asks the same method whether a column takes ordered operators at all.
+Whether an annotation names an order at all is `AnnotationPairings.namesAnOrder`, an exhaustive switch over `LogicalType`. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
 
 `Statistics` keeps its bounds either way; metadata surfaces such as `hardwood inspect` report what the file holds.
 

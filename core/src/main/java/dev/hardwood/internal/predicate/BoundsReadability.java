@@ -10,10 +10,10 @@ package dev.hardwood.internal.predicate;
 import java.util.List;
 import java.util.function.IntPredicate;
 
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.metadata.ColumnOrder;
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -134,46 +134,9 @@ public final class BoundsReadability {
             boolean orderRecognized = columnOrders.size() <= i
                     || columnOrders.get(i) != ColumnOrder.UNKNOWN;
             readable[i] = orderRecognized && !annotationDropped.test(i)
-                    && namesAnOrder(column.logicalType());
+                    && AnnotationPairings.namesAnOrder(column.logicalType());
         }
         return new BoundsReadability(readable);
     }
 
-    /// Whether the annotation names an order for the values beneath it.
-    ///
-    /// Two callers ask: this one, to decide whether bounds already recorded can be trusted, and
-    /// [FilterPredicateResolver], to decide whether a column takes `lt`, `ltEq`, `gt` and `gtEq`
-    /// at all. Both questions are the one the format answers, so they share an answer and cannot
-    /// drift apart.
-    ///
-    /// The switch is exhaustive rather than a list of the types without one, so an annotation
-    /// added later has to say which side it falls on. It mirrors
-    /// `StatisticsOrder#supportsBounds` on the write side without delegating to it: that asks
-    /// whether to record bounds, this whether the values themselves have an order.
-    static boolean namesAnOrder(LogicalType logicalType) {
-        if (logicalType == null) {
-            return true; // the physical type's own order
-        }
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> true;
-            case LogicalType.EnumType ignored -> true;
-            case LogicalType.JsonType ignored -> true;
-            case LogicalType.BsonType ignored -> true;
-            case LogicalType.UuidType ignored -> true;
-            case LogicalType.DateType ignored -> true;
-            case LogicalType.TimeType ignored -> true;
-            case LogicalType.TimestampType ignored -> true;
-            case LogicalType.IntType ignored -> true;
-            case LogicalType.DecimalType ignored -> true;
-            case LogicalType.Float16Type ignored -> true;
-            // parquet-format leaves these unordered, and a NULL column stores no values.
-            case LogicalType.IntervalType ignored -> false;
-            case LogicalType.NullType ignored -> false;
-            case LogicalType.VariantType ignored -> false;
-            case LogicalType.GeometryType ignored -> false;
-            case LogicalType.GeographyType ignored -> false;
-            case LogicalType.ListType ignored -> false;
-            case LogicalType.MapType ignored -> false;
-        };
-    }
 }

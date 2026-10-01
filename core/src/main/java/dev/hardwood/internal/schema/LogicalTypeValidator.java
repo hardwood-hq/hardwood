@@ -46,31 +46,56 @@ public class LogicalTypeValidator {
         if (logicalType == null) {
             return;
         }
-        switch (logicalType) {
-            case LogicalType.StringType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.EnumType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.JsonType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.BsonType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.GeometryType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.GeographyType ignored -> require(columnName, logicalType, type, PhysicalType.BYTE_ARRAY);
-            case LogicalType.DateType ignored -> require(columnName, logicalType, type, PhysicalType.INT32);
-            case LogicalType.UuidType ignored -> requireFixed(columnName, logicalType, type, typeLength, 16);
-            case LogicalType.Float16Type ignored -> requireFixed(columnName, logicalType, type, typeLength, 2);
-            case LogicalType.IntervalType ignored -> requireFixed(columnName, logicalType, type, typeLength, 12);
-            case LogicalType.IntType integer -> require(columnName, logicalType, type,
-                    integer.bitWidth() == 64 ? PhysicalType.INT64 : PhysicalType.INT32);
-            case LogicalType.TimeType time -> require(columnName, logicalType, type,
-                    time.unit() == LogicalType.TimeUnit.MILLIS ? PhysicalType.INT32 : PhysicalType.INT64);
-            case LogicalType.TimestampType ignored -> validateTimestamp(columnName, logicalType, type, typeLength);
-            case LogicalType.DecimalType decimal -> validateDecimal(columnName, type, typeLength, decimal);
-            case LogicalType.NullType ignored -> requireNullable(columnName, repetition);
-            case LogicalType.ListType ignored -> throw groupAnnotation(columnName, logicalType);
-            case LogicalType.MapType ignored -> throw groupAnnotation(columnName, logicalType);
-            case LogicalType.VariantType ignored -> throw new IllegalArgumentException(
-                    "VARIANT annotates a group of metadata and value children, which the writer "
-                            + "does not yet build: " + columnName);
+        if (logicalType instanceof LogicalType.NullType) {
+            requireNullable(columnName, repetition);
+            return;
+        }
+        Pairing pairing = AnnotationPairings.check(type, typeLength, logicalType);
+        if (pairing instanceof Pairing.Illegal illegal) {
+            throw refusal(columnName, type, typeLength, logicalType, illegal.fault());
         }
     }
+
+    /// The writer's wording for a pairing [AnnotationPairings#check] refuses. It addresses the author
+    /// of a schema being declared, naming the column they wrote, where the reader's wording
+    /// describes a file that already exists.
+    private static IllegalArgumentException refusal(String columnName, PhysicalType type, Integer typeLength,
+                                                   LogicalType logicalType, Pairing.Fault fault) {
+        return switch (fault) {
+            case Pairing.Fault.WrongPhysicalType wrong -> wrongType(columnName, type, logicalType, wrong);
+            case Pairing.Fault.WrongWidth wrong ->
+                    widthRefusal(columnName, logicalType, wrong.expected(), typeLength);
+            case Pairing.Fault.PrecisionTooLarge tooLarge -> new IllegalArgumentException(
+                    "DECIMAL precision " + tooLarge.precision() + " exceeds the maximum "
+                            + tooLarge.maxPrecision() + " a " + type + " can represent on column " + columnName);
+            case Pairing.Fault.GroupAnnotation ignored -> logicalType instanceof LogicalType.VariantType
+                    ? new IllegalArgumentException("VARIANT annotates a group of metadata and value children, "
+                            + "which the writer does not yet build: " + columnName)
+                    : groupAnnotation(columnName, logicalType);
+        };
+    }
+
+    private static IllegalArgumentException wrongType(String columnName, PhysicalType type,
+                                                      LogicalType logicalType,
+                                                      Pairing.Fault.WrongPhysicalType wrong) {
+        if (logicalType instanceof LogicalType.DecimalType) {
+            return new IllegalArgumentException("DECIMAL is not valid on physical type " + type
+                    + " (column " + columnName + "); use INT32, INT64, BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY");
+        }
+        if (logicalType instanceof LogicalType.TimestampType) {
+            return new IllegalArgumentException(logicalType + " annotates an INT64 or a FIXED_LEN_BYTE_ARRAY("
+                    + Flba12Timestamps.WIDTH + ") column, not " + type + " (column " + columnName + ")");
+        }
+        return new IllegalArgumentException(logicalType + " annotates a " + wrong.allowed().getFirst()
+                + " column, not " + type + " (column " + columnName + ")");
+    }
+
+    private static IllegalArgumentException widthRefusal(String columnName, LogicalType logicalType,
+                                                        int expected, Integer typeLength) {
+        return new IllegalArgumentException(logicalType + " annotates a FIXED_LEN_BYTE_ARRAY of length "
+                + expected + ", not " + typeLength + " (column " + columnName + ")");
+    }
+
 
     /// `UNKNOWN` annotates a column of any physical type whose every value is null, which a
     /// `REQUIRED` column can never be: no value it could legally hold matches the annotation,

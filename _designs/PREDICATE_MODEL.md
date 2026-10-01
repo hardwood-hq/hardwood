@@ -209,7 +209,7 @@ Every per-annotation decision is a `switch` over `LogicalType` (or over `Compari
 | `FilterPredicateResolver.orderingLiteral` | whether a binary column orders as its bytes, and which literal carries its order |
 | `ColumnLiterals.logical` | the literals a refusal message names |
 | `TextColumns.isText` | whether `getString` reads the column and a `String` is its literal |
-| `BoundsReadability.namesAnOrder` | whether the type defines an order, shared by the ordered-operator refusal and bounds readability |
+| `AnnotationPairings.namesAnOrder` | whether the type defines an order, shared by the ordered-operator refusal, bounds readability and the writer's statistics |
 | `BinaryComparator.sliceOrder` | the slice order of a `Comparison` |
 
 Enforced by the compiler.
