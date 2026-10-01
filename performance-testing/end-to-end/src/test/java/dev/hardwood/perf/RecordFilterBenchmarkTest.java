@@ -302,7 +302,7 @@ class RecordFilterBenchmarkTest {
 
         Run fixedDecimalIn = timeFilter(
                 // Padded to the column width, so membership is byte equality.
-                FilterPredicate.in("amount_fixed", decimalLiterals()),
+                FilterPredicate.in("amount_fixed", paddedDecimalLiterals()),
                 runs);
 
         Run variableDecimalIn = timeFilter(
@@ -654,6 +654,20 @@ class RecordFilterBenchmarkTest {
                 new Schema.Field("amount_fixed", fixedDecimal, null, null),
                 new Schema.Field("amount_var", variableDecimal, null, null)));
         return schema;
+    }
+
+    /// [#DECIMAL_IN] as unscaled two's complement bytes padded to [#DECIMAL_BYTES], the spelling
+    /// `amount_fixed` holds every value under and the only one an equality literal on it takes.
+    private static byte[][] paddedDecimalLiterals() {
+        byte[][] literals = decimalLiterals();
+        for (int i = 0; i < literals.length; i++) {
+            byte[] padded = new byte[DECIMAL_BYTES];
+            byte fill = literals[i][0] < 0 ? (byte) 0xFF : 0;
+            Arrays.fill(padded, 0, DECIMAL_BYTES - literals[i].length, fill);
+            System.arraycopy(literals[i], 0, padded, DECIMAL_BYTES - literals[i].length, literals[i].length);
+            literals[i] = padded;
+        }
+        return literals;
     }
 
     /// [#DECIMAL_IN] as unscaled two's complement bytes, the literal form a decimal `IN` takes.
