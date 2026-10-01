@@ -84,7 +84,6 @@ and no column appears in two independent subtrees. `Not` never reaches the compi
 | A leaf below a struct or list | Batch matchers read a flat typed array per column |
 | `FLOAT16` comparison or `IN` | No batch matcher |
 | `intersects` | Row-group decision only |
-| A binary leaf in an instant order (`INT96`, `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`) | `BinaryComparator.sliceOrder` is `NONE` |
 | A column in two independent subtrees, e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)` | One column holds one bitmap per batch |
 | Any predicate on `NestedRowReader` | That reader has no drain-side path |
 
@@ -100,7 +99,16 @@ A matcher writes bit `i` of a per-batch `long[]` when row `i` **definitely** sat
 
 **Stale bits.** Bitmaps are sized to the batch capacity and reused across batches. A matcher and `MergePlanEvaluator` write only the words covering `[0, recordCount)`, and bits past `recordCount` may hold values from an earlier, longer batch. Every consumer bounds its reads by the record count: `FlatRowReader`'s bit scan and run walk stop at the batch size, `FlatRowReader.countMatches` masks the tail word, and `SelectionEngine.collectSetBits` iterates `[0, recordCount)`. A new consumer of these bitmaps must do the same. Untested.
 
-**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place. `BinaryComparator.sliceOrder` maps each `Comparison` to `UNSIGNED`, `SIGNED` or `NONE` through a switch with no `default`, and both the eligibility check and the matchers read it, so a new `Comparison` is answered in one place. Equality tests bytes only when `Comparison.byteExact()` holds; otherwise (a `BYTE_ARRAY` decimal, where one value has several spellings) it compares by order.
+**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place, in the order `BinaryComparator.sliceOrder` gives for the leaf's `Comparison`. Every binary leaf is eligible: the switch has no `default` and no constant standing for an order without a slice comparison, so a new `Comparison` is answered there and nothing falls back for want of a comparison.
+
+| `SliceOrder` | Compares | Carried by |
+|---|---|---|
+| `UNSIGNED` | unsigned lexicographic | a byte string, and the stored bytes of any byte column |
+| `SIGNED` | big-endian two's complement, the shorter slice sign-extended | a `DECIMAL` of either byte-array type |
+| `SIGNED_LITTLE_ENDIAN` | little-endian two's complement of one width | a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` |
+| `INT96_INSTANT` | the instant encoded: whole days, then nanoseconds within the day | a legacy `INT96` timestamp |
+
+Equality tests bytes only when `Comparison.byteExact()` holds. Otherwise it compares by order, which is what matches a padded spelling of a `BYTE_ARRAY` decimal and the several spellings an `INT96` instant has.
 
 Tests: `DrainSideOracleTest`.
 

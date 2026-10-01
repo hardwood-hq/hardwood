@@ -211,22 +211,14 @@ class BatchFilterCompilerTest {
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
     }
 
-    /// Every order a slice comparison implements is eligible, decimals included — the matcher takes
-    /// the comparison and compares in it, rather than the compiler admitting only byte strings. The
-    /// instant orders are left out: no slice comparison implements them, so they fall back (see
-    /// [IneligibleShapes#binaryLeafInInstantOrder_returnsNull()]).
+    /// Every comparison is eligible in every operator: each has a slice order, and the matcher
+    /// takes the comparison and compares in it rather than the compiler admitting only byte
+    /// strings.
     @Test
     void binaryLeaf_everySliceOrderAndOperator_isEligible() {
         FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
 
         for (Comparison comparison : Comparison.values()) {
-            boolean instantOrder = switch (comparison) {
-                case BYTE_STRING, STORED_BYTES, FIXED_DECIMAL, VARIABLE_DECIMAL -> false;
-                case FIXED_TIMESTAMP, INT96_INSTANT -> true;
-            };
-            if (instantOrder) {
-                continue;
-            }
             for (Operator op : Operator.values()) {
                 ColumnBatchMatcher[] result = compileMatchers(
                         new ResolvedPredicate.BinaryPredicate(0, op, new byte[]{'m'}, comparison),
@@ -236,6 +228,32 @@ class BatchFilterCompilerTest {
                 assertInstanceOf(BinaryBatchMatcher.class, result[0]);
             }
         }
+    }
+
+    /// An instant order is a slice order like any other: a legacy `INT96` column and a
+    /// `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` both reach the batch as twelve stored bytes, and the
+    /// matcher compares them by the instant they encode.
+    @Test
+    void binaryLeafInInstantOrder_isEligible() {
+        byte[] instant = new byte[12];
+        assertInstantOrderCompiles(schema(leaf("ts", PhysicalType.INT96)), instant, Comparison.INT96_INSTANT);
+        assertInstantOrderCompiles(schema(SchemaElement.fixedLengthPrimitive("ts", 12, RepetitionType.OPTIONAL)),
+                instant, Comparison.FIXED_TIMESTAMP);
+    }
+
+    private static void assertInstantOrderCompiles(FileSchema schema, byte[] instant, Comparison comparison) {
+        for (Operator op : Operator.values()) {
+            ColumnBatchMatcher[] result = compileMatchers(
+                    new ResolvedPredicate.BinaryPredicate(0, op, instant, comparison),
+                    schema, IntUnaryOperator.identity());
+            assertNotNull(result, comparison + " " + op);
+            assertInstanceOf(BinaryBatchMatcher.class, result[0]);
+        }
+        ColumnBatchMatcher[] in = compileMatchers(
+                new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{instant}, comparison),
+                schema, IntUnaryOperator.identity());
+        assertNotNull(in, comparison + " in");
+        assertInstanceOf(BinaryBatchMatcher.class, in[0]);
     }
 
     /// An `INT96` column's bytes reach the batch as they are stored, so equality on them is
@@ -272,47 +290,10 @@ class BatchFilterCompilerTest {
                             new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
                     ))
             ));
-            ColumnBatchMatcher[] result = compileMatchers(
+                ColumnBatchMatcher[] result = compileMatchers(
                     predicate, schema, IntUnaryOperator.identity());
             assertNotNull(result);
             assertEquals(2, result.length);
-        }
-
-        @Test
-        void binaryLeafInInstantOrder_returnsNull() {
-            // An INT96 and a FIXED_LEN_BYTE_ARRAY(12) TIMESTAMP compare by instant, which no batch
-            // matcher implements. Both columns reach the batch as a BinaryBatchValues, so a matcher
-            // would compare their 12 bytes in a byte order: wrong rows, silently, instead of a
-            // fallback.
-            byte[] instant = new byte[12];
-            FileSchema int96 = schema(leaf("ts", PhysicalType.INT96));
-            FileSchema fixedTimestamp = schema(SchemaElement.fixedLengthPrimitive("ts", 12, RepetitionType.OPTIONAL));
-            assertInstantOrderFallsBack(int96, instant, Comparison.INT96_INSTANT);
-            assertInstantOrderFallsBack(fixedTimestamp, instant, Comparison.FIXED_TIMESTAMP);
-        }
-
-        private static void assertInstantOrderFallsBack(FileSchema schema, byte[] instant, Comparison comparison) {
-            for (Operator op : Operator.values()) {
-                ResolvedPredicate binary = new ResolvedPredicate.BinaryPredicate(0, op, instant, comparison);
-                assertNull(BatchFilterCompiler.tryCompile(binary, schema, IntUnaryOperator.identity()),
-                        comparison + " " + op);
-            }
-            ResolvedPredicate binaryIn = new ResolvedPredicate.BinaryInPredicate(0,
-                    new byte[][]{instant}, comparison);
-            assertNull(BatchFilterCompiler.tryCompile(binaryIn, schema, IntUnaryOperator.identity()),
-                    comparison + " in");
-        }
-
-        @Test
-        void andWithIneligibleBinaryChild_returnsNull() {
-            FileSchema schema = schema(
-                    leaf("id", PhysicalType.INT64),
-                    leaf("ts", PhysicalType.INT96));
-            ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
-                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
-                    new ResolvedPredicate.BinaryPredicate(1, Operator.EQ,
-                            new byte[12], Comparison.INT96_INSTANT)));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
         @Test

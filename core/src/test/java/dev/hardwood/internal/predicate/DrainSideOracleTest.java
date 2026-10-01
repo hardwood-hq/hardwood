@@ -79,10 +79,17 @@ class DrainSideOracleTest {
     private static final int COL_FLAG = 4;   // boolean
     private static final int COL_NAME = 5;   // BYTE_ARRAY, widths differ
     private static final int COL_AMOUNT = 6; // FIXED_LEN_BYTE_ARRAY(4)
+    private static final int COL_MOMENT = 7; // FIXED_LEN_BYTE_ARRAY(12)
 
     /// Width of `amount`: every value is padded to it, so a [Comparison#FIXED_DECIMAL] comparison
     /// always sees equal widths and the sign byte decides first.
     private static final int AMOUNT_WIDTH = 4;
+
+    /// Width of `moment`: the twelve bytes an `INT96` and a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`
+    /// both store, which carry the two instant orders.
+    private static final int MOMENT_WIDTH = 12;
+
+    private static final long NANOS_PER_DAY = 86_400_000_000_000L;
 
     // ---------- Single-leaf coverage, all supported (type, op) pairs ----------
 
@@ -408,6 +415,83 @@ class DrainSideOracleTest {
                 Comparison.FIXED_DECIMAL), w);
     }
 
+    /// `moment` read as a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`: a little-endian count whose byte
+    /// order is not its value order, so a byte-wise matcher would answer a different row set.
+    @Test
+    void singleFixedTimestampLeaf_allOps_bothWaysAgree() {
+        Workload w = workload(0x15A1);
+        for (byte[] literal : new byte[][]{flba12(0), flba12(1), flba12(-1), flba12(1L << 40)}) {
+            for (Operator op : Operator.values()) {
+                assertSurvivorsAgree(new ResolvedPredicate.BinaryPredicate(COL_MOMENT, op, literal,
+                        Comparison.FIXED_TIMESTAMP), w);
+            }
+        }
+    }
+
+    /// `moment` read as a legacy `INT96`: the instant it encodes, which several spellings share
+    /// because the nanoseconds are not bounded by one day.
+    @Test
+    void singleInt96Leaf_allOps_bothWaysAgree() {
+        Workload w = workload(0x1960);
+        for (byte[] literal : new byte[][]{int96(0, 2_460_000), int96(NANOS_PER_DAY, 2_459_999),
+                int96(NANOS_PER_DAY - 1, 2_459_999), int96(0, 0)}) {
+            for (Operator op : Operator.values()) {
+                assertSurvivorsAgree(new ResolvedPredicate.BinaryPredicate(COL_MOMENT, op, literal,
+                        Comparison.INT96_INSTANT), w);
+            }
+        }
+    }
+
+    /// Membership in an instant order: a member the pool holds under another spelling has to match
+    /// the rows holding that instant.
+    @Test
+    void binaryIn_instantOrders_bothWaysAgree() {
+        Workload w = workload(0x1961);
+        byte[][] int96Members = {int96(0, 2_460_000), int96(NANOS_PER_DAY - 1, 2_459_999), int96(5, 1)};
+        assertSurvivorsAgree(new ResolvedPredicate.BinaryInPredicate(COL_MOMENT, int96Members,
+                Comparison.INT96_INSTANT), w);
+        byte[][] timestampMembers = {flba12(0), flba12(-1), flba12(1L << 40), flba12(7)};
+        assertSurvivorsAgree(new ResolvedPredicate.BinaryInPredicate(COL_MOMENT, timestampMembers,
+                Comparison.FIXED_TIMESTAMP), w);
+    }
+
+    /// An instant-order leaf beside a numeric one: both run as per-column matchers whose bitmaps the
+    /// merge intersects.
+    @Test
+    void int96AndLongLeaves_bothWaysAgree() {
+        Workload w = workload(0x1962);
+        assertSurvivorsAgree(new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.BinaryPredicate(COL_MOMENT, Operator.GT, int96(0, 2_000_000),
+                        Comparison.INT96_INSTANT),
+                new ResolvedPredicate.LongPredicate(COL_ID, Operator.LT, 100L))), w);
+    }
+
+    /// Little-endian two's complement in [#MOMENT_WIDTH] bytes, sign-extended past the `long` the
+    /// count is given as.
+    private static byte[] flba12(long count) {
+        byte[] value = new byte[MOMENT_WIDTH];
+        for (int i = 0; i < Long.BYTES; i++) {
+            value[i] = (byte) (count >>> (8 * i));
+        }
+        byte fill = count < 0 ? (byte) 0xFF : 0;
+        for (int i = Long.BYTES; i < MOMENT_WIDTH; i++) {
+            value[i] = fill;
+        }
+        return value;
+    }
+
+    /// A legacy `INT96`: little-endian nanoseconds of the day, then the little-endian Julian day.
+    private static byte[] int96(long nanosOfDay, int julianDay) {
+        byte[] value = new byte[MOMENT_WIDTH];
+        for (int i = 0; i < Long.BYTES; i++) {
+            value[i] = (byte) (nanosOfDay >>> (8 * i));
+        }
+        for (int i = 0; i < Integer.BYTES; i++) {
+            value[Long.BYTES + i] = (byte) (julianDay >>> (8 * i));
+        }
+        return value;
+    }
+
     /// `negate` expands `IN` to a conjunction of `NOT_EQ` leaves on one column, which folds into a
     /// single per-column composite rather than reaching the `IN` matcher.
     @Test
@@ -508,8 +592,18 @@ class DrainSideOracleTest {
     }
 
     private static BitSet referenceSurvivors(int column, Workload w, ValueTest test) {
-        byte[][] values = column == COL_NAME ? w.names : w.amounts;
-        BitSet nulls = column == COL_NAME ? w.nameNulls : w.amountNulls;
+        byte[][] values = switch (column) {
+            case COL_NAME -> w.names;
+            case COL_AMOUNT -> w.amounts;
+            case COL_MOMENT -> w.moments;
+            default -> throw new IllegalArgumentException("col " + column);
+        };
+        BitSet nulls = switch (column) {
+            case COL_NAME -> w.nameNulls;
+            case COL_AMOUNT -> w.amountNulls;
+            case COL_MOMENT -> w.momentNulls;
+            default -> throw new IllegalArgumentException("col " + column);
+        };
         BitSet out = new BitSet(N);
         for (int i = 0; i < N; i++) {
             if (!nulls.get(i) && test.test(values[i])) {
@@ -523,8 +617,27 @@ class DrainSideOracleTest {
         return switch (comparison) {
             case BYTE_STRING, STORED_BYTES -> Arrays.compareUnsigned(value, literal);
             case FIXED_DECIMAL, VARIABLE_DECIMAL -> asNumber(value).compareTo(asNumber(literal));
-            case FIXED_TIMESTAMP, INT96_INSTANT -> throw new IllegalArgumentException("No drain-side workload uses " + comparison);
+            case FIXED_TIMESTAMP -> asLittleEndianNumber(value).compareTo(asLittleEndianNumber(literal));
+            case INT96_INSTANT -> asInstantNanos(value).compareTo(asInstantNanos(literal));
         };
+    }
+
+    /// Little-endian two's complement: the same bytes read back to front.
+    private static BigInteger asLittleEndianNumber(byte[] bytes) {
+        byte[] bigEndian = new byte[bytes.length];
+        for (int i = 0; i < bytes.length; i++) {
+            bigEndian[i] = bytes[bytes.length - 1 - i];
+        }
+        return asNumber(bigEndian);
+    }
+
+    /// The nanoseconds since the Julian epoch an `INT96` encodes, summed rather than divided into
+    /// whole days as [BinaryComparator#compareInt96] does.
+    private static BigInteger asInstantNanos(byte[] bytes) {
+        byte[] nanos = Arrays.copyOfRange(bytes, 0, Long.BYTES);
+        byte[] day = Arrays.copyOfRange(bytes, Long.BYTES, MOMENT_WIDTH);
+        return asLittleEndianNumber(day).multiply(BigInteger.valueOf(NANOS_PER_DAY))
+                .add(asLittleEndianNumber(nanos));
     }
 
     /// Big-endian two's complement, the empty array being zero.
@@ -620,6 +733,7 @@ class DrainSideOracleTest {
         boolean[] flags = new boolean[N];
         byte[][] names = new byte[N][];
         byte[][] amounts = new byte[N][];
+        byte[][] moments = new byte[N][];
         BitSet idNulls = new BitSet(N);
         BitSet valueNulls = new BitSet(N);
         BitSet tagNulls = new BitSet(N);
@@ -627,6 +741,7 @@ class DrainSideOracleTest {
         BitSet flagNulls = new BitSet(N);
         BitSet nameNulls = new BitSet(N);
         BitSet amountNulls = new BitSet(N);
+        BitSet momentNulls = new BitSet(N);
 
         // Boundary-heavy values to cover NaN, infinities, type extremes, and
         // equal-to-literal cases. The first few rows of each column carry these.
@@ -650,6 +765,13 @@ class DrainSideOracleTest {
                 {0x00, (byte) 0x80}, {(byte) 0x9C}, {(byte) 0xFF}, {(byte) 0xFF, 0},
                 utf8("abcdefghi"), utf8("applesauce"), utf8("applesauces")};
         int[] boundaryAmounts = {100, -50, 0, -1, Integer.MIN_VALUE, Integer.MAX_VALUE};
+        // Twelve-byte values, read by one comparison as a little-endian count and by the other as
+        // an instant. Rows 5 and 6 are one instant under two spellings, so an `INT96` equality has
+        // to match both and a byte equality only one; the counts straddle the literals in the
+        // little-endian order, where the leading byte is the least significant.
+        byte[][] momentPool = {flba12(0), flba12(1), flba12(-1), flba12(1L << 40), flba12(Long.MAX_VALUE),
+                int96(0, 2_460_000), int96(NANOS_PER_DAY, 2_459_999), int96(NANOS_PER_DAY - 1, 2_459_999),
+                int96(1, 2_460_000), int96(0, 0), int96(-1, 0), flba12(7), flba12(256)};
 
         for (int i = 0; i < N; i++) {
             ids[i] = r.nextInt(300) - 50; // straddles literal 100
@@ -685,13 +807,17 @@ class DrainSideOracleTest {
             if (r.nextInt(11) == 0) {
                 nameNulls.set(i);
             }
+            moments[i] = momentPool[r.nextInt(momentPool.length)];
             if (r.nextInt(9) == 0) {
                 amountNulls.set(i);
+            }
+            if (r.nextInt(8) == 0) {
+                momentNulls.set(i);
             }
         }
         return new Workload(ids, idNulls, values, valueNulls,
                 tags, tagNulls, scores, scoreNulls, flags, flagNulls,
-                names, nameNulls, amounts, amountNulls);
+                names, nameNulls, amounts, amountNulls, moments, momentNulls);
     }
 
     private static final class Workload {
@@ -709,6 +835,8 @@ class DrainSideOracleTest {
         final BitSet nameNulls;
         final byte[][] amounts;
         final BitSet amountNulls;
+        final byte[][] moments;
+        final BitSet momentNulls;
         final FileSchema schema;
         final ProjectedSchema projection;
 
@@ -718,7 +846,8 @@ class DrainSideOracleTest {
                  float[] scores, BitSet scoreNulls,
                  boolean[] flags, BitSet flagNulls,
                  byte[][] names, BitSet nameNulls,
-                 byte[][] amounts, BitSet amountNulls) {
+                 byte[][] amounts, BitSet amountNulls,
+                 byte[][] moments, BitSet momentNulls) {
             this.ids = ids;
             this.idNulls = idNulls;
             this.values = values;
@@ -733,7 +862,9 @@ class DrainSideOracleTest {
             this.nameNulls = nameNulls;
             this.amounts = amounts;
             this.amountNulls = amountNulls;
-            SchemaElement root = SchemaElement.root("root", 7);
+            this.moments = moments;
+            this.momentNulls = momentNulls;
+            SchemaElement root = SchemaElement.root("root", 8);
             SchemaElement c1 = SchemaElement.primitive("id", PhysicalType.INT64, RepetitionType.OPTIONAL);
             SchemaElement c2 = SchemaElement.primitive("value", PhysicalType.DOUBLE, RepetitionType.OPTIONAL);
             SchemaElement c3 = SchemaElement.primitive("tag", PhysicalType.INT32, RepetitionType.OPTIONAL);
@@ -741,7 +872,8 @@ class DrainSideOracleTest {
             SchemaElement c5 = SchemaElement.primitive("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL);
             SchemaElement c6 = SchemaElement.primitive("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL);
             SchemaElement c7 = SchemaElement.fixedLengthPrimitive("amount", AMOUNT_WIDTH, RepetitionType.OPTIONAL);
-            this.schema = FileSchema.fromSchemaElements(List.of(root, c1, c2, c3, c4, c5, c6, c7));
+            SchemaElement c8 = SchemaElement.fixedLengthPrimitive("moment", MOMENT_WIDTH, RepetitionType.OPTIONAL);
+            this.schema = FileSchema.fromSchemaElements(List.of(root, c1, c2, c3, c4, c5, c6, c7, c8));
             this.projection = ProjectedSchema.create(schema, ColumnProjection.all());
         }
 
@@ -753,7 +885,8 @@ class DrainSideOracleTest {
                     scores[i], scoreNulls.get(i),
                     flags[i], flagNulls.get(i),
                     names[i], nameNulls.get(i),
-                    amounts[i], amountNulls.get(i));
+                    amounts[i], amountNulls.get(i),
+                    moments[i], momentNulls.get(i));
         }
 
         BatchExchange.Batch batch(int projectedIdx) {
@@ -786,6 +919,10 @@ class DrainSideOracleTest {
                 case COL_AMOUNT -> {
                     b.values = binaryValues(amounts, amountNulls, false);
                     b.validity = nullsToValidity(amountNulls);
+                }
+                case COL_MOMENT -> {
+                    b.values = binaryValues(moments, momentNulls, false);
+                    b.validity = nullsToValidity(momentNulls);
                 }
                 default -> throw new IllegalArgumentException("col " + projectedIdx);
             }
@@ -838,6 +975,8 @@ class DrainSideOracleTest {
         private final boolean nameNull;
         private final byte[] amountValue;
         private final boolean amountNull;
+        private final byte[] momentValue;
+        private final boolean momentNull;
 
         SyntheticRow(long idValue, boolean idNull,
                      double valueValue, boolean valueNull,
@@ -845,7 +984,8 @@ class DrainSideOracleTest {
                      float scoreValue, boolean scoreNull,
                      boolean flagValue, boolean flagNull,
                      byte[] nameValue, boolean nameNull,
-                     byte[] amountValue, boolean amountNull) {
+                     byte[] amountValue, boolean amountNull,
+                     byte[] momentValue, boolean momentNull) {
             this.idValue = idValue;
             this.idNull = idNull;
             this.valueValue = valueValue;
@@ -860,6 +1000,8 @@ class DrainSideOracleTest {
             this.nameNull = nameNull;
             this.amountValue = amountValue;
             this.amountNull = amountNull;
+            this.momentValue = momentValue;
+            this.momentNull = momentNull;
         }
 
         @Override public boolean isNull(int idx) {
@@ -871,6 +1013,7 @@ class DrainSideOracleTest {
                 case COL_FLAG -> flagNull;
                 case COL_NAME -> nameNull;
                 case COL_AMOUNT -> amountNull;
+                case COL_MOMENT -> momentNull;
                 default -> throw new IndexOutOfBoundsException(idx);
             };
         }
@@ -884,6 +1027,7 @@ class DrainSideOracleTest {
                 case "flag" -> flagNull;
                 case "name" -> nameNull;
                 case "amount" -> amountNull;
+                case "moment" -> momentNull;
                 default -> throw new IllegalArgumentException(name);
             };
         }
@@ -899,7 +1043,7 @@ class DrainSideOracleTest {
         @Override public boolean getBoolean(int idx) { return flagValue; }
         @Override public boolean getBoolean(String name) { return flagValue; }
 
-        @Override public int getFieldCount() { return 7; }
+        @Override public int getFieldCount() { return 8; }
         @Override public String getFieldName(int idx) {
             return switch (idx) {
                 case COL_ID -> "id";
@@ -909,6 +1053,7 @@ class DrainSideOracleTest {
                 case COL_FLAG -> "flag";
                 case COL_NAME -> "name";
                 case COL_AMOUNT -> "amount";
+                case COL_MOMENT -> "moment";
                 default -> throw new IndexOutOfBoundsException(idx);
             };
         }
@@ -923,6 +1068,7 @@ class DrainSideOracleTest {
             return switch (idx) {
                 case COL_NAME -> nameValue;
                 case COL_AMOUNT -> amountValue;
+                case COL_MOMENT -> momentValue;
                 default -> throw new IndexOutOfBoundsException(idx);
             };
         }
@@ -931,6 +1077,7 @@ class DrainSideOracleTest {
             return switch (name) {
                 case "name" -> nameValue;
                 case "amount" -> amountValue;
+                case "moment" -> momentValue;
                 default -> throw new IllegalArgumentException(name);
             };
         }

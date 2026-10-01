@@ -17,11 +17,11 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 public final class BinaryLtEqBatchMatcher implements BinaryBatchMatcher {
 
     private final byte[] literal;
-    private final boolean signed;
+    private final BinaryComparator.SliceOrder order;
 
     public BinaryLtEqBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
-        this.signed = BinaryComparator.signedSliceOrder(comparison);
+        this.order = BinaryComparator.sliceOrder(comparison);
     }
 
     @Override
@@ -41,7 +41,7 @@ public final class BinaryLtEqBatchMatcher implements BinaryBatchMatcher {
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
                 if ((present & (1L << b)) != 0L
-                        && BinaryComparator.compare(bytes, offsets[i], offsets[i + 1], literal, signed) <= 0) {
+                        && BinaryComparator.compare(bytes, offsets[i], offsets[i + 1], literal, order) <= 0) {
                     word |= 1L << b;
                 }
             }

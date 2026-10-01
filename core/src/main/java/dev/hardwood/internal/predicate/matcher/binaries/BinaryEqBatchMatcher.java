@@ -18,12 +18,12 @@ public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
 
     private final byte[] literal;
     private final boolean byteExact;
-    private final boolean signed;
+    private final BinaryComparator.SliceOrder order;
 
     public BinaryEqBatchMatcher(byte[] literal, Comparison comparison) {
         this.literal = literal;
         this.byteExact = comparison.byteExact();
-        this.signed = BinaryComparator.signedSliceOrder(comparison);
+        this.order = BinaryComparator.sliceOrder(comparison);
     }
 
     @Override
@@ -56,6 +56,6 @@ public final class BinaryEqBatchMatcher implements BinaryBatchMatcher {
     private boolean matches(byte[] bytes, int from, int to) {
         return byteExact
                 ? BinaryComparator.sliceEquals(bytes, from, to, literal)
-                : BinaryComparator.compare(bytes, from, to, literal, signed) == 0;
+                : BinaryComparator.compare(bytes, from, to, literal, order) == 0;
     }
 }

@@ -410,6 +410,34 @@ class ColumnBatchMatcherTest {
         return new byte[]{(byte) (v >> 8), (byte) v};
     }
 
+    /// Little-endian two's complement in twelve bytes — a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`
+    /// value, sign-extended past the `long` the count is given as.
+    private static byte[] flba12(long count) {
+        byte[] value = new byte[12];
+        for (int i = 0; i < Long.BYTES; i++) {
+            value[i] = (byte) (count >>> (8 * i));
+        }
+        byte fill = count < 0 ? (byte) 0xFF : 0;
+        value[8] = fill;
+        value[9] = fill;
+        value[10] = fill;
+        value[11] = fill;
+        return value;
+    }
+
+    /// Twelve bytes holding a legacy `INT96` timestamp: little-endian nanoseconds of the day, then
+    /// the little-endian Julian day.
+    private static byte[] int96(long nanosOfDay, int julianDay) {
+        byte[] value = new byte[12];
+        for (int i = 0; i < Long.BYTES; i++) {
+            value[i] = (byte) (nanosOfDay >>> (8 * i));
+        }
+        for (int i = 0; i < Integer.BYTES; i++) {
+            value[Long.BYTES + i] = (byte) (julianDay >>> (8 * i));
+        }
+        return value;
+    }
+
     @Test
     void binaryEq_matchesExactBytesAndExcludesNulls() {
         BatchExchange.Batch batch = binaryBatch(nullsAt(2),
@@ -485,6 +513,50 @@ class ColumnBatchMatcherTest {
         // -1.00 outranks -2.56 despite being the shorter string.
         assertArrayEquals(new long[]{bits(0, 1, 2)},
                 runMatcher(new BinaryGtBatchMatcher(new byte[]{(byte) 0xFF, 0x00}, Comparison.VARIABLE_DECIMAL), batch));
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` counts its unit as a little-endian integer, so the
+    /// least significant byte leads and the sign sits in the last: byte order and time order
+    /// disagree on every one of these rows.
+    @Test
+    void binaryOrderingOps_fixedTimestampComparesLittleEndian() {
+        // 1, 256, -1, 2^40 (a count no INT64 nanosecond timestamp could carry as a date).
+        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+                flba12(1), flba12(256), flba12(-1), flba12(1L << 40), flba12(7));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new BinaryLtBatchMatcher(flba12(0), Comparison.FIXED_TIMESTAMP), batch));
+        assertArrayEquals(new long[]{bits(0, 1, 3)},
+                runMatcher(new BinaryGtBatchMatcher(flba12(0), Comparison.FIXED_TIMESTAMP), batch));
+        assertArrayEquals(new long[]{bits(0, 2)},
+                runMatcher(new BinaryLtBatchMatcher(flba12(256), Comparison.FIXED_TIMESTAMP), batch));
+        // As an unsigned byte string, 1 outranks 256 and -1 outranks both.
+        assertArrayEquals(new long[]{bits(0, 1, 2, 3)},
+                runMatcher(new BinaryGtBatchMatcher(flba12(0), Comparison.BYTE_STRING), batch));
+    }
+
+    /// A legacy `INT96` compares by the instant it encodes. Its nanoseconds are not bounded by one
+    /// day, so an instant has more than one spelling and equality cannot be byte equality.
+    @Test
+    void binaryOps_int96ComparesByTheInstantEncoded() {
+        long nanosPerDay = 86_400_000_000_000L;
+        BatchExchange.Batch batch = binaryBatch(nullsAt(4),
+                int96(0, 2_460_000),                       // midnight on day 2460000
+                int96(nanosPerDay, 2_459_999),             // the same instant, spelled a day earlier
+                int96(nanosPerDay - 1, 2_459_999),         // one nanosecond earlier
+                int96(1, 2_460_000),                       // one nanosecond later
+                int96(0, 2_470_000));
+        byte[] midnight = int96(0, 2_460_000);
+        assertArrayEquals(new long[]{bits(0, 1)},
+                runMatcher(new BinaryEqBatchMatcher(midnight, Comparison.INT96_INSTANT), batch));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new BinaryLtBatchMatcher(midnight, Comparison.INT96_INSTANT), batch));
+        assertArrayEquals(new long[]{bits(3)},
+                runMatcher(new BinaryGtBatchMatcher(midnight, Comparison.INT96_INSTANT), batch));
+        assertArrayEquals(new long[]{bits(0, 1, 3)},
+                runMatcher(new BinaryGtEqBatchMatcher(midnight, Comparison.INT96_INSTANT), batch));
+        // The stored bytes of the second spelling are not those of the literal.
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new BinaryEqBatchMatcher(midnight, Comparison.STORED_BYTES), batch));
     }
 
     /// The same number may be spelled with padding on a `BYTE_ARRAY` DECIMAL, so equality there

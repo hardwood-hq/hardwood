@@ -179,12 +179,12 @@ A `BinaryPredicate` and a `BinaryInPredicate` carry a `Comparison`, which fixes 
 | `BYTE_STRING` | byte-ordered columns: text, `BSON`, `UUID`, `INTERVAL`, geometry, unannotated binary | yes | unsigned |
 | `FIXED_DECIMAL` | `DECIMAL` over `FIXED_LEN_BYTE_ARRAY`, typed or `byte[]` literal | yes | signed |
 | `VARIABLE_DECIMAL` | `DECIMAL` over `BYTE_ARRAY` | no | signed |
-| `FIXED_TIMESTAMP` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, typed or `byte[]` literal | yes | none |
-| `INT96_INSTANT` | `Instant` on `INT96` | no | none |
+| `FIXED_TIMESTAMP` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`, typed or `byte[]` literal | yes | signed little-endian |
+| `INT96_INSTANT` | `Instant` on `INT96` | no | instant |
 | `STORED_BYTES` | `byte[]` equality on a value-ordered column with several encodings | yes | unsigned |
 
 - **`byteExact`** gates every shortcut that tests bytes rather than order: the Bloom filter probe, the dictionary's byte probe, and the byte-equality batch matchers. Without it, a padded spelling of the literal's value would hash or compare as a miss and its rows would be dropped. A `FLOAT16` `float` literal is not a `BinaryPredicate`; it skips the Bloom filter and is checked against the dictionary by decoded value ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)).
-- **`sliceOrder`** names the order a batch matcher can compare byte slices in; `NONE` keeps a predicate off the batch path ([RECORD_FILTERING.md](RECORD_FILTERING.md)).
+- **`sliceOrder`** names the order a batch matcher compares byte slices in, and is the one mapping from a `Comparison` to a comparison: `Comparison.compare` reads it too, so the record path and the drain-side matchers cannot order the same column differently. Every `Comparison` has an order a slice comparison implements, so no binary predicate is kept off the batch path for want of one ([RECORD_FILTERING.md](RECORD_FILTERING.md)).
 
 A `byte[]` literal goes through `orderingLiteral`, which names the typed literal of a value-ordered column or returns none for a byte-ordered one. On a byte-ordered column it resolves to `BYTE_STRING`. On a value-ordered one the ordered operators throw, naming the typed literal, and equality resolves as follows:
 

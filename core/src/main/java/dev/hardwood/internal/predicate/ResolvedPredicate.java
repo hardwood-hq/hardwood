@@ -178,12 +178,8 @@ public sealed interface ResolvedPredicate {
             /// @return negative if `left` sorts first, zero if the two are the same value,
             ///         positive if `right` sorts first
             public int compare(byte[] left, byte[] right) {
-                return switch (this) {
-                    case BYTE_STRING, STORED_BYTES -> BinaryComparator.compareUnsigned(left, right);
-                    case FIXED_DECIMAL, VARIABLE_DECIMAL -> BinaryComparator.compareSigned(left, right);
-                    case FIXED_TIMESTAMP -> BinaryComparator.compareSignedLittleEndian(left, right);
-                    case INT96_INSTANT -> BinaryComparator.compareInt96(left, right);
-                };
+                return BinaryComparator.compare(left, 0, left.length, right,
+                        BinaryComparator.sliceOrder(this));
             }
 
             /// Whether the column can hold a given value only as exactly one byte string.

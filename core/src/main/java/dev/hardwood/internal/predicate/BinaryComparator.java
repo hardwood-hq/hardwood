@@ -82,49 +82,43 @@ public final class BinaryComparator {
         return 0;
     }
 
-    /// Compare the slice `a[aFrom, aTo)` against all of `b` in the column's order: signed when
-    /// `signed`, otherwise unsigned.
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` in `order`.
     ///
     /// @return negative if the slice < b, zero if equal, positive if the slice > b
-    public static int compare(byte[] a, int aFrom, int aTo, byte[] b, boolean signed) {
-        return signed ? compareSigned(a, aFrom, aTo, b) : compareUnsigned(a, aFrom, aTo, b);
+    public static int compare(byte[] a, int aFrom, int aTo, byte[] b, SliceOrder order) {
+        return switch (order) {
+            case UNSIGNED -> compareUnsigned(a, aFrom, aTo, b);
+            case SIGNED -> compareSigned(a, aFrom, aTo, b);
+            case SIGNED_LITTLE_ENDIAN -> compareSignedLittleEndian(a, aFrom, aTo, b);
+            case INT96_INSTANT -> compareInt96(a, aFrom, aTo, b);
+        };
     }
 
-    /// The order [#compare(byte[], int, int, byte[], boolean)] compares slices in for a comparison.
+    /// An order [#compare(byte[], int, int, byte[], SliceOrder)] compares slices in. Every order a
+    /// binary column sorts in has a constant here, so a predicate on any such column is decidable
+    /// over slices.
     public enum SliceOrder {
         /// Unsigned lexicographic.
         UNSIGNED,
         /// Big-endian two's complement, sign-extending the shorter slice.
         SIGNED,
-        /// No slice comparison implements the order, so a predicate in it cannot be decided over
-        /// slices.
-        NONE
+        /// Little-endian two's complement of one fixed width.
+        SIGNED_LITTLE_ENDIAN,
+        /// The instant a legacy `INT96` timestamp encodes.
+        INT96_INSTANT
     }
 
-    /// The slice order `comparison` compares in, or [SliceOrder#NONE] where no slice comparison
-    /// implements it.
+    /// The slice order `comparison` compares in.
     ///
-    /// Both the batch filter compiler's eligibility check and the byte-array matchers read the
-    /// order from here, so a new [ResolvedPredicate.BinaryPredicate.Comparison] is answered once:
-    /// the switch has no `default`, and [SliceOrder#NONE] keeps a predicate off the batch path.
+    /// The byte-array matchers read the order from here, so a new
+    /// [ResolvedPredicate.BinaryPredicate.Comparison] is answered once, in a switch with no
+    /// `default` and no constant standing for an order without a slice comparison.
     public static SliceOrder sliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
         return switch (comparison) {
             case BYTE_STRING, STORED_BYTES -> SliceOrder.UNSIGNED;
             case FIXED_DECIMAL, VARIABLE_DECIMAL -> SliceOrder.SIGNED;
-            case FIXED_TIMESTAMP, INT96_INSTANT -> SliceOrder.NONE;
-        };
-    }
-
-    /// The `signed` argument [#compare(byte[], int, int, byte[], boolean)] takes to compare slices
-    /// in `comparison`'s order, resolved once so a per-row loop does not switch over the order.
-    ///
-    /// @throws IllegalArgumentException for a comparison whose [#sliceOrder] is [SliceOrder#NONE]
-    public static boolean signedSliceOrder(ResolvedPredicate.BinaryPredicate.Comparison comparison) {
-        return switch (sliceOrder(comparison)) {
-            case UNSIGNED -> false;
-            case SIGNED -> true;
-            case NONE -> throw new IllegalArgumentException(
-                    "No slice comparison compares in the " + comparison + " order");
+            case FIXED_TIMESTAMP -> SliceOrder.SIGNED_LITTLE_ENDIAN;
+            case INT96_INSTANT -> SliceOrder.INT96_INSTANT;
         };
     }
 
@@ -164,20 +158,31 @@ public final class BinaryComparator {
     /// @throws IllegalArgumentException if the two differ in width, which no column of the type
     ///         stores
     public static int compareSignedLittleEndian(byte[] a, byte[] b) {
-        if (a.length != b.length) {
+        return compareSignedLittleEndian(a, 0, a.length, b);
+    }
+
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` as little-endian two's complement
+    /// values of equal width, exactly as [#compareSignedLittleEndian(byte[], byte[])] does.
+    ///
+    /// @return negative if the slice < b, zero if equal, positive if the slice > b
+    /// @throws IllegalArgumentException if the two differ in width, which no column of the type
+    ///         stores
+    public static int compareSignedLittleEndian(byte[] a, int aFrom, int aTo, byte[] b) {
+        int length = aTo - aFrom;
+        if (length != b.length) {
             throw new IllegalArgumentException("A little-endian signed comparison takes values of one width, not "
-                    + a.length + " and " + b.length + " bytes");
+                    + length + " and " + b.length + " bytes");
         }
-        int last = a.length - 1;
+        int last = length - 1;
         if (last < 0) {
             return 0;
         }
-        if (a[last] != b[last]) {
-            return Byte.compare(a[last], b[last]);
+        if (a[aFrom + last] != b[last]) {
+            return Byte.compare(a[aFrom + last], b[last]);
         }
         for (int i = last - 1; i >= 0; i--) {
-            if (a[i] != b[i]) {
-                return Integer.compare(a[i] & 0xFF, b[i] & 0xFF);
+            if (a[aFrom + i] != b[i]) {
+                return Integer.compare(a[aFrom + i] & 0xFF, b[i] & 0xFF);
             }
         }
         return 0;
@@ -195,11 +200,20 @@ public final class BinaryComparator {
     /// @return negative if a < b, zero if both encode the same instant, positive if a > b
     /// @throws IllegalArgumentException if either value is not twelve bytes
     public static int compareInt96(byte[] a, byte[] b) {
-        requireInt96(a);
-        requireInt96(b);
-        long aNanos = (long) LONG_LE.get(a, 0);
+        return compareInt96(a, 0, a.length, b);
+    }
+
+    /// Compare the slice `a[aFrom, aTo)` against all of `b` by the instants they encode, exactly as
+    /// [#compareInt96(byte[], byte[])] does.
+    ///
+    /// @return negative if the slice < b, zero if both encode the same instant, positive if a > b
+    /// @throws IllegalArgumentException if either value is not twelve bytes
+    public static int compareInt96(byte[] a, int aFrom, int aTo, byte[] b) {
+        requireInt96(aTo - aFrom);
+        requireInt96(b.length);
+        long aNanos = (long) LONG_LE.get(a, aFrom);
         long bNanos = (long) LONG_LE.get(b, 0);
-        long aDay = (int) INT_LE.get(a, Long.BYTES) + Math.floorDiv(aNanos, NANOS_PER_DAY);
+        long aDay = (int) INT_LE.get(a, aFrom + Long.BYTES) + Math.floorDiv(aNanos, NANOS_PER_DAY);
         long bDay = (int) INT_LE.get(b, Long.BYTES) + Math.floorDiv(bNanos, NANOS_PER_DAY);
         int byDay = Long.compare(aDay, bDay);
         return byDay != 0
@@ -207,10 +221,10 @@ public final class BinaryComparator {
                 : Long.compare(Math.floorMod(aNanos, NANOS_PER_DAY), Math.floorMod(bNanos, NANOS_PER_DAY));
     }
 
-    private static void requireInt96(byte[] value) {
-        if (value.length != LogicalTypeConverter.INT96_BYTES) {
+    private static void requireInt96(int width) {
+        if (width != LogicalTypeConverter.INT96_BYTES) {
             throw new IllegalArgumentException("An INT96 value is " + LogicalTypeConverter.INT96_BYTES
-                    + " bytes, not " + value.length);
+                    + " bytes, not " + width);
         }
     }
 }

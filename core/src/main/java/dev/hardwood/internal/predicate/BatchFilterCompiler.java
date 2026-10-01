@@ -15,7 +15,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntUnaryOperator;
 
-import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtEqBatchMatcher;
@@ -82,9 +81,15 @@ import dev.hardwood.schema.FileSchema;
 ///   same mechanism that handles `id >= x AND id <= y` today.
 ///
 /// Anything else (intermediate-struct paths, `Float16Predicate`,
-/// `GeospatialPredicate`, unsupported `(type, op)`, and a binary predicate in an
-/// order no slice comparison implements) returns `null` and the caller falls back
-/// to the row reader's record-level matcher.
+/// `GeospatialPredicate`, unsupported `(type, op)`) returns `null` and the caller
+/// falls back to the row reader's record-level matcher.
+///
+/// A binary leaf only ever names a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96`
+/// column, each of which reaches the batch as a
+/// [dev.hardwood.internal.reader.BinaryBatchValues] holding the stored bytes. That is
+/// what lets every such leaf compile and the matchers cast `batch.values` to it
+/// unchecked; the order its [BinaryComparator.SliceOrder] names is then the only thing
+/// that varies between them.
 public final class BatchFilterCompiler {
 
     private BatchFilterCompiler() {}
@@ -289,21 +294,12 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate ignored -> true;
             case ResolvedPredicate.Float16Predicate ignored -> false;
             case ResolvedPredicate.Float16InPredicate ignored -> false;
-            case ResolvedPredicate.BinaryPredicate p -> hasSliceOrder(p.comparison());
-            case ResolvedPredicate.BinaryInPredicate p -> hasSliceOrder(p.comparison());
+            case ResolvedPredicate.BinaryPredicate ignored -> true;
+            case ResolvedPredicate.BinaryInPredicate ignored -> true;
             case ResolvedPredicate.GeospatialPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
             case ResolvedPredicate.Or ignored -> false;
         };
-    }
-
-    /// Whether a [BinaryBatchMatcher] can compare in `comparison`'s order. A binary leaf only ever
-    /// names a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, each of which reaches the
-    /// batch as a `BinaryBatchValues` holding the stored bytes, so the order alone decides. The
-    /// instant orders of an `INT96` and a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` have no slice
-    /// comparison and fall back.
-    private static boolean hasSliceOrder(Comparison comparison) {
-        return BinaryComparator.sliceOrder(comparison) != BinaryComparator.SliceOrder.NONE;
     }
 
     private static ColumnBatchMatcher leafMatcher(ResolvedPredicate leaf) {
