@@ -27,6 +27,7 @@ import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.schema.TextColumns;
@@ -544,7 +545,7 @@ public class FilterPredicateResolver {
     /// This runs before the literal's type is checked, so the refusal names the literals the column
     /// takes: a caller holding a literal of another type learns both at once.
     private static void requireOrder(String columnName, ColumnSchema columnSchema, Operator op) {
-        if (isEquality(op) || BoundsReadability.namesAnOrder(columnSchema.logicalType())) {
+        if (isEquality(op) || AnnotationPairings.namesAnOrder(columnSchema.logicalType())) {
             return;
         }
         throw new IllegalArgumentException("Column '" + columnName + "' is annotated "
@@ -690,11 +691,30 @@ public class FilterPredicateResolver {
                     float16ToFloat(columnName, value)), bytes));
         }
         if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            requireDecimal(columnName, columnSchema);
             rejectUnholdableWidth(columnName, columnSchema, Operator.EQ, value);
             return new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ, value, Comparison.FIXED_DECIMAL);
         }
+        requireDecimal(columnName, columnSchema);
         return new ResolvedPredicate.And(List.of(new ResolvedPredicate.BinaryPredicate(columnIndex, Operator.EQ,
                 value, Comparison.VARIABLE_DECIMAL), bytes));
+    }
+
+    /// The column each remaining branch of [#storedBytesEqual] and [#storedBytesMember] resolves
+    /// for: a `DECIMAL`, over a `FIXED_LEN_BYTE_ARRAY` where every value is padded to the column
+    /// width or over a `BYTE_ARRAY` where each is held in the fewest bytes that fit it.
+    ///
+    /// Those two walk the byte-stored columns whose values do not order as their bytes, and the
+    /// decimals are the last of them. A column reaching either branch that is not one would be
+    /// resolved as a decimal and compared in an order that is not its own, so it is refused
+    /// instead: a value-ordered column added later states its comparison in those helpers before a
+    /// predicate on it resolves.
+    private static void requireDecimal(String columnName, ColumnSchema columnSchema) {
+        if (!(columnSchema.logicalType() instanceof LogicalType.DecimalType)) {
+            throw new IllegalArgumentException("Column '" + columnName + "' is "
+                    + ColumnLiterals.describe(columnSchema) + ", whose values do not order as their stored bytes "
+                    + "and whose own comparison this reader does not know");
+        }
     }
 
     /// Whether a row stores exactly one of `values`, as [#storedBytesEqual] decides it for each.
@@ -719,11 +739,13 @@ public class FilterPredicateResolver {
                     float16Probes(columnName, values)), bytes));
         }
         if (columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            requireDecimal(columnName, columnSchema);
             for (byte[] value : values) {
                 rejectUnholdableWidth(columnName, columnSchema, Operator.EQ, value);
             }
             return new ResolvedPredicate.BinaryInPredicate(columnIndex, values, Comparison.FIXED_DECIMAL);
         }
+        requireDecimal(columnName, columnSchema);
         return new ResolvedPredicate.And(List.of(new ResolvedPredicate.BinaryInPredicate(columnIndex, values,
                 Comparison.VARIABLE_DECIMAL), bytes));
     }

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.internal.thrift.FooterRewriter;
@@ -154,6 +155,33 @@ class UnreadableSortOrderTest {
 
         assertThat(BoundsReadability.of(schema, List.of(), ordinal -> true).readable(0)).isFalse();
         assertThat(BoundsReadability.of(schema, List.of(), ordinal -> false).readable(0)).isTrue();
+    }
+
+    /// A `byte[]` literal on a column whose values do not order as their bytes compares as the
+    /// stored bytes, and the column's bounds are recorded in the order of its values, so they say
+    /// nothing about the order those bytes sort in. The value's own comparison, which the resolver
+    /// pairs with this one, is what reads them. The file is not at fault, so nothing is reported.
+    @Test
+    void storedByteBoundsAreNotReadAndReportNothing() {
+        FileSchema decimal = FileSchema.builder("s")
+                .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.decimal(10, 2))
+                .build();
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("amount", new byte[]{0x7F}), decimal);
+        ResolvedPredicate.BinaryPredicate storedBytes = (ResolvedPredicate.BinaryPredicate)
+                ((ResolvedPredicate.And) resolved).children().stream()
+                        .filter(child -> child instanceof ResolvedPredicate.BinaryPredicate binary
+                                && binary.comparison() == Comparison.STORED_BYTES)
+                        .findFirst()
+                        .orElseThrow();
+        // Bounds that would exclude the literal's bytes if they were read in their order.
+        Statistics aboveTheLiteral = new Statistics(new byte[]{(byte) 0x80}, new byte[]{(byte) 0x90},
+                0L, null, false);
+
+        MinMaxStats stats = MinMaxStats.of(aboveTheLiteral, storedBytes, BoundsReadability.ALL);
+
+        assertThat(stats.canDrop(storedBytes)).isFalse();
+        assertThat(stats.discardReason()).isNull();
     }
 
     /// `parquet.thrift` on the `ColumnOrder` union: "If the reader does not support the value of

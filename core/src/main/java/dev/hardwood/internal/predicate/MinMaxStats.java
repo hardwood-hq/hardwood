@@ -514,17 +514,20 @@ sealed interface MinMaxStats {
     record BinaryStats(byte[] min, byte[] max, Comparison comparison) implements MinMaxStats {
 
         static MinMaxStats of(byte[] min, byte[] max, Comparison comparison) {
-            // parquet.thrift leaves the type-defined order of an INT96 undefined, and no order its
-            // bounds are recorded in follows the instant on every value, since the nanoseconds of
-            // the day are not bounded by one day. The bounds are never read, which is a property
-            // of the type rather than a flaw in the file, so nothing is reported as discarded.
-            if (comparison == Comparison.INT96_INSTANT) {
-                return new NoBounds(null);
-            }
-            // Bounds written in the order of the column's values say nothing about the order of
-            // their bytes; the value's own comparison, which the resolver pairs with this one,
-            // reads them instead.
-            if (comparison == Comparison.STORED_BYTES) {
+            // Which comparisons read bounds at all, answered for every constant so that one added
+            // later states its own answer rather than inheriting "readable".
+            //
+            // An INT96's type-defined order is one parquet.thrift leaves undefined, and no order
+            // its bounds are recorded in follows the instant on every value, since the nanoseconds
+            // of the day are not bounded by one day. Bounds compared as the column's stored bytes
+            // say nothing about the order of its values, which the value's own comparison, paired
+            // with this one by the resolver, reads instead. Neither is a flaw in the file, so
+            // nothing is reported as discarded.
+            boolean readsBounds = switch (comparison) {
+                case BYTE_STRING, FIXED_DECIMAL, VARIABLE_DECIMAL, FIXED_TIMESTAMP -> true;
+                case INT96_INSTANT, STORED_BYTES -> false;
+            };
+            if (!readsBounds) {
                 return new NoBounds(null);
             }
             if (comparison == Comparison.FIXED_TIMESTAMP
