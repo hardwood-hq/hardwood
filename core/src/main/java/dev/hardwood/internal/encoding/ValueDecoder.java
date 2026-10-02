@@ -73,4 +73,49 @@ public interface ValueDecoder {
     default void readByteArrays(byte[][] output, int[] definitionLevels, int maxDefLevel) {
         throw new UnsupportedOperationException("readByteArrays not supported by this decoder");
     }
+
+    // -----------------------------------------------------------------------
+    // Direct-into-batch overloads
+    //
+    // These decode exactly `count` non-null values from the raw byte slice
+    // [srcPos, srcPos + count*elementBytes) and place them at dest[destOffset].
+    // The caller guarantees:
+    //   - definitionLevels is null  (all-present path only)
+    //   - dest[destOffset .. destOffset+count) is within bounds
+    //   - srcPos + count*elementBytes <= srcLimit
+    //
+    // Default: UnsupportedOperationException — callers must fall back to the
+    // existing decodePage + arraycopy path when this is thrown.
+    // -----------------------------------------------------------------------
+
+    /// Decode `count` DOUBLE values from `src[srcPos..)` into `dest[destOffset..)`.
+    ///
+    /// @param dest the destination array (batch values array)
+    /// @param destOffset first index to write into `dest`
+    /// @param count number of values to decode
+    /// @param src raw decompressed page bytes
+    /// @param srcPos byte offset in `src` of the first value
+    /// @param srcLimit exclusive byte bound of the value region in `src`
+    default void readDoubles(double[] dest, int destOffset, int count,
+                             byte[] src, int srcPos, int srcLimit) {
+        throw new UnsupportedOperationException("direct readDoubles not supported by this decoder");
+    }
+
+    /// Decode `count` INT64 values from `src[srcPos..)` into `dest[destOffset..)`.
+    default void readLongs(long[] dest, int destOffset, int count,
+                           byte[] src, int srcPos, int srcLimit) {
+        throw new UnsupportedOperationException("direct readLongs not supported by this decoder");
+    }
+
+    /// Decode `count` INT32 values from `src[srcPos..)` into `dest[destOffset..)`.
+    default void readInts(int[] dest, int destOffset, int count,
+                          byte[] src, int srcPos, int srcLimit) {
+        throw new UnsupportedOperationException("direct readInts not supported by this decoder");
+    }
+
+    /// Decode `count` FLOAT values from `src[srcPos..)` into `dest[destOffset..)`.
+    default void readFloats(float[] dest, int destOffset, int count,
+                            byte[] src, int srcPos, int srcLimit) {
+        throw new UnsupportedOperationException("direct readFloats not supported by this decoder");
+    }
 }

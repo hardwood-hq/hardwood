@@ -11,7 +11,10 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
+import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
@@ -80,6 +83,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         currentBatch.capacity = currentCapacity;
     }
 
+    @Override
+    boolean supportsCursorPath() {
+        return true;
+    }
+
     /// Writes the mask a matcher would produce when every record matches: all-ones
     /// for `[0, recordCount)` bits, tail bits of the last active word zeroed, words
     /// beyond the active range untouched.
@@ -106,6 +114,148 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             copyPageRange(page, mask.start(i), mask.end(i));
         }
     }
+
+    /// Direct-into-batch cursor drain loop.
+    ///
+    /// Decodes values from the cursor directly into the batch array, handling
+    /// straddle (a page that spans two or more batches) by keeping the cursor
+    /// alive across publish boundaries.  Falls back to the existing
+    /// [#assemblePage] path for masks (filter pushdown) and for cursor encodings
+    /// that are not directly decodable — but decodePageInto only produces a
+    /// CURSOR_SENTINEL for PLAIN/BYTE_STREAM_SPLIT, all-present, flat numeric
+    /// columns, so neither fallback fires in practice.
+    @Override
+    void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
+        // cursor.valuesLeft is the total page size; drain it into the batch(es)
+        while (cursor.valuesLeft > 0 && !done) {
+            int spaceInBatch = batchCapacity - rowsInCurrentBatch;
+            int count = Math.min(spaceInBatch, cursor.valuesLeft);
+
+            // Respect the active row cap
+            if (activeMaxRows > 0) {
+                long remaining = activeMaxRows - totalRowsAssembled;
+                if (remaining <= 0) {
+                    finishDrain();
+                    return;
+                }
+                count = (int) Math.min(count, remaining);
+            }
+
+            // Decode `count` values directly into the batch at the right offset
+            decodeDirectly(cursor, count);
+
+            // Advance cursors and batch counters
+            cursor.valuesLeft -= count;
+            rowsInCurrentBatch += count;
+            totalRowsAssembled += count;
+
+            if (rowsInCurrentBatch >= batchCapacity) {
+                publishCurrentBatch();
+                if (done) {
+                    return;
+                }
+            }
+
+            // Check row cap after publish
+            if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
+                if (rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                finishDrain();
+                return;
+            }
+        }
+    }
+
+    /// Decode `count` values from the cursor into the current batch at
+    /// `rowsInCurrentBatch`, then advance cursor position state.
+    private void decodeDirectly(PageValueCursor cursor, int count) {
+        int destOffset = rowsInCurrentBatch;
+        Object values = currentBatch.values;
+        switch (cursor.encoding) {
+            case PLAIN -> {
+                // PlainDecoder direct overloads write straight into dest[] at destOffset.
+                PlainDecoder dec =
+                        new PlainDecoder(
+                                cursor.data, cursor.srcPos, cursor.srcLimit,
+                                physicalType, column.typeLength());
+                switch (physicalType) {
+                    case DOUBLE -> dec.readDoubles((double[]) values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case INT64  -> dec.readLongs  ((long[])   values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case INT32  -> dec.readInts   ((int[])    values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case FLOAT  -> dec.readFloats ((float[])  values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    default -> throw new ParquetReadException(
+                            "Unsupported type for direct PLAIN decode: " + physicalType);
+                }
+                // PLAIN: srcPos advances by bytes consumed
+                cursor.srcPos += count * elementBytes();
+            }
+            case BYTE_STREAM_SPLIT -> {
+                // Reconstruct the BSS decoder from stored stream-base fields.
+                // bssBaseOffset is the byte offset of stream-0 in cursor.data;
+                // bssTotalValues is the total page value count;
+                // bssCurrentIndex is the number of values already drained.
+                ByteStreamSplitDecoder dec =
+                        new ByteStreamSplitDecoder(
+                                cursor.data, cursor.bssBaseOffset,
+                                cursor.srcLimit, cursor.bssTotalValues,
+                                physicalType, column.typeLength());
+                // Skip already-decoded values on straddle resume
+                if (cursor.bssCurrentIndex > 0) {
+                    skipBssValues(dec, cursor.bssCurrentIndex);
+                }
+                switch (physicalType) {
+                    case DOUBLE -> dec.readDoubles((double[]) values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case INT64  -> dec.readLongs  ((long[])   values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case INT32  -> dec.readInts   ((int[])    values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    case FLOAT  -> dec.readFloats ((float[])  values, destOffset, count,
+                            cursor.data, cursor.srcPos, cursor.srcLimit);
+                    default -> throw new ParquetReadException(
+                            "Unsupported type for direct BYTE_STREAM_SPLIT decode: " + physicalType);
+                }
+                // BSS: advance internal index (srcPos is the stream base, unchanged)
+                cursor.bssCurrentIndex += count;
+            }
+            default -> throw new ParquetReadException(
+                    "Unsupported encoding for direct decode: " + cursor.encoding);
+        }
+        // Validity bitmap: page is all-present (cursor path only engages for all-present),
+        // so backfill only if an earlier page in this batch already set the absent flag.
+        if (currentValidity != null && currentBatchHasAbsents) {
+            BitmapWords.setRange(currentValidity, destOffset, destOffset + count);
+        }
+    }
+
+    /// Byte width of one element for the column's physical type.
+    private int elementBytes() {
+        return switch (physicalType) {
+            case DOUBLE, INT64 -> 8;
+            case FLOAT, INT32  -> 4;
+            default -> throw new ParquetReadException(
+                    "elementBytes not defined for " + physicalType);
+        };
+    }
+
+    /// Advance a ByteStreamSplitDecoder past `count` values by reading into
+    /// throwaway scratch arrays (BSS has no seek API).
+    private void skipBssValues(ByteStreamSplitDecoder dec, int count) {
+        switch (physicalType) {
+            case DOUBLE -> dec.readDoubles(new double[count], null, 0);
+            case INT64  -> dec.readLongs  (new long[count],   null, 0);
+            case INT32  -> dec.readInts   (new int[count],    null, 0);
+            case FLOAT  -> dec.readFloats (new float[count],  null, 0);
+            default -> {}
+        }
+    }
+
+
 
     /// Copies values at page-relative offsets `[rangeStart, rangeEnd)` into
     /// the current batch, publishing and rolling over as the batch fills and

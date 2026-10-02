@@ -188,6 +188,212 @@ public class PageDecoder {
         return result;
     }
 
+    /// Attempt to decode a page directly into a [PageValueCursor] without building
+    /// an intermediate [Page] or a per-page primitive array.
+    ///
+    /// The cursor is filled only when the page is a DATA_PAGE (V1) or DATA_PAGE_V2
+    /// with an encoding that supports the direct path (PLAIN or BYTE_STREAM_SPLIT)
+    /// and all leaves are present.  For V1 the all-present check probes the
+    /// definition-level RLE stream; for V2 it uses the header's `numNulls` field.
+    /// In every other case the cursor is left untouched and the method returns
+    /// {@code false}; the caller must fall back to the existing
+    /// [#decodePage] + arraycopy path.
+    ///
+    /// On success the cursor holds:
+    /// <ul>
+    ///   <li>[PageValueCursor#data] — the decompressed page bytes (copied in)</li>
+    ///   <li>[PageValueCursor#srcPos] — byte offset of the first value</li>
+    ///   <li>[PageValueCursor#srcLimit] — exclusive end of the value region</li>
+    ///   <li>[PageValueCursor#valuesLeft] — total values on the page</li>
+    ///   <li>[PageValueCursor#encoding] — the page encoding (PLAIN or BYTE_STREAM_SPLIT)</li>
+    /// </ul>
+    ///
+    /// @param pageBuffer buffer containing the page (header + data)
+    /// @param dictionary dictionary for RLE_DICTIONARY pages (ignored on the direct path)
+    /// @param scratch level scratch for the slot (used here only to probe the def-level stream)
+    /// @param cursor the cursor to fill on success
+    /// @return {@code true} if the cursor was filled and the caller may use the direct path;
+    ///         {@code false} if the caller must fall back
+    boolean decodePageInto(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                            PageValueCursor cursor) {
+        // Parse page header
+        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
+        PageHeader pageHeader = PageHeaderReader.read(headerReader);
+        int headerSize = headerReader.getBytesRead();
+
+        return switch (pageHeader.type()) {
+            case DATA_PAGE    -> decodeV1PageInto(pageHeader, pageBuffer, headerSize, cursor);
+            case DATA_PAGE_V2 -> decodeV2PageInto(pageHeader, pageBuffer, headerSize, cursor);
+            default           -> false;
+        };
+    }
+
+    /// V1 DATA_PAGE direct-into-cursor path.
+    ///
+    /// V1 layout: the entire body (rep-levels + def-levels + values) is compressed
+    /// as a single blob.  Level sections are length-prefixed with inline 4-byte
+    /// integers.
+    private boolean decodeV1PageInto(PageHeader pageHeader, ByteBuffer pageBuffer,
+                                      int headerSize, PageValueCursor cursor) {
+        DataPageHeader dataHeader = pageHeader.dataPageHeader();
+        Encoding enc = dataHeader.encoding();
+
+        // Only PLAIN and BYTE_STREAM_SPLIT are directly decodable
+        if (enc != Encoding.PLAIN && enc != Encoding.BYTE_STREAM_SPLIT) {
+            return false;
+        }
+
+        // Only numeric primitive types — not BOOLEAN, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96
+        PhysicalType type = column.type();
+        if (!isDirectlyDecodableType(type)) {
+            return false;
+        }
+
+        int compressedSize = pageHeader.compressedPageSize();
+        int uncompressedSize = pageHeader.uncompressedPageSize();
+        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
+
+        if (pageHeader.crc() != null) {
+            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
+        }
+
+        // Decompress
+        Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
+        byte[] uncompressed = decompressor.decompress(pageData, uncompressedSize);
+
+        int numValues = dataHeader.numValues();
+        int offset = 0;
+
+        // Skip repetition level stream
+        if (column.maxRepetitionLevel() > 0) {
+            int repLen = readSectionLength(uncompressed, offset, uncompressedSize, "repetition level");
+            offset += 4 + repLen;
+        }
+
+        // Probe definition level stream — fall back unless all-present
+        if (column.maxDefinitionLevel() > 0) {
+            int defLen = readSectionLength(uncompressed, offset, uncompressedSize, "definition level");
+            offset += 4;
+            // Check for all-present fast path (single RLE run of maxDef)
+            int maxDef = column.maxDefinitionLevel();
+            int bitWidth = getBitWidth(maxDef);
+            RleBitPackingHybridDecoder probe =
+                    new RleBitPackingHybridDecoder(
+                            uncompressed, offset, defLen, bitWidth);
+            if (!probe.isSingleRleRunOf(maxDef, numValues)) {
+                // Mixed nulls — fall back to existing path
+                return false;
+            }
+            offset += defLen;
+        }
+        // offset now points at the first value byte
+
+        // Fill cursor
+        cursor.copyData(uncompressed, uncompressedSize);
+        cursor.srcPos = offset;
+        cursor.srcLimit = uncompressedSize;
+        cursor.valuesLeft = numValues;
+        cursor.encoding = enc;
+        // BSS straddle tracking: record the stream base and total values
+        if (enc == Encoding.BYTE_STREAM_SPLIT) {
+            cursor.bssBaseOffset = offset;
+            cursor.bssTotalValues = numValues;
+            cursor.bssCurrentIndex = 0;
+        }
+
+        commitDirectEvent(pageHeader.compressedPageSize(), pageHeader.uncompressedPageSize());
+        return true;
+    }
+
+    /// V2 DATA_PAGE_V2 direct-into-cursor path.
+    ///
+    /// V2 layout: rep-levels and def-levels are stored raw (uncompressed) at the
+    /// start of the body, with their byte lengths declared in the header.  Only
+    /// the value region is optionally compressed.  The header's `numNulls` field
+    /// provides a free all-present check — no need to probe the RLE stream.
+    private boolean decodeV2PageInto(PageHeader pageHeader, ByteBuffer pageBuffer,
+                                      int headerSize, PageValueCursor cursor) {
+        DataPageHeaderV2 v2Header = pageHeader.dataPageHeaderV2();
+        Encoding enc = v2Header.encoding();
+
+        // Only PLAIN and BYTE_STREAM_SPLIT are directly decodable
+        if (enc != Encoding.PLAIN && enc != Encoding.BYTE_STREAM_SPLIT) {
+            return false;
+        }
+
+        // Only numeric primitive types
+        if (!isDirectlyDecodableType(column.type())) {
+            return false;
+        }
+
+        // All-present check: V2 header carries numNulls directly
+        if (v2Header.numNulls() != 0) {
+            return false;
+        }
+
+        int compressedSize = pageHeader.compressedPageSize();
+        int uncompressedSize = pageHeader.uncompressedPageSize();
+        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
+
+        if (pageHeader.crc() != null) {
+            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
+        }
+
+        int numValues = v2Header.numValues();
+        int repLevelLen = v2Header.repetitionLevelsByteLength();
+        int defLevelLen = v2Header.definitionLevelsByteLength();
+        int valuesOffset = repLevelLen + defLevelLen;
+        int compressedValuesLen = pageData.remaining() - valuesOffset;
+
+        // Decompress only the value region (levels are stored raw in V2)
+        byte[] valueBytes;
+        int valuesLen;
+        if (isValueRegionCompressed(v2Header, compressedValuesLen)) {
+            ByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
+            Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
+            valuesLen = uncompressedSize - repLevelLen - defLevelLen;
+            valueBytes = decompressor.decompress(compressedValues, valuesLen);
+        } else {
+            valuesLen = compressedValuesLen;
+            valueBytes = new byte[compressedValuesLen];
+            pageData.slice(valuesOffset, compressedValuesLen).get(valueBytes);
+        }
+
+        // Fill cursor — values start at offset 0 because the buffer contains
+        // only the value region (no level prefix as in V1)
+        cursor.copyData(valueBytes, valuesLen);
+        cursor.srcPos = 0;
+        cursor.srcLimit = valuesLen;
+        cursor.valuesLeft = numValues;
+        cursor.encoding = enc;
+        if (enc == Encoding.BYTE_STREAM_SPLIT) {
+            cursor.bssBaseOffset = 0;
+            cursor.bssTotalValues = numValues;
+            cursor.bssCurrentIndex = 0;
+        }
+
+        commitDirectEvent(compressedSize, uncompressedSize);
+        return true;
+    }
+
+    /// Emit a JFR event for a successful direct-into-cursor decode.
+    private void commitDirectEvent(int compressedSize, int uncompressedSize) {
+        PageDecodedEvent event = new PageDecodedEvent();
+        event.begin();
+        event.column = column.name();
+        event.compressedSize = compressedSize;
+        event.uncompressedSize = uncompressedSize;
+        event.commit();
+    }
+
+    /// Whether `type` is directly decodable (numeric primitive only).
+    private static boolean isDirectlyDecodableType(PhysicalType type) {
+        return switch (type) {
+            case INT32, INT64, FLOAT, DOUBLE -> true;
+            default -> false;
+        };
+    }
+
     /// Decode levels using RLE/Bit-Packing Hybrid encoding.
     private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel,
             LevelScratch scratch) {

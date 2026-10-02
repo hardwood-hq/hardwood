@@ -199,4 +199,67 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
         currentIndex++;
     }
+
+    // -----------------------------------------------------------------------
+    // Direct-into-batch overloads
+    //
+    // Decode exactly `count` values from the BYTE_STREAM_SPLIT streams starting
+    // at the decoder's current index and place them at dest[destOffset..).
+    // Caller guarantees: definitionLevels == null (all-present path only).
+    // The `src/srcPos/srcLimit` arguments are not used by BYTE_STREAM_SPLIT
+    // (the decoder holds its own byte reference), but they are accepted to
+    // match the ValueDecoder interface signature.
+    // -----------------------------------------------------------------------
+
+    /// Decode `count` DOUBLE values directly into dest[destOffset..).
+    @Override
+    public void readDoubles(double[] dest, int destOffset, int count,
+                            byte[] src, int srcPos, int srcLimit) {
+        byte[] valueBytes = new byte[8];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < count; i++) {
+            gatherBytes(valueBytes);
+            buffer.rewind();
+            dest[destOffset + i] = buffer.getDouble();
+        }
+    }
+
+    /// Decode `count` INT64 values directly into dest[destOffset..).
+    @Override
+    public void readLongs(long[] dest, int destOffset, int count,
+                          byte[] src, int srcPos, int srcLimit) {
+        byte[] valueBytes = new byte[8];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < count; i++) {
+            gatherBytes(valueBytes);
+            buffer.rewind();
+            dest[destOffset + i] = buffer.getLong();
+        }
+    }
+
+    /// Decode `count` INT32 values directly into dest[destOffset..).
+    @Override
+    public void readInts(int[] dest, int destOffset, int count,
+                         byte[] src, int srcPos, int srcLimit) {
+        byte[] valueBytes = new byte[4];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < count; i++) {
+            gatherBytes(valueBytes);
+            buffer.rewind();
+            dest[destOffset + i] = buffer.getInt();
+        }
+    }
+
+    /// Decode `count` FLOAT values directly into dest[destOffset..).
+    @Override
+    public void readFloats(float[] dest, int destOffset, int count,
+                           byte[] src, int srcPos, int srcLimit) {
+        byte[] valueBytes = new byte[4];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < count; i++) {
+            gatherBytes(valueBytes);
+            buffer.rewind();
+            dest[destOffset + i] = buffer.getFloat();
+        }
+    }
 }

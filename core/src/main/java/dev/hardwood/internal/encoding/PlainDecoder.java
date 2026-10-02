@@ -286,4 +286,68 @@ public class PlainDecoder implements ValueDecoder {
         pos += length;
         return result;
     }
+
+    // -----------------------------------------------------------------------
+    // Direct-into-batch overloads
+    //
+    // Decode exactly `count` values from src[srcPos .. srcPos+count*width)
+    // directly into dest[destOffset .. destOffset+count).
+    // Caller guarantees: definitionLevels == null (all-present path only).
+    // -----------------------------------------------------------------------
+
+    /// Decode `count` DOUBLE values directly into dest[destOffset..).
+    @Override
+    public void readDoubles(double[] dest, int destOffset, int count,
+                            byte[] src, int srcPos, int srcLimit) {
+        int numBytes = count * Double.BYTES;
+        if (numBytes > srcLimit - srcPos) {
+            throw new ParquetReadException("Unexpected EOF while reading DOUBLE values (direct path)");
+        }
+        ByteBuffer.wrap(src, srcPos, numBytes)
+                  .order(ByteOrder.LITTLE_ENDIAN)
+                  .asDoubleBuffer()
+                  .get(dest, destOffset, count);
+    }
+
+    /// Decode `count` INT64 values directly into dest[destOffset..).
+    @Override
+    public void readLongs(long[] dest, int destOffset, int count,
+                          byte[] src, int srcPos, int srcLimit) {
+        int numBytes = count * Long.BYTES;
+        if (numBytes > srcLimit - srcPos) {
+            throw new ParquetReadException("Unexpected EOF while reading INT64 values (direct path)");
+        }
+        ByteBuffer.wrap(src, srcPos, numBytes)
+                  .order(ByteOrder.LITTLE_ENDIAN)
+                  .asLongBuffer()
+                  .get(dest, destOffset, count);
+    }
+
+    /// Decode `count` INT32 values directly into dest[destOffset..).
+    @Override
+    public void readInts(int[] dest, int destOffset, int count,
+                         byte[] src, int srcPos, int srcLimit) {
+        int numBytes = count * Integer.BYTES;
+        if (numBytes > srcLimit - srcPos) {
+            throw new ParquetReadException("Unexpected EOF while reading INT32 values (direct path)");
+        }
+        ByteBuffer.wrap(src, srcPos, numBytes)
+                  .order(ByteOrder.LITTLE_ENDIAN)
+                  .asIntBuffer()
+                  .get(dest, destOffset, count);
+    }
+
+    /// Decode `count` FLOAT values directly into dest[destOffset..).
+    @Override
+    public void readFloats(float[] dest, int destOffset, int count,
+                           byte[] src, int srcPos, int srcLimit) {
+        int numBytes = count * Float.BYTES;
+        if (numBytes > srcLimit - srcPos) {
+            throw new ParquetReadException("Unexpected EOF while reading FLOAT values (direct path)");
+        }
+        ByteBuffer.wrap(src, srcPos, numBytes)
+                  .order(ByteOrder.LITTLE_ENDIAN)
+                  .asFloatBuffer()
+                  .get(dest, destOffset, count);
+    }
 }
