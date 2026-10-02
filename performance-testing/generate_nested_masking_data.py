@@ -138,6 +138,17 @@ def write_with_index(source_path: str, path: str, compression: str) -> None:
     print(f"  Done: {os.path.getsize(path) / 1e6:.1f} MB")
 
 
+def verify_sha256(path: str, expected: str) -> None:
+    """Fails unless the file at path has the SHA-256 digest expected."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual != expected:
+        sys.exit(f"{path}: SHA-256 is {actual}, expected {expected}; delete it and rerun.")
+
+
 def write_wikipedia_with_index(output_dir: str) -> None:
     path = os.path.join(output_dir, WIKIPEDIA_WITH_INDEX)
     if os.path.exists(path):

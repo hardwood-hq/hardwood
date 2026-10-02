@@ -24,9 +24,11 @@ package dev.hardwood.internal.reader;
 public sealed interface Page {
 
     /// The number of values (leaves) on this page — the logical length of the
-    /// level and value arrays. The level arrays may be physically longer (see
-    /// [#definitionLevels]), so this is the count callers must iterate, never
-    /// `definitionLevels().length`.
+    /// level, value and dictionary-index arrays. Any of them may be physically
+    /// longer: the level arrays are pooled (see [#definitionLevels]), and a page
+    /// trimmed to its masked records ([PageTrimmer]) keeps its arrays at their
+    /// decoded length. This is the count callers must iterate, never an array's
+    /// `length`.
     int size();
 
     int maxDefinitionLevel();

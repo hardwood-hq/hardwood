@@ -35,7 +35,8 @@ final class PageTrimmer {
     /// Returns `page` holding only the values of the records `mask` keeps.
     ///
     /// @throws IllegalArgumentException if `mask` is [PageRowMask#ALL], which keeps the page as is
-    /// @throws ParquetReadException if the page's first repetition level is not `0`
+    /// @throws ParquetReadException if the page's first repetition level is not `0`, or the
+    ///         mask selects records past the last one the page holds
     static Page trim(Page page, PageRowMask mask) {
         if (mask.isAll()) {
             throw new IllegalArgumentException("PageRowMask.ALL keeps the page as is; nothing to trim");
@@ -58,15 +59,13 @@ final class PageTrimmer {
     /// of `k`: a fixed-width fixed-size-list page, or with `k == 1` a page of a column
     /// with no repeated ancestor. Returns the number of values kept.
     private static int compactFixedWidth(Page page, PageRowMask mask, int k) {
-        int pageRecords = page.size() / k;
+        checkMaskFits(mask, page.size() / k);
         int write = 0;
         for (int i = 0; i < mask.intervalCount(); i++) {
-            int start = Math.min(mask.start(i), pageRecords);
-            int end = Math.min(mask.end(i), pageRecords);
-            if (start < end) {
-                move(page, start * k, write, (end - start) * k);
-                write += (end - start) * k;
-            }
+            int start = mask.start(i);
+            int end = mask.end(i);
+            move(page, start * k, write, (end - start) * k);
+            write += (end - start) * k;
         }
         return write;
     }
@@ -103,11 +102,24 @@ final class PageTrimmer {
                 runStart = -1;
             }
         }
+        checkMaskFits(mask, recordIndex + 1);
         if (runStart >= 0) {
             move(page, runStart, write, size - runStart);
             write += size - runStart;
         }
         return write;
+    }
+
+    /// Fails unless every record `mask` selects lies within the page's `pageRecords`
+    /// records. A mask is derived from the page's row count in the offset index or its
+    /// header, so a mask reaching past the page means those disagree with the page's
+    /// values, and trimming to fewer records would misalign the column with its siblings.
+    private static void checkMaskFits(PageRowMask mask, int pageRecords) {
+        int maskEnd = mask.end(mask.intervalCount() - 1);
+        if (maskEnd > pageRecords) {
+            throw new ParquetReadException("Invalid column chunk: page row mask selects records up to "
+                    + maskEnd + " but the page holds " + pageRecords + " records");
+        }
     }
 
     /// Moves the `length` positions starting at `from` to start at `to`, in every array

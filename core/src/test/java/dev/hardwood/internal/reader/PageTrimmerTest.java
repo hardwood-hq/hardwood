@@ -99,6 +99,51 @@ class PageTrimmerTest {
     }
 
     @Test
+    void testKeepsBooleanValues() {
+        boolean[] values = { true, false, false, true };
+        int[] rep = { 0, 1, 0, 0 };
+        Page.BooleanPage page = new Page.BooleanPage(values, null, rep, 1, values.length);
+
+        Page.BooleanPage trimmed = (Page.BooleanPage) PageTrimmer.trim(page,
+                PageRowMask.of(new int[]{ 1, 3 }));
+
+        assertThat(trimmed.size()).isEqualTo(2);
+        assertThat(Arrays.copyOf(trimmed.values(), 2)).containsExactly(false, true);
+        assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 2)).containsExactly(0, 0);
+    }
+
+    @Test
+    void testKeepsFloatValues() {
+        float[] values = { 1f, 2f, 3f, 4f };
+        int[] rep = { 0, 0, 1, 0 };
+        Page.FloatPage page = new Page.FloatPage(values, null, rep, 1, values.length);
+
+        Page.FloatPage trimmed = (Page.FloatPage) PageTrimmer.trim(page,
+                PageRowMask.of(new int[]{ 0, 1, 2, 3 }));
+
+        assertThat(trimmed.size()).isEqualTo(2);
+        assertThat(Arrays.copyOf(trimmed.values(), 2)).containsExactly(1f, 4f);
+        assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 2)).containsExactly(0, 0);
+    }
+
+    @Test
+    void testRejectsMaskPastLastRecordOfRegularPage() {
+        assertThatThrownBy(() -> PageTrimmer.trim(fourRecords(), PageRowMask.of(new int[]{ 3, 5 })))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid column chunk: page row mask selects records up to 5 but the page holds 4 records");
+    }
+
+    @Test
+    void testRejectsMaskPastLastRecordOfFixedWidthPage() {
+        double[] values = { 0, 0.5, 1, 1.5 };
+        Page.DoublePage page = new Page.DoublePage(values, null, null, 2, values.length, 2);
+
+        assertThatThrownBy(() -> PageTrimmer.trim(page, PageRowMask.of(new int[]{ 1, 3 })))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid column chunk: page row mask selects records up to 3 but the page holds 2 records");
+    }
+
+    @Test
     void testRejectsPageStartingMidRecord() {
         int[] values = { 1, 2, 3 };
         int[] rep = { 1, 0, 1 };

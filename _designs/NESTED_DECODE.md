@@ -73,7 +73,7 @@ Tests: `ColumnReaderLayerModelTest`, `UnannotatedRepeatedListTest`, `LegacyTwoLe
 |---|---|
 | One decode at a time per holder | A slot is resubmitted only once the drain has consumed its previous page (the retriever throttle; see [READ_PIPELINE.md](READ_PIPELINE.md)). `PageDecoder` holds no scratch state of its own. |
 | Page level arrays die with assembly | The drain copies what it needs into its own accumulators during the synchronous assemble call; `REAL_VIEW_KEEP_LEVELS` keeps copies of the accumulators, never the page arrays. |
-| No consumer reads `array.length` | A pooled array can be longer than the page. Every consumer scans `page.size()` or an explicit count; `SimdOperations.countNonNulls` takes an explicit length. |
+| No consumer reads `array.length` | A pooled array can be longer than the page, and so can every position-indexed array of a trimmed page ([Masked pages](#masked-pages)). Every consumer scans `page.size()` or an explicit count; `SimdOperations.countNonNulls` takes an explicit length. |
 
 Tests: `FixedSizeListEngagementTest` (scratch reuse across pages), `SimdOperationsTest` (stale tail ignored). The single-decode-per-holder exclusion is untested.
 
