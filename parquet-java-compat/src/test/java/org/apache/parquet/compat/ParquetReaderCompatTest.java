@@ -24,6 +24,7 @@ import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 import org.junit.jupiter.api.Test;
@@ -115,6 +116,49 @@ class ParquetReaderCompatTest {
             byte[] minusOne = new byte[12];
             Arrays.fill(minusOne, (byte) 0xFF);
             assertThat(record.getBinary("utc_ns", 0).getBytes()).isEqualTo(minusOne);
+        }
+    }
+
+    /// A nanosecond `TIME` or `TIMESTAMP` has no `OriginalType`, since no converted type carries
+    /// nanoseconds, and an `INTERVAL` column has `INTERVAL`, as parquet-java reports for both.
+    @Test
+    void testOriginalTypeOfNanosecondTimesAndInterval(@TempDir File dir) throws Exception {
+        File file = new File(dir, "nanos_interval.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("time_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
+                        LogicalType.time(false, LogicalType.TimeUnit.NANOS))
+                .addColumn("ts_ns", PhysicalType.INT64, RepetitionType.OPTIONAL,
+                        LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS))
+                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 12,
+                        LogicalType.interval())
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file.toPath()), schema)) {
+            writer.rowWriter().writeRow(row -> row.setNull("time_ns").setNull("ts_ns").setNull("span"));
+        }
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), new Path(file.getPath()))
+                .build()) {
+            GroupType type = reader.read().getType();
+
+            assertThat(type.getType("time_ns").asPrimitiveType().getOriginalType()).isNull();
+            assertThat(type.getType("ts_ns").asPrimitiveType().getOriginalType()).isNull();
+            assertThat(type.getType("span").asPrimitiveType().getOriginalType()).isEqualTo(OriginalType.INTERVAL);
+        }
+    }
+
+    /// A `LIST` or `MAP` group annotated by its logical type alone, with no converted type, has the
+    /// `OriginalType` of that logical type, as parquet-java reports.
+    @Test
+    void testOriginalTypeOfGroupsAnnotatedByLogicalTypeOnly() throws Exception {
+        assertThat(firstRowType("../core/src/test/resources/list_annotation_modern_only_test.parquet")
+                .getType("tags").asGroupType().getOriginalType()).isEqualTo(OriginalType.LIST);
+        assertThat(firstRowType("../core/src/test/resources/map_annotation_modern_only_test.parquet")
+                .getType("attrs").asGroupType().getOriginalType()).isEqualTo(OriginalType.MAP);
+    }
+
+    private static GroupType firstRowType(String file) throws Exception {
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), new Path(file)).build()) {
+            return reader.read().getType();
         }
     }
 
