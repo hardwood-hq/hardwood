@@ -18,7 +18,7 @@ A column is decoded by `NestedColumnWorker` into `NestedBatch`es when:
 | Reader | Condition |
 |---|---|
 | `ColumnReader` / `ColumnReaders` | the column has at least one layer or `maxRepetitionLevel > 0` (`ColumnCursor.isNested`). A leaf below required groups only is flat. |
-| `NestedRowReader` | every projected column, flat or not, once `FileSchema.isFlatSchema()` is false. |
+| `NestedRowReader` | every decoded column, flat or not, when some decoded column has `maxRepetitionLevel > 0` or some decoded top-level field is a group. A column only the predicate references counts. See [ROW_READER.md](ROW_READER.md#flat-and-nested-readers). |
 
 All other columns go through `FlatColumnWorker` (see [READ_PIPELINE.md](READ_PIPELINE.md)).
 
