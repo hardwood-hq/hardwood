@@ -10,6 +10,7 @@ package dev.hardwood.internal.variant;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -127,9 +128,9 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         private static Carrier ofInt32(LogicalType logicalType) {
             return switch (logicalType) {
                 case null -> INT32;
-                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 8 -> INT8;
-                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 16 -> INT16;
-                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 32 -> INT32;
+                case LogicalType.IntType i when !AnnotationPairings.ordersUnsigned(i) && i.bitWidth() == 8 -> INT8;
+                case LogicalType.IntType i when !AnnotationPairings.ordersUnsigned(i) && i.bitWidth() == 16 -> INT16;
+                case LogicalType.IntType i when !AnnotationPairings.ordersUnsigned(i) && i.bitWidth() == 32 -> INT32;
                 case LogicalType.DecimalType d -> DECIMAL4;
                 case LogicalType.DateType d -> DATE;
                 default -> null;
@@ -139,7 +140,7 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         private static Carrier ofInt64(LogicalType logicalType) {
             return switch (logicalType) {
                 case null -> INT64;
-                case LogicalType.IntType i when i.isSigned() && i.bitWidth() == 64 -> INT64;
+                case LogicalType.IntType i when !AnnotationPairings.ordersUnsigned(i) && i.bitWidth() == 64 -> INT64;
                 case LogicalType.DecimalType d -> DECIMAL8;
                 case LogicalType.TimeType t when !t.isAdjustedToUTC() && t.unit() == LogicalType.TimeUnit.MICROS ->
                         TIME_MICROS;

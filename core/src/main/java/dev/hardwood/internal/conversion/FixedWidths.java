@@ -7,10 +7,12 @@
  */
 package dev.hardwood.internal.conversion;
 
-/// The byte widths parquet-format fixes for a value: those of the `FIXED_LEN_BYTE_ARRAY`
-/// annotations, which `AnnotationPairings` checks a column's declared width against, and that of
-/// the legacy `INT96`. Every encoder, decoder, check and rendering of one of these values reads
-/// its width from here.
+import dev.hardwood.metadata.PhysicalType;
+
+/// The byte widths parquet-format fixes for a value: those of the physical types whose values
+/// all take the same number of bytes, and those of the `FIXED_LEN_BYTE_ARRAY` annotations, which
+/// `AnnotationPairings` checks a column's declared width against. Every encoder, decoder, check
+/// and rendering of one of these values reads its width from here.
 public final class FixedWidths {
 
     /// "`UUID` annotates a 16-byte `FIXED_LEN_BYTE_ARRAY` primitive type."
@@ -32,5 +34,21 @@ public final class FixedWidths {
     public static final int INT96 = 12;
 
     private FixedWidths() {
+    }
+
+    /// The bytes one plain-encoded value of `type` occupies: 4 for an `INT32` or `FLOAT`, 8 for an
+    /// `INT64` or `DOUBLE`, and [#INT96] for an `INT96`.
+    ///
+    /// @throws IllegalArgumentException for a type whose values have no width of their own: a
+    ///         `BOOLEAN`, stored as one bit, a `BYTE_ARRAY`, whose values vary in length, and a
+    ///         `FIXED_LEN_BYTE_ARRAY`, whose width each column declares
+    public static int of(PhysicalType type) {
+        return switch (type) {
+            case INT32, FLOAT -> Integer.BYTES;
+            case INT64, DOUBLE -> Long.BYTES;
+            case INT96 -> INT96;
+            case BOOLEAN, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                    throw new IllegalArgumentException(type + " has no fixed byte width");
+        };
     }
 }

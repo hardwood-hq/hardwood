@@ -13,6 +13,7 @@ import java.util.Set;
 
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
@@ -149,7 +150,8 @@ final class AvroSchemaEmitter {
             case FLOAT -> "float";
             case DOUBLE -> "double";
             case INT32 -> {
-                boolean unsignedInt = prim.logicalType() instanceof LogicalType.IntType it && !it.isSigned() && it.bitWidth() == 32;
+                boolean unsignedInt = prim.logicalType() instanceof LogicalType.IntType it
+                        && AnnotationPairings.ordersUnsigned(it) && it.bitWidth() == 32;
                 yield unsignedInt ? "long" : "int";
             }
             case INT64 -> "long";

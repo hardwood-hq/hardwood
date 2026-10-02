@@ -52,7 +52,7 @@ class DroppedAnnotationTest {
         SchemaElement onInt64 = leaf(PhysicalType.INT64, null, geometry);
         assertThat(annotationOf(onInt64)).isNull();
         assertThat(LeafAnnotation.dropFault(onInt64))
-                .isEqualTo("GEOMETRY is read from BYTE_ARRAY, but the column is INT64");
+                .isEqualTo("GEOMETRY(OGC:CRS84) is read from BYTE_ARRAY, but the column is INT64");
 
         SchemaElement onByteArray = leaf(PhysicalType.BYTE_ARRAY, null, geometry);
         assertThat(annotationOf(onByteArray)).isEqualTo(geometry);
@@ -62,7 +62,7 @@ class DroppedAnnotationTest {
                 LogicalType.geography(null, null));
         assertThat(annotationOf(geographyOnFixed)).isNull();
         assertThat(LeafAnnotation.dropFault(geographyOnFixed))
-                .isEqualTo("GEOGRAPHY is read from BYTE_ARRAY, but the column is FIXED_LEN_BYTE_ARRAY");
+                .isEqualTo("GEOGRAPHY(OGC:CRS84, SPHERICAL) is read from BYTE_ARRAY, but the column is FIXED_LEN_BYTE_ARRAY");
     }
 
     /// A group carries only the annotations of a structure: `LIST`, `MAP` and `VARIANT`, and the

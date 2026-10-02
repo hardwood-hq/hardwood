@@ -72,36 +72,11 @@ public final class LogicalTypeConverter {
         }
         return switch (illegal.fault()) {
             case Pairing.Fault.WrongPhysicalType wrong ->
-                    readsFrom(token(logicalType), wrong.allowed(), physicalType);
+                    readsFrom(logicalType.toString(), wrong.allowed(), physicalType);
             case Pairing.Fault.WrongWidth wrong -> widthFault(logicalType, wrong.expected(), typeLength);
             case Pairing.Fault.PrecisionTooLarge tooLarge -> precisionFault(physicalType, typeLength,
                     logicalType, tooLarge.precision(), tooLarge.maxPrecision());
-            case Pairing.Fault.GroupAnnotation ignored -> structural(token(logicalType));
-        };
-    }
-
-    /// The annotation as a fault message names it: the format's token, with the parameters that
-    /// decide which column carries it.
-    private static String token(LogicalType logicalType) {
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> "STRING";
-            case LogicalType.JsonType ignored -> "JSON";
-            case LogicalType.EnumType ignored -> "ENUM";
-            case LogicalType.BsonType ignored -> "BSON";
-            case LogicalType.DateType ignored -> "DATE";
-            case LogicalType.TimestampType ignored -> "TIMESTAMP";
-            case LogicalType.TimeType time -> "TIME(" + time.unit() + ")";
-            case LogicalType.IntType integer -> "INT(" + integer.bitWidth() + ")";
-            case LogicalType.DecimalType ignored -> "DECIMAL";
-            case LogicalType.UuidType ignored -> "UUID";
-            case LogicalType.IntervalType ignored -> "INTERVAL";
-            case LogicalType.Float16Type ignored -> "FLOAT16";
-            case LogicalType.GeometryType ignored -> "GEOMETRY";
-            case LogicalType.GeographyType ignored -> "GEOGRAPHY";
-            case LogicalType.ListType ignored -> "LIST";
-            case LogicalType.MapType ignored -> "MAP";
-            case LogicalType.VariantType ignored -> "VARIANT";
-            case LogicalType.NullType ignored -> "NULL";
+            case Pairing.Fault.GroupAnnotation ignored -> structural(logicalType.toString());
         };
     }
 
@@ -120,10 +95,10 @@ public final class LogicalTypeConverter {
     /// every other width-fixing annotation is read from a `FIXED_LEN_BYTE_ARRAY` alone.
     private static String widthFault(LogicalType logicalType, int expected, Integer typeLength) {
         if (logicalType instanceof LogicalType.TimestampType) {
-            return "TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is " + expected
+            return logicalType + " over a FIXED_LEN_BYTE_ARRAY is " + expected
                     + " bytes, but the column declares " + typeLength;
         }
-        return token(logicalType) + " is exactly " + expected + " bytes, but the column declares " + typeLength;
+        return logicalType + " is exactly " + expected + " bytes, but the column declares " + typeLength;
     }
 
     private static String precisionFault(PhysicalType actual, Integer typeLength, LogicalType annotation,
@@ -426,7 +401,7 @@ public final class LogicalTypeConverter {
     /// `Long.toUnsignedString`.
     private static Object convertToInt(Object value, PhysicalType physicalType,
                                        LogicalType.IntType intType) {
-        if (intType.isSigned() && physicalType == PhysicalType.INT32) {
+        if (!AnnotationPairings.ordersUnsigned(intType) && physicalType == PhysicalType.INT32) {
             if (intType.bitWidth() == 8) {
                 return ((Integer) value).byteValue();
             }

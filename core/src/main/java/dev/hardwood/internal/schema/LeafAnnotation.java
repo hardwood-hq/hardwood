@@ -8,6 +8,7 @@
 package dev.hardwood.internal.schema;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.SchemaElement;
 
@@ -84,8 +85,17 @@ public final class LeafAnnotation {
 
     /// Whether the element's `converted_type`, rather than its `logicalType`, decides its annotation.
     private static boolean convertedTypeDecides(SchemaElement element) {
-        return element.convertedType() != null
-                && (element.logicalType() == null || element.logicalType() instanceof LogicalType.NullType);
+        return convertedTypeDecides(element.convertedType(), element.logicalType());
+    }
+
+    /// Whether a `converted_type` decides an element's annotation beside this `LogicalType` union:
+    /// where the union is absent, holds a member this release does not recognize (which reads as
+    /// absent), or is `UNKNOWN`, which yields to a converted type as [#effective] describes.
+    ///
+    /// @param convertedType the element's `converted_type`, `null` where it has none
+    /// @param union the element's union member as read, `null` where it is absent or unrecognized
+    public static boolean convertedTypeDecides(ConvertedType convertedType, LogicalType union) {
+        return convertedType != null && (union == null || union instanceof LogicalType.NullType);
     }
 
     /// Build a [LogicalType.DecimalType] from a legacy `DECIMAL` converted-type

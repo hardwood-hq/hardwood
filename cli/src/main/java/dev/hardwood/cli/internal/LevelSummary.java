@@ -201,9 +201,7 @@ public record LevelSummary(
         }
         return switch (column.type()) {
             case BOOLEAN -> (count + 7) / 8;
-            case INT32, FLOAT -> count * 4;
-            case INT64, DOUBLE -> count * 8;
-            case INT96 -> count * FixedWidths.INT96;
+            case INT32, FLOAT, INT64, DOUBLE, INT96 -> count * FixedWidths.of(column.type());
             case FIXED_LEN_BYTE_ARRAY -> column.typeLength() != null ? count * column.typeLength() : -1;
             case BYTE_ARRAY -> -1;
         };

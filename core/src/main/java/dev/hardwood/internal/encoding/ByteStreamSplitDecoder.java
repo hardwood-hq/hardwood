@@ -10,6 +10,7 @@ package dev.hardwood.internal.encoding;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -58,15 +59,14 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
 
     private static int getByteWidth(PhysicalType type, Integer typeLength) {
         return switch (type) {
-            case FLOAT, INT32 -> 4;
-            case DOUBLE, INT64 -> 8;
+            case FLOAT, INT32, DOUBLE, INT64 -> FixedWidths.of(type);
             case FIXED_LEN_BYTE_ARRAY -> {
                 if (typeLength == null) {
                     throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY requires typeLength");
                 }
                 yield typeLength;
             }
-            default -> throw new IllegalArgumentException(
+            case BOOLEAN, INT96, BYTE_ARRAY -> throw new IllegalArgumentException(
                     "BYTE_STREAM_SPLIT is not defined over " + type);
         };
     }

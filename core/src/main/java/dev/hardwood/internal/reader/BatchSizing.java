@@ -161,10 +161,9 @@ public final class BatchSizing {
     /// Variable-length types use a 16-byte estimate (pointer + average payload).
     private static int columnByteWidth(ColumnSchema col) {
         return switch (col.type()) {
-            case INT32, FLOAT -> 4;
-            case INT64, DOUBLE -> 8;
+            case INT32, FLOAT, INT64, DOUBLE, INT96 -> FixedWidths.of(col.type());
+            // One `boolean` per value in the decoded batch.
             case BOOLEAN -> 1;
-            case INT96 -> FixedWidths.INT96;
             // Rough estimate; UTF8/ENUM/JSON columns cost a little more per row — they
             // also carry a lazily-allocated per-value dictionary-index array for
             // interned-String reuse — but the byte-array estimate is intentionally

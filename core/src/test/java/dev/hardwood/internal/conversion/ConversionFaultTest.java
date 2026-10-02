@@ -44,7 +44,7 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.INT32, null, LogicalType.string()))
                 .isEqualTo("STRING is read from BYTE_ARRAY, but the column is INT32");
         assertThat(fault(PhysicalType.INT32, null, timestamp()))
-                .isEqualTo("TIMESTAMP is read from INT64 or FIXED_LEN_BYTE_ARRAY, but the column is INT32");
+                .isEqualTo("TIMESTAMP(MILLIS, UTC) is read from INT64 or FIXED_LEN_BYTE_ARRAY, but the column is INT32");
     }
 
     @Test
@@ -54,7 +54,7 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.uuid()))
                 .isEqualTo("UUID is exactly 16 bytes, but the column declares 8");
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 16, timestamp()))
-                .isEqualTo("TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column declares 16");
+                .isEqualTo("TIMESTAMP(MILLIS, UTC) over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column declares 16");
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.interval()))
                 .isEqualTo("INTERVAL is exactly 12 bytes, but the column declares 8");
     }
@@ -79,11 +79,11 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.INT64, null, time(LogicalType.TimeUnit.MICROS))).isNull();
         assertThat(fault(PhysicalType.INT64, null, time(LogicalType.TimeUnit.NANOS))).isNull();
         assertThat(fault(PhysicalType.INT64, null, time(LogicalType.TimeUnit.MILLIS)))
-                .isEqualTo("TIME(MILLIS) is read from INT32, but the column is INT64");
+                .isEqualTo("TIME(MILLIS, UTC) is read from INT32, but the column is INT64");
         assertThat(fault(PhysicalType.INT32, null, time(LogicalType.TimeUnit.MICROS)))
-                .isEqualTo("TIME(MICROS) is read from INT64, but the column is INT32");
+                .isEqualTo("TIME(MICROS, UTC) is read from INT64, but the column is INT32");
         assertThat(fault(PhysicalType.INT32, null, time(LogicalType.TimeUnit.NANOS)))
-                .isEqualTo("TIME(NANOS) is read from INT64, but the column is INT32");
+                .isEqualTo("TIME(NANOS, UTC) is read from INT64, but the column is INT32");
     }
 
     /// `INT(8)`, `INT(16)` and `INT(32)` are stored in an `INT32` and `INT(64)` in an
@@ -94,11 +94,11 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.INT32, null, LogicalType.intType(32, false))).isNull();
         assertThat(fault(PhysicalType.INT64, null, LogicalType.intType(64, false))).isNull();
         assertThat(fault(PhysicalType.INT64, null, LogicalType.intType(8, true)))
-                .isEqualTo("INT(8) is read from INT32, but the column is INT64");
+                .isEqualTo("INT_8 is read from INT32, but the column is INT64");
         assertThat(fault(PhysicalType.INT64, null, LogicalType.intType(32, false)))
-                .isEqualTo("INT(32) is read from INT32, but the column is INT64");
+                .isEqualTo("UINT_32 is read from INT32, but the column is INT64");
         assertThat(fault(PhysicalType.INT32, null, LogicalType.intType(64, true)))
-                .isEqualTo("INT(64) is read from INT64, but the column is INT32");
+                .isEqualTo("INT_64 is read from INT64, but the column is INT32");
     }
 
     /// A `DECIMAL`'s precision must fit the digits its carrier holds: nine for an `INT32`,
@@ -127,9 +127,9 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.geometry(null))).isNull();
         assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.geography(null, null))).isNull();
         assertThat(fault(PhysicalType.INT32, null, LogicalType.geometry(null)))
-                .isEqualTo("GEOMETRY is read from BYTE_ARRAY, but the column is INT32");
+                .isEqualTo("GEOMETRY(OGC:CRS84) is read from BYTE_ARRAY, but the column is INT32");
         assertThat(fault(PhysicalType.INT64, null, LogicalType.geography(null, null)))
-                .isEqualTo("GEOGRAPHY is read from BYTE_ARRAY, but the column is INT64");
+                .isEqualTo("GEOGRAPHY(OGC:CRS84, SPHERICAL) is read from BYTE_ARRAY, but the column is INT64");
     }
 
     /// `JSON`, `BSON` and `ENUM` all carry a `BYTE_ARRAY` payload, so each is faulted on
@@ -156,7 +156,7 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.BYTE_ARRAY, null, decimal())).isNull();
         assertThat(fault(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, decimal())).isNull();
         assertThat(fault(PhysicalType.BOOLEAN, null, decimal()))
-                .isEqualTo("DECIMAL is read from INT32, INT64, BYTE_ARRAY or"
+                .isEqualTo("DECIMAL(9, 4) is read from INT32, INT64, BYTE_ARRAY or"
                         + " FIXED_LEN_BYTE_ARRAY, but the column is BOOLEAN");
     }
 
@@ -179,7 +179,7 @@ class ConversionFaultTest {
         assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.map()))
                 .isEqualTo("MAP annotates a group, but the column is a primitive");
         assertThat(fault(PhysicalType.BYTE_ARRAY, null, LogicalType.variant(1)))
-                .isEqualTo("VARIANT annotates a group, but the column is a primitive");
+                .isEqualTo("VARIANT(1) annotates a group, but the column is a primitive");
     }
 
     /// `NULL` is legal over any physical type — it says every value in the column is null.

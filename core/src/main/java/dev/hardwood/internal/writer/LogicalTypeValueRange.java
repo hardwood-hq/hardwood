@@ -10,6 +10,7 @@ package dev.hardwood.internal.writer;
 import java.math.BigInteger;
 
 import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.Pairing;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
@@ -88,18 +89,44 @@ public final class LogicalTypeValueRange {
     }
 
     /// The range `column`'s annotation declares.
+    ///
+    /// The switch is exhaustive, so an annotation added later has to state whether it narrows
+    /// the values its physical type holds.
+    ///
+    /// @throws IllegalArgumentException if [AnnotationPairings#check] calls the annotation illegal
+    ///         over the column's physical type and width, which includes every annotation of a
+    ///         group; no column the writer accepts carries one
     public static LogicalTypeValueRange of(ColumnSchema column) {
         LogicalType logicalType = column.logicalType();
         if (logicalType == null) {
             return UNBOUNDED;
         }
-        if (logicalType instanceof LogicalType.NullType) {
-            return NO_VALUE;
+        PhysicalType type = column.type();
+        if (AnnotationPairings.check(type, column.typeLength(), logicalType) instanceof Pairing.Illegal) {
+            throw notOver(type, column.typeLength(), logicalType);
         }
-        return switch (column.type()) {
-            case INT32, INT64 -> integral(column.type(), logicalType);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryDecimal(logicalType);
-            default -> UNBOUNDED;
+        return switch (logicalType) {
+            case LogicalType.IntType integer -> integerRange(type, integer);
+            case LogicalType.TimeType time -> timeRange(time);
+            case LogicalType.DecimalType decimal -> decimalRange(type, decimal);
+            case LogicalType.NullType ignored -> NO_VALUE;
+            // Every value of the physical type is a value of these: a day count, an offset
+            // from the epoch, a half float, or bytes whose contents the writer does not parse.
+            case LogicalType.DateType ignored -> UNBOUNDED;
+            case LogicalType.TimestampType ignored -> UNBOUNDED;
+            case LogicalType.Float16Type ignored -> UNBOUNDED;
+            case LogicalType.IntervalType ignored -> UNBOUNDED;
+            case LogicalType.UuidType ignored -> UNBOUNDED;
+            case LogicalType.StringType ignored -> UNBOUNDED;
+            case LogicalType.EnumType ignored -> UNBOUNDED;
+            case LogicalType.JsonType ignored -> UNBOUNDED;
+            case LogicalType.BsonType ignored -> UNBOUNDED;
+            case LogicalType.GeometryType ignored -> UNBOUNDED;
+            case LogicalType.GeographyType ignored -> UNBOUNDED;
+            // These annotate a group, never a column with values, and are refused above.
+            case LogicalType.ListType ignored -> throw notOver(type, column.typeLength(), logicalType);
+            case LogicalType.MapType ignored -> throw notOver(type, column.typeLength(), logicalType);
+            case LogicalType.VariantType ignored -> throw notOver(type, column.typeLength(), logicalType);
         };
     }
 
@@ -170,49 +197,66 @@ public final class LogicalTypeValueRange {
         return new BigInteger(value).abs().compareTo(unscaledBound) <= 0;
     }
 
-    /// The range of an `INT32` or `INT64` column. An `INT(n)` narrower than its physical type
-    /// bounds the value to what `n` bits hold; `INT(32)` / `INT(64)` and their unsigned forms
-    /// bound nothing, because every bit pattern of the physical type is a value of the column
-    /// and spelling a large unsigned one as a negative is the only way to reach it — which is
-    /// also how the reader returns it.
-    ///
-    /// A `TIME` bounds the value to one day of its unit, and a `DECIMAL` to the digits its
-    /// precision declares. That precision never exceeds what the physical type can hold: the
-    /// schema builder's `LogicalTypeValidator` refuses a wider one, and a schema read from a file
-    /// has it dropped by `LeafAnnotation.dropFault`, both counting digits by
+    /// The range of an `INT(n)` column. One narrower than its physical type bounds the value to
+    /// what `n` bits hold; `INT(32)` / `INT(64)` and their unsigned forms bound nothing, because
+    /// every bit pattern of the physical type is a value of the column and spelling a large
+    /// unsigned one as a negative is the only way to reach it — which is also how the reader
+    /// returns it.
+    private static LogicalTypeValueRange integerRange(PhysicalType type, LogicalType.IntType integer) {
+        int typeBits = switch (type) {
+            case INT32 -> Integer.SIZE;
+            case INT64 -> Long.SIZE;
+            case BOOLEAN, INT96, FLOAT, DOUBLE, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> throw notOver(type, integer);
+        };
+        int bitWidth = integer.bitWidth();
+        if (bitWidth >= typeBits) {
+            return UNBOUNDED;
+        }
+        boolean unsigned = AnnotationPairings.ordersUnsigned(integer);
+        long min = unsigned ? 0L : -(1L << (bitWidth - 1));
+        long max = unsigned ? (1L << bitWidth) - 1 : (1L << (bitWidth - 1)) - 1;
+        return new LogicalTypeValueRange(integer, min, max, null, 0, false);
+    }
+
+    /// A `TIME` bounds the value to one day of its unit, whichever integral type carries it.
+    private static LogicalTypeValueRange timeRange(LogicalType.TimeType time) {
+        return new LogicalTypeValueRange(time, 0L, unitsPerDay(time.unit()) - 1, null, 0, false);
+    }
+
+    /// A `DECIMAL` bounds the unscaled value to the digits its precision declares. That precision
+    /// never exceeds what the physical type can hold: the schema builder's `LogicalTypeValidator`
+    /// refuses a wider one, and a schema read from a file has it dropped by
+    /// `LeafAnnotation.dropFault`, both counting digits by
     /// [AnnotationPairings#maxDecimalPrecision(PhysicalType)].
-    private static LogicalTypeValueRange integral(PhysicalType type, LogicalType logicalType) {
-        int typeBits = type == PhysicalType.INT32 ? Integer.SIZE : Long.SIZE;
-        if (logicalType instanceof LogicalType.IntType intType) {
-            int bitWidth = intType.bitWidth();
-            if (bitWidth >= typeBits) {
-                return UNBOUNDED;
+    private static LogicalTypeValueRange decimalRange(PhysicalType type, LogicalType.DecimalType decimal) {
+        return switch (type) {
+            case INT32, INT64 -> {
+                long bound = POWERS_OF_TEN[decimal.precision()] - 1;
+                yield new LogicalTypeValueRange(decimal, -bound, bound, null, 0, false);
             }
-            long min = intType.isSigned() ? -(1L << (bitWidth - 1)) : 0L;
-            long max = intType.isSigned() ? (1L << (bitWidth - 1)) - 1 : (1L << bitWidth) - 1;
-            return new LogicalTypeValueRange(logicalType, min, max, null, 0, false);
-        }
-        if (logicalType instanceof LogicalType.TimeType time) {
-            return new LogicalTypeValueRange(logicalType, 0L, unitsPerDay(time.unit()) - 1, null, 0, false);
-        }
-        if (logicalType instanceof LogicalType.DecimalType decimal) {
-            long bound = POWERS_OF_TEN[decimal.precision()] - 1;
-            return new LogicalTypeValueRange(logicalType, -bound, bound, null, 0, false);
-        }
-        return UNBOUNDED;
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> binaryDecimal(decimal);
+            case BOOLEAN, INT96, FLOAT, DOUBLE -> throw notOver(type, decimal);
+        };
     }
 
     /// The range of a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column annotated `DECIMAL`, whose
     /// values are big-endian two's complement unscaled values of at most the declared precision.
-    private static LogicalTypeValueRange binaryDecimal(LogicalType logicalType) {
-        if (!(logicalType instanceof LogicalType.DecimalType decimal)) {
-            return UNBOUNDED;
-        }
+    private static LogicalTypeValueRange binaryDecimal(LogicalType.DecimalType decimal) {
         BigInteger bound = BigInteger.TEN.pow(decimal.precision()).subtract(BigInteger.ONE);
         // A value of L bytes spans at most 2^(8L-1) in magnitude, so it is in range whatever
         // its bytes are while 2^(8L-1) <= bound — which holds for every L up to the bound's
         // bit length divided by eight.
-        return new LogicalTypeValueRange(logicalType, 0, 0, bound, bound.bitLength() / Byte.SIZE, false);
+        return new LogicalTypeValueRange(decimal, 0, 0, bound, bound.bitLength() / Byte.SIZE, false);
+    }
+
+    private static IllegalArgumentException notOver(PhysicalType type, LogicalType logicalType) {
+        return new IllegalArgumentException(logicalType + " is not defined over " + type);
+    }
+
+    private static IllegalArgumentException notOver(PhysicalType type, Integer typeLength, LogicalType logicalType) {
+        return type == PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength != null
+                ? new IllegalArgumentException(logicalType + " is not defined over " + type + "(" + typeLength + ")")
+                : notOver(type, logicalType);
     }
 
     /// How many of `unit` a day holds, which is one past the largest value a `TIME` column can

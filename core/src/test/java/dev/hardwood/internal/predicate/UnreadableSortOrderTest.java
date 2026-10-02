@@ -349,7 +349,7 @@ class UnreadableSortOrderTest {
         }
         assertThat(warnings.messages()).containsExactly(
                 "Ignoring 1 annotation(s) their field cannot carry; each such field is read as though "
-                        + "unannotated: ts (TIMESTAMP over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column "
+                        + "unannotated: ts (TIMESTAMP(MICROS, UTC) over a FIXED_LEN_BYTE_ARRAY is 12 bytes, but the column "
                         + "declares 16)",
                 "[dropped-timestamp.parquet: column 'ts'] " + UNREADABLE_BOUNDS_WARNING);
     }

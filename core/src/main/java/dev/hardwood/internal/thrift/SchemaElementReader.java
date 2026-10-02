@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.thrift;
 
+import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
@@ -121,11 +122,11 @@ public class SchemaElementReader {
         if (name == null) {
             throw ThriftCompactReader.missingFields(ThriftStruct.SCHEMA_ELEMENT, 4);
         }
-        // A legacy DECIMAL standing alone on a primitive takes its digits from this element;
-        // beside a union member the reader recognizes, the union carries its own and these decide
-        // nothing. On a group it is no annotation the group can carry, and the schema drops it.
-        boolean unionDecides = logicalType != null && !(logicalType instanceof LogicalType.NullType);
-        if (type != null && convertedType == ConvertedType.DECIMAL && !unionDecides) {
+        // A legacy DECIMAL deciding a primitive's annotation takes its digits from this element;
+        // where the union decides, it carries its own and these decide nothing. On a group it is
+        // no annotation the group can carry, and the schema drops it.
+        if (type != null && convertedType == ConvertedType.DECIMAL
+                && LeafAnnotation.convertedTypeDecides(convertedType, logicalType)) {
             LogicalTypeReader.requireDecimalDigits("DECIMAL converted type on column '" + name + "'",
                     scale == null ? 0 : scale, precision);
         }

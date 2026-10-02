@@ -8,8 +8,6 @@
 package dev.hardwood.writer;
 
 import java.nio.ByteBuffer;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -22,11 +20,13 @@ import dev.hardwood.InputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -92,39 +92,6 @@ class WriterAnnotationRangeTest {
                 arguments(PhysicalType.INT32, LogicalType.date(), Integer.MIN_VALUE + 0L),
                 arguments(PhysicalType.INT64, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS),
                         Long.MIN_VALUE));
-    }
-
-    /// The annotations with nothing to bound, each named for the reason it has nothing: a value
-    /// of the physical type is a value of the column, whatever bits it carries.
-    ///
-    /// This list plus the kinds [#boundedColumns] and the `UNKNOWN` cases cover is the whole
-    /// sealed hierarchy, which [#everyAnnotationIsEitherRangeCheckedOrDeclaredNotToBe] asserts.
-    private static final Set<Class<? extends LogicalType>> NOT_RANGE_CHECKED = Set.of(
-            LogicalType.StringType.class, LogicalType.EnumType.class, LogicalType.JsonType.class,
-            LogicalType.BsonType.class, LogicalType.UuidType.class, LogicalType.Float16Type.class,
-            LogicalType.IntervalType.class, LogicalType.GeometryType.class,
-            LogicalType.GeographyType.class, LogicalType.DateType.class,
-            LogicalType.TimestampType.class, LogicalType.ListType.class, LogicalType.MapType.class,
-            LogicalType.VariantType.class);
-
-    /// Every member of the sealed [LogicalType] hierarchy is either exercised by this class or
-    /// declared to have nothing to range-check.
-    ///
-    /// The tables here are written by hand, and deliberately so: their bounds are constants
-    /// rather than values read back out of `LogicalTypeValueRange`, which is what makes them an
-    /// independent check on the arithmetic the writer applies rather than a restatement of it.
-    /// The cost of writing them by hand is that they can fall behind the hierarchy, and this is
-    /// what stops them: an annotation added to the writer fails here until someone decides which
-    /// of the two it is.
-    @Test
-    void everyAnnotationIsEitherRangeCheckedOrDeclaredNotToBe() {
-        Set<Class<?>> checked = new HashSet<>(NOT_RANGE_CHECKED);
-        checked.add(LogicalType.NullType.class);
-        boundedColumns().forEach(row -> checked.add(row.get()[1].getClass()));
-
-        assertThat(LogicalType.class.getPermittedSubclasses())
-                .as("every LogicalType is range-checked here or declared not to be")
-                .allSatisfy(member -> assertThat(checked).contains(member));
     }
 
     /// The bounded table's rows really are bounded, and the unbounded table's really are not, as
@@ -553,7 +520,42 @@ class WriterAnnotationRangeTest {
                 .hasMessage("Column 0 (v) is INT32, not INT64");
     }
 
+    /// A column whose annotation the pairing grid refuses over its physical type has no range,
+    /// rather than the range the annotation would declare over a type it is defined over.
+    @Test
+    void anAnnotationOverATypeItIsNotDefinedOverHasNoRange() {
+        ColumnSchema column = column(PhysicalType.BYTE_ARRAY, null, LogicalType.time(true, LogicalType.TimeUnit.MILLIS));
+
+        assertThatThrownBy(() -> LogicalTypeValueRange.of(column))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("TIME(MILLIS, UTC) is not defined over BYTE_ARRAY");
+    }
+
+    /// A width-fixing annotation over a `FIXED_LEN_BYTE_ARRAY` of another width has no range.
+    @Test
+    void anAnnotationOverAWidthItIsNotDefinedOverHasNoRange() {
+        ColumnSchema column = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, 8, LogicalType.uuid());
+
+        assertThatThrownBy(() -> LogicalTypeValueRange.of(column))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("UUID is not defined over FIXED_LEN_BYTE_ARRAY(8)");
+    }
+
+    /// An annotation of a group has no range over any primitive column.
+    @Test
+    void aGroupAnnotationHasNoRange() {
+        ColumnSchema column = column(PhysicalType.INT32, null, LogicalType.list());
+
+        assertThatThrownBy(() -> LogicalTypeValueRange.of(column))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("LIST is not defined over INT32");
+    }
+
     // ==================== Helpers ====================
+
+    private static ColumnSchema column(PhysicalType type, Integer typeLength, LogicalType logicalType) {
+        return new ColumnSchema(FieldPath.of("v"), type, RepetitionType.REQUIRED, typeLength, 0, 0, 0, logicalType);
+    }
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
