@@ -45,49 +45,21 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
         return annotations;
     }
 
-    /// The annotations written for a logical type, whatever physical type carries it.
-    ///
-    /// Two members are asymmetric. `INTERVAL` writes only the legacy annotation, because
-    /// parquet.thrift reserves union field 9 for it without ever defining the member struct.
-    /// `TIME` and `TIMESTAMP` derive their legacy annotation from the unit alone, ignoring
-    /// `isAdjustedToUTC`: the legacy annotations denoted UTC-normalized values, but
-    /// parquet-format requires writers to annotate local times with them too, for forward
-    /// compatibility with the libraries that did so before the union existed. Nanosecond units
-    /// have no legacy counterpart and are union-only.
+    /// The annotations written for a logical type, whatever physical type carries it: the union
+    /// member where the union has one and the legacy annotation [AnnotationKind#convertedType]
+    /// names. `INTERVAL` writes only the legacy annotation, because parquet.thrift reserves union
+    /// field 9 for it without ever defining the member struct.
     private static LogicalTypeAnnotations of(LogicalType logicalType) {
         if (logicalType == null) {
             return NONE;
         }
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> both(logicalType, ConvertedType.UTF8);
-            case LogicalType.MapType ignored -> both(logicalType, ConvertedType.MAP);
-            case LogicalType.ListType ignored -> both(logicalType, ConvertedType.LIST);
-            case LogicalType.EnumType ignored -> both(logicalType, ConvertedType.ENUM);
-            case LogicalType.DateType ignored -> both(logicalType, ConvertedType.DATE);
-            case LogicalType.JsonType ignored -> both(logicalType, ConvertedType.JSON);
-            case LogicalType.BsonType ignored -> both(logicalType, ConvertedType.BSON);
-            case LogicalType.DecimalType decimal -> new LogicalTypeAnnotations(
-                    decimal, ConvertedType.DECIMAL, decimal.scale(), decimal.precision());
-            case LogicalType.IntType integer -> both(logicalType, intConvertedType(integer));
-            case LogicalType.TimeType time -> both(logicalType, switch (time.unit()) {
-                case MILLIS -> ConvertedType.TIME_MILLIS;
-                case MICROS -> ConvertedType.TIME_MICROS;
-                case NANOS -> null;
-            });
-            case LogicalType.TimestampType timestamp -> both(logicalType, switch (timestamp.unit()) {
-                case MILLIS -> ConvertedType.TIMESTAMP_MILLIS;
-                case MICROS -> ConvertedType.TIMESTAMP_MICROS;
-                case NANOS -> null;
-            });
-            case LogicalType.IntervalType ignored -> new LogicalTypeAnnotations(
-                    null, ConvertedType.INTERVAL, null, null);
-            case LogicalType.NullType ignored -> unionOnly(logicalType);
-            case LogicalType.UuidType ignored -> unionOnly(logicalType);
-            case LogicalType.Float16Type ignored -> unionOnly(logicalType);
-            case LogicalType.VariantType ignored -> unionOnly(logicalType);
-            case LogicalType.GeometryType ignored -> unionOnly(logicalType);
-            case LogicalType.GeographyType ignored -> unionOnly(logicalType);
-        };
+        AnnotationKind kind = AnnotationKind.of(logicalType);
+        LogicalType union = kind.hasUnionMember() ? logicalType : null;
+        ConvertedType convertedType = kind.convertedType(logicalType);
+        if (logicalType instanceof LogicalType.DecimalType decimal) {
+            return new LogicalTypeAnnotations(union, convertedType, decimal.scale(), decimal.precision());
+        }
+        return new LogicalTypeAnnotations(union, convertedType, null, null);
     }
 
     /// The annotations written for a group, which the schema model may hold in either
@@ -96,11 +68,13 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
     ///
     /// The deprecated `MAP_KEY_VALUE` has no union member and is passed through unchanged.
     ///
-    /// @throws IllegalArgumentException if either annotation is one [AnnotationPairings] does not
-    ///         define over a group, which the reader drops and the writer never writes
+    /// @throws IllegalArgumentException if either annotation is one the format does not define
+    ///         over a group ([AnnotationKind#annotatesGroup()],
+    ///         [AnnotationPairings#annotatesGroup(ConvertedType)]), which the reader drops and the
+    ///         writer never writes
     public static LogicalTypeAnnotations ofGroup(ConvertedType convertedType, LogicalType logicalType) {
         if (logicalType != null) {
-            if (!AnnotationPairings.annotatesGroup(logicalType)) {
+            if (!AnnotationKind.of(logicalType).annotatesGroup()) {
                 throw new IllegalArgumentException(logicalType + " annotates a primitive, not a group");
             }
             return of(logicalType);
@@ -115,17 +89,6 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
             case LIST -> both(LogicalType.list(), ConvertedType.LIST);
             case MAP -> both(LogicalType.map(), ConvertedType.MAP);
             default -> new LogicalTypeAnnotations(null, convertedType, null, null);
-        };
-    }
-
-    private static ConvertedType intConvertedType(LogicalType.IntType integer) {
-        boolean signed = integer.isSigned();
-        return switch (integer.bitWidth()) {
-            case 8 -> signed ? ConvertedType.INT_8 : ConvertedType.UINT_8;
-            case 16 -> signed ? ConvertedType.INT_16 : ConvertedType.UINT_16;
-            case 32 -> signed ? ConvertedType.INT_32 : ConvertedType.UINT_32;
-            case 64 -> signed ? ConvertedType.INT_64 : ConvertedType.UINT_64;
-            default -> throw new IllegalArgumentException("Invalid integer bit width: " + integer.bitWidth());
         };
     }
 

@@ -88,7 +88,7 @@ import dev.hardwood.schema.FileSchema;
 /// column, each of which reaches the batch as a
 /// [dev.hardwood.internal.reader.BinaryBatchValues] holding the stored bytes. That is
 /// what lets every such leaf compile and the matchers cast `batch.values` to it
-/// unchecked; the order its [AnnotationPairings.ByteColumnOrder] names is then the only thing
+/// unchecked; the order its [ByteColumnOrder] names is then the only thing
 /// that varies between them.
 public final class BatchFilterCompiler {
 

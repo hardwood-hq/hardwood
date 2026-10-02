@@ -12,7 +12,7 @@ import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
+import dev.hardwood.internal.schema.ByteColumnOrder;
 
 /// `value != literal` over a byte-array column.
 public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {

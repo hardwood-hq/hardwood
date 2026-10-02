@@ -27,8 +27,9 @@ import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.conversion.PhysicalValueConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
-import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
+import dev.hardwood.internal.schema.ByteColumnOrder;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.internal.schema.TextColumns;
@@ -540,7 +541,7 @@ public class FilterPredicateResolver {
     /// This runs before the literal's type is checked, so the refusal names the literals the column
     /// takes: a caller holding a literal of another type learns both at once.
     private static void requireOrder(String columnName, ColumnSchema columnSchema, Operator op) {
-        if (isEquality(op) || AnnotationPairings.namesAnOrder(columnSchema.logicalType())) {
+        if (isEquality(op) || AnnotationKind.namesAnOrder(columnSchema.logicalType())) {
             return;
         }
         throw new IllegalArgumentException("Column '" + columnName + "' is annotated "
@@ -588,10 +589,10 @@ public class FilterPredicateResolver {
         }
     }
 
-    /// Whether the column's values order by unsigned magnitude, as [AnnotationPairings#ordersUnsigned]
+    /// Whether the column's values order by unsigned magnitude, as [AnnotationKind#ordersUnsigned]
     /// answers for the writer's statistics too.
     private static boolean ordersUnsigned(ColumnSchema columnSchema) {
-        return AnnotationPairings.ordersUnsigned(columnSchema.logicalType());
+        return AnnotationKind.ordersUnsigned(columnSchema.logicalType());
     }
 
     // ==================== Byte literals ====================

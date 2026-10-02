@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 import dev.hardwood.cli.internal.JsonStrings;
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
@@ -280,8 +280,8 @@ final class ProtoSchemaEmitter {
     private static String primitiveToProtoType(SchemaNode.PrimitiveNode prim) {
         return switch (prim.type()) {
             case BOOLEAN -> "bool";
-            case INT32 -> AnnotationPairings.ordersUnsigned(prim.logicalType()) ? "uint32" : "int32";
-            case INT64 -> AnnotationPairings.ordersUnsigned(prim.logicalType()) ? "uint64" : "int64";
+            case INT32 -> AnnotationKind.ordersUnsigned(prim.logicalType()) ? "uint32" : "int32";
+            case INT64 -> AnnotationKind.ordersUnsigned(prim.logicalType()) ? "uint64" : "int64";
             // A 12-byte value does not fit an int64. Protobuf has no 96-bit scalar, so
             // the bytes pass through whole, as the Avro emitter's 12-byte fixed does.
             case INT96 -> "bytes";

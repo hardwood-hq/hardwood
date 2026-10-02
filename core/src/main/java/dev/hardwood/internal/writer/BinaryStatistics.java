@@ -8,7 +8,7 @@
 package dev.hardwood.internal.writer;
 
 import dev.hardwood.internal.schema.AnnotationPairings;
-import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
+import dev.hardwood.internal.schema.ByteColumnOrder;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 

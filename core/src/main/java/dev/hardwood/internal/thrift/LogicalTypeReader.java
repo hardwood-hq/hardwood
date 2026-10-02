@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.thrift;
 
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm;
@@ -45,44 +46,54 @@ public class LogicalTypeReader {
 
             // Union: only one field should be set, but we need to read to the end
             if (result == null) {
-                result = switch (ThriftCompactReader.fieldId(header)) {
-                    case 1 -> emptyArm(reader, header, LogicalType.string()); // STRING
-                    case 2 -> emptyArm(reader, header, LogicalType.map()); // MAP
-                    case 3 -> emptyArm(reader, header, LogicalType.list()); // LIST
-                    case 4 -> emptyArm(reader, header, LogicalType.enumType()); // ENUM
-                    case 5 -> readDecimalType(reader, header);
-                    case 6 -> emptyArm(reader, header, LogicalType.date()); // DATE
-                    case 7 -> readTimeType(reader, header);
-                    case 8 -> readTimestampType(reader, header);
-                    case 10 -> readIntType(reader, header);
-                    case 11 -> emptyArm(reader, header, LogicalType.nullType()); // NULL
-                    case 12 -> emptyArm(reader, header, LogicalType.json()); // JSON
-                    case 13 -> emptyArm(reader, header, LogicalType.bson()); // BSON
-                    case 14 -> emptyArm(reader, header, LogicalType.uuid()); // UUID
-                    case 15 -> emptyArm(reader, header, LogicalType.float16()); // FLOAT16
-                    case 16 -> readVariantType(reader, header);
-                    case 17 -> readGeometryType(reader, header);
-                    case 18 -> readGeographyType(reader, header);
+                AnnotationKind kind = AnnotationKind.ofUnionField(ThriftCompactReader.fieldId(header));
+                if (kind != null) {
+                    result = readMember(reader, header, kind);
+                }
+                else {
                     // An arm this version does not know. The format treats a new logical
                     // type as forward-compatible: read the physical values and lose the
                     // semantics, rather than refuse a file a newer writer produced.
-                    default -> {
-                        LOG.log(System.Logger.Level.WARNING,
-                                "Ignoring unrecognized LogicalType union field {0};"
-                                + " the column will be read as its physical type."
-                                + " The file may have been written against a newer"
-                                + " version of the format.",
-                                ThriftCompactReader.fieldId(header));
-                        reader.skipField(ThriftCompactReader.fieldType(header));
-                        yield null;
-                    }
-                };
+                    LOG.log(System.Logger.Level.WARNING,
+                            "Ignoring unrecognized LogicalType union field {0};"
+                            + " the column will be read as its physical type."
+                            + " The file may have been written against a newer"
+                            + " version of the format.",
+                            ThriftCompactReader.fieldId(header));
+                    reader.skipField(ThriftCompactReader.fieldType(header));
+                }
             }
             else {
                 // Already found the union variant, skip remaining fields
                 reader.skipField(ThriftCompactReader.fieldType(header));
             }
         }
+    }
+
+    /// Reads the member arm of `kind`, whose union field id [AnnotationKind] states. A member that
+    /// decodes to no annotation, such as a time in a unit this version does not know, yields
+    /// `null`.
+    private static LogicalType readMember(ThriftCompactReader reader, int header, AnnotationKind kind) {
+        return switch (kind) {
+            case STRING -> emptyArm(reader, header, LogicalType.string());
+            case MAP -> emptyArm(reader, header, LogicalType.map());
+            case LIST -> emptyArm(reader, header, LogicalType.list());
+            case ENUM -> emptyArm(reader, header, LogicalType.enumType());
+            case DECIMAL -> readDecimalType(reader, header);
+            case DATE -> emptyArm(reader, header, LogicalType.date());
+            case TIME -> readTimeType(reader, header);
+            case TIMESTAMP -> readTimestampType(reader, header);
+            case INT -> readIntType(reader, header);
+            case NULL -> emptyArm(reader, header, LogicalType.nullType());
+            case JSON -> emptyArm(reader, header, LogicalType.json());
+            case BSON -> emptyArm(reader, header, LogicalType.bson());
+            case UUID -> emptyArm(reader, header, LogicalType.uuid());
+            case FLOAT16 -> emptyArm(reader, header, LogicalType.float16());
+            case VARIANT -> readVariantType(reader, header);
+            case GEOMETRY -> readGeometryType(reader, header);
+            case GEOGRAPHY -> readGeographyType(reader, header);
+            case INTERVAL -> throw new IllegalStateException(kind + " has no union member to read");
+        };
     }
 
     /// Reads a member arm whose struct carries no fields. Like every member arm this version

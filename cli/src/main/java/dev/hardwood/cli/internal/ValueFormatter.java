@@ -20,7 +20,7 @@ import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.conversion.Flba12Timestamps;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -144,7 +144,7 @@ public final class ValueFormatter {
             // and decoded here, the same rendering the materialised path gives it.
             case LogicalType.BsonType b ->
                     text(LogicalTypeConverter.bytesToString(reader.getBinary(fieldIndex)), style);
-            case LogicalType.IntType it when AnnotationPairings.ordersUnsigned(it) -> formatUnsignedInt(reader, fieldIndex, prim);
+            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> formatUnsignedInt(reader, fieldIndex, prim);
             case LogicalType.IntType it -> formatPhysical(reader, fieldIndex, budget);
             case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));
             // getFloat widens the two-byte half-precision payload.
@@ -470,7 +470,7 @@ public final class ValueFormatter {
 
     private static boolean isUnsigned(SchemaNode schema) {
         return schema instanceof SchemaNode.PrimitiveNode pn
-                && AnnotationPairings.ordersUnsigned(pn.logicalType());
+                && AnnotationKind.ordersUnsigned(pn.logicalType());
     }
 
     private static boolean isAnnotatedString(LogicalType lt) {
@@ -672,7 +672,7 @@ public final class ValueFormatter {
             case null -> Integer.toString(raw);
             case LogicalType.DateType d -> LogicalTypeConverter.intToDate(raw).toString();
             case LogicalType.TimeType t -> timeText(raw, t.unit());
-            case LogicalType.IntType it when AnnotationPairings.ordersUnsigned(it) -> Long.toString(Integer.toUnsignedLong(raw));
+            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> Long.toString(Integer.toUnsignedLong(raw));
             case LogicalType.IntType it -> Integer.toString(raw);
             case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
             default -> throw notBackedBy(col, lt, "INT32");
@@ -687,7 +687,7 @@ public final class ValueFormatter {
             case null -> Long.toString(raw);
             case LogicalType.TimestampType ts -> LogicalTypeConverter.longToTemporal(raw, ts).toString();
             case LogicalType.TimeType t -> timeText(raw, t.unit());
-            case LogicalType.IntType it when AnnotationPairings.ordersUnsigned(it) -> Long.toUnsignedString(raw);
+            case LogicalType.IntType it when AnnotationKind.ordersUnsigned(it) -> Long.toUnsignedString(raw);
             case LogicalType.IntType it -> Long.toString(raw);
             case LogicalType.DecimalType d -> LogicalTypeConverter.longToDecimal(raw, d.scale()).toPlainString();
             default -> throw notBackedBy(col, lt, "INT64");
@@ -898,14 +898,14 @@ public final class ValueFormatter {
     }
 
     private static String formatInt32Value(int v, LogicalType lt) {
-        if (AnnotationPairings.ordersUnsigned(lt)) {
+        if (AnnotationKind.ordersUnsigned(lt)) {
             return Long.toString(Integer.toUnsignedLong(v));
         }
         return Integer.toString(v);
     }
 
     private static String formatInt64Value(long v, LogicalType lt) {
-        if (AnnotationPairings.ordersUnsigned(lt)) {
+        if (AnnotationKind.ordersUnsigned(lt)) {
             return Long.toUnsignedString(v);
         }
         return Long.toString(v);

@@ -21,6 +21,7 @@ import java.time.temporal.Temporal;
 import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.schema.Pairing;
@@ -401,7 +402,7 @@ public final class LogicalTypeConverter {
     /// `Long.toUnsignedString`.
     private static Object convertToInt(Object value, PhysicalType physicalType,
                                        LogicalType.IntType intType) {
-        if (!AnnotationPairings.ordersUnsigned(intType) && physicalType == PhysicalType.INT32) {
+        if (!AnnotationKind.ordersUnsigned(intType) && physicalType == PhysicalType.INT32) {
             if (intType.bitWidth() == 8) {
                 return ((Integer) value).byteValue();
             }

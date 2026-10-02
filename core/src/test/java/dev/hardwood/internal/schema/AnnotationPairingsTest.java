@@ -75,26 +75,6 @@ class AnnotationPairingsTest {
                 Arguments.of(PhysicalType.FIXED_LEN_BYTE_ARRAY, 7, null));
     }
 
-    /// The annotations parquet-format gives no order, against those it does. A column without one
-    /// records no bounds, reads none and takes no ordered predicate.
-    @Test
-    void theFormatNamesNoOrderForIntervalGeospatialUnknownAndTheGroupAnnotations() {
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.interval())).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.geometry(null))).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.geography(null, null))).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.nullType())).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.variant(1))).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.list())).isFalse();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.map())).isFalse();
-
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.string())).isTrue();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.decimal(10, 2))).isTrue();
-        assertThat(AnnotationPairings.namesAnOrder(LogicalType.float16())).isTrue();
-        assertThat(AnnotationPairings.namesAnOrder(timestamp())).isTrue();
-        // An unannotated column takes the order of its physical type.
-        assertThat(AnnotationPairings.namesAnOrder(null)).isTrue();
-    }
-
     /// A `DECIMAL` is the one annotation four physical types hold, each to its own digit limit.
     @Test
     void aDecimalIsLegalOnFourPhysicalTypesWithinTheirDigits() {
@@ -207,23 +187,23 @@ class AnnotationPairingsTest {
     @Test
     void aByteColumnSortsInTheOrderItsAnnotationNames() {
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.BYTE_ARRAY, null))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.BYTES);
+                .isEqualTo(ByteColumnOrder.BYTES);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.uuid()))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.BYTES);
+                .isEqualTo(ByteColumnOrder.BYTES);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2)))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_BIG_ENDIAN);
+                .isEqualTo(ByteColumnOrder.SIGNED_BIG_ENDIAN);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.decimal(9, 2)))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_BIG_ENDIAN);
+                .isEqualTo(ByteColumnOrder.SIGNED_BIG_ENDIAN);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, timestamp()))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.SIGNED_LITTLE_ENDIAN);
+                .isEqualTo(ByteColumnOrder.SIGNED_LITTLE_ENDIAN);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16()))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.HALF_FLOAT);
+                .isEqualTo(ByteColumnOrder.HALF_FLOAT);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, null))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.INT96_INSTANT);
+                .isEqualTo(ByteColumnOrder.INT96_INSTANT);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval()))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.NONE);
+                .isEqualTo(ByteColumnOrder.NONE);
         assertThat(AnnotationPairings.byteColumnOrder(PhysicalType.INT96, LogicalType.nullType()))
-                .isEqualTo(AnnotationPairings.ByteColumnOrder.INT96_INSTANT);
+                .isEqualTo(ByteColumnOrder.INT96_INSTANT);
     }
 
     /// `IEEE_754_TOTAL_ORDER` is defined for a `FLOAT`, a `DOUBLE` and a `FLOAT16` alone, the type

@@ -10,7 +10,7 @@ package dev.hardwood.internal.writer;
 import java.util.Arrays;
 
 import dev.hardwood.internal.predicate.BinaryComparator;
-import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
+import dev.hardwood.internal.schema.ByteColumnOrder;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a binary column chunk's `min` / `max` / `null_count` in the column's

@@ -9,6 +9,7 @@ package dev.hardwood.internal.writer;
 
 import java.math.BigInteger;
 
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.Pairing;
 import dev.hardwood.metadata.LogicalType;
@@ -212,7 +213,7 @@ public final class LogicalTypeValueRange {
         if (bitWidth >= typeBits) {
             return UNBOUNDED;
         }
-        boolean unsigned = AnnotationPairings.ordersUnsigned(integer);
+        boolean unsigned = AnnotationKind.ordersUnsigned(integer);
         long min = unsigned ? 0L : -(1L << (bitWidth - 1));
         long max = unsigned ? (1L << bitWidth) - 1 : (1L << (bitWidth - 1)) - 1;
         return new LogicalTypeValueRange(integer, min, max, null, 0, false);

@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
@@ -31,7 +31,7 @@ abstract class ValueEncoder {
     static ValueEncoder forColumn(ColumnSchema column, ColumnEncoding encoding,
                                   int statisticsTruncationLength, int startingCapacity) {
         PhysicalType type = column.type();
-        boolean unsigned = AnnotationPairings.ordersUnsigned(column.logicalType());
+        boolean unsigned = AnnotationKind.ordersUnsigned(column.logicalType());
         // Only AUTO decides between a dictionary and something else, so only AUTO needs one
         // built: a column under a named policy pays neither the interning nor the index array.
         boolean dictionary = encoding == ColumnEncoding.AUTO;

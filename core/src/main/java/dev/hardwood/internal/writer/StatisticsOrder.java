@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -23,10 +23,10 @@ import dev.hardwood.schema.ColumnSchema;
 final class StatisticsOrder {
 
     /// Whether this column's `min` / `max` may be written, which is whether its annotation names
-    /// an order: see [AnnotationPairings#namesAnOrder]. A column without one writes its null count
+    /// an order: see [AnnotationKind#namesAnOrder()]. A column without one writes its null count
     /// alone.
     static boolean supportsBounds(ColumnSchema column) {
-        return AnnotationPairings.namesAnOrder(column.logicalType());
+        return AnnotationKind.namesAnOrder(column.logicalType());
     }
 
     /// The statistics with the bounds and their exactness flags dropped, keeping the null count.

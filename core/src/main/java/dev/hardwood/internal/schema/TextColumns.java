@@ -18,8 +18,8 @@ import dev.hardwood.metadata.PhysicalType;
 /// columns: a literal is a value the column's accessors return, so a column a `String`
 /// cannot be read out of is a column a `String` cannot filter either.
 ///
-/// The switch in [#isText] is exhaustive rather than a list of exceptions, so an
-/// annotation added later has to state whether a `String` reads it.
+/// Each annotation's constant in [AnnotationKind] states whether it is text, so an annotation
+/// added later has to state whether a `String` reads it.
 public final class TextColumns {
 
     private TextColumns() {
@@ -41,27 +41,9 @@ public final class TextColumns {
         return type == PhysicalType.BYTE_ARRAY && logicalType != null && isText(logicalType);
     }
 
-    /// Whether the annotation says the stored bytes are the UTF-8 encoding of a string.
+    /// Whether the annotation says the stored bytes are the UTF-8 encoding of a string, as
+    /// [AnnotationKind#holdsText] states it per annotation.
     private static boolean isText(LogicalType logicalType) {
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> true;
-            case LogicalType.EnumType ignored -> true;
-            case LogicalType.JsonType ignored -> true;
-            case LogicalType.DecimalType ignored -> false;
-            case LogicalType.Float16Type ignored -> false;
-            case LogicalType.UuidType ignored -> false;
-            case LogicalType.BsonType ignored -> false;
-            case LogicalType.IntervalType ignored -> false;
-            case LogicalType.GeometryType ignored -> false;
-            case LogicalType.GeographyType ignored -> false;
-            case LogicalType.NullType ignored -> false;
-            case LogicalType.VariantType ignored -> false;
-            case LogicalType.ListType ignored -> false;
-            case LogicalType.MapType ignored -> false;
-            case LogicalType.IntType ignored -> false;
-            case LogicalType.DateType ignored -> false;
-            case LogicalType.TimeType ignored -> false;
-            case LogicalType.TimestampType ignored -> false;
-        };
+        return AnnotationKind.of(logicalType).holdsText();
     }
 }

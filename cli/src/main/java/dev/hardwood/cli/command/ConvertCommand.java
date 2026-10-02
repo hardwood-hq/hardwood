@@ -26,7 +26,7 @@ import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -274,7 +274,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     private static boolean writeJsonInt32(PrintWriter out, LogicalType logicalType, int n) {
-        if (AnnotationPairings.ordersUnsigned(logicalType)) {
+        if (AnnotationKind.ordersUnsigned(logicalType)) {
             out.print(Integer.toUnsignedLong(n));
         } else {
             out.print(n);
@@ -283,7 +283,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
     }
 
     private static boolean writeJsonInt64(PrintWriter out, LogicalType logicalType, long n) {
-        if (AnnotationPairings.ordersUnsigned(logicalType)) {
+        if (AnnotationKind.ordersUnsigned(logicalType)) {
             out.print(Long.toUnsignedString(n));
         } else {
             out.print(n);

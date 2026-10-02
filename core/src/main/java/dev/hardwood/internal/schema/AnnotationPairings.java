@@ -23,36 +23,30 @@ import static dev.hardwood.internal.schema.Pairing.Fault.PrecisionTooLarge;
 import static dev.hardwood.internal.schema.Pairing.Fault.WrongPhysicalType;
 import static dev.hardwood.internal.schema.Pairing.Fault.WrongWidth;
 
-/// Which pairings of physical type, annotation and width parquet-format defines, and which
-/// annotations name an order over their column's values.
+/// The rules parquet-format states about an annotation together with a column's physical type,
+/// its width or a legacy `converted_type`: which pairings it defines, which byte order a
+/// byte-stored column sorts in, whether a file's `column_orders` entry names an order a column
+/// has, how many digits a `DECIMAL` carrier holds, and which annotations a group keeps.
 ///
-/// Each question is answered here and nowhere else. The writer refuses a pairing [#check] calls illegal
+/// A fact about an annotation alone (whether it names an order, annotates a group, holds text or
+/// compares unsigned) is [AnnotationKind]'s, and the rules here read it from there. Each rule is
+/// answered here and nowhere else. The writer refuses a pairing [#check] calls illegal
 /// ([LogicalTypeValidator]) and the reader drops the annotation of one
 /// (`LogicalTypeConverter.conversionFault`), which is what parquet-format requires of a reader:
 /// "readers should ignore both the logical type annotation and column order for that column. Only
-/// the physical type information should be used to process the column's data." A column whose
-/// annotation [#namesAnOrder] denies has no bounds recorded for it, none read from it, and no
-/// ordered predicate admitted on it.
+/// the physical type information should be used to process the column's data."
 ///
-/// Both switches are exhaustive with no `default`, so a new annotation does not compile until it is
-/// answered, and a pairing the format newly defines is one cell of the first one's grid.
-///
-/// Every cell is taken from the specification, and each arm cites the sentence that settles it: `LogicalTypes.md` and `parquet.thrift` at
-/// parquet-format `bf099392`. `FILE` (union field 19) is absent because [LogicalType] does not model
-/// it (#1413); a footer carrying it decodes to an unrecognized union member and the annotation is
-/// dropped, which is what the format asks of a reader that does not recognize one.
+/// Every cell of the grid is taken from the specification, and each rule cites the sentence that
+/// settles it: `LogicalTypes.md` and `parquet.thrift` at parquet-format `bf099392`. Each
+/// annotation's constant in [AnnotationKind] names the rule it is defined by.
 public final class AnnotationPairings {
 
-    private static final List<PhysicalType> BYTE_ARRAY_ONLY = List.of(PhysicalType.BYTE_ARRAY);
-    private static final List<PhysicalType> FIXED_ONLY = List.of(PhysicalType.FIXED_LEN_BYTE_ARRAY);
-    private static final List<PhysicalType> INT32_ONLY = List.of(PhysicalType.INT32);
-    private static final List<PhysicalType> INT64_ONLY = List.of(PhysicalType.INT64);
     private static final List<PhysicalType> TIMESTAMP_TYPES =
             List.of(PhysicalType.INT64, PhysicalType.FIXED_LEN_BYTE_ARRAY);
     private static final List<PhysicalType> DECIMAL_TYPES = List.of(PhysicalType.INT32, PhysicalType.INT64,
             PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
 
-    private static final Pairing LEGAL = new Legal();
+    static final Pairing LEGAL = new Legal();
 
     /// `log10(2)` to forty places, which makes [#maxDecimalPrecision(int)] exact for every width an
     /// `i32` can declare: `(8 * length - 1) * log10(2)` never comes within `1e-11` of an
@@ -62,77 +56,15 @@ public final class AnnotationPairings {
     private AnnotationPairings() {
     }
 
-    /// Whether parquet-format defines an order over the values of a column annotated `annotation`.
-    ///
-    /// It defines none for `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST` and
-    /// `MAP`, and states for `INTERVAL` that no `min` / `max` should be written at all. The writer
-    /// records no bounds for such a column and the reader reads none from one, since a bound in an
-    /// order a reader cannot know would prune away live rows, and the ordered operators are refused
-    /// on it. One answer serves all three, the format stating one rule.
-    ///
-    /// The switch is exhaustive rather than a list of the annotations without an order, so one
-    /// added later has to say which side it falls on.
-    ///
-    /// @param annotation the column's annotation, `null` for an unannotated column, whose physical
-    ///        type names its order
-    public static boolean namesAnOrder(LogicalType annotation) {
-        if (annotation == null) {
-            return true;
-        }
-        return switch (annotation) {
-            case LogicalType.StringType ignored -> true;
-            case LogicalType.EnumType ignored -> true;
-            case LogicalType.JsonType ignored -> true;
-            case LogicalType.BsonType ignored -> true;
-            case LogicalType.UuidType ignored -> true;
-            case LogicalType.DateType ignored -> true;
-            case LogicalType.TimeType ignored -> true;
-            case LogicalType.TimestampType ignored -> true;
-            case LogicalType.IntType ignored -> true;
-            case LogicalType.DecimalType ignored -> true;
-            case LogicalType.Float16Type ignored -> true;
-            case LogicalType.IntervalType ignored -> false;
-            case LogicalType.NullType ignored -> false;
-            case LogicalType.VariantType ignored -> false;
-            case LogicalType.GeometryType ignored -> false;
-            case LogicalType.GeographyType ignored -> false;
-            case LogicalType.ListType ignored -> false;
-            case LogicalType.MapType ignored -> false;
-        };
-    }
-
-    /// The order the values of a byte-stored column sort in, as `parquet.thrift`'s `ColumnOrder`
-    /// gives it per annotation. It is the one representation of a byte order: the writer collects
-    /// bounds in it, a predicate's `Comparison` names one, and `BinaryComparator` compares byte
-    /// slices in each that has a slice comparison.
-    public enum ByteColumnOrder {
-        /// Unsigned byte-wise: the stored bytes order as the values do.
-        BYTES,
-        /// The number a big-endian two's complement encodes, the shorter value sign-extended: a
-        /// `DECIMAL`.
-        SIGNED_BIG_ENDIAN,
-        /// The count a little-endian two's complement of one width encodes: a
-        /// `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`.
-        SIGNED_LITTLE_ENDIAN,
-        /// The IEEE half a `FLOAT16` encodes, compared as that float rather than as a slice.
-        HALF_FLOAT,
-        /// The instant a legacy `INT96` timestamp encodes: whole days, then nanoseconds.
-        INT96_INSTANT,
-        /// No order: the annotation names none, as [#namesAnOrder] answers.
-        NONE
-    }
-
     /// The order the values of a column stored as `INT96`, `BYTE_ARRAY` or
     /// `FIXED_LEN_BYTE_ARRAY` sort in. The writer collects a byte column's bounds in it and the
-    /// resolver compares a byte literal in it, so the two cannot disagree about a column.
-    ///
-    /// The switch is exhaustive rather than a list of the value-ordered annotations, so one added
-    /// later has to state whether its values order as their bytes.
+    /// resolver compares a byte literal in it, so the two cannot disagree about a column. An
+    /// annotated column's order is the one [AnnotationKind] states for its annotation.
     ///
     /// @param type the column's physical type, one stored as bytes
     /// @param annotation the column's annotation, `null` for an unannotated column
     /// @throws IllegalArgumentException if `type` is not stored as bytes, or `annotation` is one
-    ///         [#check] refuses over it
+    ///         defined over no byte-stored type
     public static ByteColumnOrder byteColumnOrder(PhysicalType type, LogicalType annotation) {
         switch (type) {
             case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> {
@@ -148,67 +80,29 @@ public final class AnnotationPairings {
         if (annotation == null) {
             return ByteColumnOrder.BYTES;
         }
-        if (!namesAnOrder(annotation)) {
-            return ByteColumnOrder.NONE;
+        ByteColumnOrder order = AnnotationKind.of(annotation).byteOrder();
+        if (order == null) {
+            throw new IllegalArgumentException(annotation + " is not defined over " + type);
         }
-        return switch (annotation) {
-            case LogicalType.StringType ignored -> ByteColumnOrder.BYTES;
-            case LogicalType.EnumType ignored -> ByteColumnOrder.BYTES;
-            case LogicalType.JsonType ignored -> ByteColumnOrder.BYTES;
-            case LogicalType.BsonType ignored -> ByteColumnOrder.BYTES;
-            // Not in ColumnOrder's list, so the FIXED_LEN_BYTE_ARRAY's own unsigned byte order.
-            case LogicalType.UuidType ignored -> ByteColumnOrder.BYTES;
-            // "DECIMAL - signed comparison of the represented value"
-            case LogicalType.DecimalType ignored -> ByteColumnOrder.SIGNED_BIG_ENDIAN;
-            // "FLOAT16 - signed comparison of the represented value"
-            case LogicalType.Float16Type ignored -> ByteColumnOrder.HALF_FLOAT;
-            // "signed two's-complement comparison of the represented value"
-            case LogicalType.TimestampType ignored -> ByteColumnOrder.SIGNED_LITTLE_ENDIAN;
-            case LogicalType.IntType ignored -> throw notStoredAsBytes(type, annotation);
-            case LogicalType.DateType ignored -> throw notStoredAsBytes(type, annotation);
-            case LogicalType.TimeType ignored -> throw notStoredAsBytes(type, annotation);
-            // namesAnOrder has answered these above.
-            case LogicalType.IntervalType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.GeometryType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.GeographyType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.NullType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.VariantType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.ListType ignored -> throw orderAnsweredAbove(annotation);
-            case LogicalType.MapType ignored -> throw orderAnsweredAbove(annotation);
-        };
+        return order;
     }
 
     /// Whether a file's `column_orders` entry names an order the values of a column of this
     /// physical type and annotation have, so that the bounds recorded in it can be read.
     ///
-    /// `TYPE_ORDER` is the order [#namesAnOrder] answers for. `IEEE_754_TOTAL_ORDER` is defined
+    /// `TYPE_ORDER` is the order [AnnotationKind#namesAnOrder(LogicalType)] answers for. `IEEE_754_TOTAL_ORDER` is defined
     /// for "columns of physical type FLOAT or DOUBLE, or logical type FLOAT16" alone, and an
     /// order this release does not recognize names nothing it can read.
     ///
     /// @param order the column's entry, [ColumnOrder#TYPE_DEFINED_ORDER] where the file has none
     public static boolean namesAnOrder(ColumnOrder order, PhysicalType type, LogicalType annotation) {
         return switch (order) {
-            case TYPE_DEFINED_ORDER -> namesAnOrder(annotation);
+            case TYPE_DEFINED_ORDER -> AnnotationKind.namesAnOrder(annotation);
             case IEEE754_TOTAL_ORDER -> annotation == null
                     ? type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
                     : annotation instanceof LogicalType.Float16Type;
             case UNKNOWN -> false;
         };
-    }
-
-    /// Whether an integer column's values compare unsigned: only the unsigned `INT` annotations
-    /// do. The narrower ones never diverge from the signed order over the values they hold, but
-    /// take the unsigned form too, so the annotation alone decides.
-    public static boolean ordersUnsigned(LogicalType annotation) {
-        return annotation instanceof LogicalType.IntType integer && !integer.isSigned();
-    }
-
-    private static IllegalArgumentException notStoredAsBytes(PhysicalType type, LogicalType annotation) {
-        return new IllegalArgumentException(annotation + " is not defined over " + type);
-    }
-
-    private static IllegalStateException orderAnsweredAbove(LogicalType annotation) {
-        return new IllegalStateException(annotation + " names no order, which namesAnOrder answers");
     }
 
     /// Whether the format defines `annotation` over a column of this physical type and width.
@@ -224,43 +118,7 @@ public final class AnnotationPairings {
         if (annotation == null) {
             return LEGAL;
         }
-        return switch (annotation) {
-            // "may only be used to annotate the BYTE_ARRAY primitive type"
-            case LogicalType.StringType ignored -> byteArray(type);
-            // "annotates the BYTE_ARRAY primitive type"
-            case LogicalType.EnumType ignored -> byteArray(type);
-            // "must annotate a BYTE_ARRAY primitive type"
-            case LogicalType.JsonType ignored -> byteArray(type);
-            case LogicalType.BsonType ignored -> byteArray(type);
-            // "Allowed for physical type: BYTE_ARRAY." on both structs, the payload being WKB.
-            case LogicalType.GeometryType ignored -> byteArray(type);
-            case LogicalType.GeographyType ignored -> byteArray(type);
-            // "annotates a 16-byte FIXED_LEN_BYTE_ARRAY primitive type"
-            case LogicalType.UuidType ignored -> fixedWidth(type, typeLength, FixedWidths.UUID);
-            // "must annotate a FIXED_LEN_BYTE_ARRAY of length 12"
-            case LogicalType.IntervalType ignored ->
-                    fixedWidth(type, typeLength, FixedWidths.INTERVAL);
-            // "The primitive type is a 2-byte FIXED_LEN_BYTE_ARRAY."
-            case LogicalType.Float16Type ignored ->
-                    fixedWidth(type, typeLength, FixedWidths.FLOAT16);
-            // "must annotate an int32 that stores the number of days from the Unix epoch"
-            case LogicalType.DateType ignored -> only(type, PhysicalType.INT32, INT32_ONLY);
-            // MILLIS "must annotate an int32"; MICROS and NANOS "must annotate an int64".
-            case LogicalType.TimeType time -> time.unit() == LogicalType.TimeUnit.MILLIS
-                    ? only(type, PhysicalType.INT32, INT32_ONLY)
-                    : only(type, PhysicalType.INT64, INT64_ONLY);
-            case LogicalType.IntType integer -> integerPairing(type, integer);
-            case LogicalType.TimestampType ignored -> timestampPairing(type, typeLength);
-            case LogicalType.DecimalType decimal -> decimalPairing(type, typeLength, decimal);
-            // "allowed for any physical type, only null values stored": no physical type
-            // contradicts it, and the schema alone cannot disprove the claim.
-            case LogicalType.NullType ignored -> LEGAL;
-            // `LIST` and `MAP` annotate a multi-level structure and `VARIANT` "must annotate a
-            // group", so none of the three is a pairing a primitive column can hold.
-            case LogicalType.ListType ignored -> new Illegal(new GroupAnnotation());
-            case LogicalType.MapType ignored -> new Illegal(new GroupAnnotation());
-            case LogicalType.VariantType ignored -> new Illegal(new GroupAnnotation());
-        };
+        return AnnotationKind.of(annotation).pairing(type, typeLength, annotation);
     }
 
     /// Whether the format defines the legacy `converted_type` over a column of this physical type,
@@ -277,37 +135,10 @@ public final class AnnotationPairings {
     public static Pairing checkConverted(PhysicalType type, ConvertedType converted) {
         return switch (converted) {
             // "Like the logical type counterpart, it must annotate an int64."
-            case TIMESTAMP_MILLIS, TIMESTAMP_MICROS -> only(type, PhysicalType.INT64, INT64_ONLY);
+            case TIMESTAMP_MILLIS, TIMESTAMP_MICROS -> only(type, PhysicalType.INT64);
             case UTF8, MAP, MAP_KEY_VALUE, LIST, ENUM, DECIMAL, DATE, TIME_MILLIS, TIME_MICROS,
                  UINT_8, UINT_16, UINT_32, UINT_64, INT_8, INT_16, INT_32, INT_64, JSON, BSON,
                  INTERVAL -> LEGAL;
-        };
-    }
-
-    /// Whether the format defines `annotation` over a group: `LIST` and `MAP` annotate the
-    /// outer group of their structure and `VARIANT` "must annotate a group"; every other
-    /// annotation is defined over a primitive alone. The reader drops any other annotation off
-    /// a group, as it drops one off a primitive that cannot carry it.
-    public static boolean annotatesGroup(LogicalType annotation) {
-        return switch (annotation) {
-            case LogicalType.ListType ignored -> true;
-            case LogicalType.MapType ignored -> true;
-            case LogicalType.VariantType ignored -> true;
-            case LogicalType.StringType ignored -> false;
-            case LogicalType.EnumType ignored -> false;
-            case LogicalType.JsonType ignored -> false;
-            case LogicalType.BsonType ignored -> false;
-            case LogicalType.UuidType ignored -> false;
-            case LogicalType.DateType ignored -> false;
-            case LogicalType.TimeType ignored -> false;
-            case LogicalType.TimestampType ignored -> false;
-            case LogicalType.IntType ignored -> false;
-            case LogicalType.DecimalType ignored -> false;
-            case LogicalType.Float16Type ignored -> false;
-            case LogicalType.IntervalType ignored -> false;
-            case LogicalType.NullType ignored -> false;
-            case LogicalType.GeometryType ignored -> false;
-            case LogicalType.GeographyType ignored -> false;
         };
     }
 
@@ -330,11 +161,12 @@ public final class AnnotationPairings {
                 || annotation instanceof LogicalType.MapType && converted == ConvertedType.MAP;
     }
 
-    /// A group's annotation as the reader keeps it: `annotation` where [#annotatesGroup] holds,
-    /// `null` otherwise. `FileSchema` and `BareRepeatedGroups` both read a group through this and
-    /// [#readableGroupConvertedType], so they cannot disagree about which structure it is.
+    /// A group's annotation as the reader keeps it: `annotation` where
+    /// [AnnotationKind#annotatesGroup()] holds, `null` otherwise. `FileSchema` and
+    /// `BareRepeatedGroups` both read a group through this and [#readableGroupConvertedType], so
+    /// they cannot disagree about which structure it is.
     public static LogicalType readableGroupAnnotation(LogicalType annotation) {
-        return annotation != null && annotatesGroup(annotation) ? annotation : null;
+        return annotation != null && AnnotationKind.of(annotation).annotatesGroup() ? annotation : null;
     }
 
     /// A group's converted type as the reader keeps it: `converted` where it annotates a group
@@ -348,12 +180,19 @@ public final class AnnotationPairings {
         return readableAnnotation == null || convertedAgrees(readableAnnotation, converted) ? converted : null;
     }
 
-    private static Pairing byteArray(PhysicalType type) {
-        return only(type, PhysicalType.BYTE_ARRAY, BYTE_ARRAY_ONLY);
+    /// An annotation defined over a `BYTE_ARRAY` alone.
+    static Pairing byteArray(PhysicalType type) {
+        return only(type, PhysicalType.BYTE_ARRAY);
     }
 
-    private static Pairing only(PhysicalType actual, PhysicalType required, List<PhysicalType> allowed) {
-        return actual == required ? LEGAL : new Illegal(new WrongPhysicalType(allowed));
+    /// An annotation defined over `required` alone.
+    static Pairing only(PhysicalType actual, PhysicalType required) {
+        return actual == required ? LEGAL : new Illegal(new WrongPhysicalType(List.of(required)));
+    }
+
+    /// An annotation of a group, which no primitive column holds.
+    static Pairing groupAnnotation() {
+        return new Illegal(new GroupAnnotation());
     }
 
     /// Whether a `FIXED_LEN_BYTE_ARRAY` declares a width its values can have. One that does not is
@@ -363,9 +202,9 @@ public final class AnnotationPairings {
     }
 
     /// An annotation parquet-format fixes to one `FIXED_LEN_BYTE_ARRAY` width.
-    private static Pairing fixedWidth(PhysicalType type, Integer typeLength, int width) {
+    static Pairing fixedWidth(PhysicalType type, Integer typeLength, int width) {
         if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return new Illegal(new WrongPhysicalType(FIXED_ONLY));
+            return new Illegal(new WrongPhysicalType(List.of(PhysicalType.FIXED_LEN_BYTE_ARRAY)));
         }
         return !hasUsableWidth(typeLength) || typeLength == width ? LEGAL : new Illegal(new WrongWidth(width));
     }
@@ -373,21 +212,19 @@ public final class AnnotationPairings {
     /// "INT(8, true), INT(16, true), and INT(32, true) must annotate an int32 primitive type and
     /// INT(64, true) must annotate an int64", and the same for the unsigned forms. Signedness decides
     /// the order the column's values compare in, not which type carries them.
-    private static Pairing integerPairing(PhysicalType type, LogicalType.IntType integer) {
-        boolean wide = integer.bitWidth() == 64;
-        PhysicalType required = wide ? PhysicalType.INT64 : PhysicalType.INT32;
-        return type == required ? LEGAL : new Illegal(new WrongPhysicalType(wide ? INT64_ONLY : INT32_ONLY));
+    static Pairing integerPairing(PhysicalType type, LogicalType.IntType integer) {
+        return only(type, integer.bitWidth() == 64 ? PhysicalType.INT64 : PhysicalType.INT32);
     }
 
     /// "each value is an int64 or a 12-byte FIXED_LEN_BYTE_ARRAY", the latter a little-endian count
     /// whose range the `INT64` form cannot hold.
-    private static Pairing timestampPairing(PhysicalType type, Integer typeLength) {
+    static Pairing timestampPairing(PhysicalType type, Integer typeLength) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             return !hasUsableWidth(typeLength) || typeLength == FixedWidths.FLBA12_TIMESTAMP
                     ? LEGAL
                     : new Illegal(new WrongWidth(FixedWidths.FLBA12_TIMESTAMP));
         }
-        return only(type, PhysicalType.INT64, TIMESTAMP_TYPES);
+        return type == PhysicalType.INT64 ? LEGAL : new Illegal(new WrongPhysicalType(TIMESTAMP_TYPES));
     }
 
     /// "DECIMAL can be used to annotate the following types: int32, for 1 <= precision <= 9;
@@ -395,7 +232,7 @@ public final class AnnotationPairings {
     /// size, length n can store <= floor(log_10(2^(8*n - 1) - 1)) base-10 digits; byte_array,
     /// precision is not limited". [#maxDecimalPrecision(PhysicalType)] and [#maxDecimalPrecision(int)]
     /// count those digits.
-    private static Pairing decimalPairing(PhysicalType type, Integer typeLength,
+    static Pairing decimalPairing(PhysicalType type, Integer typeLength,
             LogicalType.DecimalType decimal) {
         boolean held = switch (type) {
             case INT32, INT64, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> true;

@@ -9,6 +9,7 @@ package dev.hardwood.internal.predicate;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.TimestampAccessorKind;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -17,8 +18,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// The literal types a filter predicate takes on a column, as a refusal names them: the value of
 /// the column's logical accessor, where it has one, and that of its physical accessor.
 ///
-/// The switch over [LogicalType] is exhaustive rather than a list of exceptions, so an annotation
-/// added later has to state which literal it takes.
+/// The literal of an annotated column is the one its annotation's constant in [AnnotationKind]
+/// states, so an annotation added later has to state which literal it takes.
 final class ColumnLiterals {
 
     private ColumnLiterals() {
@@ -59,7 +60,7 @@ final class ColumnLiterals {
     /// The value of the column's logical accessor, or `null` where only the physical accessor reads it.
     ///
     /// Text is [TextColumns]'s to answer, being the `String` literal's contract as well as this
-    /// name's, so an annotation it calls text reaches the switch below only over a physical type
+    /// name's, so an annotation it calls text reaches the lookup below only over a physical type
     /// that cannot carry it, which `FileSchema` has already dropped.
     private static String logical(ColumnSchema columnSchema) {
         PhysicalType type = columnSchema.type();
@@ -73,26 +74,11 @@ final class ColumnLiterals {
         if (logicalType == null) {
             return null;
         }
-        return switch (logicalType) {
-            case LogicalType.StringType ignored -> throw textElsewhere(columnSchema);
-            case LogicalType.EnumType ignored -> throw textElsewhere(columnSchema);
-            case LogicalType.JsonType ignored -> throw textElsewhere(columnSchema);
-            case LogicalType.DecimalType ignored -> "BigDecimal";
-            case LogicalType.Float16Type ignored -> "float";
-            case LogicalType.UuidType ignored -> "UUID";
-            case LogicalType.IntervalType ignored -> "PqInterval";
-            case LogicalType.DateType ignored -> "LocalDate";
-            case LogicalType.TimeType ignored -> "LocalTime";
-            case LogicalType.TimestampType timestamp -> timestamp.isAdjustedToUTC() ? "Instant" : "LocalDateTime";
-            case LogicalType.IntType ignored -> null;
-            case LogicalType.BsonType ignored -> null;
-            case LogicalType.GeometryType ignored -> null;
-            case LogicalType.GeographyType ignored -> null;
-            case LogicalType.NullType ignored -> null;
-            case LogicalType.VariantType ignored -> null;
-            case LogicalType.ListType ignored -> null;
-            case LogicalType.MapType ignored -> null;
-        };
+        AnnotationKind kind = AnnotationKind.of(logicalType);
+        if (kind.holdsText()) {
+            throw textElsewhere(columnSchema);
+        }
+        return kind.literal(logicalType);
     }
 
     private static IllegalStateException textElsewhere(ColumnSchema columnSchema) {

@@ -16,7 +16,7 @@ import org.apache.avro.Schema;
 
 import dev.hardwood.avro.internal.AvroPlanNode.Kind;
 import dev.hardwood.internal.conversion.FixedWidths;
-import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -392,7 +392,7 @@ public final class AvroSchemaConverter {
     private static AvroPlanNode convertIntType(LogicalType.IntType i, SchemaNode.PrimitiveNode prim) {
         // UINT_32 widens to LONG so the unsigned magnitude fits; the kind records that
         // the column is still int[]-backed and must be read as an int and widened.
-        if (AnnotationPairings.ordersUnsigned(i) && i.bitWidth() == 32) {
+        if (AnnotationKind.ordersUnsigned(i) && i.bitWidth() == 32) {
             return AvroPlanNode.leaf(Schema.create(Schema.Type.LONG), Kind.UNSIGNED_INT32, prim);
         }
         if (i.bitWidth() <= 32) {

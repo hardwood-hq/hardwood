@@ -13,7 +13,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.conversion.FixedWidths;
-import dev.hardwood.internal.schema.AnnotationPairings.ByteColumnOrder;
+import dev.hardwood.internal.schema.ByteColumnOrder;
 
 /// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
 /// BYTE_ARRAY), big-endian signed two's complement (for DECIMAL columns of either byte-array type),

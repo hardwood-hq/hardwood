@@ -202,15 +202,15 @@ Tests: `BinaryDecimalFilterTest`, `tools/predicate-audit`, `FilterPredicateResol
 
 ### Exhaustive switches
 
-Every per-annotation decision is a `switch` over `LogicalType` (or over `Comparison`) with no `default` arm, so an annotation or comparison added later fails to compile until each decision states its answer:
+Every per-annotation decision is a fact of the annotation's `AnnotationKind` constant, which `AnnotationKind.of` reaches through a `switch` over `LogicalType` with no `default` arm, or a `switch` over `Comparison` with none, so an annotation or comparison added later fails to compile until each decision states its answer ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#annotation-model)):
 
-| Switch | Decides |
-|---|---|
-| `AnnotationPairings.byteColumnOrder` | the order a byte-stored column's values sort in, shared by the writer's bounds, `orderingLiteral` (which literal carries the order) and the stored-byte equality helpers |
-| `ColumnLiterals.logical` | the literals a refusal message names |
-| `TextColumns.isText` | whether `getString` reads the column and a `String` is its literal |
-| `AnnotationPairings.namesAnOrder` | whether the type defines an order, shared by the ordered-operator refusal, bounds readability and the writer's statistics |
-| `BinaryComparator.order` | the `ByteColumnOrder` of a `Comparison` |
+| Fact | Read through | Decides |
+|---|---|---|
+| `AnnotationKind.byteOrder` | `AnnotationPairings.byteColumnOrder` | the order a byte-stored column's values sort in, shared by the writer's bounds, `orderingLiteral` (which literal carries the order) and the stored-byte equality helpers |
+| `AnnotationKind.literal` | `ColumnLiterals.logical` | the literals a refusal message names |
+| `AnnotationKind.holdsText` | `TextColumns.holdsText` | whether `getString` reads the column and a `String` is its literal |
+| `AnnotationKind.namesAnOrder` | `AnnotationKind.namesAnOrder(LogicalType)` | whether the type defines an order, shared by the ordered-operator refusal, bounds readability and the writer's statistics |
+| `BinaryComparator.order` | | the `ByteColumnOrder` of a `Comparison` |
 
 Enforced by the compiler.
 

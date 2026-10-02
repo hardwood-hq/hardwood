@@ -211,7 +211,7 @@ Bounds are always exact unless truncated, so a reader may treat `min_value == ma
 
 ### Sort order
 
-A column's order is its logical type's where it has one, and its physical type's otherwise. `ValueEncoder.forColumn` and `BinaryStatistics.forColumn` select the collector from the `ColumnSchema` once per chunk, so the order costs nothing per value. Both read the order from `AnnotationPairings`: `ordersUnsigned` for an integer column and `byteColumnOrder` for a byte-stored one, the same answers `FilterPredicateResolver` compares a literal by, so a chunk's bounds and a predicate over them are in one order.
+A column's order is its logical type's where it has one, and its physical type's otherwise. `ValueEncoder.forColumn` and `BinaryStatistics.forColumn` select the collector from the `ColumnSchema` once per chunk, so the order costs nothing per value. Both read the order from `AnnotationKind.ordersUnsigned` for an integer column and from `AnnotationPairings.byteColumnOrder` for a byte-stored one, the same answers `FilterPredicateResolver` compares a literal by, so a chunk's bounds and a predicate over them are in one order.
 
 | Order | Columns | Collector |
 |---|---|---|
@@ -224,7 +224,7 @@ A column's order is its logical type's where it has one, and its physical type's
 | Boolean (`false < true`) | `BOOLEAN` | `BooleanStatisticsCollector` |
 | Undefined | `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST`, `MAP` | `NullCountStatistics` for binary; bounds dropped at flush otherwise |
 
-`StatisticsOrder.supportsBounds` asks `AnnotationPairings.namesAnOrder`, which the read side reads too. An undefined-order column writes `null_count` without bounds: parquet-format says so directly for `INTERVAL`, and a bound in an order the reader cannot know would prune away live rows. A binary column of undefined order does not accumulate bounds at all, so a `GEOMETRY` chunk does not copy a blob out on every bound extension only for flush to discard it. `BoundsReadability` reads the same answer ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)).
+`StatisticsOrder.supportsBounds` asks `AnnotationKind.namesAnOrder`, which the read side reads too. An undefined-order column writes `null_count` without bounds: parquet-format says so directly for `INTERVAL`, and a bound in an order the reader cannot know would prune away live rows. A binary column of undefined order does not accumulate bounds at all, so a `GEOMETRY` chunk does not copy a blob out on every bound extension only for flush to discard it. `BoundsReadability` reads the same answer ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bounds-readability)).
 
 ### Floating point
 

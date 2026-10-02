@@ -99,7 +99,7 @@ A matcher writes bit `i` of a per-batch `long[]` when row `i` **definitely** sat
 
 **Stale bits.** Bitmaps are sized to the batch capacity and reused across batches. A matcher and `MergePlanEvaluator` write only the words covering `[0, recordCount)`, and bits past `recordCount` may hold values from an earlier, longer batch. Every consumer bounds its reads by the record count: `FlatRowReader`'s bit scan and run walk stop at the batch size, `FlatRowReader.countMatches` masks the tail word, and `SelectionEngine.collectSetBits` iterates `[0, recordCount)`. A new consumer of these bitmaps must do the same. Untested.
 
-**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place, in the `AnnotationPairings.ByteColumnOrder` that `BinaryComparator.order` gives for the leaf's `Comparison`, the order the writer collected the column's bounds in. Every binary leaf is eligible: the switch has no `default` and every `Comparison` names an order with a slice comparison, so a new `Comparison` is answered there and nothing falls back for want of a comparison.
+**Binary leaves.** Byte-array matchers compare each value's slice of the batch's `BinaryBatchValues` in place, in the `ByteColumnOrder` that `BinaryComparator.order` gives for the leaf's `Comparison`, the order the writer collected the column's bounds in. Every binary leaf is eligible: the switch has no `default` and every `Comparison` names an order with a slice comparison, so a new `Comparison` is answered there and nothing falls back for want of a comparison.
 
 | `ByteColumnOrder` | Compares | Carried by |
 |---|---|---|
