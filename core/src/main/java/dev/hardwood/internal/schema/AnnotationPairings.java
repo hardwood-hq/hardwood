@@ -285,4 +285,30 @@ public final class AnnotationPairings {
         }
         return new BigDecimal(8L * fixedWidth - 1).multiply(LOG10_2).longValue();
     }
+
+    /// The narrowest `FIXED_LEN_BYTE_ARRAY` width a `DECIMAL` of `precision` digits fits in, the
+    /// inverse of [#maxDecimalPrecision(int)]: the smallest width whose count reaches `precision`.
+    /// Precision 9 takes 4 bytes, 18 takes 8 and 38 takes 16.
+    ///
+    /// The count grows with the width and is at least the width, so the answer lies between 1 and
+    /// `precision` and a binary search over that count finds it; the two cannot disagree.
+    ///
+    /// @throws IllegalArgumentException if `precision` is not positive
+    public static int minDecimalWidth(int precision) {
+        if (precision <= 0) {
+            throw new IllegalArgumentException("A DECIMAL needs a positive precision, not " + precision);
+        }
+        int low = 1;
+        int high = precision;
+        while (low < high) {
+            int mid = low + (high - low) / 2;
+            if (maxDecimalPrecision(mid) >= precision) {
+                high = mid;
+            }
+            else {
+                low = mid + 1;
+            }
+        }
+        return low;
+    }
 }

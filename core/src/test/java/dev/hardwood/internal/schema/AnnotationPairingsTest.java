@@ -274,6 +274,34 @@ class AnnotationPairingsTest {
         }
     }
 
+    /// The narrowest width is the inverse of the count: it holds the precision, and one byte
+    /// fewer does not.
+    @Test
+    void theNarrowestDecimalWidthIsTheInverseOfTheCount() {
+        for (int precision = 1; precision <= 2500; precision++) {
+            int width = AnnotationPairings.minDecimalWidth(precision);
+            assertThat(AnnotationPairings.maxDecimalPrecision(width))
+                    .as("precision %d", precision)
+                    .isGreaterThanOrEqualTo(precision);
+            if (width > 1) {
+                assertThat(AnnotationPairings.maxDecimalPrecision(width - 1))
+                        .as("precision %d", precision)
+                        .isLessThan(precision);
+            }
+        }
+        assertThat(AnnotationPairings.minDecimalWidth(9)).isEqualTo(4);
+        assertThat(AnnotationPairings.minDecimalWidth(18)).isEqualTo(8);
+        assertThat(AnnotationPairings.minDecimalWidth(38)).isEqualTo(16);
+        assertThat(AnnotationPairings.minDecimalWidth(Integer.MAX_VALUE)).isEqualTo(891_723_283);
+    }
+
+    @Test
+    void aPrecisionThatIsNotPositiveHasNoWidth() {
+        assertThatThrownBy(() -> AnnotationPairings.minDecimalWidth(0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("A DECIMAL needs a positive precision, not 0");
+    }
+
     /// The widest width an `i32` can declare holds more digits than an `int` counts.
     @Test
     void theWidestWidthIsCountedWithoutOverflow() {

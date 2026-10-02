@@ -7,10 +7,13 @@
  */
 package dev.hardwood.internal.schema;
 
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -61,6 +64,28 @@ class AnnotationKindTest {
 
         assertThat(AnnotationKind.of(LogicalType.string()).annotatesGroup()).isFalse();
         assertThat(AnnotationKind.of(LogicalType.nullType()).annotatesGroup()).isFalse();
+    }
+
+    /// The widths a `FIXED_LEN_BYTE_ARRAY` declared without one takes, each legal under
+    /// [AnnotationPairings#check]. `TIMESTAMP` implies none, an `INT64` carrying it as well.
+    @Test
+    void theImpliedWidthIsLegalForItsAnnotation() {
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.uuid())).isEqualTo(16);
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.interval())).isEqualTo(12);
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.float16())).isEqualTo(2);
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.decimal(10, 2))).isEqualTo(5);
+        for (LogicalType annotation : List.of(LogicalType.uuid(), LogicalType.interval(), LogicalType.float16(),
+                LogicalType.decimal(10, 2))) {
+            assertThat(AnnotationPairings.check(PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                    AnnotationKind.impliedFixedWidth(annotation), annotation))
+                    .as("%s", annotation)
+                    .isInstanceOf(Pairing.Legal.class);
+        }
+
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS)))
+                .isNull();
+        assertThat(AnnotationKind.impliedFixedWidth(LogicalType.string())).isNull();
+        assertThat(AnnotationKind.impliedFixedWidth(null)).isNull();
     }
 
     /// A fact that depends on the record is read off a record of the constant's own kind alone: a

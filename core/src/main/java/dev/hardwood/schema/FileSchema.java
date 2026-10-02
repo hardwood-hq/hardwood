@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
+import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
@@ -528,12 +529,17 @@ public class FileSchema {
 
         /// Append a primitive column carrying a logical type annotation.
         ///
+        /// A `FIXED_LEN_BYTE_ARRAY` column takes the length its annotation implies: 16 bytes for
+        /// `UUID`, 12 for `INTERVAL`, 2 for `FLOAT16`, and for `DECIMAL` the fewest bytes that
+        /// hold its precision. Any other annotation needs the type-length overload.
+        ///
         /// @param columnName the column name
         /// @param type the physical type
         /// @param repetition `REQUIRED` or `OPTIONAL`
         /// @param logicalType the annotation, which must be legal for `type`
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or the annotation does
-        ///         not apply to the physical type
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the annotation does
+        ///         not apply to the physical type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the
+        ///         annotation implies no length
         public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
                                  LogicalType logicalType) {
             content.addColumn(columnName, type, repetition, logicalType);
@@ -594,7 +600,8 @@ public class FileSchema {
         }
 
         /// Append a `MAP` group whose key carries a logical type annotation — a `STRING` key
-        /// being the common case.
+        /// being the common case. A `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation
+        /// implies, as [#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
         ///
         /// @param mapName the map group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
@@ -602,7 +609,8 @@ public class FileSchema {
         /// @param keyLogicalType the key's annotation, which must be legal for `keyType`
         /// @param value declares the map's value, like a list element
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         or the annotation does not apply to the key's physical type
+        ///         the annotation does not apply to the key's physical type, or `keyType` is
+        ///         `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                            LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
             content.map(mapName, repetition, keyType, keyLogicalType, value);
@@ -672,10 +680,13 @@ public class FileSchema {
             return addColumn(columnName, type, repetition, (Integer) typeLength, null);
         }
 
-        /// Append a primitive field carrying a logical type annotation.
+        /// Append a primitive field carrying a logical type annotation. A `FIXED_LEN_BYTE_ARRAY`
+        /// field takes the length its annotation implies, as [Builder#addColumn(String,
+        /// PhysicalType, RepetitionType, LogicalType)] describes.
         ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or the annotation does
-        ///         not apply to the physical type
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the annotation does
+        ///         not apply to the physical type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the
+        ///         annotation implies no length
         public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
                                        LogicalType logicalType) {
             return addColumn(columnName, type, repetition, null, logicalType);
@@ -740,10 +751,13 @@ public class FileSchema {
             return map(mapName, repetition, keyType, null, null, value);
         }
 
-        /// Append a nested `MAP` field whose key carries a logical type annotation.
+        /// Append a nested `MAP` field whose key carries a logical type annotation. A
+        /// `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation implies, as
+        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         or the annotation does not apply to the key's physical type
+        ///         the annotation does not apply to the key's physical type, or `keyType` is
+        ///         `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
         public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                                  LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
             return map(mapName, repetition, keyType, null, keyLogicalType, value);
@@ -805,9 +819,12 @@ public class FileSchema {
             set(leaf(childName, type, repetition, (Integer) typeLength, null));
         }
 
-        /// Declare a primitive element carrying a logical type annotation.
+        /// Declare a primitive element carrying a logical type annotation. A
+        /// `FIXED_LEN_BYTE_ARRAY` element takes the length its annotation implies, as
+        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
         ///
-        /// @throws IllegalArgumentException if the annotation does not apply to the physical type
+        /// @throws IllegalArgumentException if the annotation does not apply to the physical
+        ///         type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
         public void primitive(PhysicalType type, RepetitionType repetition, LogicalType logicalType) {
             set(leaf(childName, type, repetition, null, logicalType));
         }
@@ -848,10 +865,13 @@ public class FileSchema {
             set(buildMap(childName, repetition, keyType, null, null, value));
         }
 
-        /// Declare a nested `MAP` element whose key carries a logical type annotation.
+        /// Declare a nested `MAP` element whose key carries a logical type annotation. A
+        /// `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation implies, as
+        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
         ///
-        /// @throws IllegalArgumentException if no value is declared or the annotation does not
-        ///         apply to the key's physical type
+        /// @throws IllegalArgumentException if no value is declared, the annotation does not
+        ///         apply to the key's physical type, or `keyType` is `FIXED_LEN_BYTE_ARRAY` and
+        ///         the annotation implies no length
         public void map(RepetitionType repetition, PhysicalType keyType, LogicalType keyLogicalType,
                         Consumer<ElementBuilder> value) {
             set(buildMap(childName, repetition, keyType, null, keyLogicalType, value));
@@ -903,15 +923,20 @@ public class FileSchema {
 
     /// Builds a primitive leaf, validating the type length — required and positive for a
     /// `FIXED_LEN_BYTE_ARRAY`, absent for every other type — and that the logical type
-    /// annotation, if any, is legal for that physical type.
+    /// annotation, if any, is legal for that physical type. A `FIXED_LEN_BYTE_ARRAY` declared
+    /// without a length takes the one its annotation implies
+    /// ([AnnotationKind#impliedFixedWidth]), where it implies one.
     private static BuilderLeaf leaf(String name, PhysicalType type, RepetitionType repetition, Integer typeLength,
                                     LogicalType logicalType) {
         if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength != null) {
             throw new IllegalArgumentException("A type length is only valid for a FIXED_LEN_BYTE_ARRAY column, not "
                     + type + " (" + name + ")");
         }
-        LogicalTypeValidator.validateLeaf(name, type, repetition, typeLength, logicalType);
-        return new BuilderLeaf(name, type, repetition, typeLength, logicalType);
+        Integer length = type == PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength == null
+                ? AnnotationKind.impliedFixedWidth(logicalType)
+                : typeLength;
+        LogicalTypeValidator.validateLeaf(name, type, repetition, length, logicalType);
+        return new BuilderLeaf(name, type, repetition, length, logicalType);
     }
 
     /// Lowers a primitive leaf to its [SchemaElement], deriving both annotation representations

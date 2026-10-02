@@ -8,6 +8,7 @@
 package dev.hardwood.internal.schema;
 
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
 
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.metadata.ConvertedType;
@@ -17,7 +18,7 @@ import dev.hardwood.metadata.PhysicalType;
 /// The facts parquet-format states about each annotation, one constant per member of
 /// [LogicalType]: its `LogicalType` union field, whether it annotates a group, whether its bytes
 /// are text, the order its values sort in, the physical types and widths it is defined over, the
-/// legacy `converted_type` a writer writes beside it, and the literal a filter predicate takes on
+/// `FIXED_LEN_BYTE_ARRAY` width a column declared without one takes, the legacy `converted_type` a writer writes beside it, and the literal a filter predicate takes on
 /// its column.
 ///
 /// Each fact is a constructor argument, so a member added to [LogicalType] states all of them in
@@ -56,6 +57,8 @@ public enum AnnotationKind {
 
     /// "DECIMAL - signed comparison of the represented value", its bytes big-endian.
     DECIMAL(5, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.SIGNED_BIG_ENDIAN,
+            // The narrowest width that holds the precision.
+            annotation -> AnnotationPairings.minDecimalWidth(((LogicalType.DecimalType) annotation).precision()),
             (type, typeLength, annotation) ->
                     AnnotationPairings.decimalPairing(type, typeLength, (LogicalType.DecimalType) annotation),
             annotation -> ConvertedType.DECIMAL,
@@ -97,7 +100,7 @@ public enum AnnotationKind {
     /// `min` / `max` should be written for it.
     INTERVAL(AnnotationKind.NO_UNION_FIELD, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.NONE,
             // "must annotate a FIXED_LEN_BYTE_ARRAY of length 12"
-            (type, typeLength, annotation) -> AnnotationPairings.fixedWidth(type, typeLength, FixedWidths.INTERVAL),
+            FixedWidths.INTERVAL,
             annotation -> ConvertedType.INTERVAL,
             annotation -> "PqInterval"),
 
@@ -130,14 +133,14 @@ public enum AnnotationKind {
     /// Not in `ColumnOrder`'s list, so the `FIXED_LEN_BYTE_ARRAY`'s own unsigned byte order.
     UUID(14, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.BYTES,
             // "annotates a 16-byte FIXED_LEN_BYTE_ARRAY primitive type"
-            (type, typeLength, annotation) -> AnnotationPairings.fixedWidth(type, typeLength, FixedWidths.UUID),
+            FixedWidths.UUID,
             annotation -> null,
             annotation -> "UUID"),
 
     /// "FLOAT16 - signed comparison of the represented value", compared as the half float.
     FLOAT16(15, Target.PRIMITIVE, Content.OTHER, ByteColumnOrder.HALF_FLOAT,
             // "The primitive type is a 2-byte FIXED_LEN_BYTE_ARRAY."
-            (type, typeLength, annotation) -> AnnotationPairings.fixedWidth(type, typeLength, FixedWidths.FLOAT16),
+            FixedWidths.FLOAT16,
             annotation -> null,
             annotation -> "float"),
 
@@ -161,6 +164,9 @@ public enum AnnotationKind {
 
     /// The [#unionField] of an annotation the `LogicalType` union has no member for.
     public static final int NO_UNION_FIELD = 0;
+
+    /// The width an annotation that implies none answers for, as [#impliedFixedWidth] returns it.
+    private static final int NO_IMPLIED_WIDTH = 0;
 
     private static final AnnotationKind[] BY_UNION_FIELD = byUnionField();
 
@@ -186,6 +192,7 @@ public enum AnnotationKind {
     private final Target target;
     private final Content content;
     private final ByteColumnOrder byteOrder;
+    private final ToIntFunction<LogicalType> impliedWidth;
     private final PairingRule pairing;
     private final Function<LogicalType, ConvertedType> convertedType;
     private final Function<LogicalType, String> literal;
@@ -203,10 +210,33 @@ public enum AnnotationKind {
     AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
             PairingRule pairing, Function<LogicalType, ConvertedType> convertedType,
             Function<LogicalType, String> literal) {
+        this(unionField, target, content, byteOrder, annotation -> NO_IMPLIED_WIDTH, pairing, convertedType,
+                literal);
+    }
+
+    /// An annotation parquet-format defines over a `FIXED_LEN_BYTE_ARRAY` of `pinnedWidth` bytes
+    /// alone: that is the one pairing it is defined over, and the width a column declared without
+    /// one takes.
+    ///
+    /// @param pinnedWidth the one `FIXED_LEN_BYTE_ARRAY` width the annotation is defined over
+    AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
+            int pinnedWidth, Function<LogicalType, ConvertedType> convertedType,
+            Function<LogicalType, String> literal) {
+        this(unionField, target, content, byteOrder, annotation -> pinnedWidth,
+                (type, typeLength, annotation) -> AnnotationPairings.fixedWidth(type, typeLength, pinnedWidth),
+                convertedType, literal);
+    }
+
+    /// @param impliedWidth the `FIXED_LEN_BYTE_ARRAY` width a column declared without one takes,
+    ///        [#NO_IMPLIED_WIDTH] where the annotation implies none; [#pairing] must call it legal
+    AnnotationKind(int unionField, Target target, Content content, ByteColumnOrder byteOrder,
+            ToIntFunction<LogicalType> impliedWidth, PairingRule pairing,
+            Function<LogicalType, ConvertedType> convertedType, Function<LogicalType, String> literal) {
         this.unionField = unionField;
         this.target = target;
         this.content = content;
         this.byteOrder = byteOrder;
+        this.impliedWidth = impliedWidth;
         this.pairing = pairing;
         this.convertedType = convertedType;
         this.literal = literal;
@@ -306,6 +336,21 @@ public enum AnnotationKind {
     /// annotation is defined over no byte-stored type.
     ByteColumnOrder byteOrder() {
         return byteOrder;
+    }
+
+    /// The width a `FIXED_LEN_BYTE_ARRAY` column annotated `annotation` takes when its declaration
+    /// gives none: the one width the format defines a `UUID`, `INTERVAL` or `FLOAT16` over, and the
+    /// narrowest that holds a `DECIMAL`'s precision ([AnnotationPairings#minDecimalWidth]). Any
+    /// other annotation implies none, `TIMESTAMP` included, since an `INT64` carries it as well.
+    ///
+    /// @param annotation the column's annotation, `null` for an unannotated column
+    /// @return the width, `null` where the annotation implies none
+    public static Integer impliedFixedWidth(LogicalType annotation) {
+        if (annotation == null) {
+            return null;
+        }
+        int width = of(annotation).impliedWidth.applyAsInt(annotation);
+        return width == NO_IMPLIED_WIDTH ? null : width;
     }
 
     /// Whether the format defines `annotation`, of this kind, over a column of this physical type

@@ -20,7 +20,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | Method | Declares |
 |---|---|
 | `addColumn(name, type, repetition)` | a primitive column |
-| `addColumn(name, type, repetition, logicalType)` | a primitive column carrying an annotation |
+| `addColumn(name, type, repetition, logicalType)` | a primitive column carrying an annotation; a `FIXED_LEN_BYTE_ARRAY` column takes the length the annotation implies |
 | `addColumn(name, type, repetition, typeLength)` | a `FIXED_LEN_BYTE_ARRAY` column of the given byte length |
 | `addColumn(name, type, repetition, typeLength, logicalType)` | both of the above |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
@@ -30,13 +30,24 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
 
-`repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is required and positive for `FIXED_LEN_BYTE_ARRAY` and rejected for every other type, so a `UUID`, `INTERVAL`, `FLOAT16` or fixed-width `DECIMAL` column is declared through a `typeLength` overload:
+`repetition` is `REQUIRED` or `OPTIONAL`; `REPEATED` is rejected, repetition being what `list` and `map` express. `typeLength` is rejected for every type but `FIXED_LEN_BYTE_ARRAY`, and a `FIXED_LEN_BYTE_ARRAY` column has a positive one. Declared without one, it takes the length its annotation implies:
+
+| Annotation | Implied `typeLength` |
+|---|---|
+| `UUID` | 16 |
+| `INTERVAL` | 12 |
+| `FLOAT16` | 2 |
+| `DECIMAL(precision, scale)` | the fewest bytes whose two's complement holds `precision` digits: 1 for precision 1–2, 4 for 9, 8 for 18, 16 for 38 |
+
+Any other annotation, or none, implies no length, and the column is declared through a `typeLength` overload. A `typeLength` given explicitly is kept as given; a `DECIMAL` may take more bytes than its precision needs, while a `UUID`, `INTERVAL` or `FLOAT16` of any other length is rejected.
 
 ```java
 FileSchema schema = FileSchema.builder("event")
-        .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                LogicalType.uuid())
-        .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 8,
+        .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                LogicalType.uuid())                                                 // 16 bytes
+        .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                LogicalType.decimal(18, 2))                                         // 8 bytes
+        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 16,
                 LogicalType.decimal(18, 2))
         .build();
 ```

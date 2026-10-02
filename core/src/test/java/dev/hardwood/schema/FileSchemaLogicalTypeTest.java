@@ -321,6 +321,84 @@ class FileSchemaLogicalTypeTest {
                 .hasMessage("FLOAT16 annotates a FIXED_LEN_BYTE_ARRAY of length 2, not 4 (column half)");
     }
 
+    /// A `FIXED_LEN_BYTE_ARRAY` declared without a length takes the one its annotation pins.
+    @Test
+    void fixedWidthAnnotationsImplyTheirLength() {
+        assertThat(lowered(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.uuid()).typeLength()).isEqualTo(16);
+        assertThat(lowered(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval()).typeLength()).isEqualTo(12);
+        assertThat(lowered(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.float16()).typeLength()).isEqualTo(2);
+    }
+
+    /// A `DECIMAL` declared without a length takes the fewest bytes that hold its precision.
+    @ParameterizedTest
+    @MethodSource("impliedDecimalWidths")
+    void aDecimalImpliesTheNarrowestLengthThatHoldsItsPrecision(int precision, int width) {
+        SchemaElement amount = lowered(PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.decimal(precision, 0));
+
+        assertThat(amount.typeLength()).isEqualTo(width);
+    }
+
+    static Stream<Arguments> impliedDecimalWidths() {
+        return Stream.of(
+                Arguments.of(1, 1),
+                Arguments.of(2, 1),
+                Arguments.of(3, 2),
+                Arguments.of(9, 4),
+                Arguments.of(10, 5),
+                Arguments.of(18, 8),
+                Arguments.of(19, 9),
+                Arguments.of(38, 16),
+                Arguments.of(39, 17));
+    }
+
+    /// The struct, list element and map key verbs derive the length as the top level does.
+    @Test
+    void nestedDeclarationsImplyTheLength() {
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("order", RepetitionType.OPTIONAL, order -> order
+                        .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                LogicalType.uuid()))
+                .list("prices", RepetitionType.OPTIONAL, element -> element
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                LogicalType.decimal(9, 2)))
+                .map("byId", RepetitionType.OPTIONAL, PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.uuid(),
+                        value -> value.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                LogicalType.float16()))
+                .build();
+
+        assertThat(schema.getColumn("order.id").typeLength()).isEqualTo(16);
+        assertThat(schema.getColumn("prices.list.element").typeLength()).isEqualTo(4);
+        assertThat(schema.getColumn("byId.key_value.key").typeLength()).isEqualTo(16);
+        assertThat(schema.getColumn("byId.key_value.value").typeLength()).isEqualTo(2);
+    }
+
+    /// An explicit length is kept as given, a `DECIMAL`'s even where it is wider than its
+    /// precision needs.
+    @Test
+    void anExplicitLengthIsKept() {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
+                        LogicalType.decimal(9, 2))
+                .build();
+
+        assertThat(schema.getColumn("amount").typeLength()).isEqualTo(16);
+    }
+
+    /// `TIMESTAMP` pins no length, an `INT64` carrying it as well, and neither does an
+    /// unannotated column; both still need the type-length overload.
+    @Test
+    void anAnnotationThatPinsNoLengthStillNeedsOne() {
+        assertThatThrownBy(() -> withColumn(PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                LogicalType.timestamp(true, TimeUnit.NANOS)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column annotated requires a positive type length");
+        assertThatThrownBy(() -> FileSchema.builder("schema")
+                .addColumn("raw", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED)
+                .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY column raw requires a positive type length");
+    }
+
     @Test
     void decimalPrecisionMustFitThePhysicalType() {
         assertThatThrownBy(() -> withColumn(PhysicalType.INT32, LogicalType.decimal(10, 0)))
