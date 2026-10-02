@@ -35,6 +35,13 @@ RUN microdnf install -y --nodocs \
       python3-pip \
     && microdnf clean all
 
+# `gh stack`, the official extension, registers existing pull requests as a GitHub stack
+# (`gh stack link <pr>...`), which `gh` itself cannot do. It installs under /root/.local/share
+# rather than the mounted config volume, so it has to be baked in. Pinned because the extension is
+# young enough that its command surface is still moving.
+ARG GH_STACK_VERSION=v0.1.1
+RUN gh extension install github/gh-stack --pin "$GH_STACK_VERSION"
+
 # Install SDKMAN and Java 25 (Temurin). The GA build (25-tem) can leave a virtual thread parked
 # forever under timed blocking-queue waits (JDK-8369227, fixed in 25.0.3), which hangs readers (#1230).
 ENV SDKMAN_DIR="/root/.sdkman"
