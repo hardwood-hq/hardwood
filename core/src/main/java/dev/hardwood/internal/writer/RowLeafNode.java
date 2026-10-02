@@ -272,10 +272,12 @@ final class RowLeafNode extends RowNode {
     }
 
     /// Rejects a value on a column annotated `UNKNOWN`, which holds only nulls: no value it
-    /// could carry matches the annotation, and the reader refuses to materialize one.
+    /// could carry matches the annotation, and the reader refuses to materialize one. The
+    /// schema alone decides this, so it is a setter that does not fit the field rather than a
+    /// rejection of the record's data.
     private void requireValueAllowed(String setter) {
         if (range.holdsNoValue()) {
-            throw new RejectedRecordException(path, "Field " + path
+            throw new IllegalArgumentException("Field " + path
                     + " is annotated UNKNOWN, which holds only nulls; " + setter
                     + " cannot set a value on it");
         }

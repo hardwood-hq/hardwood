@@ -8,6 +8,8 @@ Related documents:
 - [FILE_METADATA.md](FILE_METADATA.md): the malformed-input policy of the footer parser
 - [LOGICAL_TYPES.md](LOGICAL_TYPES.md): which annotations `FileSchema` drops
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): why a column with a dropped annotation has no readable bounds
+- [WRITER.md](WRITER.md): which exceptions out of a write call fail the writer
+- [WRITER_INPUT.md](WRITER_INPUT.md): which row-writer rejections are returned rather than thrown
 - [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md): the user-facing table
 
 ## Exception types
@@ -26,7 +28,7 @@ whether to fix their code or stop trusting the file.
 | `SchemaIncompatibleException` | a `ParquetReadException`: schemas that cannot be reconciled across a multi-file read, or a footer disagreeing with itself | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
 | `UnsupportedOperationException` | the file is correct and Hardwood cannot read it: encryption, an absent codec library, an unimplemented encoding, a chunk in another file, a column chunk read without an OffsetIndex or a range-backed file over 2 GB | no |
-| `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held | no |
+| `IllegalArgumentException`, `NullPointerException`, `IndexOutOfBoundsException`, `NoSuchElementException`, `IllegalStateException` | the reader was asked for something it never held, or the writer was handed input it does not accept | no |
 | `VariantTypeException` | unchecked: a Variant `as*` accessor called on a value of another type tag | no |
 
 The caller's side is stated except for one case: asking an accessor for a type the column
@@ -56,6 +58,17 @@ is guaranteed to catch it will reach a caller eventually. `ThriftTruncatedExcept
 internal `ParquetReadException` subclass the page-header readers catch to grow a short read, is
 restated as a plain `ParquetReadException` at every boundary that classifies a failure, so
 no caller holds it.
+
+`RejectedRecordException` carries a rejection of a record's own data (a value its column
+cannot hold, a `REQUIRED` field left null) from the row layer's setters and
+`PhysicalValueConverter` up to `RowWriter`, the one class that calls `RowPlan.writeRecord`.
+`writeRow` restates it as a plain `IllegalArgumentException`. `tryWriteRow` raises nothing
+for it and returns `RowWriteResult.Rejected` with its field path and message, the one failure
+Hardwood reports as a value rather than an exception. The type is thrown from many sites and
+caught in one class only because every path to those sites runs through
+`RowPlan.writeRecord`. A caller of `PhysicalValueConverter` outside the row layer, such as
+`ColumnBatch`, would have no such boundary and would let the internal type reach a caller
+(untested).
 
 A new public type earns its place only where a caller would act on it. Where the response is
 the same — retry, give up, report — the distinction belongs in the message every one of these

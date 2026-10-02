@@ -281,7 +281,7 @@ hardwood version <version> (build <commit>)
 | `abort()` | Discards the output and closes the writer |
 | `close()` or `abort()` on a closed or aborted writer | Nothing |
 
-The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` returns `RowWriteResult.Rejected` for a data-dependent rejection of the record itself and does not fail the writer; an exception from its filler, builder misuse, or a failure while a staged batch is written still does. A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
+The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
 A failure while `close()` finishes or publishes the file discards the output as well, and `close()` throws it. When the output cannot be discarded, `abort()` and `close()` on a failed writer throw the `IOException`; a failure while finishing or publishing carries it as a suppressed exception.
 
@@ -292,9 +292,11 @@ A failure while `close()` finishes or publishes the file discards the output as 
 | Member | Meaning |
 |---|---|
 | `Staged` | The record is in the batch. A later flush can still fail the writer. |
-| `Rejected(fieldPath, message)` | The record was not staged. `fieldPath` is the schema path already used in rejection messages; `message` is the full text `writeRow` throws for the same rejection. |
+| `Rejected(fieldPath, message)` | The record was not staged, and the staged batch is unchanged. `fieldPath` is the schema path the message names; `message` is the full text `writeRow` throws for the same rejection. |
 
-Only a rejection of the record itself becomes `Rejected`: a value the column cannot hold, or a `REQUIRED` field left unset or set null. Builder misuse — an unknown name, a field set twice, a setter that does not fit the field — and an exception from the filler still throw and fail the writer.
+A rejection that depends on the value handed over becomes `Rejected`: a value outside the range its annotation declares, a value whose magnitude or precision the column cannot hold under the configured `PrecisionLossPolicy`, a `FIXED_LEN_BYTE_ARRAY` value of the wrong length, or a `REQUIRED` field left unset or set null.
+
+Every other failure throws and fails the writer, as it does under `writeRow`: an unknown field name or index, a field set twice, a setter that does not fit the field (including any value setter on a column annotated `UNKNOWN`), an exception thrown by the filler, and a failure while a completed batch is written.
 
 ## What the Writer Rejects
 

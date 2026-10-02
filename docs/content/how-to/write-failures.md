@@ -26,7 +26,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
 }
 ```
 
-A writer whose write call has thrown cannot be written to again. `RowWriter.tryWriteRow` returns a `RowWriteResult.Rejected` for a data-dependent rejection of the record itself and leaves the writer usable; see [Skipping a Rejected Record](write-row-by-row.md#skipping-a-rejected-record). `ColumnWriter.writeBatch` has no per-row skip: a rejected batch drops every row in it.
+A writer whose write call has thrown cannot be written to again. To skip a rejected record and carry on with the next, write it with `RowWriter.tryWriteRow`; see [Skipping a Rejected Record](write-row-by-row.md#skipping-a-rejected-record). `ColumnWriter.writeBatch` has no skip: a rejected batch fails the writer, and `close()` discards the whole file.
 
 ## The Data Source Throws
 

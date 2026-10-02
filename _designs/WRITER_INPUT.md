@@ -279,7 +279,11 @@ Within a struct scope, a field that is never set is written as null if it is `OP
 
 A list or map entry is nullable only where the schema says so: `ListBuilder.addNull()` requires an `OPTIONAL` element, and a map's `key` is always `REQUIRED`, so a null key throws. An absent list (`setNull("phones")`) and an empty one (`setList("phones", phones -> {})`) are distinct.
 
-A record is staged in full or not at all. `RowPlan` checkpoints every node's staging before the filler runs and rolls it back if it throws, whether the writer rejected a value or the caller's own code failed, so a rejected record leaves the staged batch exactly as it was and its columns still agree on their record count. The exception still fails the writer, as every exception out of a write call does ([WRITER.md](WRITER.md)).
+A record is staged in full or not at all. `RowPlan` checkpoints every node's staging before the filler runs and rolls it back if it throws, whether the writer rejected a value or the caller's own code failed, so a rejected record leaves the staged batch exactly as it was and its columns still agree on their record count. `writeRow` lets the exception fail the writer, as every exception out of a write call does ([WRITER.md](WRITER.md)); `tryWriteRow` returns a rejection of the record itself as `RowWriteResult.Rejected` and leaves the writer usable.
+
+Which failures `tryWriteRow` returns is decided where each is thrown. A check that depends on the value handed over (an annotation range, a precision or magnitude the column cannot hold, a `FIXED_LEN_BYTE_ARRAY` of the wrong length, a `REQUIRED` field left unset or set null) raises the internal `RejectedRecordException`, carrying the field path; `writeRow` restates it as a plain `IllegalArgumentException`, so the internal type never reaches a caller ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md)). A check the schema alone decides (an unknown name, a field set twice, a setter that does not fit the field, any value setter on an `UNKNOWN` column) raises `IllegalArgumentException` and fails the writer under both methods, as does an exception from the filler: either marks a defect in the calling code rather than in one record. A new rejection in the row layer is placed on one side of this line.
+
+Tests: `RowWriterRulesTest`, `RowWriterTryWriteRowTest`.
 
 ### Value conversion
 
@@ -339,5 +343,4 @@ One rule keeps both open: **no unqualified `Object`-typed setter.** There is no 
 - **`INT96`** is not writable through either API.
 - **`VARIANT`** annotations are rejected on a declared leaf, and the builder cannot declare a Variant group; a Variant group read from a file is written field by field through the binary setters, since the writer has no Variant encoder.
 - **Typed binding** (writing a POJO or record directly) is the write side of the typed view epic (#940), not part of this layer.
-- **A rejected record fails the writer** although its staging is rolled back; skipping it and continuing is #1253.
 - **Open input-vocabulary gaps**, tracked in #1291: `StructBuilder.setValue` and `setVariant` (the two reader accessors with no setter); `ColumnBatch.strings(…)` and a blob-plus-offsets binary form matching the reader's `getBinaryValues()` / `getBinaryOffsets()`; and group-oriented nesting for columnar copies, including a `REQUIRED` leaf under an `OPTIONAL` struct, whose reader-side leaf validity reports nulls the writer's leaf setter refuses on a `REQUIRED` column.

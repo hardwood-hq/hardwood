@@ -100,17 +100,21 @@ A `REQUIRED` field left unset fails the record. `writeRow` then fails the writer
 ```java
 import dev.hardwood.writer.RowWriteResult;
 
-for (Person person : people) {
-    switch (rows.tryWriteRow(row -> row
-            .setLong("id", person.id())
-            .setString("name", person.name()))) {
-        case RowWriteResult.Staged _ -> { }
-        case RowWriteResult.Rejected rejected -> log(rejected.message());
+try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("people.parquet")), schema)) {
+    RowWriter rows = writer.rowWriter();
+    for (Person person : people) {
+        if (rows.tryWriteRow(row -> row
+                .setLong("id", person.id())
+                .setString("name", person.name())) instanceof RowWriteResult.Rejected rejected) {
+            System.err.println("Skipped " + person.id() + ": " + rejected.message());
+        }
     }
 }
 ```
 
-`Staged` means the record is in the batch, not that it has been flushed. A rejection of the record itself is skippable: a value the column cannot hold, or a `REQUIRED` field left unset or set null. An exception thrown by the filler, a field name the schema does not have, a field set twice, a setter that does not fit the field, or a failure while a staged batch is written still fails the writer.
+With the schema above, a person whose `name` is `null` is skipped with the message `Field name is REQUIRED; it must be set to a non-null value in every record`, and `close()` publishes every other person.
+
+Which failures `tryWriteRow` returns as `Rejected`, and which still fail the writer, is listed under [`RowWriteResult`](../reference/writer.md#rowwriteresult).
 
 ## Structs, Lists, and Maps
 

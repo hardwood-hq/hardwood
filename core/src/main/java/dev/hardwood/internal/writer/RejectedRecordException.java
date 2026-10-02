@@ -13,8 +13,12 @@ package dev.hardwood.internal.writer;
 /// [dev.hardwood.writer.RowWriter#writeRow] still throws it and fails the writer.
 ///
 /// Distinct from builder misuse — an unknown name, a field set twice, a setter that does
-/// not fit the field — and from an exception the filler throws itself. Those remain
-/// [IllegalArgumentException] or whatever the filler raised.
+/// not fit the field (any value setter on an `UNKNOWN` column included) — and from an
+/// exception the filler throws itself. Those remain [IllegalArgumentException] or whatever
+/// the filler raised.
+///
+/// The type never reaches a caller: `writeRow` restates it as a plain
+/// [IllegalArgumentException].
 public final class RejectedRecordException extends IllegalArgumentException {
 
     private static final long serialVersionUID = 1L;

@@ -29,7 +29,7 @@ import dev.hardwood.writer.PrecisionLossPolicy;
 ///
 /// A value the column cannot represent at all — a date beyond the `INT32` day range, an
 /// unscaled decimal wider than the declared precision — always throws
-/// [RejectedRecordException] (a subclass of [IllegalArgumentException]); there is no
+/// [RejectedRecordException], which `RowWriter` reports as a rejected record; there is no
 /// narrowing that would preserve its magnitude.
 ///
 /// A value the column can hold only approximately — an [Instant] with sub-millisecond

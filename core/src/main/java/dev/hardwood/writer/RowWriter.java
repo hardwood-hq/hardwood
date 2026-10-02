@@ -96,6 +96,14 @@ public final class RowWriter {
         try {
             plan.writeRecord(filler);
         }
+        catch (RejectedRecordException e) {
+            writer.markFailed();
+            // The internal type carries the field path to tryWriteRow only; a caller sees the
+            // JDK type the rejection is documented as.
+            IllegalArgumentException rejection = new IllegalArgumentException(e.getMessage(), e.getCause());
+            rejection.setStackTrace(e.getStackTrace());
+            throw rejection;
+        }
         catch (Throwable t) {
             writer.markFailed();
             throw t;
@@ -119,6 +127,8 @@ public final class RowWriter {
     /// @throws IOException if writing a completed batch fails
     /// @throws IllegalArgumentException if the filler names a field the schema does not have,
     ///         sets one twice, or uses a setter that does not fit a field's declared type
+    ///         (any value setter on an `UNKNOWN` column included); or if a record of the batch
+    ///         this call completes has more values for a column than a column chunk can hold
     /// @throws IndexOutOfBoundsException if the filler addresses a field by an index the
     ///         struct it is setting does not have
     /// @throws IllegalStateException if the writer is closed, or a previous write has failed

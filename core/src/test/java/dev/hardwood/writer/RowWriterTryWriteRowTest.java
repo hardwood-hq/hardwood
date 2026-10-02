@@ -9,12 +9,14 @@ package dev.hardwood.writer;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -28,7 +30,9 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqMap;
 import dev.hardwood.schema.FileSchema;
 
 import static dev.hardwood.writer.WriterTestSupport.oneColumn;
@@ -246,6 +250,166 @@ class RowWriterTryWriteRowTest {
         }
     }
 
+    /// A rejection raised inside a list scope, after an element of the record was staged,
+    /// leaves the list writable for the next record.
+    @Test
+    void rejectionInsideAListLeavesTheListWritable() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .list("scores", RepetitionType.OPTIONAL, element -> element.primitive(
+                        PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(8, true)))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setInt("id", 1).setList("scores", scores -> scores.addInt(1).addInt(2)));
+            assertThat(rows.tryWriteRow(row -> row.setInt("id", 2)
+                    .setList("scores", scores -> scores.addInt(3).addInt(200))))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("scores.list.element");
+                        assertThat(rejected.message()).isEqualTo(
+                                "Field scores.list.element: 200 is out of range for a INT_8 column");
+                    });
+            rows.writeRow(row -> row.setInt("id", 3).setList("scores", scores -> scores.addInt(4)));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(WriterTestSupport.readInts(reader, 0)).containsExactly(1, 3);
+            assertThat(WriterTestSupport.readListOfInts(reader, 1)).containsExactly(List.of(1, 2), List.of(4));
+        }
+    }
+
+    /// A null map key, rejected after an entry of the record was staged, leaves the map
+    /// writable for the next record.
+    @Test
+    void nullMapKeyLeavesTheMapWritable() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            rows.writeRow(row -> row.setInt("id", 1)
+                    .setMap("props", props -> props.addEntry(entry -> entry.setInt("key", 1).setInt("value", 10))));
+            assertThat(rows.tryWriteRow(row -> row.setInt("id", 2).setMap("props", props -> props
+                    .addEntry(entry -> entry.setInt("key", 2).setInt("value", 20))
+                    .addEntry(entry -> entry.setNull("key").setInt("value", 30)))))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("props.key_value.key");
+                        assertThat(rejected.message()).isEqualTo("Field props.key_value.key is REQUIRED; it must "
+                                + "be set to a non-null value in every record");
+                    });
+            rows.writeRow(row -> row.setInt("id", 3)
+                    .setMap("props", props -> props.addEntry(entry -> entry.setInt("key", 3).setInt("value", 40))));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rows = reader.rowReader()) {
+            rows.next();
+            assertThat(rows.getInt("id")).isEqualTo(1);
+            assertMapEntry(rows.getMap("props"), 1, 10);
+            rows.next();
+            assertThat(rows.getInt("id")).isEqualTo(3);
+            assertMapEntry(rows.getMap("props"), 3, 40);
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void explicitNullOnARequiredFieldIsReturned() throws Exception {
+        Path file = dir.resolve("out.parquet");
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), oneColumn())) {
+            RowWriter rows = writer.rowWriter();
+            assertThat(rows.tryWriteRow(row -> row.setNull("id")))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("id");
+                        assertThat(rejected.message()).isEqualTo(
+                                "Field id is REQUIRED; it must be set to a non-null value in every record");
+                    });
+            rows.writeRow(row -> row.setInt("id", 1));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(WriterTestSupport.readInts(reader, 0)).containsExactly(1);
+        }
+    }
+
+    @Test
+    void binaryDecimalOutsideItsPrecisionIsReturned() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.decimal(5, 2))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            assertThat(rows.tryWriteRow(row -> row.setBinary("v", BigInteger.valueOf(1_000_000).toByteArray())))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("v");
+                        assertThat(rejected.message()).isEqualTo(
+                                "Field v: the value is not an unscaled value the column's DECIMAL(5, 2) can hold");
+                    });
+            rows.writeRow(row -> row.setBinary("v", BigInteger.valueOf(100).toByteArray()));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void decimalRescaleThatDropsDigitsIsReturned() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.decimal(5, 2))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            assertThat(rows.tryWriteRow(row -> row.setDecimal("v", new BigDecimal("1.234"))))
+                    .isInstanceOfSatisfying(RowWriteResult.Rejected.class, rejected -> {
+                        assertThat(rejected.fieldPath()).isEqualTo("v");
+                        assertThat(rejected.message()).isEqualTo("Field v: 1.234 cannot be rescaled to the column's "
+                                + "DECIMAL(5, 2) without dropping digits. Rescale it at the call site (for example "
+                                + "BigDecimal.setScale(2, RoundingMode.HALF_UP)), declare a finer scale, or configure "
+                                + "WriterConfig.precisionLossPolicy(TRUNCATE)");
+                    });
+            rows.writeRow(row -> row.setDecimal("v", new BigDecimal("1.23")));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
+        }
+    }
+
+    /// A value on an `UNKNOWN` column is refused whatever the value, so it is a setter that
+    /// does not fit the field, not a rejected record.
+    @Test
+    void valueOnAnUnknownColumnFailsTheWriter() throws Exception {
+        Path file = dir.resolve("out.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            RowWriter rows = writer.rowWriter();
+            assertThatThrownBy(() -> rows.tryWriteRow(row -> row.setInt("v", 7)))
+                    .isExactlyInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Field v is annotated UNKNOWN, which holds only nulls; setInt cannot set a "
+                            + "value on it");
+            assertThatThrownBy(() -> rows.tryWriteRow(row -> row.setNull("v")))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage(FAILED);
+        }
+
+        assertNothingAt(file);
+    }
+
     @Test
     void writeRowStillFailsTheWriterOnADataRejection() throws Exception {
         Path file = dir.resolve("out.parquet");
@@ -257,7 +421,7 @@ class RowWriterTryWriteRowTest {
             RowWriter rows = writer.rowWriter();
             rows.writeRow(row -> row.setInt("v", 1));
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("v", 200)))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isExactlyInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Field v: 200 is out of range for a INT_8 column");
             assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("v", 2)))
                     .isInstanceOf(IllegalStateException.class)
@@ -379,6 +543,12 @@ class RowWriterTryWriteRowTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(0);
         }
+    }
+
+    private static void assertMapEntry(PqMap map, int key, int value) {
+        assertThat(map.size()).isEqualTo(1);
+        assertThat(map.getEntries().get(0).getIntKey()).isEqualTo(key);
+        assertThat(map.getEntries().get(0).getIntValue()).isEqualTo(value);
     }
 
     private static void assertNothingAt(Path file) throws IOException {
