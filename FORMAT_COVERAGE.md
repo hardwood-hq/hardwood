@@ -124,7 +124,7 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 6 | min_value | ✅ | preferred |
 | 7 | is_max_value_exact | 🟡 | on public record and round-tripped by the writer; no filtering consumer (#483) |
 | 8 | is_min_value_exact | 🟡 | #483 |
-| 9 | nan_count | 🟡 | on public record and written for every `FLOAT`/`DOUBLE`/`FLOAT16` chunk, zero included; no filtering consumer (#898), and the FP always-matches gap it unblocks is #795 |
+| 9 | nan_count | ✅ | written for every `FLOAT`/`DOUBLE`/`FLOAT16` chunk, zero included; filtering: floating-point full matches and all-`NaN` row groups and inline pages |
 
 ### SizeStatistics
 | id | field | status | notes |
@@ -189,7 +189,7 @@ Empty struct; not read (see `PageHeader.index_page_header`).
 | 5 | null_counts | ✅ | |
 | 6 | repetition_level_histograms | 🟡 | per-page, concatenated page-major |
 | 7 | definition_level_histograms | 🟡 | per-page, concatenated page-major |
-| 8 | nan_counts | 🟡 | on public record, no functional consumer |
+| 8 | nan_counts | ✅ | filtering: all-`NaN` pages, `NaN`-free bounds |
 
 ### OffsetIndex
 | id | field | status | notes |
@@ -240,7 +240,7 @@ The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
 - **Bloom-filter writing** — filter *serialization* is not implemented (ROADMAP 9.3). The read path (#669) and `eq`/`in` pushdown (#105) are done.
 - **Size statistics & level histograms** — parsed, exposed, and surfaced by the CLI (`dive` column chunk detail, `hardwood inspect columns`); no reader-side consumer yet.
-- **Statistics completeness** — distinct_count, nan_count and the exactness flags are parsed but drive no filtering (#483).
+- **Statistics completeness** — distinct_count and the exactness flags are parsed but drive no filtering (#483).
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.
 - **Column orders** — float total-order vs type-defined; #483.
 - **Deprecated / niche** — split-file `file_path` (surfaced, and reading such a chunk fails rather than decoding this file's bytes), index pages, row-group ordinals: no planned support.

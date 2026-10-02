@@ -45,6 +45,9 @@ sealed interface UnitStats {
     /// The unit's null count.
     NullStats nulls();
 
+    /// The unit's `NaN` count.
+    NaNStats nans();
+
     /// The unit's definition level histogram.
     DefinitionLevelStats definitionLevels();
 
@@ -71,7 +74,9 @@ sealed interface UnitStats {
     /// that column `0` is its real level.
     ///
     /// A value predicate cannot match a unit that is null on every row, since a null satisfies
-    /// none of them, `NOT_EQ` included. Otherwise it is answered from [#minMax]. Every value
+    /// none of them, `NOT_EQ` included. A floating-point one on a unit whose non-null values are
+    /// all `NaN` is answered from [#nans], which needs no bounds; a writer under the type-defined
+    /// order records none for such a unit. Otherwise it is answered from [#minMax]. Every value
     /// predicate type is named here rather than reached by a `default`, so a new one does not
     /// compile until it is placed — and a predicate a null can satisfy must not be placed with
     /// these.
@@ -101,9 +106,9 @@ sealed interface UnitStats {
             case ResolvedPredicate.LongPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedIntPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedLongPredicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.FloatPredicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.Float16Predicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.DoublePredicate ignored -> decideValue(leaf, logContext);
+            case ResolvedPredicate.FloatPredicate ignored -> decideFloatingPoint(leaf, logContext);
+            case ResolvedPredicate.Float16Predicate ignored -> decideFloatingPoint(leaf, logContext);
+            case ResolvedPredicate.DoublePredicate ignored -> decideFloatingPoint(leaf, logContext);
             case ResolvedPredicate.BooleanPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.BinaryPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.IntInPredicate ignored -> decideValue(leaf, logContext);
@@ -111,9 +116,9 @@ sealed interface UnitStats {
             case ResolvedPredicate.UnsignedIntInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.UnsignedLongInPredicate ignored -> decideValue(leaf, logContext);
             case ResolvedPredicate.BinaryInPredicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.FloatInPredicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.DoubleInPredicate ignored -> decideValue(leaf, logContext);
-            case ResolvedPredicate.Float16InPredicate ignored -> decideValue(leaf, logContext);
+            case ResolvedPredicate.FloatInPredicate ignored -> decideFloatingPoint(leaf, logContext);
+            case ResolvedPredicate.DoubleInPredicate ignored -> decideFloatingPoint(leaf, logContext);
+            case ResolvedPredicate.Float16InPredicate ignored -> decideFloatingPoint(leaf, logContext);
             // Geospatial statistics sit on the column chunk's metadata alone, outside any unit.
             case ResolvedPredicate.GeospatialPredicate ignored -> FilterDecision.MIGHT_MATCH;
             case ResolvedPredicate.And ignored -> throw notALeaf(leaf);
@@ -129,6 +134,12 @@ sealed interface UnitStats {
         MinMaxStats minMax = minMax(leaf);
         minMax.reportIfDiscarded(locate(logContext), readability(), ResolvedPredicate.leafColumnIndex(leaf));
         return minMax.decideLeaf(leaf, nulls.noNulls());
+    }
+
+    private FilterDecision decideFloatingPoint(ResolvedPredicate leaf, LogContext logContext) {
+        NullStats nulls = nulls();
+        NaNStats nans = nans();
+        return nans.allNaN(nulls) ? nans.decideAllNaN(leaf, nulls) : decideValue(leaf, logContext);
     }
 
     private static IllegalArgumentException notALeaf(ResolvedPredicate predicate) {
@@ -166,6 +177,12 @@ sealed interface UnitStats {
             Statistics statistics = statistics();
             Long nullCount = statistics == null ? null : statistics.nullCount();
             return new NullStats(nullCount == null ? NullStats.UNKNOWN_NULL_COUNT : nullCount, rowCount);
+        }
+
+        @Override
+        public NaNStats nans() {
+            Statistics statistics = statistics();
+            return statistics == null ? new NaNStats(NaNStats.UNKNOWN_NAN_COUNT) : NaNStats.of(statistics);
         }
 
         @Override
@@ -208,6 +225,11 @@ sealed interface UnitStats {
         public NullStats nulls() {
             Long nullCount = statistics.nullCount();
             return new NullStats(nullCount == null ? NullStats.UNKNOWN_NULL_COUNT : nullCount, rowCount);
+        }
+
+        @Override
+        public NaNStats nans() {
+            return NaNStats.of(statistics);
         }
 
         @Override
@@ -259,6 +281,11 @@ sealed interface UnitStats {
             long[] nullCounts = columnIndex.nullCounts();
             return new NullStats(nullCounts == null ? NullStats.UNKNOWN_NULL_COUNT : nullCounts[pageIndex],
                     rowCount);
+        }
+
+        @Override
+        public NaNStats nans() {
+            return NaNStats.ofPage(columnIndex, pageIndex);
         }
 
         @Override

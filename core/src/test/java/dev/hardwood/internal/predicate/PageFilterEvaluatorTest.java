@@ -235,6 +235,46 @@ class PageFilterEvaluatorTest {
         assertThat(MinMaxStats.ofPage(columnIndex, 1, gt, BoundsReadability.ALL).canDrop(gt)).isFalse();
     }
 
+    /// A page whose `nan_counts` entry covers every row is all-`NaN` and is decided without its
+    /// bounds, here the `NaN` pair a total-order writer records for it (#898).
+    @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
+    @MethodSource
+    void allNaNPageIsDecidedByWhetherANaNRowMatches(Operator op, float value, boolean page0Kept,
+            boolean page1Kept) {
+        ColumnIndex columnIndex = new ColumnIndex(new boolean[2],
+                List.of(floatBytes(Float.NaN), floatBytes(3.0f)), List.of(floatBytes(Float.NaN), floatBytes(4.0f)),
+                ColumnIndex.BoundaryOrder.UNORDERED, new long[]{ 0, 0 }, null, null, new long[]{ 50, 0 });
+
+        RowRanges ranges = evaluatePages(columnIndex, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.FloatPredicate(0, op, value));
+
+        assertThat(ranges.overlapsPage(0, 50)).isEqualTo(page0Kept);
+        assertThat(ranges.overlapsPage(50, 100)).isEqualTo(page1Kept);
+    }
+
+    /// A null-only page is null on every row, so a positive `nan_counts` entry beside the flag
+    /// cannot make it all-`NaN`, and a predicate a `NaN` row satisfies still drops it.
+    @Test
+    void nullPageIsNotReadAsAllNaN() {
+        ColumnIndex columnIndex = new ColumnIndex(new boolean[]{ true, false },
+                List.of(floatBytes(0.0f), floatBytes(3.0f)), List.of(floatBytes(0.0f), floatBytes(4.0f)),
+                ColumnIndex.BoundaryOrder.UNORDERED, new long[]{ 50, 0 }, null, null, new long[]{ 50, 0 });
+
+        RowRanges ranges = evaluatePages(columnIndex, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                new ResolvedPredicate.FloatPredicate(0, Operator.GT, 1.0f));
+
+        assertThat(ranges.overlapsPage(0, 50)).isFalse();
+        assertThat(ranges.overlapsPage(50, 100)).isTrue();
+    }
+
+    static Stream<Arguments> allNaNPageIsDecidedByWhetherANaNRowMatches() {
+        return Stream.of(
+                Arguments.of(Operator.LT, 10.0f, false, true),
+                Arguments.of(Operator.EQ, 3.5f, false, true),
+                Arguments.of(Operator.GT, 10.0f, true, false),
+                Arguments.of(Operator.EQ, Float.NaN, true, false));
+    }
+
     // Double Filtering Tests
 
     // 2 pages: [10.0,20.0], [30.0,40.0]

@@ -38,6 +38,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - A filter column outside the projection is not read in row groups whose statistics prove every row matches, and a `RowReader` no longer resolves it by name ([#1274](https://github.com/hardwood-hq/hardwood/issues/1274)).
 
+- Row groups and pages whose values are all `NaN` are skipped by floating-point filters a `NaN` fails, and a floating-point filter is no longer evaluated row by row in row groups whose statistics prove every row matches ([#898](https://github.com/hardwood-hq/hardwood/issues/898)).
+
 - A filtered `ColumnReader` evaluates a predicate on a field of a required struct instead of throwing ([#1279](https://github.com/hardwood-hq/hardwood/issues/1279)).
 
 - A logical type annotation a column's physical type cannot carry, or one this release does not recognize, including a `TIME` or `TIMESTAMP` in an unrecognized unit, is ignored, and the column is read as its physical type ([#1139](https://github.com/hardwood-hq/hardwood/issues/1139), [#1406](https://github.com/hardwood-hq/hardwood/issues/1406), [#1239](https://github.com/hardwood-hq/hardwood/issues/1239)).

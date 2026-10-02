@@ -206,6 +206,65 @@ class UnitStatsTest {
                 .isEqualTo(MIGHT_MATCH);
     }
 
+    /// A floating-point unit whose `nan_count` and null count cover every row is all-`NaN`, and
+    /// is decided by whether a `NaN` row satisfies the leaf, without bounds: under the
+    /// type-defined order a writer records none for it (#898). The chunk and a page carrying the
+    /// same statistics inline on its header decide alike.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource
+    void allNaNUnitIsDecidedByWhetherANaNRowMatches(String name, ResolvedPredicate leaf,
+            long nullCount, long nanCount, FilterDecision expected) {
+        Statistics statistics = new Statistics(null, null,
+                nullCount == NullStats.UNKNOWN_NULL_COUNT ? null : nullCount, null, false, true, true,
+                nanCount == NaNStats.UNKNOWN_NAN_COUNT ? null : nanCount);
+        RowGroup rowGroup = new RowGroup(List.of(chunkWith(PhysicalType.DOUBLE, statistics, null)), 1000, ROWS);
+
+        assertThat(UnitStats.ChunkStats.of(rowGroup, 0, BoundsReadability.ALL).decide(leaf, UNNAMED))
+                .isEqualTo(expected);
+        assertThat(new UnitStats.InlinePageStats(statistics, ROWS, BoundsReadability.ALL).decide(leaf, UNNAMED))
+                .isEqualTo(expected);
+    }
+
+    static Stream<Arguments> allNaNUnitIsDecidedByWhetherANaNRowMatches() {
+        ResolvedPredicate lt10 = new ResolvedPredicate.DoublePredicate(0, Operator.LT, 10.0);
+        ResolvedPredicate gt10 = new ResolvedPredicate.DoublePredicate(0, Operator.GT, 10.0);
+        ResolvedPredicate eqNaN = new ResolvedPredicate.DoublePredicate(0, Operator.EQ, Double.NaN);
+        ResolvedPredicate notEqNaN = new ResolvedPredicate.DoublePredicate(0, Operator.NOT_EQ, Double.NaN);
+        ResolvedPredicate float16GtEq = new ResolvedPredicate.Float16Predicate(0, Operator.GT_EQ, 1.0f);
+        ResolvedPredicate floatLtEq = new ResolvedPredicate.FloatPredicate(0, Operator.LT_EQ, 1.0f);
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 1.0, Double.NaN });
+        ResolvedPredicate inWithoutNaN = new ResolvedPredicate.FloatInPredicate(0, new float[]{ 1.0f });
+        long unknownNulls = NullStats.UNKNOWN_NULL_COUNT;
+        long unknownNaNs = NaNStats.UNKNOWN_NAN_COUNT;
+
+        return Stream.of(
+                Arguments.of("LT a number, every row NaN", lt10, 0L, 100L, CANNOT_MATCH),
+                Arguments.of("GT a number, every row NaN", gt10, 0L, 100L, ALWAYS_MATCHES),
+                Arguments.of("LT a number, every row NaN or null", lt10, 40L, 60L, CANNOT_MATCH),
+                Arguments.of("GT a number, every row NaN or null", gt10, 40L, 60L, MIGHT_MATCH),
+                Arguments.of("EQ NaN, every row NaN, null count unknown", eqNaN, unknownNulls, 100L, ALWAYS_MATCHES),
+                Arguments.of("NOT_EQ NaN, every row NaN", notEqNaN, 0L, 100L, CANNOT_MATCH),
+                Arguments.of("FLOAT16 GT_EQ a number, every row NaN", float16GtEq, 0L, 100L, ALWAYS_MATCHES),
+                Arguments.of("FLOAT LT_EQ a number, every row NaN", floatLtEq, 0L, 100L, CANNOT_MATCH),
+                Arguments.of("IN holding NaN, every row NaN", inWithNaN, 0L, 100L, ALWAYS_MATCHES),
+                Arguments.of("IN without NaN, every row NaN", inWithoutNaN, 0L, 100L, CANNOT_MATCH),
+                Arguments.of("LT a number, one row not NaN", lt10, 0L, 99L, MIGHT_MATCH),
+                Arguments.of("LT a number, null count unknown, one row not NaN", lt10, unknownNulls, 99L, MIGHT_MATCH),
+                Arguments.of("LT a number, NaN count unknown", lt10, 0L, unknownNaNs, MIGHT_MATCH),
+                Arguments.of("GT a number, NaN and null counts exceed the rows", gt10, 50L, 60L, MIGHT_MATCH));
+    }
+
+    /// A `nan_count` on a column of another type is no fact a value predicate on it reads.
+    @Test
+    void nanCountOfANonFloatingPointColumnIsNotRead() {
+        Statistics statistics = new Statistics(null, null, 0L, null, false, true, true, (long) ROWS);
+        RowGroup rowGroup = new RowGroup(List.of(chunkWith(PhysicalType.INT32, statistics, null)), 1000, ROWS);
+
+        assertThat(UnitStats.ChunkStats.of(rowGroup, 0, BoundsReadability.ALL)
+                .decide(new ResolvedPredicate.IntPredicate(0, Operator.GT, 5), UNNAMED))
+                .isEqualTo(MIGHT_MATCH);
+    }
+
     @Test
     void compoundPredicateIsNotALeaf() {
         ResolvedPredicate and = new ResolvedPredicate.And(List.of(
@@ -239,8 +298,12 @@ class UnitStatsTest {
     private static ColumnChunk chunkWith(long nullCount, long[] histogram) {
         Statistics statistics = new Statistics(intBytes(10), intBytes(20),
                 nullCount == NullStats.UNKNOWN_NULL_COUNT ? null : nullCount, null, false);
+        return chunkWith(PhysicalType.INT32, statistics, histogram);
+    }
+
+    private static ColumnChunk chunkWith(PhysicalType type, Statistics statistics, long[] histogram) {
         ColumnMetaData metaData = new ColumnMetaData(
-                PhysicalType.INT32, List.of(Encoding.PLAIN), FieldPath.of("order", "price"),
+                type, List.of(Encoding.PLAIN), FieldPath.of("order", "price"),
                 CompressionCodec.UNCOMPRESSED, ROWS, 1000, 1000, Map.of(), 0, null, statistics,
                 null, null, null, List.of(), new SizeStatistics(null, null, histogram));
         return new ColumnChunk(metaData, null, null, null, null, "");

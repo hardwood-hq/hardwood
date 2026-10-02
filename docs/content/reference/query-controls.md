@@ -259,6 +259,11 @@ value satisfies — `notEq`, `gt` or `gtEq` against a number, or `eq`, `ltEq` or
 unit records a `nan_count` of zero. `eq`, `lt` and `ltEq` against a number, and `gt` against
 `NaN`, prune from the bounds alone.
 
+A row group proves every row matches a floating-point predicate from its bounds where it records
+no nulls and either records a `nan_count` of zero or the predicate is one a `NaN` value satisfies.
+A row group or page whose `nan_count` and null count together equal its row count holds only `NaN`
+and null values; every predicate a `NaN` value fails skips it, with or without bounds.
+
 ## Column projection forms
 
 | Form | Description |

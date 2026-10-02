@@ -20,7 +20,10 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.CountingInputFile;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.Statistics;
@@ -28,8 +31,11 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,8 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// bounds cannot exclude it because the unit records no `nan_count` of zero (#1016).
 ///
 /// A `NaN` bound is invalid under `TYPE_ORDER`; under `IEEE_754_TOTAL_ORDER` it may legally
-/// describe an all-`NaN` unit. The pair is discarded either way (#898 tracks interpreting the
-/// all-`NaN` case).
+/// describe an all-`NaN` unit. The pair is discarded either way; an all-`NaN` unit is recognised
+/// from its `nan_count` instead (#898).
 ///
 /// The check lives where [MinMaxStats] sources the bounds, alongside the other reasons a pair
 /// of bounds can be unusable (#1172), so these cases go in through a leaf and its statistics
@@ -253,6 +259,68 @@ class NaNStatisticsFilterTest {
         return rows.stream();
     }
 
+    /// Whether every row of a unit with usable bounds satisfies a comparison (#898). Where the
+    /// unit may hold `NaN`, a full match needs an operator a `NaN` row satisfies as well; where
+    /// `nan_count` proves none, the interval decides alone.
+    @ParameterizedTest(name = "double {0}({1}) on [{2},{3}] nanFree={4} expectAlways={5}")
+    @MethodSource
+    void doubleAlwaysMatchesTable(Operator op, double value, double min, double max,
+            boolean nanFree, boolean expectAlways) {
+        assertThat(StatisticsFilterSupport.alwaysMatchesDouble(op, value, min, max, nanFree))
+                .isEqualTo(expectAlways);
+        assertThat(StatisticsFilterSupport.alwaysMatchesFloat(op, (float) value, (float) min, (float) max, nanFree))
+                .isEqualTo(expectAlways);
+    }
+
+    static Stream<Arguments> doubleAlwaysMatchesTable() {
+        List<Arguments> rows = new ArrayList<>();
+        //                  op               value       min  max   NaN possible  NaN-free
+        addDoubleRows(rows, Operator.EQ,     Double.NaN, 1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.NOT_EQ, Double.NaN, 1.0, 10.0, false,        true);
+        addDoubleRows(rows, Operator.LT,     Double.NaN, 1.0, 10.0, false,        true);
+        addDoubleRows(rows, Operator.LT_EQ,  Double.NaN, 1.0, 10.0, true,         true);
+        addDoubleRows(rows, Operator.GT,     Double.NaN, 1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.GT_EQ,  Double.NaN, 1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.EQ,     5.0,        5.0, 5.0,  false,        true);
+        addDoubleRows(rows, Operator.EQ,     5.0,        1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.NOT_EQ, 20.0,       1.0, 10.0, true,         true);
+        addDoubleRows(rows, Operator.NOT_EQ, 5.0,        1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.LT,     20.0,       1.0, 10.0, false,        true);
+        addDoubleRows(rows, Operator.LT,     10.0,       1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.LT_EQ,  10.0,       1.0, 10.0, false,        true);
+        addDoubleRows(rows, Operator.LT_EQ,  5.0,        1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.GT,     0.0,        1.0, 10.0, true,         true);
+        addDoubleRows(rows, Operator.GT,     1.0,        1.0, 10.0, false,        false);
+        addDoubleRows(rows, Operator.GT_EQ,  1.0,        1.0, 10.0, true,         true);
+        addDoubleRows(rows, Operator.GT_EQ,  5.0,        1.0, 10.0, false,        false);
+        return rows.stream();
+    }
+
+    /// A zero bound is widened before the full-match test as before the drop test, so a unit
+    /// bounded by `+0` is not promised to match a predicate its hidden `-0` fails.
+    @Test
+    void zeroBoundIsWidenedBeforeTheFullMatchTest() {
+        assertThat(StatisticsFilterSupport.alwaysMatchesDouble(Operator.GT, -0.0, 0.0, 10.0, true)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesDouble(Operator.EQ, 0.0, 0.0, 0.0, true)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesFloat(Operator.LT, 0.0f, -10.0f, -0.0f, true)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesDoubleIn(new double[]{ 0.0 }, 0.0, 0.0, true)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesDouble(Operator.GT_EQ, -0.0, 0.0, 10.0, true)).isTrue();
+    }
+
+    /// An `IN` list matches every row of a single-point unit holding a member, where a `NaN` row
+    /// is ruled out by the count or matched by a `NaN` probe.
+    @Test
+    void inListAlwaysMatchesASinglePointWhereNaNRowsAreAccountedFor() {
+        assertThat(StatisticsFilterSupport.alwaysMatchesDoubleIn(new double[]{ 1.0, 5.0 }, 5.0, 5.0, true)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesDoubleIn(new double[]{ 1.0, 5.0 }, 5.0, 5.0, false)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesDoubleIn(new double[]{ Double.NaN, 5.0 }, 5.0, 5.0, false))
+                .isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesFloatIn(new float[]{ Float.NaN, 5.0f }, 5.0f, 5.0f, false))
+                .isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesFloatIn(new float[]{ 5.0f }, 1.0f, 5.0f, true)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesFloatIn(new float[]{ 1.0f }, 5.0f, 5.0f, true)).isFalse();
+    }
+
     /// The spec leaves `+0`/`-0` ambiguous under the type-defined ordering, so a zero bound is
     /// widened and the opposite zero is not dropped. The bounds are widened whatever order a file
     /// declares, since the predicate is resolved once for every file of a read.
@@ -330,6 +398,99 @@ class NaNStatisticsFilterTest {
                     .as("%s", leaf)
                     .isTrue();
         }
+    }
+
+    /// The writer records `nan_count` for every floating-point chunk, and the reader proves full
+    /// matches and all-`NaN` row groups from it (#898). Three row groups of [#ROWS_PER_GROUP]
+    /// rows: `price` runs `0..99` in the first, `950..1049` in the second, and is `NaN`
+    /// throughout the third. `price` is filter-only, so a row group proven to match in full reads
+    /// none of it, and a pruned one reads nothing.
+    @Test
+    void writerNaNCountsLetTheReaderProveFullMatchesAndAllNaNRowGroups() throws Exception {
+        ByteBufferOutputFile out = threeRowGroupsWithAnAllNaNOne();
+
+        // LT fails a NaN row: the first row group matches in full on its recorded zero count,
+        // and the all-NaN one cannot match.
+        CountingInputFile ltFile = new CountingInputFile(ByteBuffer.wrap(out.toByteArray()));
+        assertThat(readIds(ltFile, FilterPredicate.lt("price", 1000.0)))
+                .containsExactlyElementsOf(ids(0, 150));
+        assertThat(chunkRead(ltFile, "price", 0)).as("price read in row group 0").isFalse();
+        assertThat(chunkRead(ltFile, "price", 1)).as("price read in row group 1").isTrue();
+        assertThat(chunkRead(ltFile, "id", 2)).as("id read in row group 2").isFalse();
+
+        // GT is satisfied by a NaN row: the all-NaN row group matches in full, and the first,
+        // proven NaN-free, cannot match.
+        CountingInputFile gtFile = new CountingInputFile(ByteBuffer.wrap(out.toByteArray()));
+        assertThat(readIds(gtFile, FilterPredicate.gt("price", 1000.0)))
+                .containsExactlyElementsOf(ids(151, 300));
+        assertThat(chunkRead(gtFile, "id", 0)).as("id read in row group 0").isFalse();
+        assertThat(chunkRead(gtFile, "price", 1)).as("price read in row group 1").isTrue();
+        assertThat(chunkRead(gtFile, "price", 2)).as("price read in row group 2").isFalse();
+        assertThat(chunkRead(gtFile, "id", 2)).as("id read in row group 2").isTrue();
+    }
+
+    private static final int ROWS_PER_GROUP = 100;
+
+    private static ByteBufferOutputFile threeRowGroupsWithAnAllNaNOne() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("price", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(ROWS_PER_GROUP).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            for (int i = 0; i < 3 * ROWS_PER_GROUP; i++) {
+                final long id = i;
+                final double price = switch (i / ROWS_PER_GROUP) {
+                    case 0 -> i;
+                    case 1 -> 850 + i;
+                    default -> Double.NaN;
+                };
+                writer.rowWriter().writeRow(row -> row.setLong("id", id).setDouble("price", price));
+            }
+        }
+        return out;
+    }
+
+    private static List<Long> readIds(CountingInputFile file, FilterPredicate filter) throws Exception {
+        List<Long> ids = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(file);
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("id"))
+                     .filter(filter)
+                     .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                ids.add(rows.getLong("id"));
+            }
+        }
+        return ids;
+    }
+
+    private static List<Long> ids(long from, long to) {
+        List<Long> ids = new ArrayList<>();
+        for (long id = from; id < to; id++) {
+            ids.add(id);
+        }
+        return ids;
+    }
+
+    /// Whether a read other than a pruning read overlapped the chunk of `column` in row group
+    /// `rowGroupIndex`.
+    private static boolean chunkRead(CountingInputFile file, String column, int rowGroupIndex)
+            throws Exception {
+        ColumnMetaData chunk;
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            chunk = reader.getFileMetaData().rowGroups().get(rowGroupIndex).columns().stream()
+                    .map(ColumnChunk::metaData)
+                    .filter(c -> c.pathInSchema().leafName().equals(column))
+                    .findFirst()
+                    .orElseThrow();
+        }
+        long start = chunk.dictionaryPageOffset() != null ? chunk.dictionaryPageOffset() : chunk.dataPageOffset();
+        long end = start + chunk.totalCompressedSize();
+        return file.reads().stream()
+                .anyMatch(r -> r.offset() < end && r.end() > start && !r.reason().contains("pruning"));
     }
 
     private static List<Double> readMatching(ByteBufferOutputFile out, String column,

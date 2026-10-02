@@ -189,45 +189,60 @@ class FilterDecisionTest {
                 .isEqualTo(MIGHT_MATCH);
     }
 
-    // ==================== Floating point: never ALWAYS_MATCHES ====================
+    // ==================== Floating point ====================
 
+    /// A fully satisfying interval promises every row only where a `NaN` row is accounted for:
+    /// by a recorded `nan_count` of zero, or by the operator, where a `NaN` row satisfies it
+    /// anyway (#898).
     @Test
-    void floatingPointNeverPromisesAlwaysMatches() {
-        // nan_count is not consumed yet: NaN rows sit outside [min, max], so even a
-        // fully-satisfying interval cannot promise every row for FP columns.
+    void floatingPointAlwaysMatchesWhereNaNRowsAreAccountedFor() {
+        // NaN sorts above every number, so a NaN row satisfies GT against one: no count needed.
         ResolvedPredicate gtDouble =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 1.0);
         assertThat(doubleStats(10.0, 20.0).decideLeaf(gtDouble, true))
-                .isEqualTo(MIGHT_MATCH);
-
+                .isEqualTo(ALWAYS_MATCHES);
         ResolvedPredicate gtFloat =
                 new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.GT, 1.0f);
         assertThat(floatStats(10.0f, 20.0f).decideLeaf(gtFloat, true))
-                .isEqualTo(MIGHT_MATCH);
+                .isEqualTo(ALWAYS_MATCHES);
 
+        // A NaN row fails LT, so only a NaN-free unit is a full match.
+        ResolvedPredicate ltDouble =
+                new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.LT, 30.0);
+        assertThat(doubleStats(10.0, 20.0).decideLeaf(ltDouble, true))
+                .isEqualTo(MIGHT_MATCH);
+        assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(ltDouble, true))
+                .isEqualTo(ALWAYS_MATCHES);
+
+        // An IN list is a full match on a single point, where a NaN row is ruled out by the
+        // count or matched by a NaN probe.
         ResolvedPredicate inDouble =
                 new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 });
         assertThat(doubleStats(15.0, 15.0).decideLeaf(inDouble, true))
                 .isEqualTo(MIGHT_MATCH);
+        assertThat(nanFreeDoubleStats(15.0, 15.0).decideLeaf(inDouble, true))
+                .isEqualTo(ALWAYS_MATCHES);
+        ResolvedPredicate inDoubleWithNaN =
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0, Double.NaN });
+        assertThat(doubleStats(15.0, 15.0).decideLeaf(inDoubleWithNaN, true))
+                .isEqualTo(ALWAYS_MATCHES);
 
-        // CANNOT_MATCH is still proven by operators a NaN row never satisfies, such as EQ
-        // outside the bounds — not by floating-point GT, which NaN rows may match (#1016).
+        // Nulls still stand in the way of a full match.
+        assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(gtDouble, false))
+                .isEqualTo(MIGHT_MATCH);
+
+        // CANNOT_MATCH is proven by operators a NaN row never satisfies, such as EQ outside the
+        // bounds, and by GT only where the unit is proven NaN-free (#1016).
         ResolvedPredicate eqOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.EQ, 25.0);
         assertThat(doubleStats(10.0, 20.0).decideLeaf(eqOutside, true))
                 .isEqualTo(CANNOT_MATCH);
-
         ResolvedPredicate gtOutside =
                 new ResolvedPredicate.DoublePredicate(0, FilterPredicate.Operator.GT, 25.0);
         assertThat(doubleStats(10.0, 20.0).decideLeaf(gtOutside, true))
                 .isEqualTo(MIGHT_MATCH);
-
-        // A recorded nan_count of zero lets the bounds prove GT empty, but a fully-satisfying
-        // interval is not promoted to ALWAYS_MATCHES (#898).
         assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(gtOutside, true))
                 .isEqualTo(CANNOT_MATCH);
-        assertThat(nanFreeDoubleStats(10.0, 20.0).decideLeaf(gtDouble, true))
-                .isEqualTo(MIGHT_MATCH);
     }
 
     // ==================== Binary leaf decisions ====================

@@ -1,6 +1,6 @@
 # Statistics pruning
 
-Describes how a file's metadata decides, for a row group or a page, whether no row, some rows or every row can match a resolved predicate. It covers the three statistics a unit carries (min/max, null count, definition level histogram), how bounds are judged readable, the row-group absence probes (bloom filters and dictionaries), and page pruning through the column index and inline page statistics.
+Describes how a file's metadata decides, for a row group or a page, whether no row, some rows or every row can match a resolved predicate. It covers the four statistics a unit carries (min/max, null count, `NaN` count, definition level histogram), how bounds are judged readable, the row-group absence probes (bloom filters and dictionaries), and page pruning through the column index and inline page statistics.
 
 Related documents:
 
@@ -15,9 +15,9 @@ Related documents:
 
 | Decision | Meaning | Proven by |
 |---|---|---|
-| `CANNOT_MATCH` | no row of the unit matches; skip it | min/max, null count, histogram, bloom filter, dictionary, geospatial bounding box |
+| `CANNOT_MATCH` | no row of the unit matches; skip it | min/max, null count, `NaN` count, histogram, bloom filter, dictionary, geospatial bounding box |
 | `MIGHT_MATCH` | undecided; evaluate the rows | the default wherever metadata is absent, partial or untrusted |
-| `ALWAYS_MATCHES` | every row matches; per-row evaluation is redundant | min/max, null count and histogram only |
+| `ALWAYS_MATCHES` | every row matches; per-row evaluation is redundant | min/max, null count, `NaN` count and histogram only |
 
 Bloom filters and dictionaries answer "is this value present?". That bounds what a unit can hold and says nothing about what every row does hold, so neither ever raises a decision to `ALWAYS_MATCHES`.
 
@@ -37,7 +37,7 @@ A unit is one column's statistics over a stretch of rows. `UnitStats` is a seale
 | `IndexPageStats` | the `ColumnIndex` entry at one page index, with the `OffsetIndex` locating it | next page's `firstRowIndex` minus this page's; the row group's row count minus it for the last page |
 | `InlinePageStats` | `Statistics` on a `DataPageHeader` or `DataPageHeaderV2` | `DataPageHeaderV2.numRows()`; for v1, `numValues()` on a column with no repeated node above it, `UNKNOWN_ROW_COUNT` below one |
 
-Sourcing resolves where a statistic comes from once, and absorbs every guard against it not being there: a column ordinal the row group does not carry, absent `ColumnMetaData`, absent `Statistics`, an absent null count or histogram. A unit that cannot be sourced has every statistic unknown and proves nothing. Every proof that needs a row count yields `MIGHT_MATCH` under `UNKNOWN_ROW_COUNT`.
+Sourcing resolves where a statistic comes from once, and absorbs every guard against it not being there: a column ordinal the row group does not carry, absent `ColumnMetaData`, absent `Statistics`, an absent null count, `NaN` count or histogram. A unit that cannot be sourced has every statistic unknown and proves nothing. Every proof that needs a row count yields `MIGHT_MATCH` under `UNKNOWN_ROW_COUNT`.
 
 `UnitStats.decide(leaf, logContext)` is the single entry point. It names every leaf type of `ResolvedPredicate` in an exhaustive switch, so a new leaf does not compile until it states which statistic answers it, and in particular whether a null can satisfy it. `AND` and `OR` passed to it throw `IllegalArgumentException`. Row-group filtering, column-index page filtering and the inline page drop all go through it, so a chunk and a page carrying the same statistics prove the same thing.
 
@@ -45,7 +45,7 @@ What is shared is the leaf decision only. The `AND`/`OR` fold stays per evaluato
 
 Tests: `UnitStatsTest`, `PageDropPredicatesTest`.
 
-## The three statistics
+## The four statistics
 
 ### Min/max
 
@@ -96,6 +96,17 @@ Tests: `MinMaxStatsTest`, `InvertedStatisticsFilterTest`, `UnsignedIntegerFilter
 
 Tests: `UnitStatsTest`, `PageFilterEvaluatorTest`.
 
+### `NaN` counts
+
+`NaNStats` carries a floating-point unit's `nan_count` (`Statistics.nanCount` for a chunk or inline page, `ColumnIndex.nanCounts[i]` for a column-index page) and is read for `FLOAT`, `DOUBLE` and `FLOAT16` leaves only. An absent count is unknown and proves nothing.
+
+- `nanFree()`, a recorded count of zero, lets the bounds speak for every non-null value; `MinMaxStats` reads it as described under [NaN](#nan).
+- `allNaN()` holds where `nanCount + nullCount == rowCount`, or `nanCount == rowCount` with the null count unknown: every row is null or `NaN`. Such a unit is decided before its bounds, which a type-defined-order writer does not record for it and a total-order writer records as `NaN`. `CANNOT_MATCH` where a `NaN` row fails the leaf, `ALWAYS_MATCHES` where it satisfies the leaf and `nanCount == rowCount`, `MIGHT_MATCH` otherwise. Whether a `NaN` row satisfies a comparison is the table under [NaN](#nan); it satisfies an `IN` list exactly when the list holds a `NaN` probe.
+
+The count is held against the row count for the reason `NullStats` gives: a filtered leaf writes one entry per row.
+
+Tests: `UnitStatsTest`, `PageFilterEvaluatorTest`.
+
 ### Definition level histograms
 
 `DefinitionLevelStats` carries one histogram with one bucket per definition level up to the leaf's maximum. A null predicate on a node at definition level `d` splits the buckets at `d`: entries below were written with the node absent, entries at or above with it present.
@@ -113,7 +124,7 @@ IS NULL / IS NOT NULL
   group()  (definitionLevel < leafDefinitionLevel)  -> histogram only; MIGHT_MATCH without one
   leaf, histogram sizedFor(leafDefinitionLevel)     -> histogram
   leaf, otherwise                                   -> null count
-value predicate                                     -> null count (all-null), then min/max
+value predicate                                     -> NaN count (all-NaN, floating point only), null count (all-null), then min/max
 EveryNonNullRowPredicate                            -> null count, as IS NOT NULL
 NoRowPredicate                                      -> CANNOT_MATCH
 GeospatialPredicate                                 -> MIGHT_MATCH (no unit carries it)
@@ -129,7 +140,7 @@ Tests: `UnitStatsTest`, `PageFilterEvaluatorTest`.
 
 A value leaf is `ALWAYS_MATCHES` when its bounds are usable, the whole interval satisfies the operator, and `NullStats` proves `nullCount == 0`. `MinMaxStats.decideLeaf` takes the null-free fact as a parameter, so a caller cannot promise every row while leaving null rows unaccounted for. A unit recording no null count is not null-free.
 
-Floating-point leaves (`FLOAT`, `DOUBLE`, `FLOAT16`) never yield `ALWAYS_MATCHES` at any granularity: `NaN` sits outside the bounds, and a recorded `nan_count` of zero is not used to promote a fully satisfying interval.
+A floating-point leaf (`FLOAT`, `DOUBLE`, `FLOAT16`) additionally needs a `NaN` row accounted for, since `NaN` sits outside the bounds: by a recorded `nan_count` of zero, or by the operator where a `NaN` row satisfies it anyway (`GT`, `GT_EQ`, `NOT_EQ` against a number, `LT_EQ` and `GT_EQ` against `NaN`, an `IN` list holding `NaN`). The ±0 widening of [Column order and signed zeros](#column-order-and-signed-zeros) only enlarges the interval, so it applies here as well.
 
 Composition on the row-group side (`FilterDecision.and` / `or`, folded in `RowGroupFilterEvaluator`):
 
@@ -186,7 +197,7 @@ Only a recorded `nan_count` of zero proves a unit holds no `NaN`; an absent coun
 | `GT_EQ` | anything |
 | `LT` | never |
 
-A floating-point `IN` list containing a `NaN` probe never drops on bounds. Chunk units read `Statistics.nanCount`, column-index pages `ColumnIndex.nanCounts[i]`.
+A floating-point `IN` list containing a `NaN` probe never drops on bounds. The count is sourced by `NaNStats` ([`NaN` counts](#nan-counts)), which also decides an all-`NaN` unit without its bounds.
 
 Tests: `NaNStatisticsFilterTest`, `PageFilterEvaluatorTest`.
 
@@ -276,7 +287,7 @@ A column chunk with no offset index is read through `SequentialFetchPlan`, which
 - **Leaves.** `PageDropPredicates.byColumn` collects the AND-necessary leaves per column: it recurses into `AND`, skips every `OR` subtree, and keeps leaves. Falsifying such a leaf falsifies the predicate.
 - **Placeholders.** A dropped page is replaced by `PageInfo.nullPlaceholder` with the rows the page contributes (the masked count where a row mask applies), decoded as an all-null page. Sibling columns stay row-aligned and the per-row filter rejects the null rows. Hence only a leaf a null row fails may drop a page: `IS NULL` is never collected.
 - **Optional columns only.** A required column (`maxDefinitionLevel == 0`) cannot represent the placeholder's nulls and decodes every page. Untested.
-- **Decision.** `canDropPage` builds an `InlinePageStats` and drops the page if any leaf is `CANNOT_MATCH`, from bounds or from a null count equal to the page's row count. A page header carries no histogram, so group null predicates are never decided here.
+- **Decision.** `canDropPage` builds an `InlinePageStats` and drops the page if any leaf is `CANNOT_MATCH`, from bounds, from a null count equal to the page's row count, or from a `NaN` count that leaves no non-null value outside `NaN`. A page header carries no histogram, so group null predicates are never decided here.
 
 Tests: `PageDropPredicatesTest`, `PredicatePushDownTest`, `InlineNullPageDropTest`.
 
@@ -299,6 +310,6 @@ Tests: `RowGroupBloomFilterEventTest`, `RowGroupDictionaryFilterEventTest`, `Row
 - **Inline page drops are per column.** A page dropped on its inline statistics saves that column's decompression and decode only; sibling columns fetch and decode the same rows, because the drop is found while walking the column's page headers, after every fetch plan is built.
 - **Absence probes are row-group scoped.** Parquet carries no per-page bloom filter or dictionary, so they stay outside `UnitStats`.
 - **Geospatial `intersects` is row-group only.** `GeospatialStatistics` lives on `ColumnMetaData`; page units report it unknown ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)).
-- **Floating-point full matches and all-`NaN` units** (#898). A recorded `nan_count` of zero rules out a `NaN` row but does not promote a satisfying interval to `ALWAYS_MATCHES`, and a unit whose bounds are `NaN` (an all-`NaN` unit under the total order) is discarded rather than pruned.
+- **`NaN` bounds are not interpreted.** A total-order writer may record `NaN` bounds for a unit holding `NaN`; they are discarded, and an all-`NaN` unit is recognised from its `nan_count`, which that order also requires.
 - **Declared sort order is unused** (#838). `ColumnIndex.boundaryOrder` and `sorting_columns` are not consulted; page decisions walk every page.
 - **Filter regions outside the file** (#1135). A bloom filter or dictionary chunk the footer places past the end of the file fails with `InputFile.readRange`'s bounds error rather than a `ParquetReadException` naming the footer field.

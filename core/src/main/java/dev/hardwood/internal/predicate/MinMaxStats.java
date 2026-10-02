@@ -39,8 +39,8 @@ sealed interface MinMaxStats {
     /// every finite value in `Double.compare`'s total order, so comparing against such a
     /// bound would prune units holding matching finite rows (#566). A `NaN` bound is
     /// invalid under `TYPE_ORDER`; under `IEEE_754_TOTAL_ORDER` it may instead represent
-    /// an all-`NaN` unit, whose interpretation is deferred to #898 — so the pair is
-    /// discarded either way.
+    /// an all-`NaN` unit, which that order also requires a `nan_count` for, and [NaNStats]
+    /// identifies from the count — so the pair is discarded either way.
     String NOT_A_NUMBER = "one of them is NaN, which sorts above every finite value";
 
     /// The spec requires `min <= max`. A pair the wrong way round excludes every value it
@@ -143,17 +143,15 @@ sealed interface MinMaxStats {
         if (stats.isMinMaxDeprecated()) {
             return new NoBounds(DEPRECATED_SORT_ORDER);
         }
-        Long nanCount = stats.nanCount();
-        return sourced(stats.minValue(), stats.maxValue(), nanCount != null && nanCount == 0,
+        return sourced(stats.minValue(), stats.maxValue(), NaNStats.of(stats).nanFree(),
                 leaf, readability);
     }
 
     /// The [ColumnIndex] entry for one page of a column chunk.
     static MinMaxStats ofPage(ColumnIndex columnIndex, int pageIndex, ResolvedPredicate leaf,
             BoundsReadability readability) {
-        long[] nanCounts = columnIndex.nanCounts();
         return sourced(columnIndex.minValues().get(pageIndex), columnIndex.maxValues().get(pageIndex),
-                nanCounts != null && nanCounts[pageIndex] == 0, leaf, readability);
+                NaNStats.ofPage(columnIndex, pageIndex).nanFree(), leaf, readability);
     }
 
     /// Decodes the pair as the leaf reads it, yielding [NoBounds] where the file wrote none,
@@ -445,7 +443,8 @@ sealed interface MinMaxStats {
     ///
     /// `nanFree`, whether the unit records a `nan_count` of zero, is carried rather than applied
     /// here because it decides whether the bounds can rule out a `NaN` row, not whether they hold
-    /// together; see [StatisticsFilterSupport#canDropFloat].
+    /// together; see [StatisticsFilterSupport#canDropFloat] and
+    /// [StatisticsFilterSupport#alwaysMatchesFloat].
     record FloatStats(float min, float max, boolean nanFree)
             implements MinMaxStats {
 
@@ -471,13 +470,19 @@ sealed interface MinMaxStats {
             };
         }
 
-        /// NaN values sit outside the min/max ordering, so a unit whose `[min, max]` fully
-        /// satisfies the predicate may still hold non-matching NaN rows. Only a `nanFree` unit
-        /// rules them out, and promoting one to a full match is #898, so a floating-point column
-        /// is never promised a full match here.
         @Override
         public boolean alwaysMatches(ResolvedPredicate leaf) {
-            return false;
+            return switch (leaf) {
+                case ResolvedPredicate.FloatPredicate p -> StatisticsFilterSupport.alwaysMatchesFloat(
+                        p.op(), p.value(), min, max, nanFree);
+                case ResolvedPredicate.Float16Predicate p -> StatisticsFilterSupport.alwaysMatchesFloat(
+                        p.op(), p.value(), min, max, nanFree);
+                case ResolvedPredicate.FloatInPredicate p -> StatisticsFilterSupport.alwaysMatchesFloatIn(
+                        p.values(), min, max, nanFree);
+                case ResolvedPredicate.Float16InPredicate p -> StatisticsFilterSupport.alwaysMatchesFloatIn(
+                        p.values(), min, max, nanFree);
+                default -> throw wrongWidth("FLOAT", leaf);
+            };
         }
     }
 
@@ -503,10 +508,15 @@ sealed interface MinMaxStats {
             };
         }
 
-        /// See [FloatStats#alwaysMatches].
         @Override
         public boolean alwaysMatches(ResolvedPredicate leaf) {
-            return false;
+            return switch (leaf) {
+                case ResolvedPredicate.DoublePredicate p -> StatisticsFilterSupport.alwaysMatchesDouble(
+                        p.op(), p.value(), min, max, nanFree);
+                case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.alwaysMatchesDoubleIn(
+                        p.values(), min, max, nanFree);
+                default -> throw wrongWidth("DOUBLE", leaf);
+            };
         }
     }
 

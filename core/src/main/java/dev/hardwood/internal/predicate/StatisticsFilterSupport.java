@@ -92,7 +92,7 @@ final class StatisticsFilterSupport {
     /// unit's bounds say nothing about.
     ///
     /// @param naNProbe whether the predicate's value is itself `NaN`
-    private static boolean naNRowSatisfies(FilterPredicate.Operator op, boolean naNProbe) {
+    static boolean naNRowSatisfies(FilterPredicate.Operator op, boolean naNProbe) {
         return switch (op) {
             case EQ, LT_EQ -> naNProbe;
             case NOT_EQ, GT -> !naNProbe;
@@ -145,6 +145,51 @@ final class StatisticsFilterSupport {
             case LT_EQ -> cmpMax >= 0;
             case GT -> cmpMin < 0;
             case GT_EQ -> cmpMin <= 0;
+        };
+    }
+
+    /// Determines if every row of a unit with `FLOAT` or `FLOAT16` min/max statistics satisfies
+    /// the operator.
+    ///
+    /// The bounds are assumed usable, as for [#canDropFloat], and describe the unit's non-`NaN`
+    /// values only. A `NaN` row is accounted for either by `nanFree`, which rules it out, or by
+    /// the operator, where a `NaN` row satisfies it anyway. Widening a zero bound only enlarges
+    /// the interval, so the widening [#canDropFloat] applies is sound here too.
+    ///
+    /// @param nanFree whether the unit records a `nan_count` of zero
+    static boolean alwaysMatchesFloat(FilterPredicate.Operator op, float value, float min, float max,
+            boolean nanFree) {
+        if (!nanFree && !naNRowSatisfies(op, Float.isNaN(value))) {
+            return false;
+        }
+        min = (min == 0.0f) ? -0.0f : min;
+        max = (max == 0.0f) ? 0.0f : max;
+        return switch (op) {
+            case EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
+            case NOT_EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
+            case LT -> Float.compare(max, value) < 0;
+            case LT_EQ -> Float.compare(max, value) <= 0;
+            case GT -> Float.compare(min, value) > 0;
+            case GT_EQ -> Float.compare(min, value) >= 0;
+        };
+    }
+
+    /// Determines if every row of a unit with `DOUBLE` min/max statistics satisfies the
+    /// operator. See [#alwaysMatchesFloat].
+    static boolean alwaysMatchesDouble(FilterPredicate.Operator op, double value, double min, double max,
+            boolean nanFree) {
+        if (!nanFree && !naNRowSatisfies(op, Double.isNaN(value))) {
+            return false;
+        }
+        min = (min == 0.0) ? -0.0 : min;
+        max = (max == 0.0) ? 0.0 : max;
+        return switch (op) {
+            case EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;
+            case NOT_EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
+            case LT -> Double.compare(max, value) < 0;
+            case LT_EQ -> Double.compare(max, value) <= 0;
+            case GT -> Double.compare(min, value) > 0;
+            case GT_EQ -> Double.compare(min, value) >= 0;
         };
     }
 
@@ -201,10 +246,8 @@ final class StatisticsFilterSupport {
         // See canDropFloat: widen ±0 bounds.
         min = (min == 0.0f) ? -0.0f : min;
         max = (max == 0.0f) ? 0.0f : max;
-        for (float value : values) {
-            if (Float.isNaN(value)) {
-                return false;
-            }
+        if (containsNaN(values)) {
+            return false;
         }
         for (float value : values) {
             if (Float.compare(value, min) >= 0 && Float.compare(value, max) <= 0) {
@@ -218,10 +261,8 @@ final class StatisticsFilterSupport {
         // See canDropFloat: widen ±0 bounds.
         min = (min == 0.0) ? -0.0 : min;
         max = (max == 0.0) ? 0.0 : max;
-        for (double value : values) {
-            if (Double.isNaN(value)) {
-                return false;
-            }
+        if (containsNaN(values)) {
+            return false;
         }
         for (double value : values) {
             if (Double.compare(value, min) >= 0 && Double.compare(value, max) <= 0) {
@@ -229,6 +270,25 @@ final class StatisticsFilterSupport {
             }
         }
         return true;
+    }
+
+    /// Whether a floating-point `IN` list holds a `NaN` probe, which a `NaN` row matches.
+    static boolean containsNaN(float[] values) {
+        for (float value : values) {
+            if (Float.isNaN(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean containsNaN(double[] values) {
+        for (double value : values) {
+            if (Double.isNaN(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, Comparison comparison) {
@@ -262,6 +322,37 @@ final class StatisticsFilterSupport {
         }
         for (long value : values) {
             if (value == min) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// The single-point case for a floating-point column, where a `NaN` row is accounted for by
+    /// `nanFree` or by a `NaN` probe in the list. A zero bound is widened as for [#canDropFloat],
+    /// so a unit of zeroes is never a single point.
+    static boolean alwaysMatchesFloatIn(float[] values, float min, float max, boolean nanFree) {
+        min = (min == 0.0f) ? -0.0f : min;
+        max = (max == 0.0f) ? 0.0f : max;
+        if (Float.compare(min, max) != 0 || !(nanFree || containsNaN(values))) {
+            return false;
+        }
+        for (float value : values) {
+            if (Float.compare(value, min) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean alwaysMatchesDoubleIn(double[] values, double min, double max, boolean nanFree) {
+        min = (min == 0.0) ? -0.0 : min;
+        max = (max == 0.0) ? 0.0 : max;
+        if (Double.compare(min, max) != 0 || !(nanFree || containsNaN(values))) {
+            return false;
+        }
+        for (double value : values) {
+            if (Double.compare(value, min) == 0) {
                 return true;
             }
         }

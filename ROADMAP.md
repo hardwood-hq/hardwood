@@ -324,7 +324,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 9.1 Statistics
 - [x] Implement `Statistics` record (minValue, maxValue, nullCount, distinctCount)
 - [x] Statistics deserialization (`StatisticsReader` with deprecated/preferred field fallback)
-- [x] `nan_count` deserialization (`StatisticsReader` field 9; no functional consumer yet)
+- [x] `nan_count` deserialization (`StatisticsReader` field 9)
+- [x] `nan_count` in pruning: a recorded zero lets floating-point bounds prove a full match, and a count covering every non-null value prunes an all-`NaN` row group or page, or proves a row group a full match (#898)
 - [x] Implement `SizeStatistics` record (unencoded `BYTE_ARRAY` size, repetition/definition level histograms)
 - [x] SizeStatistics deserialization (`SizeStatisticsReader`, `ColumnMetaData` field 16)
 - [x] SizeStatistics and level histograms surfaced in the CLI (`dive` column chunk detail, `inspect columns --column`)
