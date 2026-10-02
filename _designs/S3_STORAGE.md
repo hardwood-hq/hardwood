@@ -1,6 +1,6 @@
 # S3 Storage
 
-Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
 
 Related documents:
 
@@ -88,6 +88,10 @@ Tests: `Aws4SignerTest` (s3), which runs the SigV4 conformance vectors of `awsla
 `S3Fetcher.open()` issues one `GET` with `Range: bytes=-65536` instead of a `HEAD`. The response carries the object size in `Content-Range` (`bytes a-b/size`), falling back to `Content-Length` when the object is smaller than the window and the server answers `200` with the whole body. The same round-trip returns the last 64 KB of the object, which usually contains the Parquet footer and its length field, so opening a file costs one request instead of two. The window size is a cost heuristic, not an assumption about file layout: a footer larger than the window is read by a second range request, because the tail serves only reads that lie entirely inside it. Opening is idempotent.
 
 The tail bytes are held in a direct buffer for as long as the file is open, so slices handed to FFM-based decompressors are native memory. Any `readRange` wholly inside the tail window is answered from it without a request, in both backing modes.
+
+### Object identity
+
+`S3InputFile.identity()` is the `ETag` header of the response to the suffix-range `GET`, taken as the server sends it, quotes included, and empty when the server sends none. It costs no request beyond the open, is fixed when the file opens, and names the object version whose tail and length the open observed. S3 changes the `ETag` whenever an object's content changes, which is what a `MetadataSource` footer check relies on ([INPUT_FILES.md](INPUT_FILES.md#identity)). Range reads after the open do not send `If-Match`, so the identity names the content at open time and not what a later range read returns. The s3proxy file-system backend the integration tests run against sends no `ETag`; `S3InputFileIdentityTest` covers the identity against a local endpoint that does.
 
 ### Range reads
 

@@ -14,6 +14,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Optional;
 
 import dev.hardwood.InputFile;
 
@@ -139,6 +140,11 @@ public final class RangeBackedInputFile implements InputFile {
     @Override
     public String name() {
         return delegate.name();
+    }
+
+    @Override
+    public Optional<String> identity() throws IOException {
+        return delegate.identity();
     }
 
     @Override

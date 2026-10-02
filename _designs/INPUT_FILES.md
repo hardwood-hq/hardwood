@@ -1,6 +1,6 @@
 # Input files
 
-Describes how the reader gets at a file's bytes: the `InputFile` contract, who opens and closes an `InputFile`, the memory-mapped local backend, the in-memory backend, the backend-agnostic range cache in core, and the size limits each imposes.
+Describes how the reader gets at a file's bytes: the `InputFile` contract and the identity of a file's content, who opens and closes an `InputFile`, the memory-mapped local backend, the in-memory backend, the backend-agnostic range cache in core, and the size limits each imposes.
 
 Related documents:
 
@@ -20,19 +20,35 @@ Related documents:
 | `readRange(long offset, int length)` | Returns the bytes `[offset, offset + length)` of the file. `offset` is absolute within the file. The returned buffer has position `0` at `offset` and exactly `length` bytes remaining. It may be a zero-copy view (a slice of a mapping or of a caller's buffer) or a freshly allocated buffer. |
 | `length()` | The file's size in bytes. |
 | `name()` | A human-readable identifier. It prefixes exception messages (`ExceptionContext.filePrefix`, which renders `[name] …`) and fills the `file` field of JFR events. |
+| `identity()` | An identifier of the content the file was opened against, or empty. Defaulted to empty. See [Identity](#identity). |
 | `close()` | Releases what `open()` acquired. |
 
 The mapped and range-backed backends throw `IllegalStateException` for a `readRange` or `length` call before `open()`. Every built-in backend throws `IndexOutOfBoundsException` for a range outside `[0, length())`, through the shared check `ReadRanges.checkBounds`, with the message `[name] readRange(offset, length) out of bounds (n bytes)`. An I/O failure is an `IOException`; an implementation that reports a failed read as `UncheckedIOException` is still treated as a transport failure, not as a corrupt file (see [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md)).
 
 A returned buffer belongs to the caller that asked for it, and the read pipeline treats it as immutable. The contract does not require it to be read-only: a mapped slice is, an in-memory slice inherits the mutability of the user's buffer, and a range-cache slice is a writable view of the cache.
 
-`InputFile` carries no identity beyond `name()`. Nothing in core keys state on an `InputFile` across readers; the parsed-footer cache lives inside one reader (see [FILE_METADATA.md](FILE_METADATA.md)).
+Nothing in core keys state on an `InputFile` across readers: the parsed-footer cache lives inside one reader, and a footer that outlives a reader lives in the caller's `MetadataSource` ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)).
 
 **Thread safety.** Once opened, an `InputFile` must accept concurrent `readRange` and `length` calls from any thread. A read calls it from the thread that opens the reader (the first footer) and the thread that builds a fast-`tail` reader (its planning reads), from every column's retriever thread, and from common-pool tasks (every later file's footer load, and the plan and chunk prefetches) at the same time ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)). `open()` and `close()` need not be thread-safe: the reader calls `open()` once per file on one thread, and the thread start or future hand-off that carries the opened file to the reading threads publishes the fields `open()` wrote. `MappedInputFile` relies on this; its fields are neither `volatile` nor guarded. `RangeBackedInputFile` synchronises `open`, `readRange` and `close`.
 
 **Interruption.** A backend may use an interruptible channel. `FileChannel` is one: interrupting a thread inside a channel operation, or entering one with the interrupt flag set, closes the channel for every user of that `InputFile`. The reader therefore never interrupts a thread that can be inside `readRange`: `ColumnWorker.close()` interrupts only the drain, which does no I/O ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)), and the decode tasks a context's `shutdownNow()` interrupts read no file either. The retrievers and speculative tasks that do read are stopped and awaited, never interrupted ([Closing](#ownership-and-lifecycle)). A caller that cancels its own reads by interrupting the reading thread (`Future.cancel(true)`) closes the channel of a local file larger than 2 GB.
 
 Tests: `ByteBufferInputFileTest`, `MappedInputFileLargeFileTest`, `FileNameInExceptionTest`, `ColumnReadersTransportFailureTest`. The interruption rule is untested.
+
+### Identity
+
+`identity()` names the content an `InputFile` was opened against, so that a footer read from one file is not used on another. A `ParsedFooter` records the identity of the file it was read from, and a reader compares it with the identity of the file it opens before using a footer a `MetadataSource` supplied ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)). Two contents with the same identity must be the same bytes; a backend that cannot promise that returns empty.
+
+| Backend | Identity | Cost |
+|---|---|---|
+| `MappedInputFile` | `size:mtime:fileKey` from `BasicFileAttributes`, the modification time at the file system's full precision; the absolute path takes the file key's place where the file system has none, since size and modification time alone can be shared by two different files | one stat in `open()` |
+| `S3InputFile` | the object's `ETag` ([S3_STORAGE.md](S3_STORAGE.md#object-identity)) | none |
+| `ByteBufferInputFile` | empty | none |
+| `RangeBackedInputFile` | its wrapped file's | none |
+
+The identity is resolved by `open()` and fixed for the file's lifetime: it names what the file holds for its reader, not what its location holds by the time it is asked, and so stays true when the location changes underneath an open reader. The built-in backends that resolve it in `open()` throw `IllegalStateException` when asked before it. `MappedInputFile` stats the path before it opens the channel. A replacement racing with `open()` then leaves the identity naming the content the path held before, which no later open finds again, so a footer recorded against it is never served for the replacement under that identity; stating after the channel opened would label the mapped bytes with the replacement's identity instead.
+
+Tests: `MappedInputFileIdentityTest`, `S3InputFileIdentityTest`.
 
 ## Ownership and lifecycle
 

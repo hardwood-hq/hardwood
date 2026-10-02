@@ -75,6 +75,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `convert --format json` writes a non-finite Variant float as a JSON string and a Variant timestamp without a time zone without a trailing `Z` ([#1021](https://github.com/hardwood-hq/hardwood/issues/1021)).
 
+- A `MetadataSource` installed through `HardwoodContext.builder()` supplies the parsed footer of every file a reader opens, so a footer is read and parsed once for any number of readers ([#837](https://github.com/hardwood-hq/hardwood/issues/837)).
+
 **Breaking Changes:**
 
 - A filter predicate's literal must be a value the column's accessors return: a `String` filters only text columns, an `Instant` only UTC timestamps and a `LocalDate` only `DATE` columns. Other literals, ordered operators on types without an order, and equality literals the column cannot hold throw `IllegalArgumentException` ([#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).

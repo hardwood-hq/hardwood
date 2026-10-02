@@ -1,6 +1,6 @@
 # File metadata
 
-Describes how the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, and the per-file cache that holds each parsed footer for one `ParquetFileReader`.
+Describes how the reader turns a file's metadata bytes into the records everything else plans against: locating and reading the footer, the malformed-input policy of the Thrift compact-protocol parser, the public metadata records and what their absent fields look like, the parse and consistency checks of statistics, the page index and bloom filters, the per-file cache that holds each parsed footer for one `ParquetFileReader`, and the footers a caller supplies through a `MetadataSource` and how they are checked against the file.
 
 Related documents:
 
@@ -14,7 +14,7 @@ Related documents:
 
 ## Footer read
 
-`ParquetMetadataReader.readFooter` reads a footer from the end of the file alone, in two range reads:
+`ParquetMetadataReader.read` reads a footer from the end of the file alone, in two range reads:
 
 1. The last eight bytes: the little-endian footer length and the trailing magic.
 2. The footer body, `footerLength` bytes ending where those eight begin.
@@ -31,7 +31,7 @@ The leading magic is never read. Every page is located through the footer, so th
 
 Both encryption modes raise the same `UnsupportedOperationException` (`ParquetMetadataReader.ENCRYPTED_MESSAGE`): the file is correct and this library does not decrypt it. How the plaintext-footer case leaves the Thrift parse is in [EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#the-table-above-is-the-whole-list).
 
-The footer is read once per file per `ParquetFileReader`: at `open`/`openAll` for the first file, and through the per-file cache for the rest ([Per-file metadata](#per-file-metadata)). `FileSchema.fromSchemaElements` derives the schema from the parsed footer in the same step, after `BareRepeatedGroups` has dropped the annotation of every repeated group outside a `LIST`/`MAP` group, other than `VARIANT`, from the elements ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)); a failure in either is a read failure of that file, raised as `ParquetReadException`. The drop runs at these two sites rather than in `fromSchemaElements`, which also builds the schemas declared for the writer, where `WriterSchemaShape` refuses the same groups.
+A `ParquetFileReader` acquires each file's footer once, through `ParquetMetadataReader.load`: at `open`/`openAll` for the first file, and through the per-file cache for the rest ([Per-file metadata](#per-file-metadata)). `load` reads the footer, or takes it from the context's `MetadataSource` when one is installed ([Supplied footers](#supplied-footers)). `ParquetMetadataReader.schemaOf` derives the schema from the parsed footer in the same step, after `BareRepeatedGroups` has dropped the annotation of every repeated group outside a `LIST`/`MAP` group, other than `VARIANT`, from the elements ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)); a failure in either is a read failure of that file, raised as `ParquetReadException`. The drop runs in `schemaOf` rather than in `fromSchemaElements`, which also builds the schemas declared for the writer, where `WriterSchemaShape` refuses the same groups. The parse, the schema and the two lengths travel together as a `FileFooter`.
 
 Tests: `ParquetMetadataReaderTest`, `EncryptedFileTest`, `ParquetFileReaderFooterFailureTest`, `ParquetFileReaderOpenFailureTest`, `AnnotatedBareRepeatedGroupTest`. The "File too small" check and a footer length that reaches into the leading magic are untested.
 
@@ -191,7 +191,7 @@ Each call reads at most one footer, so the checked `IOException` it declares bel
 
 ### Lifetime and failure
 
-- **Seeded first file.** `openAll` reads the first footer and seeds index `0` with it, so opening a reader and inspecting that index never read the same footer twice.
+- **Seeded first file.** `openAll` loads the first footer and seeds index `0` with it, so opening a reader and inspecting that index never load the same footer twice.
 - **One load per file.** Indexed metadata access and every `RowGroupIterator` go through the same cache, so no direction of access reparses a footer. `computeIfAbsent` under the lifecycle lock makes all requesters of an index observe the same future.
 - **Failures stay cached.** A failed load remains in the map, so the reader does not retry it implicitly. Closing and reopening the parent reader is the retry boundary after a failure and the refresh boundary for a file changed on storage; inputs must stay unchanged while the reader is open.
 - **Exception shape.** A load runs in a `Supplier`, which wraps an `IOException` in `UncheckedIOException`, and `join` wraps again in `CompletionException`. `FileMetadataCache.getFile` undoes both, so synchronous metadata access and iterator planning both see the failure prefixed with the file name: an `IOException` with the original as its cause, or a `ParquetReadException` or `UnsupportedOperationException` of the original type. A non-`IOException` runtime failure while reading a later footer is restated as a read failure with the file name, as on the first file.
@@ -203,9 +203,30 @@ A `RowGroupIterator` built directly over a list of files, outside a `ParquetFile
 
 Tests: `FileMetadataCacheTest`, `MultiFileRowReaderTest`, `MultiFilePlanningTest`, `ParquetFileReaderFooterFailureTest`, `EncryptedFileTest`.
 
+## Supplied footers
+
+A `MetadataSource` (`dev.hardwood`) installed on a `HardwoodContext` supplies the footer of every file a reader opened against that context reads. It is consulted where the reader acquires a footer, in `ParquetMetadataReader.load`, which both the first-file open and `FileMetadataCache.loadFile` call, so a multi-file reader asks it for each later file when that file is loaded. The source owns acquisition: it returns a footer for every file, reading one on a miss, so retention, eviction and the handling of a failing store are the caller's and the reader has no fallback path.
+
+A `ParsedFooter` (`dev.hardwood.metadata`) is a public interface whose one implementation, `ParsedFooterImpl`, is created by `ParsedFooter.readFrom`, which reads through the same `ParquetMetadataReader.read` as a reader's own open and records the file's `InputFile.identity()`. It wraps the `FileFooter` that read produced, with the leaves whose logical type the parse did not read and the schema `schemaOf` derived, so a reader served from a source gets the schema and `BoundsReadability` it would have derived from the file: no path builds either from a footer it did not read itself. `load` takes the `FileFooter` from that implementation, as the readers take their context from `HardwoodContextImpl`. A `ParsedFooter` is held in memory only. The Thrift readers skip every field they do not model, so a parse written back out is not the footer the file holds, and a persisted form would need the original footer bytes.
+
+Every chunk offset and page location comes from the footer, so a footer that does not describe the file reads unrelated bytes rather than failing. `load` therefore checks each supplied footer before returning it, in this order:
+
+| Check | Fails when | Cost |
+|---|---|---|
+| `IDENTITY` | the footer's source identity and the file's identity are both present and differ | none: both are resolved at open ([INPUT_FILES.md](INPUT_FILES.md#identity)) |
+| `STRUCTURE` | a byte range the footer locates in its own file (column chunks, page indexes, bloom filters) ends past `length()` | none |
+| `TRAILER` | the file's length differs from the length the footer was read with, or the footer length in the file's last eight bytes differs from the footer's | one read of the last eight bytes, the read a reader's own open makes first |
+
+Identity is the sound check; the other two hold where a backend has none. A same-length rewrite that keeps the footer length passes them. `STRUCTURE` reports a file shorter than the data the footer locates, such as a truncated file or a shorter replacement, before the trailer's length comparison would. It checks nothing that is a property of the footer alone, such as row groups that disagree with `num_rows`: a reader's own open accepts such a footer, and a served open must not reject a file a reader's own open reads. With a source installed an open reads only the trailer, where a reader's own open reads the trailer and the footer body. On S3 the trailer lies in the tail the open pre-fetches, so a supplied footer costs no request, and saves the second request a footer larger than that tail costs ([S3_STORAGE.md](S3_STORAGE.md#open-suffix-range-tail-fetch)). The leading magic is not read here either.
+
+A failed check raises `StaleMetadataException`, an `IOException` naming the file, the check, and both identities. It is not a `ParquetReadException`: the file is intact, and evicting the footer the source served and opening a new reader is the remedy. `FileMetadataCache.loadFile` carries it through its future as the sole cause of an `UncheckedIOException`, so `getFile` hands the caller the exception itself. A `RuntimeException` the source raises keeps its type and gains the file prefix; it is the caller's code failing, not the file, so it is not restated as a read failure. A source that returns `null` raises `IllegalStateException`. An `IOException` it raises propagates unchanged from the first file's open; for a later file `loadFile` wraps it as it wraps any `IOException` of the load, so `getFile` raises an `IOException` naming the file with the source's as its cause.
+
+The source is called on the thread that opens the reader for the first file and on the common-pool tasks that load later footers, for several files at once, so an implementation must be thread-safe, and a call blocks the load waiting on it.
+
+Tests: `MetadataSourceTest`, `MappedInputFileIdentityTest`, `S3InputFileIdentityTest`, `S3MetadataSourceIT`, and `UnreadableSortOrderTest` for bounds readability on a supplied footer.
+
 ## Boundaries
 
-- **Parsed metadata reuse across opens** (#837). The cache lives for one `ParquetFileReader`; a caller that opens a reader per request parses the footer on every open. No mechanism lets a caller supply a parsed footer.
 - **Unknown compression codec** (#967). A codec id past `LZ4_RAW` raises from the footer parse, so a file written with a codec the format adds later has unreadable metadata as well as unreadable data.
 - **Parquet Modular Encryption** (#128). Both encryption modes are refused at the footer.
 - **`DataPageHeaderV2.num_nulls = -1`** (#1225). parquet-java before 1.18.0 writes it for columns with statistics disabled; the non-negative rule rejects such pages.

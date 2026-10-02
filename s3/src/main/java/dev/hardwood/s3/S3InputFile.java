@@ -9,7 +9,9 @@ package dev.hardwood.s3;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 
+import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.RangeBackedInputFile;
 
@@ -72,6 +74,14 @@ public class S3InputFile implements InputFile {
     @Override
     public String name() {
         return impl.name();
+    }
+
+    /// The object's `ETag`, taken from the response to the request [#open()] issues; empty when
+    /// the endpoint sent none.
+    @Override
+    @Experimental
+    public Optional<String> identity() {
+        return fetcher.identity();
     }
 
     @Override

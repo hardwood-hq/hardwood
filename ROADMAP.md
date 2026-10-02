@@ -245,6 +245,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Page decompression
 - [x] Parallel column batch fetching
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
+- [x] Footers supplied across readers through a `MetadataSource` on the context, checked against each file before use (#837; see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md#supplied-footers))
 
 ### 7.3 Record Assembly (Inverse Dremel)
 - [x] Column reader synchronization (via RowReader)

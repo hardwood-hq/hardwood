@@ -18,7 +18,7 @@ On a local file up to 2 GB a `readRange` is a zero-copy slice of the whole-file 
 
 | Step | Where | Requests |
 |---|---|---|
-| Footer | `ParquetMetadataReader.readFooter` | Two reads: the trailing length and magic, then the footer body; the leading magic is not read ([FILE_METADATA.md](FILE_METADATA.md#footer-read)). On S3 the suffix read `S3InputFile.open` issues serves both when the footer lies inside it ([S3_STORAGE.md](S3_STORAGE.md)) |
+| Footer | `ParquetMetadataReader.read` | Two reads: the trailing length and magic, then the footer body; the leading magic is not read ([FILE_METADATA.md](FILE_METADATA.md#footer-read)). A footer a `MetadataSource` supplies costs the first read only ([FILE_METADATA.md](FILE_METADATA.md#supplied-footers)). On S3 the suffix read `S3InputFile.open` issues serves both when the footer lies inside it ([S3_STORAGE.md](S3_STORAGE.md)) |
 | Row-group pruning on footer statistics | `RowGroupIterator.filterRowGroups` | None. Records, per kept row group, the columns whose bloom filter a leaf would probe |
 
 A file is planned when the first column enters the previous file's last row group, one row group ahead of the read ([READ_PIPELINE.md](READ_PIPELINE.md#incremental-planning)). Planning reads no bloom filter; which leaves are probed is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).

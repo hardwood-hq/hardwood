@@ -266,7 +266,7 @@ public class RowGroupIterator implements Closeable {
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles), true, NO_CLOSE_LISTENER, context,
+        this(new FileMetadataCache(inputFiles, context.metadataSource()), true, NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
 

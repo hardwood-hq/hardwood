@@ -22,6 +22,7 @@ whether to fix their code or stop trusting the file.
 | Exception | Means | Retriable |
 |---|---|---|
 | `IOException` | the bytes did not arrive | yes |
+| `StaleMetadataException` | an `IOException`: the footer a `MetadataSource` supplied does not describe the file; the file is intact | yes, once the source reads the footer afresh |
 | `ParquetReadException` | they arrived and are not valid Parquet | no |
 | `SchemaIncompatibleException` | a `ParquetReadException`: schemas that cannot be reconciled across a multi-file read, or a footer disagreeing with itself | no |
 | `ParquetWriteException` | the writer could not produce the file, and neither the caller nor the destination is at fault | no |
