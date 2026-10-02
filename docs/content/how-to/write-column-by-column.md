@@ -44,9 +44,9 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 }
 ```
 
-The writer creates the batch — bound to the schema — hands it to the filler, then submits it, so there is no separate build or submit step. `columnWriter()` returns the same view on every call, so it can be obtained once and kept; call `writeBatch` as often as there is data and the writer bands the values into pages and row groups itself.
+The writer creates the batch — bound to the schema — hands it to the filler, then submits it, so there is no separate build or submit step. `columnWriter()` returns the same view on every call, so it can be obtained once and kept; call `writeBatch` as often as there is data and the writer bands the values into pages and row groups itself. Batch boundaries leave no trace in the file, and what the writer holds follows `rowGroupBufferTargetBytes` rather than the batch size; see [The Write Model](../concepts/write-model.md#why-the-writer-chooses-the-boundaries). A file is written through one API: calling both `columnWriter()` and [`rowWriter()`](write-row-by-row.md) on the same `ParquetFileWriter` is rejected, on the call that obtains the second view.
 
-The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination. After a failure, see [Handle Write Failures](write-failures.md).
+The footer is written last, so **the file is valid only once `close()` returns**. After a failure, see [Handle Write Failures](write-failures.md).
 
 ## Batch Rules
 
@@ -81,8 +81,6 @@ columns.writeBatch(batch -> batch
         .ints("score", scores, nulls));
 ```
 
-The values array stays full length — one slot per row — and the entry at a null row is never read, so there is no need to compact the values.
-
 `Validity` is the same type the reader returns from `getLeafValidity()`, so a mask read from one file can be handed straight to the writer of another. Build one with `Validity.ofNulls(boolean[])` (`nulls[i] == true` marks row `i` null) or `Validity.of(long[])` for a packed bitmap with set-bit-means-present polarity; `Validity.NO_NULLS` is the all-present singleton.
 
 ```java
@@ -98,7 +96,7 @@ A null mask on a `REQUIRED` column is rejected. A `boolean[]` mask is length-che
 
 ## Binary and Fixed-Width Values
 
-`bytes(...)` writes a `BYTE_ARRAY` column and `fixed(...)` a `FIXED_LEN_BYTE_ARRAY` column, both taking `byte[][]`. A `STRING` column is a `BYTE_ARRAY` column annotated `STRING`, so its values are written as UTF-8 bytes — the columnar API has no `String` overload, and the encoding is the caller's to perform:
+`bytes(...)` writes a `BYTE_ARRAY` column and `fixed(...)` a `FIXED_LEN_BYTE_ARRAY` column, both taking `byte[][]`. A `STRING` column takes its values as UTF-8 bytes the caller encodes:
 
 ```java
 byte[][] names = new byte[people.size()][];
@@ -107,7 +105,7 @@ for (int i = 0; i < names.length; i++) {
 }
 ```
 
-Every present value of a `FIXED_LEN_BYTE_ARRAY` column must be exactly the length the column declares. The bytes themselves are written as given: the writer does not check that a `STRING` column's values are valid UTF-8, or that a `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY` column's payloads are well formed.
+Every present value of a `FIXED_LEN_BYTE_ARRAY` column must be exactly the length the column declares. The writer does not validate binary content; see [Value Ranges](../reference/writer.md#value-ranges).
 
 ## Nested Columns
 
@@ -153,36 +151,8 @@ Layers compose to any depth: `list("m.list.element", innerOffsets)` describes th
 
 Offsets are validated: they must start at `0`, be non-decreasing, and end at exactly the number of entries the element column holds.
 
-The `list` and `map` verbs address the entry offsets of a `LIST` or `MAP` group, and a repeated field the annotation does not account for has no offsets to address — so `create` rejects one, listed under [Schema Shapes](../reference/writer.md#schema-shapes). A schema read back from an existing file may carry a legacy two-level list, `LIST { repeated element }` or `LIST { repeated group element { … } }`; both are writable here, addressed through the annotated group's path exactly as the three-level layout is.
-
-## Batch Size
-
-Batch boundaries leave no trace in the file. The writer distributes each batch's values into per-column buffers, flushes a row group once those reach the row-group target, and cuts the pages as the row group is written out; a batch larger than the row-group target is split at that boundary.
-
-Submit whole columns as one large batch, or stream many small ones and discard each after handing it over; the file is the same either way. What the writer holds follows `rowGroupBufferTargetBytes` rather than the batch size — see [The Write Model](../concepts/write-model.md).
+`create` rejects a repeated field that no `LIST` or `MAP` annotation accounts for; see [Schema Shapes](../reference/writer.md#schema-shapes). The legacy two-level lists a schema read from an existing file may carry are writable here, addressed through the annotated group's path exactly as the three-level layout is.
 
 ## Configuring the Writer
 
-`WriterConfig` carries the page and row-group targets, the compression codec and the per-column encoding policy. Pass one to `create`:
-
-```java
-import dev.hardwood.metadata.CompressionCodec;
-import dev.hardwood.writer.ColumnEncoding;
-import dev.hardwood.writer.WriterConfig;
-
-WriterConfig config = WriterConfig.builder()
-        .codec(CompressionCodec.ZSTD)
-        .rowGroupBufferTargetBytes(64L << 20)
-        .encoding("temperature", ColumnEncoding.BYTE_STREAM_SPLIT)
-        .build();
-```
-
-Every option, its default and what it rejects: [Writer Reference](../reference/writer.md).
-
-## Stamping Metadata on the File
-
-The footer's key-value metadata and its `created_by` identifier are set on the `ParquetFileWriter`, at any point until `close()`. See [File Metadata](../reference/writer.md#file-metadata).
-
-## One API per File
-
-A file is written through one API or the other: calling both `columnWriter()` and [`rowWriter()`](write-row-by-row.md) on the same `ParquetFileWriter` is rejected, on the call that obtains the second view. The row-oriented layer stages records into batches and submits them through this same core, so it produces the same layout — see [Choosing a Writer](index.md#choosing-a-writer).
+Pass a `WriterConfig` to `ParquetFileWriter.create(out, schema, config)` to set the codec, the page and row-group targets and the per-column encoding policy; every option, its default and what it rejects is under [Writer Options](../reference/writer.md#writer-options). The footer's key-value metadata and `created_by` identifier are set on the `ParquetFileWriter` until `close()`; see [File Metadata](../reference/writer.md#file-metadata).

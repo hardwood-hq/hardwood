@@ -11,7 +11,7 @@
 -->
 # Package Structure
 
-Hardwood is organized into public API packages and internal implementation packages. Application code should import only from the public packages; `dev.hardwood.internal.*` and its subpackages are implementation details and may change without notice.
+Application code should import only from the packages marked **Public API**.
 
 | Package | Visibility | Purpose |
 |---------|-----------|---------|
