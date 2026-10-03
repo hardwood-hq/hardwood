@@ -17,16 +17,16 @@ Related documents:
 The Parquet container is written front to back and never seeked backward:
 
 ```
-PAR1 | <row group 0 pages> | <row group 1 pages> | ... | FileMetaData (thrift) | <footer length: 4 bytes LE> | PAR1
+PAR1 | <row group 0 pages> | <row group 1 pages> | ... | <page index> | FileMetaData (thrift) | <footer length: 4 bytes LE> | PAR1
 ```
 
-Every offset a reader needs lives in the `FileMetaData` footer, which is emitted last. The writer takes the running byte position from `OutputFile.position()`, records page and column-chunk offsets as it streams them out, and serializes the accumulated metadata at the end. No random access and no memory mapping are required on the write path, and the output size is not known until the file is finished. This is the inverse of the read side, which maps a file of known size and fans out random-access reads ([INPUT_FILES.md](INPUT_FILES.md)).
+Every offset a reader needs lives in the `FileMetaData` footer, which is emitted last. The writer takes the running byte position from `OutputFile.position()`, records page and column-chunk offsets as it streams them out, and serializes the accumulated metadata at the end. The page index of every column chunk is written as one block between the last row group and the footer ([Page index](WRITER_ENCODING.md#page-index)), so it too is emitted after everything it describes. No random access and no memory mapping are required on the write path, and the output size is not known until the file is finished. This is the inverse of the read side, which maps a file of known size and fans out random-access reads ([INPUT_FILES.md](INPUT_FILES.md)).
 
 ### Row-group buffering
 
-A row group's column chunks are written contiguously, and each column chunk's metadata (compressed and uncompressed sizes, page offsets, statistics, encodings) is only known once its bytes have been encoded. The writer therefore **buffers a full row group's columns in memory, then encodes and writes them in schema order**. A file of any size is a sequence of row groups, each buffered, flushed and forgotten, so what the writer holds follows the row-group targets rather than the size of the file ([Memory](#memory)).
+A row group's column chunks are written contiguously, and each column chunk's metadata (compressed and uncompressed sizes, page offsets, statistics, encodings) is only known once its bytes have been encoded. The writer therefore **buffers a full row group's columns in memory, then encodes and writes them in schema order**. A file of any size is a sequence of row groups, each buffered, flushed and forgotten, so what the writer holds follows the row-group targets rather than the size of the file, apart from the page index it keeps for the footer ([Memory](#memory)).
 
-Three layout tiers stack here: a **page** holds a slice of one column, a **column chunk** is one column's pages for one row group, and a **row group** holds one column chunk per leaf column. All three are internal; only the page target and the two row-group targets are user-visible, as `WriterConfig` options.
+Three layout tiers stack here: a **page** holds a slice of one column, a **column chunk** is one column's pages for one row group, and a **row group** holds one column chunk per leaf column. All three are internal; only the two page targets and the two row-group targets are user-visible, as `WriterConfig` options.
 
 Buffering the whole row group before encoding is what lets each column chunk's encoding be chosen from everything the chunk holds, and lets a page be cut on the bytes it encodes to ([WRITER_ENCODING.md](WRITER_ENCODING.md)). Both depend on the chunk being complete before its first page is produced.
 
@@ -182,6 +182,8 @@ A writer's heap is dominated by the open row group, and `retainedBytes()` is the
 - **Read windows.** Each `ValueEncoder` reads its source through a fixed typed window, filled in bulk, so reading a value is not a virtual call into `ColumnSource` per value.
 - **Row-layer staging.** `RowWriter` stages records into a batch before submitting it, until a fixed record count or until the staged variable-width payload reaches `rowGroupBufferTargetBytes`. That staging is held beside the open row group.
 - **The caller's batch.** A `ColumnBatch` references the caller's arrays for the duration of `writeBatch`; the writer copies what it keeps.
+- **Dictionary page scans.** A column that writes dictionary pages keeps two `int` arrays sized to the largest dictionary it has tracked, plus room for the most distinct entries one page has named, to find each page's distinct entries ([WRITER_ENCODING.md](WRITER_ENCODING.md#statistics)). They are kept for the next row group, and only dictionaries up to a fixed size are tracked, so they are bounded per column.
+- **The page index.** Each flushed row group's `ColumnIndex` and `OffsetIndex` are held until `close()` writes them. This is the one thing that grows with the file: per data page, a location and, where the chunk has a column index, two bounds. A bound is the type's width for a fixed-width column; a `BYTE_ARRAY` bound is at most `statisticsTruncationLength` bytes, except a `max` with no shorter upper bound and a binary `DECIMAL` bound, which are written whole. Pages are at most `pageTargetRows` records but may hold fewer where the byte target cuts first, so the index grows by at least one entry per `pageTargetRows` records per column.
 
 Where the row target cuts first, peak heap is the row count times what a record retains: a byte per level stream per entry, 4 bytes of index per present value while its chunk is interning (plus a dictionary entry if the value is new), or the value's width once the chunk has stopped interning. A column whose values are narrower than its levels (a flat `OPTIONAL` `BOOLEAN`, one bit of value against one byte of level) is the case where the level store dominates. The user-facing sizing guide is [write-model.md](../docs/content/concepts/write-model.md#what-bounds-memory).
 
@@ -198,7 +200,7 @@ Tests: `WriterRetentionTest`, `WriterSizingMatrixTest`.
 | `version` | `1` |
 | `schema` | `FileSchema.toSchemaElements()`, with the logical-type annotations `LogicalTypeWriter` serializes ([WRITER_INPUT.md](WRITER_INPUT.md)) |
 | `num_rows` | the sum over row groups |
-| `row_groups` | one per flushed row group, each column chunk's `ColumnMetaData` as its buffer produced it ([WRITER_ENCODING.md](WRITER_ENCODING.md)); no offset or column index, no Bloom filter |
+| `row_groups` | one per flushed row group, each column chunk's `ColumnMetaData` as its buffer produced it ([WRITER_ENCODING.md](WRITER_ENCODING.md)), with the offset and length of its `OffsetIndex` and, where it has one, its `ColumnIndex`; no Bloom filter |
 | `key_value_metadata` | the entries set on the writer, in insertion order; omitted when there are none |
 | `created_by` | `ParquetFileWriter.DEFAULT_CREATED_BY` unless replaced |
 | `column_orders` | `TYPE_DEFINED_ORDER` for every leaf column, the order every statistics collector computes in; the format requires the list wherever bounds are written |

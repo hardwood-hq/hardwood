@@ -137,13 +137,37 @@ final class IntValueEncoder extends ValueEncoder {
     }
 
     @Override
-    void stat(int valueIndex) {
-        statistics.accept(valueAt(valueIndex));
+    PageBounds pageStatistics(int[] indices, int valueFrom, int valueCount, long nullCount) {
+        IntStatisticsCollector page = new IntStatisticsCollector(unsignedOrder);
+        int end = valueFrom + valueCount;
+        if (indices != null) {
+            int[] entries = dictionary.values();
+            for (int i = valueFrom; i < end; i++) {
+                page.accept(entries[indices[i]]);
+            }
+        }
+        else {
+            for (int i = valueFrom; i < end; i++) {
+                page.accept(plain[i]);
+            }
+        }
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
     }
 
     @Override
-    void statNull() {
-        statistics.acceptNull();
+    PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
+                                        long nullCount) {
+        IntStatisticsCollector page = new IntStatisticsCollector(unsignedOrder);
+        int[] values = dictionary.values();
+        for (int k = 0; k < distinct; k++) {
+            page.accept(values[entries[k]]);
+        }
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return statistics.compareBounds(left, right);
     }
 
     @Override

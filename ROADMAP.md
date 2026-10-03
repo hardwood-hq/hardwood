@@ -183,7 +183,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 6.1 Writer Architecture
 - [x] Implement `RowWriter` — the row-oriented layer over the columnar core, obtained from
   `ParquetFileWriter.rowWriter()` (see `_designs/WRITER_INPUT.md#rowwriter`)
-- [x] Implement `WriterConfig` (row-group row and buffer targets, page target, per-column encoding policy,
+- [x] Implement `WriterConfig` (row-group row and buffer targets, page byte and row targets, per-column encoding policy,
   codec, statistics truncation, precision-loss policy)
 - [x] Implement `ColumnWriter` — the columnar entry point, obtained from
   `ParquetFileWriter.columnWriter()`, taking one aligned batch of typed arrays through
@@ -349,7 +349,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Coalesced index fetching (`IndexWindow` — the slices a read needs, per structure, in windows of row groups)
 - [x] OffsetIndex-based page scanning (`PageScanner.scanPagesFromIndex()`)
 - [x] Page skipping based on ColumnIndex min/max (`PageFilterEvaluator`, integrated with `FileManager` for page-range I/O)
-- [ ] Page index writing
+- [x] Page index writing (`ColumnIndexBuilder`, written before the footer; pages record-aligned and capped by `pageTargetRows`)
 
 ### 9.3 Bloom Filters
 - [x] Implement split block bloom filter

@@ -9,10 +9,10 @@ package dev.hardwood.internal.writer;
 
 import dev.hardwood.internal.schema.AnnotationPairings;
 import dev.hardwood.internal.schema.ByteColumnOrder;
-import dev.hardwood.metadata.Statistics;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.schema.ColumnSchema;
 
-/// A binary column chunk's statistics accumulator.
+/// A binary column's statistics accumulator, for one page or one chunk.
 ///
 /// The bytes of a `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column carry no single ordering: the
 /// same physical type is compared unsigned byte-wise when it holds a string, as a signed
@@ -20,7 +20,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// timestamp, and as a represented floating-point value when it holds a half-precision float.
 /// `AnnotationPairings.byteColumnOrder` picks the accumulator, so the ordering is decided once per
 /// chunk rather than tested per value, and in the order the resolver compares a literal in.
-interface BinaryStatistics {
+abstract class BinaryStatistics extends StatisticsCollector<BinaryStatistics> {
 
     /// Selects the accumulator for a binary column's sort order.
     ///
@@ -33,13 +33,14 @@ interface BinaryStatistics {
             // A decimal's bounds compare as signed big-endian integers, under which a prefix is
             // not a lower bound, so they are never truncated.
             case SIGNED_BIG_ENDIAN -> new BinaryStatisticsCollector(ByteColumnOrder.SIGNED_BIG_ENDIAN,
-                    Integer.MAX_VALUE);
+                    Integer.MAX_VALUE, false);
             // A FIXED_LEN_BYTE_ARRAY(12) timestamp is already at its bound length.
             case SIGNED_LITTLE_ENDIAN -> new BinaryStatisticsCollector(ByteColumnOrder.SIGNED_LITTLE_ENDIAN,
-                    Integer.MAX_VALUE);
+                    Integer.MAX_VALUE, false);
             // A FIXED_LEN_BYTE_ARRAY is already at its bound length, so only a BYTE_ARRAY truncates.
             case BYTES -> new BinaryStatisticsCollector(ByteColumnOrder.BYTES,
-                    column.typeLength() == null ? truncationLength : Integer.MAX_VALUE);
+                    column.typeLength() == null ? truncationLength : Integer.MAX_VALUE,
+                    TextColumns.isAnnotatedText(column.type(), column.logicalType()));
             case INT96_INSTANT -> throw new IllegalStateException(
                     "The writer writes no INT96 column: " + column.name());
             // No ordering exists to accumulate in, and the bounds would be dropped at flush, so
@@ -49,12 +50,14 @@ interface BinaryStatistics {
         };
     }
 
-    /// Extends the bounds with a present value.
-    void accept(byte[] value);
+    /// Extends the bounds with a present value, `array[offset, offset + length)`. The slice is
+    /// copied where it is kept, since the array is the chunk's value store, which the next row
+    /// group reuses.
+    abstract void accept(byte[] array, int offset, int length);
 
-    /// Counts an absent (null) slot.
-    void acceptNull();
-
-    /// The accumulated chunk statistics.
-    Statistics toStatistics();
+    /// Extends the bounds with a present value occurring `times` times. Only a count of values
+    /// depends on the repetition, so by default the value is taken once.
+    void accept(byte[] array, int offset, int length, int times) {
+        accept(array, offset, length);
+    }
 }

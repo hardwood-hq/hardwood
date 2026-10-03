@@ -21,8 +21,10 @@ import dev.hardwood.writer.ColumnEncoding;
 ///
 /// The shredder emits only source positions, so every type-specific line lives here behind a
 /// type-agnostic shredder and page sealer. A concrete encoder reads a present value through its
-/// window at the shredder's `valueIndex`, feeds it to the dictionary or the `PLAIN` buffer, and
-/// extends the statistics; an absent slot only advances the null count.
+/// window at the shredder's `valueIndex` and feeds it to the dictionary or the `PLAIN` buffer.
+/// Statistics are taken at flush, page by page, from what the chunk holds: a page's values are
+/// compared once, by that page's collector, and the chunk's statistics are the merge of its
+/// pages'.
 abstract class ValueEncoder {
 
     /// Selects the encoder for a column's physical type. `encoding` is the column's resolved
@@ -245,13 +247,28 @@ abstract class ValueEncoder {
     /// place, so a page's value bytes are produced exactly once.
     abstract void encodeInto(ByteArrayBuilder out, ColumnEncoding encoding, int from, int count);
 
-    /// Extends the chunk statistics with the present value at `valueIndex`.
-    abstract void stat(int valueIndex);
+    /// Collects the statistics of one data page and merges them into the chunk's. The page's
+    /// present values are the stored values `[valueFrom, valueFrom + valueCount)`, or, where
+    /// `indices` is not `null`, the dictionary entries those positions of `indices` name.
+    ///
+    /// @param nullCount the page's absent slots
+    /// @return the page's bounds for the chunk's `ColumnIndex`
+    abstract PageBounds pageStatistics(int[] indices, int valueFrom, int valueCount, long nullCount);
 
-    /// Extends the chunk statistics with an absent (null) slot.
-    abstract void statNull();
+    /// Collects the statistics of one data page of a dictionary chunk from the distinct entries it
+    /// names, and merges them into the chunk's: `entries[0, distinct)`, each occurring as often
+    /// as `occurrences` says, which only a `NaN` count depends on.
+    ///
+    /// @param valueCount the page's present values
+    /// @param nullCount the page's absent slots
+    /// @return the page's bounds for the chunk's `ColumnIndex`
+    abstract PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
+                                                 long nullCount);
 
-    /// The accumulated chunk statistics.
+    /// Compares two page bounds as [#pageStatistics] encodes them, in the column's order.
+    abstract int compareBounds(byte[] left, byte[] right);
+
+    /// The chunk statistics, the merge of every page's that [#pageStatistics] has collected.
     abstract Statistics statistics();
 
     /// The most one present value can retain: its width in the value store, or a dictionary index

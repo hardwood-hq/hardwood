@@ -50,17 +50,19 @@ The value section of an `RLE_DICTIONARY` page is `[1-byte index bit width][RLE/b
 
 The dictionary page is a `DICTIONARY_PAGE` header with `num_values` equal to the dictionary size and encoding `PLAIN`, over the distinct values `PLAIN`-encoded in index order. Indices are assigned in first-seen order. `is_sorted` is not written.
 
-Every page body, dictionary page included, is compressed with the file's codec before framing, and every page header carries a CRC-32 over the body as stored. No data page carries inline statistics.
+Every page body, dictionary page included, is compressed with the file's codec before framing, and every page header carries a CRC-32 over the body as stored. No data page carries inline statistics: its bounds are in the page index.
 
 **Each page decodes without the page before it**, since a reader may seek to any page. A page encodes its value range standalone: its own `DELTA_BINARY_PACKED` header and first value, its own `DELTA_BYTE_ARRAY` prefix baseline (the page's first value has prefix length zero), its own byte streams for `BYTE_STREAM_SPLIT`. The only chunk-level state a page depends on is the encoding choice and, for `RLE_DICTIONARY`, the dictionary page.
 
 ### Page cut
 
-A page is cut at flush, on the bytes it encodes to. By then the chunk's encoding is settled, so each entry is charged what it will cost: a dictionary-encoded value the index width, a `PLAIN` fixed-width value its width, a `PLAIN` `BYTE_ARRAY` value its 4-byte prefix plus its length from the store's offsets. Levels are charged the width their stream encodes at, which RLE beats on any column whose levels run. The page takes entries until the next would cross `pageTargetBytes`, and at least one, so the target is a ceiling that only a single value larger than the whole target can breach.
+A page is cut at flush, on the bytes it encodes to and on the records it holds, at whichever of `pageTargetBytes` and `pageTargetRows` it reaches first. By then the chunk's encoding is settled, so each entry is charged what it will cost: a dictionary-encoded value the index width, a `PLAIN` fixed-width value its width, a `PLAIN` `BYTE_ARRAY` value its 4-byte prefix plus its length from the store's offsets. Levels are charged the width their stream encodes at, which RLE beats on any column whose levels run. The page takes records until the next would cross `pageTargetBytes`, and at least one, so the target is a ceiling that only a single record larger than the whole target can breach.
 
 The three delta encodings are the exception. Their width is a property of the values, which only encoding reveals, so the cut charges them the width the type would take `PLAIN`. No delta encoding exceeds that, so such pages land under the target. `AUTO` never chooses a delta encoding, so only a caller who named one reaches this.
 
-A page cut counts level entries, not records: a page may end part-way through a repeated record, and a record larger than the target spans several pages.
+**A page holds whole records.** The page index locates a page by its first record (`first_row_index`), and the format requires every page to start at a record boundary once an `OffsetIndex` is present. On a repeated column the cut therefore ends a page at the start of the record that would cross the byte target, and a record larger than the byte target is a page of its own. `pageTargetRows` counts records, not values, for the same reason.
+
+The record target exists for the page index. Without it, a column whose values encode small (a dictionary column of narrow indices, a run of repeated values) holds a whole row group in one or two pages, and its column index has nothing to prune by.
 
 Tests: `WriterLayoutTest`, `WriterDictionaryTest`, `WriterEncodingPolicyTest`, `ColumnMetaDataWriterTest`, `RowGroupDictionaryFilterSourceTest`, `WriterInteropTest` (parquet-testing-runner).
 
@@ -197,7 +199,7 @@ Tests: `WriterCompressionTest`, `CompressorFactoryTest`, `WriterCodecFailureTest
 
 ## Statistics
 
-Every column chunk carries a `Statistics`, accumulated by the `ValueEncoder`'s collector as each value arrives, independently of encoding. `StatisticsWriter` emits:
+Every column chunk carries a `Statistics`, independent of encoding. Statistics are taken at flush, page by page, from the values the chunk holds: the stored values, or for a dictionary chunk the dictionary entries its indices name. A dictionary chunk's page is first scanned for the distinct entries it names, with how often each occurs, and its largest index, which the page's bit width also needs; its bounds are then taken over those entries, so a page compares each entry once however often it repeats. The scan marks entries in two `int` arrays sized to the dictionary, so a dictionary too large to mark that way is taken value by value instead. A `BOOLEAN` page's bounds follow from counting its set bits a word at a time. Each page's collector is merged into the chunk's (`StatisticsCollector.merge`), so a value is compared once and the chunk's statistics and its page index describe the same bounds. `StatisticsWriter` emits:
 
 | Field | Written |
 |---|---|
@@ -236,9 +238,10 @@ A column's order is its logical type's where it has one, and its physical type's
 
 - a truncated `min` keeps the first `N` bytes, a prefix being `<=` the original;
 - a truncated `max` keeps the first `N` bytes, increments the last byte that is not `0xFF` and drops the bytes after it, giving the smallest string of length `<= N` that is `>=` the original; if every kept byte is `0xFF` no such bound exists and `max` is omitted;
+- a column annotated `STRING`, `ENUM` or `JSON` cuts at the code-point boundary at or before `N` bytes and, for `max`, replaces the last code point that has a successor with that successor, so its bounds stay valid UTF-8, which the format requires of a `ColumnIndex` bound. UTF-8 byte order is code-point order, so the bound keeps its side of the value. Bytes that are not well-formed UTF-8 are truncated as bytes;
 - a truncated bound is flagged inexact.
 
-Truncation is order-preserving only under unsigned byte-wise comparison, so it applies only to the lexicographic order. A binary `DECIMAL` bound is never truncated: under signed big-endian comparison a shorter byte string is a different value, in either direction. `FIXED_LEN_BYTE_ARRAY` bounds are written whole and exact. Bounds are copied from the caller's arrays on update, so a caller reusing its arrays before flush cannot corrupt them.
+Truncation is order-preserving only under unsigned byte-wise comparison, so it applies only to the lexicographic order. A binary `DECIMAL` bound is never truncated: under signed big-endian comparison a shorter byte string is a different value, in either direction. `FIXED_LEN_BYTE_ARRAY` bounds are written whole and exact. Bounds are copied out of the chunk's value store when kept: the next row group reuses that store, while the page index holds every page's bounds until `close()`.
 
 ### `distinct_count`
 
@@ -256,11 +259,31 @@ The footer carries `column_orders` with one `TYPE_DEFINED_ORDER` per leaf column
 
 Tests: `WriterStatisticsTest`, `WriterLogicalTypeStatisticsTest`, `WriterFixedWidthTypeRoundTripTest`, `WriterVariableWidthTypeRoundTripTest`, `WriterFlba12TimestampTest`, `WriterDictionaryTest`.
 
+## Page index
+
+Every column chunk gets an `OffsetIndex`, and a `ColumnIndex` wherever its bounds can be stated. Both are built as the chunk's pages are written (`ColumnIndexBuilder`), held by the writer until `close()`, and written between the last row group and the footer: every `ColumnIndex` of the file first, in row-group and then column order, then every `OffsetIndex` in the same order, as parquet-java lays them out. Kept together, the index of many row groups is one range for a reader to fetch.
+
+| Structure | Field | Written |
+|---|---|---|
+| `OffsetIndex` | `page_locations` | per data page: the offset of its header, its size including the header, and its first record within the row group |
+| | `unencoded_byte_array_data_bytes` | not written |
+| `ColumnIndex` | `null_pages` | per data page: whether it holds no present value |
+| | `min_values` / `max_values` | the page's bounds, under the chunk statistics' rules: the column's order, `NaN` excluded, zero bounds sign-normalized, `BYTE_ARRAY` bounds truncated to `statisticsTruncationLength`. A `max` with no shorter upper bound is written whole, the field being required. A null page has empty bounds |
+| | `boundary_order` | `ASCENDING` or `DESCENDING` where every non-null page's bounds are at least, or at most, the previous non-null page's; `UNORDERED` otherwise. Taken over the bounds as written, since truncating text at a code-point boundary does not preserve the order of the values truncated |
+| | `null_counts` | per data page, always |
+| | `nan_counts` | per data page of a `FLOAT`, `DOUBLE` or `FLOAT16` chunk |
+| | level histograms | not written |
+
+A chunk has no `ColumnIndex` where the format leaves its bounds unstateable: a column whose order is undefined, the same set that writes no chunk bounds, and a floating-point chunk with a page whose present values are all `NaN`. That page has no bounds under `TYPE_DEFINED_ORDER`, and the format forbids a column index for its chunk rather than let a reader mistake legacy files that bounded `NaN`. Its `OffsetIndex` is still written.
+
+Tests: `WriterPageIndexTest`, `WriterLayoutTest`, `WriterInteropTest` and `WriterNestedInteropTest` (parquet-testing-runner).
+
 ## Boundaries
 
-- **Page index and Bloom filters.** No `OffsetIndex`, `ColumnIndex` or Bloom filter is written, and data pages carry no inline statistics, so pages of a Hardwood-written file cannot be pruned. Page index writing will need pages aligned to record boundaries, which the entry-count cut does not guarantee on repeated columns (#1291).
+- **Bloom filters.** No Bloom filter is written (#1291).
+- **Level histograms.** The `ColumnIndex` level histograms and the `OffsetIndex` `unencoded_byte_array_data_bytes` are not written, nor is `SizeStatistics`, which carries the same counts per chunk (#894).
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
-- **`SizeStatistics` and `GeospatialStatistics`** are not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
+- **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
 - **Data page V2** is not produced; every data page is V1.
 - **Per-row-group settings.** The codec and the named policies hold for the whole file; changing them at a caller-placed row-group boundary is #985. The writer does not choose a codec per chunk, which `ColumnMetaData.codec` would permit.
 - **Automatic delta or byte-stream-split selection**, `RLE` for `BOOLEAN` data pages, and compression levels are not provided.

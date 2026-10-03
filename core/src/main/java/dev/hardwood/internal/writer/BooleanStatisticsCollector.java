@@ -11,38 +11,51 @@ import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a `BOOLEAN` column chunk's `min` / `max` / `null_count` with `false < true`
 /// ordering; each bound is a single byte (`0` / `1`).
-final class BooleanStatisticsCollector {
+final class BooleanStatisticsCollector extends StatisticsCollector<BooleanStatisticsCollector> {
+
+    private static final byte FALSE = 0;
+    private static final byte TRUE = 1;
 
     private boolean sawFalse;
     private boolean sawTrue;
-    private long nullCount;
 
-    void accept(boolean value) {
-        if (value) {
-            sawTrue = true;
-        }
-        else {
-            sawFalse = true;
-        }
+    /// Extends the statistics by `trues` present `true` values and `falses` present `false` ones,
+    /// which is all a `BOOLEAN` page's bounds depend on.
+    void acceptCounts(long trues, long falses) {
+        sawTrue |= trues > 0;
+        sawFalse |= falses > 0;
     }
 
-    void acceptNull() {
-        nullCount++;
+    @Override
+    void mergeValues(BooleanStatisticsCollector page) {
+        sawFalse |= page.sawFalse;
+        sawTrue |= page.sawTrue;
     }
 
-    /// How many distinct values the chunk holds, which for `BOOLEAN` needs no dictionary: at most
-    /// `false` and `true` can occur.
-    int distinctCount() {
-        return (sawFalse ? 1 : 0) + (sawTrue ? 1 : 0);
+    @Override
+    boolean hasValues() {
+        return sawFalse || sawTrue;
     }
 
+    @Override
     Statistics toStatistics() {
-        byte[] minValue = null;
-        byte[] maxValue = null;
-        if (sawFalse || sawTrue) {
-            minValue = new byte[] { sawFalse ? (byte) 0 : (byte) 1 };
-            maxValue = new byte[] { sawTrue ? (byte) 1 : (byte) 0 };
-        }
+        byte[] minValue = hasValues() ? indexMin() : null;
+        byte[] maxValue = hasValues() ? indexMax() : null;
         return new Statistics(minValue, maxValue, nullCount, null, false);
+    }
+
+    @Override
+    byte[] indexMin() {
+        return new byte[] { sawFalse ? FALSE : TRUE };
+    }
+
+    @Override
+    byte[] indexMax() {
+        return new byte[] { sawTrue ? TRUE : FALSE };
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return Byte.compare(left[0], right[0]);
     }
 }

@@ -198,13 +198,40 @@ final class BinaryValueEncoder extends ValueEncoder {
     }
 
     @Override
-    void stat(int valueIndex) {
-        statistics.accept(valueAt(valueIndex));
+    PageBounds pageStatistics(int[] indices, int valueFrom, int valueCount, long nullCount) {
+        BinaryStatistics page = statisticsFactory.get();
+        int end = valueFrom + valueCount;
+        if (indices != null) {
+            byte[][] entries = dictionary.values();
+            for (int i = valueFrom; i < end; i++) {
+                byte[] entry = entries[indices[i]];
+                page.accept(entry, 0, entry.length);
+            }
+        }
+        else {
+            byte[] data = plainData.array();
+            for (int i = valueFrom; i < end; i++) {
+                page.accept(data, plainOffsets[i], plainOffsets[i + 1] - plainOffsets[i]);
+            }
+        }
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
     }
 
     @Override
-    void statNull() {
-        statistics.acceptNull();
+    PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
+                                        long nullCount) {
+        BinaryStatistics page = statisticsFactory.get();
+        byte[][] values = dictionary.values();
+        for (int k = 0; k < distinct; k++) {
+            byte[] entry = values[entries[k]];
+            page.accept(entry, 0, entry.length, occurrences[k]);
+        }
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return statistics.compareBounds(left, right);
     }
 
     @Override

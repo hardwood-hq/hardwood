@@ -25,6 +25,11 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.internal.column.columnindex.ColumnIndex;
+import org.apache.parquet.schema.LogicalTypeAnnotation;
+import org.apache.parquet.schema.PrimitiveComparator;
+import org.apache.parquet.schema.PrimitiveType;
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,6 +42,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.testing.InteropCase.Nullability;
+import dev.hardwood.testing.ParquetJavaReader.PageIndex;
 import dev.hardwood.testing.ParquetJavaReader.Pages;
 import dev.hardwood.writer.ColumnEncoding;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -342,6 +348,7 @@ class WriterInteropTest {
         assertDistinctCounts(testCase, file);
         assertEncodings(testCase, footer, pages);
         assertEncodingStats(footer, pages);
+        assertPageIndex(testCase, file, footer, pages, ParquetJavaReader.readPageIndex(file));
         return new Verified(footer, pages);
     }
 
@@ -559,6 +566,90 @@ class WriterInteropTest {
             assertThat(chunks(footer).get(0).getEncodings()).as("first chunk's declared encodings")
                     .contains(Encoding.RLE_DICTIONARY);
         }
+    }
+
+    /// parquet-java reads every chunk's page index, and the page bounds agree with the written
+    /// data under parquet-java's own comparator: folded over every page they are the case's true
+    /// extremes, the same ones [#assertStatistics] holds the chunk statistics to, and a chunk whose
+    /// index claims an ascending or descending boundary order has page bounds that are.
+    ///
+    /// A chunk carries no `ColumnIndex` only where the format forbids one: a column without an
+    /// order, whose chunk statistics carry no bounds either, and a floating-point chunk with a page
+    /// of nothing but `NaN`, which its raw `nan_count` must show it holds.
+    @SuppressWarnings("unchecked")
+    private void assertPageIndex(InteropCase testCase, Path file, ParquetMetadata footer, Pages pages,
+                                 List<PageIndex> indexes) throws IOException {
+        ParquetJavaReader.assertPageIndexStructure(footer, pages, indexes);
+        List<ColumnChunkMetaData> chunks = chunks(footer);
+        List<Long> nanCounts = ParquetJavaReader.readNanCounts(file);
+        Comparable<Object> min = null;
+        Comparable<Object> max = null;
+        boolean everyChunkIndexed = true;
+        for (int i = 0; i < chunks.size(); i++) {
+            ColumnChunkMetaData chunk = chunks.get(i);
+            PrimitiveType type = chunk.getPrimitiveType();
+            ColumnIndex columnIndex = indexes.get(i).columnIndex();
+            if (columnIndex == null) {
+                boolean unordered = !chunk.getStatistics().hasNonNullValue()
+                        && chunk.getStatistics().getNumNulls() < chunk.getValueCount();
+                boolean allNaNPagePossible = isFloatingPoint(type) && nanCounts.get(i) > 0;
+                assertThat(unordered || allNaNPagePossible)
+                        .as("chunk %d has no column index although its column has an order", i).isTrue();
+                everyChunkIndexed = false;
+                continue;
+            }
+            PrimitiveComparator<Object> comparator = (PrimitiveComparator<Object>) type.comparator();
+            Object previousMin = null;
+            Object previousMax = null;
+            boolean ascending = true;
+            boolean descending = true;
+            for (int p = 0; p < columnIndex.getNullPages().size(); p++) {
+                if (columnIndex.getNullPages().get(p)) {
+                    continue;
+                }
+                Statistics<?> bounds = Statistics.getBuilderForReading(type)
+                        .withMin(bytes(columnIndex.getMinValues().get(p)))
+                        .withMax(bytes(columnIndex.getMaxValues().get(p)))
+                        .withNumNulls(0)
+                        .build();
+                Object pageMin = bounds.genericGetMin();
+                Object pageMax = bounds.genericGetMax();
+                assertThat(comparator.compare(pageMin, pageMax)).as("page %d of chunk %d has min <= max", p, i)
+                        .isLessThanOrEqualTo(0);
+                if (previousMin != null) {
+                    ascending &= comparator.compare(previousMin, pageMin) <= 0
+                            && comparator.compare(previousMax, pageMax) <= 0;
+                    descending &= comparator.compare(previousMin, pageMin) >= 0
+                            && comparator.compare(previousMax, pageMax) >= 0;
+                }
+                previousMin = pageMin;
+                previousMax = pageMax;
+                min = extreme(min, bounds.genericGetMin(), true);
+                max = extreme(max, bounds.genericGetMax(), false);
+            }
+            switch (columnIndex.getBoundaryOrder()) {
+                case ASCENDING -> assertThat(ascending).as("chunk %d's pages ascend", i).isTrue();
+                case DESCENDING -> assertThat(descending).as("chunk %d's pages descend", i).isTrue();
+                case UNORDERED -> {
+                }
+            }
+        }
+        if (everyChunkIndexed) {
+            assertThat(min).as("page index min").isEqualTo(testCase.type().expectedMin(testCase));
+            assertThat(max).as("page index max").isEqualTo(testCase.type().expectedMax(testCase));
+        }
+    }
+
+    private static boolean isFloatingPoint(PrimitiveType type) {
+        return type.getPrimitiveTypeName() == PrimitiveTypeName.FLOAT
+                || type.getPrimitiveTypeName() == PrimitiveTypeName.DOUBLE
+                || type.getLogicalTypeAnnotation() instanceof LogicalTypeAnnotation.Float16LogicalTypeAnnotation;
+    }
+
+    private static byte[] bytes(ByteBuffer buffer) {
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.duplicate().get(bytes);
+        return bytes;
     }
 
     /// parquet-java's decoding of each chunk's `encoding_stats` agrees with the pages it walked:

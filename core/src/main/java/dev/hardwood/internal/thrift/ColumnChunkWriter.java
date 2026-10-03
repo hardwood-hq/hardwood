@@ -25,6 +25,22 @@ public class ColumnChunkWriter {
             writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.STRUCT);
             ColumnMetaDataWriter.write(writer, chunk.metaData());
 
+            // 4/5: offset_index_offset / offset_index_length
+            if (chunk.offsetIndexOffset() != null) {
+                writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(chunk.offsetIndexOffset());
+                writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.I32);
+                writer.writeI32(chunk.offsetIndexLength());
+            }
+
+            // 6/7: column_index_offset / column_index_length
+            if (chunk.columnIndexOffset() != null) {
+                writer.writeFieldBegin(6, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(chunk.columnIndexOffset());
+                writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.I32);
+                writer.writeI32(chunk.columnIndexLength());
+            }
+
             writer.writeFieldStop();
         }
         finally {

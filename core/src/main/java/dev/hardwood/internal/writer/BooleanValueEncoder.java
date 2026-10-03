@@ -98,7 +98,28 @@ final class BooleanValueEncoder extends ValueEncoder {
 
     @Override
     long exactDistinctCount() {
-        return statistics.distinctCount();
+        // Counted from the store rather than the statistics, which are only taken at flush: at
+        // most `false` and `true` can occur.
+        long trues = trueCount(0, plainCount);
+        return (trues > 0 ? 1 : 0) + (trues < plainCount ? 1 : 0);
+    }
+
+    /// The `true` values among the stored values `[from, from + count)`, counted a word at a time.
+    private long trueCount(int from, int count) {
+        long trues = 0;
+        int end = from + count;
+        int i = from;
+        while (i < end) {
+            int bit = i & 63;
+            int take = Math.min(64 - bit, end - i);
+            long word = plain[i >>> 6] >>> bit;
+            if (take < 64) {
+                word &= (1L << take) - 1;
+            }
+            trues += Long.bitCount(word);
+            i += take;
+        }
+        return trues;
     }
 
     @Override
@@ -143,13 +164,22 @@ final class BooleanValueEncoder extends ValueEncoder {
     }
 
     @Override
-    void stat(int valueIndex) {
-        statistics.accept(valueAt(valueIndex));
+    PageBounds pageStatistics(int[] indices, int valueFrom, int valueCount, long nullCount) {
+        BooleanStatisticsCollector page = new BooleanStatisticsCollector();
+        long trues = trueCount(valueFrom, valueCount);
+        page.acceptCounts(trues, valueCount - trues);
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
     }
 
     @Override
-    void statNull() {
-        statistics.acceptNull();
+    PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
+                                        long nullCount) {
+        throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return statistics.compareBounds(left, right);
     }
 
     @Override

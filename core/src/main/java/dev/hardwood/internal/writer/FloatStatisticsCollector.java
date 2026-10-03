@@ -25,48 +25,91 @@ import dev.hardwood.metadata.Statistics;
 /// floating-point column under the type-defined order, and a recorded `0` is the only thing that
 /// proves a chunk holds no `NaN` — a count left absent tells a reader nothing, since the bounds
 /// say nothing about `NaN` either way.
-final class FloatStatisticsCollector {
+final class FloatStatisticsCollector extends StatisticsCollector<FloatStatisticsCollector> {
 
     private float min;
     private float max;
-    private long nullCount;
     private long nanCount;
     private boolean hasValues;
+
+    /// Extends the statistics by `value`, occurring `times` times, which only the `NaN` count
+    /// depends on.
+    void accept(float value, int times) {
+        if (Float.isNaN(value)) {
+            nanCount += times;
+            return;
+        }
+        extend(value, value);
+    }
 
     void accept(float value) {
         if (Float.isNaN(value)) {
             nanCount++;
             return; // NaN never participates in min/max
         }
+        extend(value, value);
+    }
+
+    private void extend(float low, float high) {
         if (!hasValues) {
-            min = value;
-            max = value;
+            min = low;
+            max = high;
             hasValues = true;
             return;
         }
-        if (Float.compare(value, min) < 0) {
-            min = value;
+        if (Float.compare(low, min) < 0) {
+            min = low;
         }
-        if (Float.compare(value, max) > 0) {
-            max = value;
+        if (Float.compare(high, max) > 0) {
+            max = high;
         }
     }
 
-    void acceptNull() {
-        nullCount++;
+    @Override
+    void mergeValues(FloatStatisticsCollector page) {
+        nanCount += page.nanCount;
+        if (page.hasValues) {
+            extend(page.min, page.max);
+        }
     }
 
+    @Override
+    boolean hasValues() {
+        return hasValues;
+    }
+
+    @Override
+    long nanCount() {
+        return nanCount;
+    }
+
+    @Override
     Statistics toStatistics() {
-        byte[] minValue = null;
-        byte[] maxValue = null;
-        if (hasValues) {
-            minValue = encode(min == 0.0f ? -0.0f : min);
-            maxValue = encode(max == 0.0f ? 0.0f : max);
-        }
+        byte[] minValue = hasValues ? indexMin() : null;
+        byte[] maxValue = hasValues ? indexMax() : null;
         return new Statistics(minValue, maxValue, nullCount, null, false, true, true, nanCount);
+    }
+
+    @Override
+    byte[] indexMin() {
+        return encode(min == 0.0f ? -0.0f : min);
+    }
+
+    @Override
+    byte[] indexMax() {
+        return encode(max == 0.0f ? 0.0f : max);
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return Float.compare(decode(left), decode(right));
     }
 
     private static byte[] encode(float value) {
         return ByteBuffer.allocate(Float.BYTES).order(ByteOrder.LITTLE_ENDIAN).putFloat(value).array();
+    }
+
+    private static float decode(byte[] bytes) {
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getFloat();
     }
 }

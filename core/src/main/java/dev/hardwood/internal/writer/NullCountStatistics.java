@@ -13,22 +13,40 @@ import dev.hardwood.metadata.Statistics;
 /// undefined — `INTERVAL`, `UNKNOWN`, `GEOMETRY`, `GEOGRAPHY`. Such a column writes its null
 /// count alone, so accumulating bounds would only produce values [ColumnChunkBuffer] discards.
 /// See [StatisticsOrder].
-final class NullCountStatistics implements BinaryStatistics {
-
-    private long nullCount;
+final class NullCountStatistics extends BinaryStatistics {
 
     @Override
-    public void accept(byte[] value) {
+    void accept(byte[] array, int offset, int length) {
         // No ordering to extend bounds in.
     }
 
     @Override
-    public void acceptNull() {
-        nullCount++;
+    void mergeValues(BinaryStatistics page) {
+        // No bounds to merge; the null count is merged by the caller.
     }
 
     @Override
-    public Statistics toStatistics() {
+    boolean hasValues() {
+        return false;
+    }
+
+    @Override
+    Statistics toStatistics() {
         return new Statistics(null, null, nullCount, null, false);
+    }
+
+    @Override
+    byte[] indexMin() {
+        throw new UnsupportedOperationException("A column without an order has no bounds");
+    }
+
+    @Override
+    byte[] indexMax() {
+        throw new UnsupportedOperationException("A column without an order has no bounds");
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        throw new UnsupportedOperationException("A column without an order has no bounds");
     }
 }

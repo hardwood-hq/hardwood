@@ -28,13 +28,17 @@ import dev.hardwood.internal.BuildInfo;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.thrift.ColumnIndexWriter;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
+import dev.hardwood.internal.thrift.OffsetIndexWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.internal.writer.ColumnSource;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.internal.writer.RecordShredder;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.internal.writer.WriterSchemaShape;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
@@ -54,7 +58,8 @@ import dev.hardwood.schema.FileSchema;
 /// levelled column's pages carrying an RLE definition-level stream ahead of the values — and
 /// flushes a row group once the bytes it holds for that group reach the configured target. Each
 /// row group is buffered, written and forgotten, so what the writer holds follows the target
-/// rather than the size of the file — and the target counts what is held, so it is that number
+/// rather than the size of the file, apart from the page index it keeps for the end of the file
+/// (a location and two bounds per data page) — and the target counts what is held, so it is that number
 /// and not a multiple of it, give or take the slack the value stores carry from growing
 /// geometrically. Each column chunk is encoded one way throughout:
 /// by default the writer weighs a dictionary against `PLAIN` once the row group is buffered and
@@ -90,7 +95,9 @@ public final class ParquetFileWriter implements Closeable {
     private final Compressor compressor;
     /// The range each column's annotation declares, resolved once and handed to every batch.
     private final LogicalTypeValueRange[] ranges;
-    private final List<RowGroup> rowGroups = new ArrayList<>();
+    /// The row groups written so far, each with its chunks' page index, which is written after
+    /// the last of them.
+    private final List<RowGroupBuffer.FlushedRowGroup> rowGroups = new ArrayList<>();
 
     /// The footer's two file-scope fields, held until [#close()] serializes them. Insertion
     /// ordered so the entries reach the file in the order they were given.
@@ -125,7 +132,7 @@ public final class ParquetFileWriter implements Closeable {
         this.ranges = LogicalTypeValueRange.forSchema(schema);
         // One buffer serves every row group: flushing it resets it in place, so the writer's
         // largest allocation is made once per file rather than once per row group.
-        this.current = new RowGroupBuffer(schema, config.pageTargetBytes(),
+        this.current = new RowGroupBuffer(schema, config.pageTargetBytes(), config.pageTargetRows(),
                 config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
                 config.statisticsTruncationLength(), compressor, config.codec());
     }
@@ -507,9 +514,9 @@ public final class ParquetFileWriter implements Closeable {
         if (current.isEmpty()) {
             return;
         }
-        RowGroup rowGroup = current.flushTo(out);
+        RowGroupBuffer.FlushedRowGroup rowGroup = current.flushTo(out);
         rowGroups.add(rowGroup);
-        numRows += rowGroup.numRows();
+        numRows += rowGroup.rowGroup().numRows();
         current.reset();
     }
 
@@ -525,12 +532,59 @@ public final class ParquetFileWriter implements Closeable {
         return Collections.nCopies(schema.getColumnCount(), ColumnOrder.TYPE_DEFINED_ORDER);
     }
 
+    /// Writes every column chunk's page index between the last row group and the footer, every
+    /// `ColumnIndex` first and every `OffsetIndex` after them, and returns the row groups with
+    /// their chunks pointing at it. Kept together, a reader fetches the index of many row groups
+    /// in one range.
+    private List<RowGroup> writePageIndex() throws IOException {
+        int columns = schema.getColumnCount();
+        long[][] columnIndexOffsets = new long[rowGroups.size()][columns];
+        int[][] columnIndexLengths = new int[rowGroups.size()][columns];
+        for (int r = 0; r < rowGroups.size(); r++) {
+            List<ColumnIndex> indexes = rowGroups.get(r).columnIndexes();
+            for (int c = 0; c < columns; c++) {
+                ColumnIndex index = indexes.get(c);
+                if (index != null) {
+                    ThriftCompactWriter writer = new ThriftCompactWriter();
+                    ColumnIndexWriter.write(writer, index);
+                    columnIndexOffsets[r][c] = out.position();
+                    columnIndexLengths[r][c] = writeIndex(writer);
+                }
+            }
+        }
+        List<RowGroup> written = new ArrayList<>(rowGroups.size());
+        for (int r = 0; r < rowGroups.size(); r++) {
+            RowGroupBuffer.FlushedRowGroup rowGroup = rowGroups.get(r);
+            List<ColumnChunk> chunks = new ArrayList<>(columns);
+            for (int c = 0; c < columns; c++) {
+                ThriftCompactWriter writer = new ThriftCompactWriter();
+                OffsetIndexWriter.write(writer, rowGroup.offsetIndexes().get(c));
+                long offsetIndexOffset = out.position();
+                int offsetIndexLength = writeIndex(writer);
+                ColumnChunk chunk = rowGroup.rowGroup().columns().get(c);
+                boolean hasColumnIndex = rowGroup.columnIndexes().get(c) != null;
+                chunks.add(new ColumnChunk(chunk.metaData(), offsetIndexOffset, offsetIndexLength,
+                        hasColumnIndex ? columnIndexOffsets[r][c] : null,
+                        hasColumnIndex ? columnIndexLengths[r][c] : null, chunk.filePath()));
+            }
+            written.add(new RowGroup(chunks, rowGroup.rowGroup().totalByteSize(), rowGroup.rowGroup().numRows()));
+        }
+        return written;
+    }
+
+    private int writeIndex(ThriftCompactWriter writer) throws IOException {
+        byte[] bytes = writer.toByteArray();
+        out.write(ByteBuffer.wrap(bytes));
+        return bytes.length;
+    }
+
     private void writeFooter() throws IOException {
+        List<RowGroup> written = writePageIndex();
         FileMetaData metaData = new FileMetaData(
                 FORMAT_VERSION,
                 schema.toSchemaElements(),
                 numRows,
-                List.copyOf(rowGroups),
+                List.copyOf(written),
                 Collections.unmodifiableMap(new LinkedHashMap<>(keyValueMetadata)),
                 createdBy,
                 columnOrders());
