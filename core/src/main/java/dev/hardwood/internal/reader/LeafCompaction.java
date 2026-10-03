@@ -66,28 +66,12 @@ public final class LeafCompaction {
     /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
     /// (nested path); only its `[0, count)` prefix is read. Only the views are
-    /// gathered: the result shares `raw`'s bytes, which a compacted batch never
-    /// outlives. A dictionary-encoded leaf carries its chunk dictionary and gathered
-    /// entry indices through, so `getStrings()` still reuses the interned instances
-    /// and the column reader's dictionary ids describe the compacted values.
+    /// gathered: the result takes over `raw`'s bytes, and `raw` must not be read
+    /// afterwards (see [BinaryBatchValues#compact]). A dictionary-encoded leaf carries its chunk
+    /// dictionary and gathered entry indices through, so `getStrings()` still reuses
+    /// the interned instances and the column reader's dictionary ids describe the
+    /// compacted values.
     public static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
-        int[] outStarts = new int[count];
-        int[] outEnds = new int[count];
-        boolean interned = raw.dictionary != null;
-        int[] outDictIndices = interned ? new int[count] : null;
-        for (int i = 0; i < count; i++) {
-            int rawIdx = map[i];
-            outStarts[i] = raw.starts[rawIdx];
-            outEnds[i] = raw.ends[rawIdx];
-            if (interned) {
-                outDictIndices[i] = raw.dictIndices[rawIdx];
-            }
-        }
-        BinaryBatchValues out = new BinaryBatchValues(raw.bytes, outStarts, outEnds, raw.byteCount);
-        if (interned) {
-            out.dictionary = raw.dictionary;
-            out.dictIndices = outDictIndices;
-        }
-        return out;
+        return raw.compact(map, count);
     }
 }

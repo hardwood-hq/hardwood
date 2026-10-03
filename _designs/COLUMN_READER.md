@@ -101,13 +101,15 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 
 Views are what keep a dictionary-encoded column from costing a byte copy per value. A batch of binary values ends at its row group's end, so it draws on at most one dictionary. It appends the dictionary's values until their bytes reach the dictionary's size, and only then copies the dictionary in, at most once per batch, recording two `int`s per value after that. A batch therefore holds at most twice the bytes that appending every value would take, however large the dictionary is. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
 
+**Deferred views.** On the flat path, a dictionary value's view is built when a reader first needs it, not as the batch is assembled, and the view arrays are allocated on their first write: a consumer of the dictionary ids, or of strings, which resolve through them, never pays for views. `BinaryBatchValues` keeps its bytes and views private behind accessors that build pending views first, so no reader can see a value without its view. The first build of deferred views raises the column worker's `ViewDemand`, and the drain builds views as it assembles from then on; only the batches in flight at that moment have theirs built on the reading thread. Columns whose views are read during assembly or at publish build them eagerly: nested columns and columns with a drain-side matcher. Filtered compaction keeps the kept dictionary values deferred and hands the raw batch's bytes to the compacted one, which is why it consumes the raw batch. Deferred views follow the same append-or-copy rule, so the bound above holds.
+
 Layer offsets and binary views are orthogonal: layer offsets say which leaf values belong to a container, binary views say which bytes belong to a leaf value.
 
 The total bytes of one batch are capped at `Integer.MAX_VALUE`, since views are `int`. The append path (`BinaryBatchValues.appendAt`) fails the read when a batch would exceed it; the remedy is a smaller batch size for that column. Where a batch has phantom positions, the drain gathers the real values' views; the gathered batch shares the raw batch's bytes, which it never outlives.
 
 `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf, `null` at null positions, and cache the result per batch. `getStrings()` requires a text column (`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated) and throws `IllegalArgumentException` otherwise; on a dictionary-encoded `STRING`, `ENUM` or `JSON` column it returns one interned `String` per dictionary entry through the batch's dictionary indices (see [VALUE_DECODE.md](VALUE_DECODE.md)), and on an unannotated column one `String` per value. Both arrays have length `getValueCount()`, not `getRecordCount()`.
 
-Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
+Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`, `BinaryBatchValuesTest`, `ColumnWorkerTest`.
 
 ### Dictionary ids
 

@@ -35,12 +35,12 @@ public final class BinaryBatchValues {
 
     private static final byte[] EMPTY = new byte[0];
 
-    public byte[] bytes;
-    public int[] starts;
-    public int[] ends;
+    private byte[] bytes;
+    private int[] starts;
+    private int[] ends;
 
     /// Bytes of [#bytes] in use; the next appended bytes land here.
-    public int byteCount;
+    private int byteCount;
 
     /// Expected bytes per appended value, sizing [#bytes] on the first value append so a
     /// batch of plain values does not grow it many times over.
@@ -72,7 +72,8 @@ public final class BinaryBatchValues {
 
     /// An empty batch slot for `capacity` values.
     public BinaryBatchValues(int capacity, int bytesPerValueHint) {
-        this(EMPTY, new int[capacity], new int[capacity], 0, bytesPerValueHint);
+        this(EMPTY, null, null, 0, bytesPerValueHint);
+        this.capacity = capacity;
     }
 
     /// A slot over existing views, for a batch that receives no further values.
@@ -86,6 +87,80 @@ public final class BinaryBatchValues {
         this.ends = ends;
         this.byteCount = byteCount;
         this.bytesPerValueHint = bytesPerValueHint;
+        this.capacity = starts != null ? starts.length : 0;
+        this.viewsPending = starts == null;
+    }
+
+    /// The values this batch can hold. [#starts] and [#ends] are allocated at this size on
+    /// their first write.
+    private int capacity;
+
+    /// Whether a reader must call [#ensureViews] before reading [#starts] and [#ends]: they are
+    /// not allocated yet, or dictionary values were recorded without their views. The accessors
+    /// test this one flag per value.
+    private boolean viewsPending;
+
+    /// End of the range whose dictionary values were recorded without views
+    /// ([#deferDictionaryRange]), `0` when there are none.
+    private int deferredEnd;
+
+    /// The column worker's [ViewDemand], set while dictionary values may be deferred, so that
+    /// building their views tells the worker to stop deferring.
+    ViewDemand viewDemand;
+
+    /// Raised by the first reader that needs the views of deferred dictionary values. From then
+    /// on the column's worker builds views as it assembles, on its own thread, so that only the
+    /// batches already in flight have theirs built on the reading thread. One instance per worker.
+    static final class ViewDemand {
+        volatile boolean requested;
+    }
+
+    /// The buffer the views point into, valid up to [#byteCount()]. Builds pending views first.
+    public byte[] bytes() {
+        ensureViews();
+        return bytes;
+    }
+
+    /// Value `i` starts at `starts()[i]` in [#bytes()]. Builds pending views first.
+    public int[] starts() {
+        ensureViews();
+        return starts;
+    }
+
+    /// Value `i` ends at `ends()[i]` in [#bytes()]. Builds pending views first.
+    public int[] ends() {
+        ensureViews();
+        return ends;
+    }
+
+    /// Bytes of [#bytes()] in use. Builds pending views first, which may append.
+    public int byteCount() {
+        ensureViews();
+        return byteCount;
+    }
+
+    /// Whether the view arrays exist yet, for tests of their deferred allocation.
+    boolean viewArraysAllocated() {
+        return starts != null;
+    }
+
+    /// Whether views are pending, for tests of the switch to building them as assembled.
+    boolean hasPendingViews() {
+        return viewsPending;
+    }
+
+    /// The values this batch can hold.
+    public int capacity() {
+        return capacity;
+    }
+
+    /// Allocates [#starts] and [#ends] on their first write.
+    private void viewArrays() {
+        if (starts == null) {
+            starts = new int[capacity];
+            ends = new int[capacity];
+            viewsPending = deferredEnd > 0;
+        }
     }
 
     /// Readies a reused slot for the next batch: its buffer is kept, its contents are not.
@@ -93,15 +168,133 @@ public final class BinaryBatchValues {
         byteCount = 0;
         dictionary = null;
         viewedDictionary = null;
+        deferredEnd = 0;
+        viewsPending = starts == null;
+    }
+
+    /// Records `[destPos, destPos + length)` as dictionary values whose views are built when a
+    /// reader first needs them ([#ensureViews]); a null gets its empty view now. A reader that
+    /// takes only the entry ids then never pays for the views, nor, if the batch holds no plain
+    /// value or null, for their arrays. The ids come from [#recordDictIndices], which the
+    /// caller runs for the same range.
+    public void deferDictionaryRange(Page.DictionaryByteArrayPage page, int srcPos, int destPos, int length) {
+        int[] indices = page.dictIndices();
+        for (int i = 0; i < length; i++) {
+            if (indices[srcPos + i] < 0) {
+                appendEmpty(destPos + i);
+            }
+        }
+        deferredEnd = Math.max(deferredEnd, destPos + length);
+        viewsPending = true;
+    }
+
+    /// Readies [#starts] and [#ends] for reading: allocates them, and builds the views of the
+    /// dictionary values recorded without them. Every reader of the views calls this first.
+    public void ensureViews() {
+        if (viewsPending) {
+            buildViews();
+        }
+    }
+
+    /// Builds the deferred views by the rule [#viewDictionaryRange] applies as it assembles:
+    /// while the deferred values' bytes stay below the dictionary's size they are appended,
+    /// otherwise the dictionary is copied in once and the values point into it.
+    private void buildViews() {
+        viewArrays();
+        viewsPending = false;
+        if (deferredEnd == 0) {
+            return;
+        }
+        if (viewDemand != null) {
+            viewDemand.requested = true;
+        }
+        int end = deferredEnd;
+        deferredEnd = 0;
+        Dictionary.ByteArrayDictionary dict = dictionary;
+        int[] entryOffsets = dict.entryOffsets();
+        int base = viewBase(dict);
+        if (base < 0) {
+            long deferredBytes = 0;
+            for (int i = 0; i < end; i++) {
+                int entry = dictIndices[i];
+                if (entry >= 0) {
+                    deferredBytes += entryOffsets[entry + 1] - entryOffsets[entry];
+                }
+            }
+            if (appendedDictionaryBytes + deferredBytes < dict.entryBytes().length) {
+                appendedDictionaryBytes += deferredBytes;
+                for (int i = 0; i < end; i++) {
+                    int entry = dictIndices[i];
+                    if (entry >= 0) {
+                        appendEntry(dict, entry, i);
+                    }
+                }
+                return;
+            }
+            base = copyIn(0);
+        }
+        for (int i = 0; i < end; i++) {
+            int entry = dictIndices[i];
+            if (entry >= 0) {
+                starts[i] = base + entryOffsets[entry];
+                ends[i] = base + entryOffsets[entry + 1];
+            }
+        }
+    }
+
+    /// The values at `map[0, count)` as a batch of their own, with their dictionary and entry
+    /// ids. Consumes this batch: the result takes over its byte buffer, which building the
+    /// result's deferred views may append to, so this batch must not be read afterwards.
+    /// Dictionary values whose views are deferred stay deferred, so a filtered read builds
+    /// views only if it reads them.
+    BinaryBatchValues compact(int[] map, int count) {
+        BinaryBatchValues out = new BinaryBatchValues(bytes, null, null, byteCount);
+        out.capacity = count;
+        out.viewArrays();
+        int keptDeferredEnd = 0;
+        for (int i = 0; i < count; i++) {
+            int rawIdx = map[i];
+            if (rawIdx < deferredEnd && dictIndices[rawIdx] >= 0) {
+                keptDeferredEnd = i + 1;
+            }
+            else {
+                out.starts[i] = starts[rawIdx];
+                out.ends[i] = ends[rawIdx];
+            }
+        }
+        out.adoptIds(this, map, count);
+        out.viewedDictionary = viewedDictionary;
+        out.viewedDictionaryBase = viewedDictionaryBase;
+        out.appendedDictionaryBytes = appendedDictionaryBytes;
+        out.viewDemand = viewDemand;
+        out.deferredEnd = keptDeferredEnd;
+        out.viewsPending = keptDeferredEnd > 0;
+        return out;
+    }
+
+    /// Takes `raw`'s dictionary and the entry ids of the values at `map[0, count)`.
+    private void adoptIds(BinaryBatchValues raw, int[] map, int count) {
+        if (raw.dictionary == null) {
+            return;
+        }
+        int[] ids = new int[count];
+        for (int i = 0; i < count; i++) {
+            ids[i] = raw.dictIndices[map[i]];
+        }
+        dictionary = raw.dictionary;
+        dictIndices = ids;
     }
 
     /// Grows the view arrays (and [#dictIndices], once allocated) to `capacity` values.
     public void growCapacity(int capacity) {
-        if (capacity <= starts.length) {
+        if (capacity <= this.capacity) {
             return;
         }
-        starts = Arrays.copyOf(starts, capacity);
-        ends = Arrays.copyOf(ends, capacity);
+        this.capacity = capacity;
+        if (starts != null) {
+            starts = Arrays.copyOf(starts, capacity);
+            ends = Arrays.copyOf(ends, capacity);
+        }
         if (dictIndices != null) {
             dictIndices = Arrays.copyOf(dictIndices, capacity);
         }
@@ -109,8 +302,9 @@ public final class BinaryBatchValues {
 
     /// Materialise value `idx` as a fresh `byte[]` copy. Allocates one array
     /// per call — used by convenience accessors and per-row materialisation
-    /// paths; hot loops should read [#bytes] / [#starts] / [#ends] directly.
+    /// paths; hot loops should read [#bytes()] / [#starts()] / [#ends()] directly.
     public byte[] byteArrayAt(int idx) {
+        ensureViews();
         return Arrays.copyOfRange(bytes, starts[idx], ends[idx]);
     }
 
@@ -120,6 +314,7 @@ public final class BinaryBatchValues {
     /// The float accessors decode here rather than through the generic value conversion
     /// because that path returns `Object` and would box the value they promised unboxed.
     public float float16At(int idx) {
+        ensureViews();
         int start = starts[idx];
         return LogicalTypeConverter.bytesToFloat16(bytes, start, ends[idx] - start);
     }
@@ -131,6 +326,7 @@ public final class BinaryBatchValues {
     /// it, and whether it survives that is left to escape analysis; reading in place
     /// does not depend on the decision going the right way.
     public BigDecimal decimalAt(int idx, int scale) {
+        ensureViews();
         int start = starts[idx];
         return LogicalTypeConverter.bytesToDecimal(bytes, start, ends[idx] - start, scale);
     }
@@ -138,6 +334,7 @@ public final class BinaryBatchValues {
     /// Decode value `idx` as the [UUID] its payload stands for, reading the bytes
     /// where they sit rather than materialising a `byte[]` for them.
     public UUID uuidAt(int idx) {
+        ensureViews();
         int start = starts[idx];
         return LogicalTypeConverter.bytesToUuid(bytes, start, ends[idx] - start);
     }
@@ -145,6 +342,7 @@ public final class BinaryBatchValues {
     /// Decode value `idx` as the [PqInterval] its payload stands for, reading the bytes
     /// where they sit rather than materialising a `byte[]` for them.
     public PqInterval intervalAt(int idx) {
+        ensureViews();
         int start = starts[idx];
         return LogicalTypeConverter.bytesToInterval(bytes, start, ends[idx] - start);
     }
@@ -152,6 +350,7 @@ public final class BinaryBatchValues {
     /// Decode value `idx` as the instant its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload stands
     /// for, reading the bytes where they sit rather than materialising a `byte[]` for them.
     public Instant flba12InstantAt(int idx, LogicalType.TimeUnit unit) {
+        ensureViews();
         int start = starts[idx];
         return Flba12Timestamps.toInstant(bytes, start, ends[idx] - start, unit);
     }
@@ -159,6 +358,7 @@ public final class BinaryBatchValues {
     /// Decode value `idx` as the wall clock its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload
     /// stands for, reading the bytes where they sit.
     public LocalDateTime flba12LocalDateTimeAt(int idx, LogicalType.TimeUnit unit) {
+        ensureViews();
         int start = starts[idx];
         return Flba12Timestamps.toLocalDateTime(bytes, start, ends[idx] - start, unit);
     }
@@ -176,6 +376,8 @@ public final class BinaryBatchValues {
                 return dict.internedString(dictIndex);
             }
         }
+        // A value without an entry id, plain or null, had its view written when it was appended,
+        // so this reads it without building the deferred views of the batch's dictionary values.
         int start = starts[idx];
         int len = ends[idx] - start;
         return new String(bytes, start, len, StandardCharsets.UTF_8);
@@ -183,6 +385,7 @@ public final class BinaryBatchValues {
 
     /// Length in bytes of value `idx`.
     public int lengthAt(int idx) {
+        ensureViews();
         return ends[idx] - starts[idx];
     }
 
@@ -195,6 +398,7 @@ public final class BinaryBatchValues {
         if (len > 0) {
             System.arraycopy(src, srcOffset, bytes, start, len);
         }
+        viewArrays();
         starts[valueIdx] = start;
         ends[valueIdx] = start + len;
         byteCount = start + len;
@@ -202,6 +406,7 @@ public final class BinaryBatchValues {
 
     /// Records an empty view as value `valueIdx`, as a null value has.
     public void appendEmpty(int valueIdx) {
+        viewArrays();
         starts[valueIdx] = byteCount;
         ends[valueIdx] = byteCount;
     }
@@ -210,6 +415,7 @@ public final class BinaryBatchValues {
     /// a `null` giving an empty view. The range form of [#appendAt], keeping the write
     /// position in a local across the range.
     public void appendRange(byte[][] values, int srcPos, int destPos, int length) {
+        viewArrays();
         int cursor = byteCount;
         byte[] buffer = bytes;
         for (int i = 0; i < length; i++) {
@@ -238,6 +444,7 @@ public final class BinaryBatchValues {
     /// values are appended instead and the dictionary is not copied in, so a batch holds
     /// at most twice the bytes that appending every value would take.
     public void viewDictionaryRange(Page.DictionaryByteArrayPage page, int srcPos, int destPos, int length) {
+        viewArrays();
         Dictionary.ByteArrayDictionary dict = page.dictionary();
         int[] indices = page.dictIndices();
         int[] entryOffsets = dict.entryOffsets();
@@ -276,6 +483,7 @@ public final class BinaryBatchValues {
     /// Sets the view of value `destIdx` to the entry the page's index at `srcIdx`
     /// names. The single-value form of [#viewDictionaryRange], for nested assembly.
     public void viewDictionaryValue(Page.DictionaryByteArrayPage page, int srcIdx, int destIdx) {
+        viewArrays();
         Dictionary.ByteArrayDictionary dict = page.dictionary();
         int entry = page.dictIndices()[srcIdx];
         if (entry < 0) {
@@ -349,7 +557,7 @@ public final class BinaryBatchValues {
                     + "; reduce the batch size for this column.");
         }
         if (needed > bytes.length) {
-            long hint = valueAppend ? (long) bytesPerValueHint * starts.length : 0L;
+            long hint = valueAppend ? (long) bytesPerValueHint * capacity : 0L;
             long newSize = Math.min(Integer.MAX_VALUE, Math.max(Math.max((long) bytes.length * 2L, needed), hint));
             bytes = Arrays.copyOf(bytes, (int) newSize);
         }
@@ -406,7 +614,6 @@ public final class BinaryBatchValues {
     private void ensureDictionary(Dictionary.ByteArrayDictionary pageDict, int destPos) {
         if (dictionary == null) {
             dictionary = pageDict;
-            int capacity = starts.length;
             if (dictIndices == null || dictIndices.length < capacity) {
                 dictIndices = new int[capacity];
             }

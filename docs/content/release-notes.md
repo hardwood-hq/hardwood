@@ -26,6 +26,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - `ColumnReader.getDictionaryIds()` and `getBinaryDictionary()` expose the dictionary entry of each value of a dictionary-encoded `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column ([#513](https://github.com/hardwood-hq/hardwood/issues/513)).
 - A `RowReader` returns one shared `String` per dictionary entry in every row group, also where the row-group size is not a multiple of the batch size ([#1199](https://github.com/hardwood-hq/hardwood/issues/1199)).
+- A `ColumnReader` over a dictionary-encoded `BYTE_ARRAY` column builds the per-value byte views of `getBinaryStarts()` and `getBinaryEnds()` only once they are read, so a reader of `getDictionaryIds()` or `getStrings()` does not pay for them ([#1439](https://github.com/hardwood-hq/hardwood/issues/1439)).
 - `ColumnReader.getStrings()` and `getBinaries()` no longer spend most of a read in garbage collection under the G1 collector at heaps up to a few GB ([#1437](https://github.com/hardwood-hq/hardwood/issues/1437)).
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).

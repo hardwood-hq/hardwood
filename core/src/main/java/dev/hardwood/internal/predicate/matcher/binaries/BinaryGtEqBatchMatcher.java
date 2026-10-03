@@ -28,9 +28,9 @@ public final class BinaryGtEqBatchMatcher implements BinaryBatchMatcher {
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         BinaryBatchValues vals = (BinaryBatchValues) batch.values;
-        byte[] bytes = vals.bytes;
-        int[] starts = vals.starts;
-        int[] ends = vals.ends;
+        byte[] bytes = vals.bytes();
+        int[] starts = vals.starts();
+        int[] ends = vals.ends();
         long[] validity = batch.validity;
         int n = batch.recordCount;
         int activeWords = (n + 63) >>> 6;

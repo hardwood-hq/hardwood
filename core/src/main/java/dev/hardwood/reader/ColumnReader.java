@@ -589,9 +589,9 @@ public class ColumnReader implements Closeable {
         }
         BinaryBatchValues bbv = realLeafBinary();
         int leafCount = nested ? getValueCount() : recordCount;
-        cachedRealBinaryBytes = bbv.bytes;
-        cachedRealBinaryStarts = trimToLeafCount(bbv.starts, leafCount);
-        cachedRealBinaryEnds = trimToLeafCount(bbv.ends, leafCount);
+        cachedRealBinaryBytes = bbv.bytes();
+        cachedRealBinaryStarts = trimToLeafCount(bbv.starts(), leafCount);
+        cachedRealBinaryEnds = trimToLeafCount(bbv.ends(), leafCount);
     }
 
     /// Resolves the dictionary view of the current batch: ids only when every non-null

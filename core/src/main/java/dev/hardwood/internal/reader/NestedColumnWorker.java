@@ -767,10 +767,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case boolean[] a -> Arrays.copyOf(a, size);
             case BinaryBatchValues bbv -> {
                 BinaryBatchValues trimmed = new BinaryBatchValues(
-                        Arrays.copyOf(bbv.bytes, bbv.byteCount),
-                        Arrays.copyOf(bbv.starts, size),
-                        Arrays.copyOf(bbv.ends, size),
-                        bbv.byteCount);
+                        Arrays.copyOf(bbv.bytes(), bbv.byteCount()),
+                        Arrays.copyOf(bbv.starts(), size),
+                        Arrays.copyOf(bbv.ends(), size),
+                        bbv.byteCount());
                 if (bbv.dictionary != null) {
                     trimmed.dictionary = bbv.dictionary;
                     trimmed.dictIndices = Arrays.copyOf(bbv.dictIndices, size);

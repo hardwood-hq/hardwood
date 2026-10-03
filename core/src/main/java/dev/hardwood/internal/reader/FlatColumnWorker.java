@@ -22,6 +22,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     private long[] currentValidity;
     private final ColumnBatchMatcher columnFilter;
+
+    /// Raised once a reader needed the views of deferred dictionary values; the drain builds
+    /// them as it assembles from then on.
+    private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
     /// Tracks whether any absent (null) leaf has been seen in the current
     /// batch; cleared by [#publishCurrentBatch]. When still false at publish
     /// time, [BatchExchange.Batch#validity] is set to `null` to signal
@@ -243,7 +247,16 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             }
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
-                bbv.viewDictionaryRange(p, srcPos, destPos, length);
+                // Dictionary values get their views when a reader first needs them, unless a
+                // reader already has (the demand is raised) or a drain-side matcher reads them
+                // here, at publish.
+                bbv.viewDemand = viewDemand;
+                if (columnFilter == null && !viewDemand.requested) {
+                    bbv.deferDictionaryRange(p, srcPos, destPos, length);
+                }
+                else {
+                    bbv.viewDictionaryRange(p, srcPos, destPos, length);
+                }
                 // Record per-value dictionary indices, for string interning and the
                 // column reader's dictionary ids; a null records -1
                 // (see BinaryBatchValues#recordDictIndices).

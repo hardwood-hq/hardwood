@@ -29,6 +29,7 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -426,6 +427,76 @@ class ColumnReaderDictionaryIdsTest {
                 }
             }
             assertThat(ids).hasSize(667).allSatisfy(value -> assertThat(value % 3).isEqualTo(1));
+        }
+    }
+
+    /// Byte views are built when first read: batches read through their ids only, then through
+    /// their views, carry each value's bytes either way.
+    @Test
+    void viewsReadAfterIdsCarryEachValuesBytes() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStations(2_000, 500))));
+             ColumnReader col = reader.buildColumnReader("label").batchSize(64).build()) {
+            int batch = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getDictionaryIds()).isNotNull();
+                if (batch++ % 3 == 0) {
+                    assertViewsMatchStrings(col);
+                }
+                else {
+                    assertResolvesLikeStrings(col);
+                }
+            }
+            assertThat(batch).isEqualTo(32);
+        }
+    }
+
+    /// A filtered read compacts the kept values of a batch whose views were not built yet: the
+    /// first batch is filtered, and its ids are read before its views.
+    @Test
+    void aFilteredReadKeepsTheBytesOfDeferredValues() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStations(2_000, 500))));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("label"))
+                     .filter(FilterPredicate.lt("id", 40L)).batchSize(64).build()) {
+            ColumnReader label = columns.getColumnReader("label");
+            long rows = 0;
+            while (columns.nextBatch()) {
+                assertThat(label.getDictionaryIds()).hasSize(columns.getRecordCount());
+                assertResolvesLikeStrings(label);
+                assertViewsMatchStrings(label);
+                rows += columns.getRecordCount();
+            }
+            assertThat(rows).isEqualTo(40);
+        }
+    }
+
+    /// The row reader's string and byte accessors alternate over dictionary values, whose
+    /// views are deferred, and the plain values the writer fell back to.
+    @Test
+    void aRowReaderReadsDeferredAndPlainValuesAsBytes() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PLAIN_FALLBACK));
+             RowReader rows = reader.rowReader()) {
+            int row = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                String expected = row < 2_000 ? new String[]{ "alpha", "bravo", "charlie" }[row % 3]
+                        : "distinct-%06d".formatted(row - 2_000);
+                String actual = row % 2 == 0
+                        ? rows.getString(0)
+                        : new String(rows.getBinary(0), StandardCharsets.UTF_8);
+                assertThat(actual).as("row %d", row).isEqualTo(expected);
+                row++;
+            }
+            assertThat(row).isEqualTo(4_000);
+        }
+    }
+
+    private static void assertViewsMatchStrings(ColumnReader col) {
+        byte[] bytes = col.getBinaryValues();
+        int[] starts = col.getBinaryStarts();
+        int[] ends = col.getBinaryEnds();
+        String[] strings = col.getStrings();
+        for (int i = 0; i < col.getValueCount(); i++) {
+            assertThat(range(bytes, starts[i], ends[i])).isEqualTo(strings[i]);
         }
     }
 

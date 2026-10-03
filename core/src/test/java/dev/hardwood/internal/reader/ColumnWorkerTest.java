@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -677,7 +678,37 @@ class ColumnWorkerTest {
         }
     }
 
-    // ==================== Helpers ====================
+    /// A reader that takes only the dictionary ids leaves every batch without views: neither
+    /// built nor allocated.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aReaderOfIdsOnlyNeverGetsViews() throws Exception {
+        List<BinaryBatchValues> batches = drainDictionaryColumn(false);
+
+        assertThat(batches).hasSize(20);
+        assertThat(batches).allSatisfy(values -> assertThat(values.viewArraysAllocated()).isFalse());
+    }
+
+    /// The first reader that builds deferred views switches the worker to building them as it
+    /// assembles: the batches already in flight are deferred, the later ones are not.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aReaderOfViewsSwitchesTheWorkerToBuildingThem() throws Exception {
+        List<BinaryBatchValues> batches = drainDictionaryColumn(true);
+
+        assertThat(batches).hasSize(20);
+        assertThat(batches.getLast().hasPendingViews()).as("views built by the drain").isFalse();
+        // Deferred, built and eager batches alike carry each value's bytes.
+        for (BinaryBatchValues values : batches) {
+            byte[] bytes = values.bytes();
+            int[] starts = values.starts();
+            int[] ends = values.ends();
+            for (int i = 0; i < 10; i++) {
+                assertThat(new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+                        .isEqualTo(values.stringAt(i));
+            }
+        }
+    }
 
     /// A worker that ends batches at row-group boundaries gives each batch value arrays sized
     /// to what its row group has left, not the full batch capacity: 100-row row groups read
@@ -706,7 +737,7 @@ class ColumnWorkerTest {
             BatchExchange.Batch batch;
             while ((batch = exchange.poll()) != null) {
                 counts.add(batch.recordCount);
-                capacities.add(((BinaryBatchValues) batch.values).starts.length);
+                capacities.add(((BinaryBatchValues) batch.values).capacity());
             }
             exchange.checkError();
             worker.close();
@@ -737,6 +768,39 @@ class ColumnWorkerTest {
             finally {
                 worker.close();
             }
+        }
+    }
+
+    // ==================== Helpers ====================
+
+    /// Drains `dict_cross_chunk.parquet`'s dictionary-encoded string column in batches of 10,
+    /// building the first batch's views when `readViews` is set.
+    private static List<BinaryBatchValues> drainDictionaryColumn(boolean readViews) throws Exception {
+        Path file = Path.of("src/test/resources/dict_cross_chunk.parquet");
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            FileSchema schema = reader.getFileSchema();
+            ColumnSchema column = schema.getColumn(0);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                    column.name(), BatchExchange.Batch::new);
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(createIterator(file, schema, context), 0), exchange, column, 10,
+                    context.decompressorFactory(), context.executor(), 0, null);
+            worker.endBatchesAtRowGroupBoundaries();
+            worker.start();
+
+            List<BinaryBatchValues> batches = new ArrayList<>();
+            BatchExchange.Batch batch;
+            while ((batch = exchange.poll()) != null) {
+                BinaryBatchValues values = (BinaryBatchValues) batch.values;
+                if (readViews && batches.isEmpty()) {
+                    values.ensureViews();
+                }
+                batches.add(values);
+            }
+            exchange.checkError();
+            worker.close();
+            return batches;
         }
     }
 

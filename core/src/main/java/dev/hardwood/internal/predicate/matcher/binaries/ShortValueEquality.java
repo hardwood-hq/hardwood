@@ -94,9 +94,9 @@ final class ShortValueEquality {
 
     /// Writes one bit per row into `outWords`, set iff the row's bytes equal a member.
     void test(BinaryBatchValues vals, int recordCount, long[] outWords) {
-        byte[] bytes = vals.bytes;
-        int[] starts = vals.starts;
-        int[] ends = vals.ends;
+        byte[] bytes = vals.bytes();
+        int[] starts = vals.starts();
+        int[] ends = vals.ends();
         // The last position an eight-byte read fits at; negative for an array under eight bytes.
         int lastLongStart = bytes.length - Long.BYTES;
         int activeWords = (recordCount + 63) >>> 6;
