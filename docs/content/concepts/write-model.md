@@ -20,10 +20,10 @@ That inversion explains most of what the write API does, and all of what it does
 A Parquet file is written front to back and never seeked backward:
 
 ```
-PAR1 | <row group 0 pages> | <row group 1 pages> | … | FileMetaData | <footer length> | PAR1
+PAR1 | <row group 0 pages> | <row group 1 pages> | … | <page index> | FileMetaData | <footer length> | PAR1
 ```
 
-The `FileMetaData` footer carries the schema and every page and column-chunk offset, and it can only be serialized once those offsets are known, so it goes last. The writer maintains a running byte position, records offsets as it streams pages out, and emits the accumulated metadata at the end.
+The `FileMetaData` footer carries the schema and every page and column-chunk offset, and it can only be serialized once those offsets are known, so it goes last. The writer maintains a running byte position, records offsets as it streams pages out, and emits the accumulated metadata at the end. Each page's bounds and location go into the page index, which is written for the whole file just before the footer.
 
 Three things follow for a caller:
 
@@ -35,7 +35,7 @@ Three things follow for a caller:
 
 A column chunk's metadata (its compressed and uncompressed sizes, its page offsets, its statistics) is only known once the chunk's bytes have been encoded. The writer therefore encodes and buffers a whole row group's columns in memory, then writes them out in schema order and records where each landed.
 
-A file of any size is a sequence of row groups, each buffered, flushed and forgotten, so peak memory follows whichever target cuts a row group, whatever the size of the file. `rowGroupTargetRows` is usually the one that cuts, since it binds for any record narrower than about 128 bytes; `rowGroupBufferTargetBytes` takes over above that and is what keeps records wider than expected from making a row group unboundedly large.
+A file of any size is a sequence of row groups, each buffered, flushed and forgotten, so peak memory follows whichever target cuts a row group, whatever the size of the file, apart from the page index described below. `rowGroupTargetRows` is usually the one that cuts, since it binds for any record narrower than about 128 bytes; `rowGroupBufferTargetBytes` takes over above that and is what keeps records wider than expected from making a row group unboundedly large.
 
 `rowGroupBufferTargetBytes` is measured on the bytes the writer retains: the level streams a byte per entry, the dictionary indices, each column's value store, and the dictionaries themselves. A row group passes it by at most one record, since a record cannot be split across row groups. So peak heap for one writer follows the target.
 
@@ -43,6 +43,8 @@ Two overheads sit on top of the target, and neither scales with how much you wri
 
 - **Growth headroom.** The buffers hold more than they are charged for while they grow: the value stores grow by half again, and the level streams, a `BYTE_ARRAY` column's packed content and every dictionary's value array and hash table double.
 - **A per-column floor.** A column's buffers have a floor under them, so a schema with enough columns that each one's share of the target falls below that floor opens at a multiple of it. Measured, 200 columns against a 1 MiB target hold about 2.4 MB before a record arrives, while a thousand columns against the default 128 MiB target stay inside it, their shares being far above the floor.
+
+The page index is held until `close()` writes it, so it grows with the file: per data page, a location and two bounds. A bound is the type's width, or for a `BYTE_ARRAY` column usually at most `statisticsTruncationLength` bytes; a page holds at most `pageTargetRows` records and fewer where its bytes reach `pageTargetBytes` first.
 
 Where the **row target** cuts first, which it does at the defaults for any record retaining less than about 128 bytes, peak heap is instead the row count times what a record retains, which follows from what each column keeps:
 
@@ -62,7 +64,7 @@ Batches and records are *arrival* units. Pages, column chunks and row groups are
 
 This is why there is no explicit "end row group" call, and why submitting one large batch and streaming a thousand small ones produce the same file. Layout is set by the targets alone, and each governs something different:
 
-- **Page size** governs read granularity: a page is the unit a reader decompresses to reach any value in it, so smaller pages prune finer and cost more metadata. It is measured in *encoded* bytes (the values at the width the chunk's encoding gives them, so a dictionary column is measured in indices), and the page is cut before the value that would cross the target. Under a delta encoding, whose width depends on the values, the cut charges the width the type would have taken `PLAIN`, so those pages land below the target.
+- **Page size** governs read granularity: a page is the unit a reader decompresses to reach any value in it, so smaller pages prune finer and cost more metadata. It is measured in *encoded* bytes (the values at the width the chunk's encoding gives them, so a dictionary column is measured in indices), and the page is cut before the record that would cross the target. A page also holds at most `pageTargetRows` records, 20,000 by default, so a column whose values encode small still has pages for the page index to prune by. A page holds whole records: a record larger than the byte target is a page of its own. Under a delta encoding, whose width depends on the values, the cut charges the width the type would have taken `PLAIN`, so those pages land below the target.
 - **Row-group rows** governs split sizing and row-group-level pruning, and defaults to 1,048,576. A row group is self-contained, so it is the boundary a file partitions on across separate readers, and it is the granularity at which a reader skips on column-chunk statistics. It does not govern how much of the read runs in parallel: Hardwood decodes *pages* concurrently within a row group, so parallelism is bounded by pages and columns rather than by banding. Unlike a byte target it needs no estimate and does not vary with the data.
 - **Row-group buffer bytes** is the memory bound above: the bytes the writer holds for the open row group. It also cuts a row group, so records wider than expected cannot make one unboundedly large.
 

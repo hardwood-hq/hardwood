@@ -15,12 +15,14 @@ import dev.hardwood.metadata.CompressionCodec;
 
 /// Tuning knobs for [ParquetFileWriter].
 ///
-/// Three size targets govern the writer's output granularity:
+/// Four targets govern the writer's output granularity:
 ///
-/// - **Page target** — the writer cuts a data page once the entries it holds would encode to
-///   this many bytes. The page is cut *before* the entry that would cross it, so this is a
-///   ceiling rather than something a page overshoots; only a single value larger than the whole
-///   target can breach it, a value not being divisible across pages.
+/// - **Page byte target** — the writer cuts a data page once the records it holds would encode
+///   to this many bytes. The page is cut *before* the record that would cross it, so this is a
+///   ceiling rather than something a page overshoots; only a single record larger than the whole
+///   target can breach it, a page holding whole records.
+/// - **Page row target** — the writer also cuts a data page once it holds this many records,
+///   which sets how finely the page index lets a reader skip within a column chunk.
 /// - **Row-group row target** — the writer cuts a row group once it holds this many records.
 ///   This is the control over how a file is banded, and it is exactly what it says: a row count
 ///   needs no estimate and does not vary with the data. It binds for narrow records.
@@ -49,6 +51,9 @@ public final class WriterConfig {
 
     /// Default page target: 1 MiB of encoded values per data page.
     public static final int DEFAULT_PAGE_TARGET_BYTES = 1 << 20;
+
+    /// Default page row target: 20,000 records per data page.
+    public static final int DEFAULT_PAGE_TARGET_ROWS = 20_000;
 
     /// Default row-group buffer target: 128 MiB of buffered values per row group.
     public static final long DEFAULT_ROW_GROUP_BUFFER_TARGET_BYTES = 128L << 20;
@@ -81,6 +86,7 @@ public final class WriterConfig {
     public static final ColumnEncoding DEFAULT_ENCODING = ColumnEncoding.AUTO;
 
     private final int pageTargetBytes;
+    private final int pageTargetRows;
     private final long rowGroupBufferTargetBytes;
     private final long rowGroupTargetRows;
     private final ColumnEncoding defaultEncoding;
@@ -91,6 +97,7 @@ public final class WriterConfig {
 
     private WriterConfig(Builder builder) {
         this.pageTargetBytes = builder.pageTargetBytes;
+        this.pageTargetRows = builder.pageTargetRows;
         this.rowGroupBufferTargetBytes = builder.rowGroupBufferTargetBytes;
         this.rowGroupTargetRows = builder.rowGroupTargetRows;
         this.defaultEncoding = builder.defaultEncoding;
@@ -113,6 +120,11 @@ public final class WriterConfig {
     /// Encoded-byte threshold at which a data page is cut.
     public int pageTargetBytes() {
         return pageTargetBytes;
+    }
+
+    /// Record count at which a data page is cut.
+    public int pageTargetRows() {
+        return pageTargetRows;
     }
 
     /// Byte threshold at which a row group is cut, counted as the bytes the writer holds for it.
@@ -174,6 +186,7 @@ public final class WriterConfig {
     public static final class Builder {
 
         private int pageTargetBytes = DEFAULT_PAGE_TARGET_BYTES;
+        private int pageTargetRows = DEFAULT_PAGE_TARGET_ROWS;
         private long rowGroupBufferTargetBytes = DEFAULT_ROW_GROUP_BUFFER_TARGET_BYTES;
         private long rowGroupTargetRows = DEFAULT_ROW_GROUP_TARGET_ROWS;
         private ColumnEncoding defaultEncoding = DEFAULT_ENCODING;
@@ -192,6 +205,22 @@ public final class WriterConfig {
                         "pageTargetBytes must be at least " + Integer.BYTES + " but was " + pageTargetBytes);
             }
             this.pageTargetBytes = pageTargetBytes;
+            return this;
+        }
+
+        /// Sets the record count at which a data page is cut; must be positive.
+        ///
+        /// A page is cut at this count or at [#pageTargetBytes], whichever is reached first.
+        /// Each page's bounds are recorded in the file's page index, so the count sets how finely
+        /// a reader can skip within a column chunk. It binds on columns whose values encode small,
+        /// such as dictionary-encoded ones, which would otherwise hold a whole row group in a few
+        /// pages. A page holds whole records, so on a repeated column it counts records rather
+        /// than values.
+        public Builder pageTargetRows(int pageTargetRows) {
+            if (pageTargetRows <= 0) {
+                throw new IllegalArgumentException("pageTargetRows must be positive but was " + pageTargetRows);
+            }
+            this.pageTargetRows = pageTargetRows;
             return this;
         }
 

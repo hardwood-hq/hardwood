@@ -19,6 +19,7 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -180,7 +181,9 @@ class CrossColumnCoalesceTest {
                 rowWriter.writeRow(row -> row.setBoolean("a", value % 3 == 0).setLong("b", value).setBoolean("c", value % 5 == 0));
             }
         }
-        return InMemoryFiles.toByteArray(out);
+        // Every file the writer produces has a page index; the plan under test is the one a
+        // file without one takes.
+        return FooterRewriter.withoutPageIndex(InMemoryFiles.toByteArray(out));
     }
 
     @Test

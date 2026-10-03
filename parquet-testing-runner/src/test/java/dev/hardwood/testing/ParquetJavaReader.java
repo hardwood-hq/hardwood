@@ -14,6 +14,7 @@ import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -27,10 +28,12 @@ import org.apache.parquet.VersionParser.ParsedVersion;
 import org.apache.parquet.VersionParser.VersionParseException;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.Encoding;
+import org.apache.parquet.column.ValuesType;
 import org.apache.parquet.column.page.DataPage;
 import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.column.page.PageReader;
+import org.apache.parquet.column.values.ValuesReader;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.format.ColumnChunk;
 import org.apache.parquet.format.FileMetaData;
@@ -44,6 +47,8 @@ import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.internal.column.columnindex.ColumnIndex;
+import org.apache.parquet.internal.column.columnindex.OffsetIndex;
 import org.apache.parquet.io.SeekableInputStream;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
@@ -179,6 +184,8 @@ final class ParquetJavaReader {
         observe(file);
         int count = 0;
         List<Set<Encoding>> chunkValueEncodings = new ArrayList<>();
+        List<List<Long>> chunkPageRecords = new ArrayList<>();
+        int pagesMidRecord = 0;
         try (ParquetFileReader reader = ParquetFileReader
                 .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS))) {
 
@@ -188,16 +195,145 @@ final class ParquetJavaReader {
                 for (ColumnDescriptor column : columns) {
                     PageReader pageReader = rowGroup.getPageReader(column);
                     Set<Encoding> chunkEncodings = EnumSet.noneOf(Encoding.class);
+                    List<Long> pageRecords = new ArrayList<>();
                     DataPage page;
                     while ((page = pageReader.readPage()) != null) {
-                        count++;
                         chunkEncodings.add(valueEncoding(page));
+                        if (column.getMaxRepetitionLevel() == 0) {
+                            pageRecords.add((long) page.getValueCount());
+                            continue;
+                        }
+                        int[] levels = repetitionLevels(column, page);
+                        if (levels[0] != 0) {
+                            pagesMidRecord++;
+                        }
+                        pageRecords.add(Arrays.stream(levels).filter(level -> level == 0).count());
                     }
+                    count += pageRecords.size();
                     chunkValueEncodings.add(chunkEncodings);
+                    chunkPageRecords.add(List.copyOf(pageRecords));
                 }
             }
         }
-        return new Pages(count, List.copyOf(chunkValueEncodings));
+        return new Pages(count, List.copyOf(chunkValueEncodings), List.copyOf(chunkPageRecords), pagesMidRecord);
+    }
+
+    /// A page's repetition levels, one per entry: a 0 starts a record.
+    private static int[] repetitionLevels(ColumnDescriptor column, DataPage page) throws IOException {
+        DataPageV1 v1 = (DataPageV1) page;
+        ValuesReader reader = v1.getRlEncoding().getValuesReader(column, ValuesType.REPETITION_LEVEL);
+        reader.initFromPage(v1.getValueCount(), v1.getBytes().toInputStream());
+        int[] levels = new int[v1.getValueCount()];
+        for (int i = 0; i < levels.length; i++) {
+            levels[i] = reader.readInteger();
+        }
+        return levels;
+    }
+
+    /// Each column chunk's page index as parquet-java reads it, in footer order. Either member is
+    /// `null` for a chunk that has none.
+    ///
+    /// @param file the file to read
+    /// @return one entry per column chunk
+    /// @throws IOException if parquet-java cannot read an index
+    static List<PageIndex> readPageIndex(Path file) throws IOException {
+        List<PageIndex> indexes = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader
+                .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS))) {
+            for (BlockMetaData block : reader.getFooter().getBlocks()) {
+                for (ColumnChunkMetaData chunk : block.getColumns()) {
+                    indexes.add(new PageIndex(reader.readOffsetIndex(chunk), reader.readColumnIndex(chunk),
+                            block.getRowCount()));
+                }
+            }
+        }
+        return indexes;
+    }
+
+    /// Asserts the page index of `file` is well formed as parquet-java reads it, as
+    /// [#assertPageIndexStructure] states it.
+    ///
+    /// @param file the file to read
+    /// @throws IOException if parquet-java cannot read the file
+    static void assertPageIndex(Path file) throws IOException {
+        assertPageIndexStructure(readFooter(file), readPages(file), readPageIndex(file));
+    }
+
+    /// Asserts each column chunk's page index is well formed as parquet-java reads it: every
+    /// data page starts a record, which the index's first row indexes require; an
+    /// `OffsetIndex` locating exactly the data pages the walk found, contiguous from the chunk's
+    /// first data page to its end, whose first row indexes are the records the pages before hold;
+    /// and, where the chunk has a `ColumnIndex`, one entry per page whose null
+    /// counts add up to the chunk's.
+    ///
+    /// @param footer the file's footer
+    /// @param pages what the page walk found
+    /// @param indexes the page index [#readPageIndex] read
+    static void assertPageIndexStructure(ParquetMetadata footer, Pages pages, List<PageIndex> indexes) {
+        List<ColumnChunkMetaData> chunks = new ArrayList<>();
+        for (BlockMetaData block : footer.getBlocks()) {
+            chunks.addAll(block.getColumns());
+        }
+        assertThat(indexes).as("page index entries").hasSize(chunks.size());
+        assertThat(pages.pagesMidRecord()).as("data pages starting part-way through a record").isZero();
+        for (int i = 0; i < chunks.size(); i++) {
+            ColumnChunkMetaData chunk = chunks.get(i);
+            OffsetIndex offsets = indexes.get(i).offsetIndex();
+            assertThat(offsets).as("offset index of chunk %d", i).isNotNull();
+            List<Long> pageRecords = pages.chunkPageRecords().get(i);
+            int pageCount = pageRecords.size();
+            assertThat(offsets.getPageCount()).as("pages located in chunk %d", i).isEqualTo(pageCount);
+            assertThat(offsets.getOffset(0)).as("first page of chunk %d", i).isEqualTo(chunk.getFirstDataPageOffset());
+            long firstRow = 0;
+            for (int p = 0; p < pageCount; p++) {
+                if (p > 0) {
+                    assertThat(offsets.getOffset(p)).as("page %d of chunk %d follows the one before", p, i)
+                            .isEqualTo(offsets.getOffset(p - 1) + offsets.getCompressedPageSize(p - 1));
+                }
+                assertThat(offsets.getFirstRowIndex(p)).as("first row of page %d of chunk %d", p, i)
+                        .isEqualTo(firstRow);
+                firstRow += pageRecords.get(p);
+            }
+            assertThat(firstRow).as("records in chunk %d", i).isEqualTo(indexes.get(i).rowCount());
+            assertThat(offsets.getOffset(pageCount - 1) + offsets.getCompressedPageSize(pageCount - 1))
+                    .as("end of chunk %d", i).isEqualTo(chunk.getStartingPos() + chunk.getTotalSize());
+
+            ColumnIndex columnIndex = indexes.get(i).columnIndex();
+            if (columnIndex != null) {
+                assertThat(columnIndex.getNullPages()).as("column index pages of chunk %d", i).hasSize(pageCount);
+                long nulls = 0;
+                for (long count : columnIndex.getNullCounts()) {
+                    nulls += count;
+                }
+                assertThat(nulls).as("page null counts of chunk %d", i)
+                        .isEqualTo(chunk.getStatistics().getNumNulls());
+            }
+        }
+    }
+
+    /// Each column chunk's `nan_count` as the raw footer carries it, in footer order; `0` where the
+    /// chunk carries none.
+    ///
+    /// @param file the file to read
+    /// @return one count per column chunk
+    /// @throws IOException if the footer cannot be read
+    static List<Long> readNanCounts(Path file) throws IOException {
+        List<Long> counts = new ArrayList<>();
+        for (RowGroup rowGroup : readFormatFooter(file).getRow_groups()) {
+            for (ColumnChunk chunk : rowGroup.getColumns()) {
+                Statistics statistics = chunk.getMeta_data().getStatistics();
+                counts.add(statistics != null && statistics.isSetNan_count() ? statistics.getNan_count() : 0L);
+            }
+        }
+        return counts;
+    }
+
+    /// One column chunk's page index.
+    ///
+    /// @param offsetIndex the chunk's `OffsetIndex`, or `null`
+    /// @param columnIndex the chunk's `ColumnIndex`, or `null`
+    /// @param rowCount the rows of the chunk's row group
+    record PageIndex(OffsetIndex offsetIndex, ColumnIndex columnIndex, long rowCount) {
     }
 
     /// The index bit width each data page declares, for a file of one flat `REQUIRED` column.
@@ -414,7 +550,12 @@ final class ParquetJavaReader {
     /// @param dataPageCount how many data pages the file holds
     /// @param chunkValueEncodings the distinct value encodings each column chunk's pages declared,
     ///        in the order the chunks were walked
-    record Pages(int dataPageCount, List<Set<Encoding>> chunkValueEncodings) {
+    /// @param chunkPageRecords the records each data page of each column chunk holds, in the
+    ///        same order: a page's entries for a flat column, the entries starting a record for
+    ///        a repeated one
+    /// @param pagesMidRecord data pages of repeated columns whose first entry continues a record
+    record Pages(int dataPageCount, List<Set<Encoding>> chunkValueEncodings, List<List<Long>> chunkPageRecords,
+                 int pagesMidRecord) {
     }
 
     /// The encoding a data page declares for its values. The writer produces DataPage V1 only, so

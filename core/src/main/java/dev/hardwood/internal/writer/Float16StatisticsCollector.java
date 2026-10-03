@@ -19,57 +19,85 @@ import dev.hardwood.metadata.Statistics;
 /// binary ones: `NaN` never extends the bounds but is counted for every chunk, zero included, and
 /// a zero bound is sign-normalized so a reader's `[min, max]` test is correct for either signed
 /// zero.
-final class Float16StatisticsCollector implements BinaryStatistics {
+final class Float16StatisticsCollector extends BinaryStatistics {
 
     private float min;
     private float max;
-    private long nullCount;
     private long nanCount;
     private boolean hasValues;
 
     @Override
-    public void accept(byte[] value) {
-        float half = decode(value);
+    void accept(byte[] array, int offset, int length) {
+        float half = decode(array, offset, length);
         if (Float.isNaN(half)) {
             nanCount++;
             return; // NaN never participates in min/max
         }
+        extend(half, half);
+    }
+
+    private void extend(float low, float high) {
         if (!hasValues) {
-            min = half;
-            max = half;
+            min = low;
+            max = high;
             hasValues = true;
             return;
         }
-        if (Float.compare(half, min) < 0) {
-            min = half;
+        if (Float.compare(low, min) < 0) {
+            min = low;
         }
-        if (Float.compare(half, max) > 0) {
-            max = half;
+        if (Float.compare(high, max) > 0) {
+            max = high;
         }
     }
 
     @Override
-    public void acceptNull() {
-        nullCount++;
+    void mergeValues(BinaryStatistics page) {
+        Float16StatisticsCollector other = (Float16StatisticsCollector) page;
+        nanCount += other.nanCount;
+        if (other.hasValues) {
+            extend(other.min, other.max);
+        }
     }
 
     @Override
-    public Statistics toStatistics() {
-        byte[] minValue = null;
-        byte[] maxValue = null;
-        if (hasValues) {
-            minValue = encode(min == 0.0f ? -0.0f : min);
-            maxValue = encode(max == 0.0f ? 0.0f : max);
-        }
+    boolean hasValues() {
+        return hasValues;
+    }
+
+    @Override
+    long nanCount() {
+        return nanCount;
+    }
+
+    @Override
+    Statistics toStatistics() {
+        byte[] minValue = hasValues ? indexMin() : null;
+        byte[] maxValue = hasValues ? indexMax() : null;
         return new Statistics(minValue, maxValue, nullCount, null, false, true, true, nanCount);
     }
 
-    private static float decode(byte[] value) {
-        if (value.length != FixedWidths.FLOAT16) {
+    @Override
+    byte[] indexMin() {
+        return encode(min == 0.0f ? -0.0f : min);
+    }
+
+    @Override
+    byte[] indexMax() {
+        return encode(max == 0.0f ? 0.0f : max);
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return Float.compare(decode(left, 0, left.length), decode(right, 0, right.length));
+    }
+
+    private static float decode(byte[] array, int offset, int length) {
+        if (length != FixedWidths.FLOAT16) {
             throw new IllegalArgumentException("A FLOAT16 value is " + FixedWidths.FLOAT16
-                    + " bytes, not " + value.length);
+                    + " bytes, not " + length);
         }
-        return LogicalTypeConverter.float16At(value, 0);
+        return LogicalTypeConverter.float16At(array, offset);
     }
 
     private static byte[] encode(float value) {

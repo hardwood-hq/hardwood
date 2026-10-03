@@ -98,7 +98,18 @@ final class BooleanValueEncoder extends ValueEncoder {
 
     @Override
     long exactDistinctCount() {
-        return statistics.distinctCount();
+        // Counted from the store rather than the statistics, which are only taken at flush: at
+        // most `false` and `true` can occur.
+        long trues = 0;
+        int fullWords = plainCount >>> 6;
+        for (int w = 0; w < fullWords; w++) {
+            trues += Long.bitCount(plain[w]);
+        }
+        int tail = plainCount & 63;
+        if (tail > 0) {
+            trues += Long.bitCount(plain[fullWords] & ((1L << tail) - 1));
+        }
+        return (trues > 0 ? 1 : 0) + (trues < plainCount ? 1 : 0);
     }
 
     @Override
@@ -143,13 +154,17 @@ final class BooleanValueEncoder extends ValueEncoder {
     }
 
     @Override
-    void stat(int valueIndex) {
-        statistics.accept(valueAt(valueIndex));
+    PageBounds pageStatistics(int[] indices, int valueFrom, int valueCount, long nullCount) {
+        BooleanStatisticsCollector page = new BooleanStatisticsCollector();
+        for (int i = valueFrom; i < valueFrom + valueCount; i++) {
+            page.accept((plain[i >>> 6] & (1L << i)) != 0);
+        }
+        return PageBounds.finish(statistics, page, valueCount, nullCount);
     }
 
     @Override
-    void statNull() {
-        statistics.acceptNull();
+    int compareBounds(byte[] left, byte[] right) {
+        return statistics.compareBounds(left, right);
     }
 
     @Override

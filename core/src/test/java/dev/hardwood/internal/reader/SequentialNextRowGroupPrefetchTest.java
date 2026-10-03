@@ -19,6 +19,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.thrift.FooterRewriter;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -99,7 +100,9 @@ class SequentialNextRowGroupPrefetchTest {
                 });
             }
         }
-        return InMemoryFiles.toByteArray(out);
+        // Every file the writer produces has a page index; the plan under test is the one a
+        // file without one takes.
+        return FooterRewriter.withoutPageIndex(InMemoryFiles.toByteArray(out));
     }
 
     /// Holds back the data reads of row group 0 until row group 1's prefetch has issued a data

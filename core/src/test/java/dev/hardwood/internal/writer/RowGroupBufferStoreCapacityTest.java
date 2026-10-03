@@ -38,6 +38,7 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -222,7 +223,7 @@ class RowGroupBufferStoreCapacityTest {
             this.shredder = new RecordShredder(schema);
             ColumnEncoding[] encodings = new ColumnEncoding[schema.getColumnCount()];
             Arrays.fill(encodings, ColumnEncoding.AUTO);
-            this.buffer = new RowGroupBuffer(schema, 1 << 20, LARGE_TARGET_BYTES, targetRows, encodings, 64,
+            this.buffer = new RowGroupBuffer(schema, 1 << 20, WriterConfig.DEFAULT_PAGE_TARGET_ROWS, LARGE_TARGET_BYTES, targetRows, encodings, 64,
                     new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
                     CompressionCodec.UNCOMPRESSED, storeCapacity);
             out.create();
@@ -240,7 +241,7 @@ class RowGroupBufferStoreCapacityTest {
             if (buffer.isEmpty()) {
                 return;
             }
-            rowGroups.add(buffer.flushTo(out));
+            rowGroups.add(buffer.flushTo(out).rowGroup());
             buffer.reset();
         }
 
