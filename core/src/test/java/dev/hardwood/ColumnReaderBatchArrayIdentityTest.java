@@ -88,14 +88,17 @@ class ColumnReaderBatchArrayIdentityTest {
 
             assertThat(col.nextBatch()).isTrue();
             byte[] bytes0 = col.getBinaryValues();
-            int[] offsets0 = col.getBinaryOffsets();
+            int[] starts0 = col.getBinaryStarts();
+            int[] ends0 = col.getBinaryEnds();
 
             assertThat(col.nextBatch()).isTrue();
             byte[] bytes1 = col.getBinaryValues();
-            int[] offsets1 = col.getBinaryOffsets();
+            int[] starts1 = col.getBinaryStarts();
+            int[] ends1 = col.getBinaryEnds();
 
             assertThat(bytes0).as("getBinaryValues() buffer").isNotSameAs(bytes1);
-            assertThat(offsets0).as("getBinaryOffsets() buffer").isNotSameAs(offsets1);
+            assertThat(starts0).as("getBinaryStarts() buffer").isNotSameAs(starts1);
+            assertThat(ends0).as("getBinaryEnds() buffer").isNotSameAs(ends1);
         }
     }
 

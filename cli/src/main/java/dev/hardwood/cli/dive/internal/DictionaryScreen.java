@@ -418,7 +418,7 @@ public final class DictionaryScreen {
             case Dictionary.LongDictionary d -> d.values()[index];
             case Dictionary.FloatDictionary d -> d.values()[index];
             case Dictionary.DoubleDictionary d -> d.values()[index];
-            case Dictionary.ByteArrayDictionary d -> d.values()[index];
+            case Dictionary.ByteArrayDictionary d -> d.entry(index);
         };
         return ValueFormatter.formatDictionary(raw, col, useLogicalType, maxChars);
     }

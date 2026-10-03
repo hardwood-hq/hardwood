@@ -72,7 +72,7 @@ class ByteArrayDictionaryInternTest {
         assertThat(page.dictIndices()).containsExactly(1, 1, 1, 1);
         assertThat(page.dictionary()).isSameAs(dict);
         for (int i = 0; i < page.size(); i++) {
-            assertThat(page.get(i)).isSameAs(entry1);
+            assertThat(page.get(i)).isEqualTo(entry1);
         }
     }
 
@@ -90,9 +90,9 @@ class ByteArrayDictionaryInternTest {
         Page.DictionaryByteArrayPage page = (Page.DictionaryByteArrayPage) dict.decodePage(indexDecoder, 4, definitionLevels, null, 1);
 
         assertThat(page.dictIndices()).containsExactly(1, -1, 1, -1);
-        assertThat(page.get(0)).isSameAs(entry1);
+        assertThat(page.get(0)).isEqualTo(entry1);
         assertThat(page.get(1)).isNull();
-        assertThat(page.get(2)).isSameAs(entry1);
+        assertThat(page.get(2)).isEqualTo(entry1);
         assertThat(page.get(3)).isNull();
     }
 

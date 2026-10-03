@@ -30,6 +30,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.BinaryBatchValuesFixtures;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -944,7 +945,7 @@ class DrainSideOracleTest {
             for (int i = 0; i < N; i++) {
                 System.arraycopy(values[i], 0, bytes, offsets[i], offsets[i + 1] - offsets[i]);
             }
-            return new BinaryBatchValues(bytes, offsets);
+            return BinaryBatchValuesFixtures.contiguous(bytes, offsets);
         }
 
         private static long[] nullsToValidity(BitSet nulls) {

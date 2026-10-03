@@ -116,7 +116,7 @@ class VariantShredReassemblerTest {
                 new Typed.Primitive(0, 1, PhysicalType.BYTE_ARRAY, LogicalType.decimal(20, 2)));
 
         NestedBatch typedCol = new NestedBatch();
-        typedCol.values = new BinaryBatchValues(new byte[0], new int[] { 0, 0 });
+        typedCol.values = BinaryBatchValuesFixtures.contiguous(new byte[0], new int[] { 0, 0 });
         typedCol.valueCount = 1;
         typedCol.recordCount = 1;
         typedCol.definitionLevels = new int[] { 1 };
@@ -205,7 +205,7 @@ class VariantShredReassemblerTest {
                 new Typed.Primitive(1, 1, PhysicalType.INT64, null));
 
         NestedBatch valueCol = new NestedBatch();
-        valueCol.values = new BinaryBatchValues(new byte[0], new int[] { 0, 0 });
+        valueCol.values = BinaryBatchValuesFixtures.contiguous(new byte[0], new int[] { 0, 0 });
         valueCol.valueCount = 1;
         valueCol.recordCount = 1;
         valueCol.definitionLevels = new int[] { 0 };
@@ -226,7 +226,7 @@ class VariantShredReassemblerTest {
     // ==================== Helpers ====================
 
     private static BinaryBatchValues binary(byte[] value) {
-        return new BinaryBatchValues(value, new int[] { 0, value.length });
+        return BinaryBatchValuesFixtures.contiguous(value, new int[] { 0, value.length });
     }
 
     /// Build a single-row batch of one non-null, non-repeated column holding `values`.
@@ -255,7 +255,7 @@ class VariantShredReassemblerTest {
     /// 1. Repetition/record offsets are left null (non-repeated columns).
     private static NestedBatchIndex singleRowObjectBatch(byte[] valueObject, long typedFieldValue) {
         NestedBatch valueCol = new NestedBatch();
-        valueCol.values = new BinaryBatchValues(valueObject, new int[] { 0, valueObject.length });
+        valueCol.values = BinaryBatchValuesFixtures.contiguous(valueObject, new int[] { 0, valueObject.length });
         valueCol.valueCount = 1;
         valueCol.recordCount = 1;
         valueCol.definitionLevels = new int[] { 1 };

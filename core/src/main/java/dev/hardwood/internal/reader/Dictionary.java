@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
@@ -131,23 +132,51 @@ public sealed interface Dictionary {
     /// A class (not a record) so it can hold the lazily-materialised per-chunk
     /// interned `String` cache ([#interned]) alongside the entry bytes.
     final class ByteArrayDictionary implements Dictionary {
-        private final byte[][] values;
+
+        /// The entries' bytes back to back, entry `i` at
+        /// `[entryOffsets[i], entryOffsets[i + 1])`. A batch copies this once and points
+        /// its values at it (see [BinaryBatchValues#viewDictionaryRange]); nothing holds
+        /// the entries in any other form.
+        private final byte[] entryBytes;
+        private final int[] entryOffsets;
 
         /// Interned `String` per entry, decoded once per chunk and reused. Lazily
         /// allocated; populated only for UTF8 / ENUM / JSON columns via [#internedString(int)].
         private String[] interned;
 
+        /// Flattens `values`, which the dictionary does not keep.
         ByteArrayDictionary(byte[][] values) {
-            this.values = values;
+            int[] offsets = new int[values.length + 1];
+            long total = 0;
+            for (int i = 0; i < values.length; i++) {
+                total += values[i].length;
+                offsets[i + 1] = Math.toIntExact(total);
+            }
+            byte[] flat = new byte[Math.toIntExact(total)];
+            for (int i = 0; i < values.length; i++) {
+                System.arraycopy(values[i], 0, flat, offsets[i], values[i].length);
+            }
+            this.entryBytes = flat;
+            this.entryOffsets = offsets;
         }
 
-        public byte[][] values() {
-            return values;
+        public byte[] entryBytes() {
+            return entryBytes;
+        }
+
+        public int[] entryOffsets() {
+            return entryOffsets;
+        }
+
+        /// A copy of entry `index`. Allocates; reads over many entries should use
+        /// [#entryBytes()] and [#entryOffsets()].
+        public byte[] entry(int index) {
+            return Arrays.copyOfRange(entryBytes, entryOffsets[index], entryOffsets[index + 1]);
         }
 
         @Override
         public int size() {
-            return values.length;
+            return entryOffsets.length - 1;
         }
 
         /// Returns dictionary entry `index` as a `String`, decoding it once per chunk
@@ -159,12 +188,13 @@ public sealed interface Dictionary {
         String internedString(int index) {
             String[] cache = interned;
             if (cache == null) {
-                cache = new String[values.length];
+                cache = new String[size()];
                 interned = cache;
             }
             String s = cache[index];
             if (s == null) {
-                s = new String(values[index], StandardCharsets.UTF_8);
+                int from = entryOffsets[index];
+                s = new String(entryBytes, from, entryOffsets[index + 1] - from, StandardCharsets.UTF_8);
                 cache[index] = s;
             }
             return s;
@@ -174,7 +204,7 @@ public sealed interface Dictionary {
         public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
                                int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
             int[] dictIndices = new int[numValues];
-            indexDecoder.readDictionaryIndices(dictIndices, values.length, definitionLevels, maxDefLevel);
+            indexDecoder.readDictionaryIndices(dictIndices, size(), definitionLevels, maxDefLevel);
             return new Page.DictionaryByteArrayPage(this, dictIndices, definitionLevels, repetitionLevels,
                     maxDefLevel, numValues);
         }
