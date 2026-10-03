@@ -50,11 +50,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// How a file is banded into pages and row groups, and what each page carries.
 ///
-/// The page and row-group targets are the only layout controls a caller has, and both are
-/// byte targets over buffered data rather than row counts. These assert that crossing either
-/// boundary changes where the values sit and not which values they are — for flat columns,
-/// for a `BOOLEAN` column whose page cut falls away from a word boundary, and for a list
-/// column whose single record outgrows a page.
+/// The page and row-group targets, each a byte target and a record target, are the only layout
+/// controls a caller has. These assert that crossing either boundary changes where the values
+/// sit and not which values they are — for flat columns, for a `BOOLEAN` column whose page cut
+/// falls away from a word boundary, and for list columns, whose pages hold whole records.
 class WriterLayoutTest {
 
     @Test
@@ -66,8 +65,10 @@ class WriterLayoutTest {
             values[i] = i;
         }
 
+        // The byte target is the one under test, so the record target is lifted out of its way.
+        WriterConfig config = WriterConfig.builder().pageTargetRows(Integer.MAX_VALUE).build();
         InMemoryOutputFile out = OutputFile.inMemory();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
         byte[] bytes = InMemoryFiles.toByteArray(out);
@@ -83,6 +84,29 @@ class WriterLayoutTest {
             );
             // Arrays.equals over containsExactly: the latter is O(n) with per-element
             // boxing/description and is needlessly slow at 600k elements.
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void aPageHoldsAtMostThePageTargetRows() throws Exception {
+        // 600k values that would take three pages by bytes take 30 by the default record target.
+        int n = 600_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+        }
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
+        }
+        byte[] bytes = InMemoryFiles.toByteArray(out);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
+            assertThat(countDataPages(bytes, meta.dataPageOffset(), meta.numValues()))
+                    .isEqualTo(n / WriterConfig.DEFAULT_PAGE_TARGET_ROWS);
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
         }
     }
@@ -390,9 +414,9 @@ class WriterLayoutTest {
     }
 
     @Test
-    void singleLargeListRecordSpansManyPages() throws Exception {
-        // One record whose list is far larger than a page: streaming must seal pages part-way
-        // through the record, and the reader must reassemble it across pages via rep levels.
+    void aListRecordLargerThanThePageTargetFillsOnePage() throws Exception {
+        // One record whose list is far larger than the byte target: a page starts at a record
+        // boundary, so the record cannot be split and its page outgrows the target.
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
@@ -415,7 +439,8 @@ class WriterLayoutTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
-            assertThat(meta.numValues()).isEqualTo(n); // the single record's elements span multiple pages
+            assertThat(meta.numValues()).isEqualTo(n);
+            assertThat(countDataPages(InMemoryFiles.toByteArray(out), meta.dataPageOffset(), meta.numValues())).isEqualTo(1);
             int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
             assertThat(readListOfInts(reader, leaf)).containsExactly(expected);
         }
@@ -521,6 +546,7 @@ class WriterLayoutTest {
                 .pageTargetBytes(pageTarget)
                 .codec(CompressionCodec.UNCOMPRESSED)
                 .encoding(encoding)
+                .pageTargetRows(Integer.MAX_VALUE)
                 // The chunk has to outlast several pages for the cut to be observable at all.
                 .rowGroupTargetRows(Long.MAX_VALUE)
                 .build();

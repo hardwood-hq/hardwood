@@ -15,12 +15,11 @@ import dev.hardwood.metadata.Statistics;
 /// Accumulates an `INT64` column chunk's `min` / `max` / `null_count`, compared in the column's
 /// type-defined order — signed, or unsigned for `UINT_64` — and encoded as 8-byte little-endian
 /// bounds. The `INT64` counterpart of [IntStatisticsCollector], including its sign-bit flip.
-final class LongStatisticsCollector {
+final class LongStatisticsCollector extends StatisticsCollector<LongStatisticsCollector> {
 
     private final long bias;
     private long min = Long.MAX_VALUE;
     private long max = Long.MIN_VALUE;
-    private long nullCount;
     private boolean hasValues;
 
     /// @param unsigned whether the column's order is unsigned
@@ -39,17 +38,47 @@ final class LongStatisticsCollector {
         hasValues = true;
     }
 
-    void acceptNull() {
-        nullCount++;
+    @Override
+    void mergeValues(LongStatisticsCollector page) {
+        if (page.hasValues) {
+            min = Math.min(min, page.min);
+            max = Math.max(max, page.max);
+            hasValues = true;
+        }
     }
 
+    @Override
+    boolean hasValues() {
+        return hasValues;
+    }
+
+    @Override
     Statistics toStatistics() {
-        byte[] minValue = hasValues ? encode(min ^ bias) : null;
-        byte[] maxValue = hasValues ? encode(max ^ bias) : null;
+        byte[] minValue = hasValues ? indexMin() : null;
+        byte[] maxValue = hasValues ? indexMax() : null;
         return new Statistics(minValue, maxValue, nullCount, null, false);
+    }
+
+    @Override
+    byte[] indexMin() {
+        return encode(min ^ bias);
+    }
+
+    @Override
+    byte[] indexMax() {
+        return encode(max ^ bias);
+    }
+
+    @Override
+    int compareBounds(byte[] left, byte[] right) {
+        return Long.compare(decode(left) ^ bias, decode(right) ^ bias);
     }
 
     private static byte[] encode(long value) {
         return ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+    }
+
+    private static long decode(byte[] bytes) {
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong();
     }
 }

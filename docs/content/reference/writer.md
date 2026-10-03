@@ -124,7 +124,8 @@ WriterConfig config = WriterConfig.builder()
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `pageTargetBytes(int)` | `1 MiB` | Encoded bytes before a data page is cut, counting the values as the chunk's chosen encoding writes them, so a dictionary column is measured in indices. A ceiling: the page is cut before the value that would cross it, and only a single value larger than the whole target can breach it. A named delta encoding lands below the target, since its width depends on the values. Must be at least 4 bytes. |
+| `pageTargetBytes(int)` | `1 MiB` | Encoded bytes before a data page is cut, counting the values as the chunk's chosen encoding writes them, so a dictionary column is measured in indices. A ceiling: the page is cut before the record that would cross it, and only a single record larger than the whole target can breach it, a page holding whole records. A named delta encoding lands below the target, since its width depends on the values. Must be at least 4 bytes. |
+| `pageTargetRows(int)` | `20,000` | Records before a data page is cut. A page holds whole records, so on a repeated column it counts records, not values. Sets how finely the page index lets a reader skip within a column chunk; it binds on columns whose values encode small, such as dictionary-encoded ones. Must be positive. |
 | `rowGroupTargetRows(long)` | `1,048,576` | Records per row group. The control over how a file is banded: row groups hold exactly this many records apart from the last. Binds for records narrower than about 128 bytes; above that the buffer target below cuts first. Must be positive; a target above the structural ceiling of `Integer.MAX_VALUE - 9` records is that ceiling, so `Long.MAX_VALUE` means "cut on bytes alone". |
 | `rowGroupBufferTargetBytes(long)` | `128 MiB` | Bytes the writer holds for the open row group before cutting it: level streams, dictionary indices, value stores and dictionaries. The memory control, and the number peak heap follows; what reaches the file is smaller by whatever the encoding and the codec win. A row group passes it by at most one record. A row group is also cut before a repeated column's chunk would reach `Integer.MAX_VALUE - 8` values and nulls, or before any column chunk would pass `Integer.MAX_VALUE - 8` bytes of `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` values, so a target above 2 GiB can yield smaller row groups. See [The Write Model](../concepts/write-model.md). Must be positive. |
 | `codec(CompressionCodec)` | `ZSTD`, or `UNCOMPRESSED` when the ZSTD library is absent | Codec each page body is compressed with. |
@@ -133,9 +134,9 @@ WriterConfig config = WriterConfig.builder()
 | `statisticsTruncationLength(int)` | `64` | Longest `BYTE_ARRAY` `min` / `max` statistics bound. A longer bound is truncated and flagged inexact. Must be positive. |
 | `precisionLossPolicy(PrecisionLossPolicy)` | `REJECT` | What the row-oriented layer does with a value carrying more precision than its column can hold. |
 
-A row group is cut at whichever of the two row-group targets is reached first.
+A page is cut at whichever of the two page targets is reached first, and a row group at whichever of the two row-group targets is reached first.
 
-Each option has a getter that reads the configured value back: `pageTargetBytes()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, and, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, and, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
 
 The footer's key-value metadata and its `created_by` identifier are set on the `ParquetFileWriter` itself; see [File Metadata](#file-metadata).
 
@@ -266,13 +267,18 @@ A value the column cannot represent at all, such as a `LocalDate` beyond the `IN
 Every column chunk carries `null_count`. `min` / `max` are computed under the column's `ColumnOrder` during encoding and written to the preferred `min_value` / `max_value` fields; the deprecated `min` / `max` fields are not written.
 
 - **Bounds are omitted where their order is undefined.** A column annotated `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST` or `MAP` writes its null count alone, parquet-format leaving those orderings unspecified; a bound in an order the reader cannot know would prune away live rows. An all-null chunk has no bounds to write either.
-- **Truncation.** `BYTE_ARRAY` bounds longer than `statisticsTruncationLength` are truncated and flagged inexact (`is_min_value_exact` / `is_max_value_exact` = `false`). Fixed-width types write those flags as `true`.
+- **Truncation.** `BYTE_ARRAY` bounds longer than `statisticsTruncationLength` are truncated and flagged inexact (`is_min_value_exact` / `is_max_value_exact` = `false`). A column annotated `STRING`, `ENUM` or `JSON` is truncated at a character boundary, so its bounds are valid UTF-8. Fixed-width types write those flags as `true`.
 - **`nan_count`** is written for every `FLOAT`, `DOUBLE` and `FLOAT16` chunk, including when it is zero, since a recorded zero lets a reader prove a chunk holds no NaN. No other type writes the field.
 - **`distinct_count`** is written where the chunk still knows its cardinality exactly: any chunk under `AUTO` that interned its values to the end, whichever encoding the flush-time comparison then chose, and any `BOOLEAN` chunk, which knows its cardinality without a dictionary. It is absent for any other chunk written under a named encoding, and for one that stopped interning part-way, which happens when repeated size probes find the dictionary losing to `PLAIN`.
 
 Every column chunk also carries `encoding_stats`: its page count per page type and encoding. A dictionary-encoded chunk lists one `PLAIN` dictionary page and all of its data pages as `RLE_DICTIONARY`, so a reader can prune its row group on the dictionary for an `eq` or `in` predicate (see [Query Controls](../how-to/query-controls.md)). Any other chunk lists its data pages under the one value encoding it was written in.
 
-Page-level index structures (OffsetIndex, ColumnIndex), Bloom filters, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
+Every file carries a page index, written between the last row group and the footer:
+
+- **`OffsetIndex`**, for every column chunk: the location of each data page and the first record it holds. Every page starts at a record boundary.
+- **`ColumnIndex`**, for every column chunk whose bounds can be stated: each page's `min` / `max` under the same rules as the chunk statistics, its null count, whether it holds only nulls, its `NaN` count for `FLOAT`, `DOUBLE` and `FLOAT16`, and whether the pages' bounds ascend or descend. A column without an order writes none, nor does a floating-point column chunk with a page whose values are all `NaN`. Where no truncated `max` exists, a page's `max` is written whole.
+
+Bloom filters, the level histograms of `SizeStatistics` and the `ColumnIndex`, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
 
 ## File Metadata
 

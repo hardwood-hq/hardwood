@@ -14,8 +14,9 @@ import java.util.List;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
@@ -54,16 +55,17 @@ public final class RowGroupBuffer {
 
     /// @param schema the file schema
     /// @param pageTargetBytes encoded bytes after which a data page is cut at flush
+    /// @param pageTargetRows records after which a data page is cut at flush
     /// @param rowGroupBufferTargetBytes retained bytes at which the row group is cut
     /// @param rowGroupTargetRows records at which the row group is cut
     /// @param encodings each leaf column's resolved encoding policy, in schema order
     /// @param statisticsTruncationLength the maximum `BYTE_ARRAY` `min` / `max` bound length
     /// @param compressor compresses each page body before it is buffered
     /// @param codec the codec `compressor` applies, recorded in each chunk's metadata
-    public RowGroupBuffer(FileSchema schema, int pageTargetBytes, long rowGroupBufferTargetBytes,
+    public RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                           long rowGroupTargetRows, ColumnEncoding[] encodings,
                           int statisticsTruncationLength, Compressor compressor, CompressionCodec codec) {
-        this(schema, pageTargetBytes, rowGroupBufferTargetBytes, rowGroupTargetRows, encodings,
+        this(schema, pageTargetBytes, pageTargetRows, rowGroupBufferTargetBytes, rowGroupTargetRows, encodings,
                 statisticsTruncationLength, compressor, codec, MAX_STORE_CAPACITY);
     }
 
@@ -71,7 +73,7 @@ public final class RowGroupBuffer {
     /// [#MAX_STORE_CAPACITY], and whose row groups at the row ceiling that capacity sets. The
     /// real cap is crossed by a column chunk of two billion entries or two gigabytes of values,
     /// out of a test's reach, so the tests of the cut it forces lower it instead.
-    RowGroupBuffer(FileSchema schema, int pageTargetBytes, long rowGroupBufferTargetBytes,
+    RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                    long rowGroupTargetRows, ColumnEncoding[] encodings, int statisticsTruncationLength,
                    Compressor compressor, CompressionCodec codec, int storeCapacity) {
         this.schema = schema;
@@ -82,7 +84,7 @@ public final class RowGroupBuffer {
         // however many columns it has.
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
-            columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, budgetBytesPerColumn,
+            columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows, budgetBytesPerColumn,
                     encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity);
         }
     }
@@ -276,16 +278,30 @@ public final class RowGroupBuffer {
     }
 
     /// Writes the buffered column chunks to `out` in schema order and returns the row
-    /// group's metadata.
-    public RowGroup flushTo(OutputFile out) throws IOException {
+    /// group's metadata, with the page index of each chunk, which the writer places after the
+    /// last row group.
+    public FlushedRowGroup flushTo(OutputFile out) throws IOException {
         List<ColumnChunk> chunks = new ArrayList<>(columns.length);
+        List<ColumnIndex> columnIndexes = new ArrayList<>(columns.length);
+        List<OffsetIndex> offsetIndexes = new ArrayList<>(columns.length);
         long totalByteSize = 0;
         for (int c = 0; c < columns.length; c++) {
             long chunkStartOffset = out.position();
-            ColumnMetaData meta = columns[c].flushTo(out, schema.getColumn(c), chunkStartOffset);
-            chunks.add(new ColumnChunk(meta, null, null, null, null, ""));
-            totalByteSize += meta.totalUncompressedSize();
+            ColumnChunkBuffer.Flushed chunk = columns[c].flushTo(out, schema.getColumn(c), chunkStartOffset);
+            chunks.add(new ColumnChunk(chunk.metaData(), null, null, null, null, ""));
+            columnIndexes.add(chunk.columnIndex());
+            offsetIndexes.add(chunk.offsetIndex());
+            totalByteSize += chunk.metaData().totalUncompressedSize();
         }
-        return new RowGroup(chunks, totalByteSize, rowCount);
+        return new FlushedRowGroup(new RowGroup(chunks, totalByteSize, rowCount), columnIndexes, offsetIndexes);
+    }
+
+    /// A row group as written, with its chunks' page index in schema order.
+    ///
+    /// @param rowGroup the row group's metadata, its chunks not yet pointing at their page index
+    /// @param columnIndexes each chunk's `ColumnIndex`, `null` for a chunk that has none
+    /// @param offsetIndexes each chunk's `OffsetIndex`
+    public record FlushedRowGroup(RowGroup rowGroup, List<ColumnIndex> columnIndexes,
+                                  List<OffsetIndex> offsetIndexes) {
     }
 }

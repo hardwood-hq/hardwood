@@ -15,7 +15,9 @@ import java.util.function.UnaryOperator;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 
 /// Rewrites the footer of a well-formed file held in memory, for a test that needs a file
 /// claiming something no writer here produces. The data pages and the page index are
@@ -44,6 +46,18 @@ public final class FooterRewriter {
         rewritten.putInt(footerBytes.length);
         rewritten.put(MAGIC);
         return rewritten.array();
+    }
+
+    /// `file` with no column chunk referring to its page index, for a test of the read path a
+    /// file without one takes. The index bytes stay in place, unreferenced.
+    public static byte[] withoutPageIndex(byte[] file) throws IOException {
+        return rewrite(file, metaData -> new FileMetaData(metaData.version(), metaData.schema(), metaData.numRows(),
+                metaData.rowGroups().stream()
+                        .map(rowGroup -> new RowGroup(rowGroup.columns().stream()
+                                .map(chunk -> new ColumnChunk(chunk.metaData(), null, null, null, null, chunk.filePath()))
+                                .toList(), rowGroup.totalByteSize(), rowGroup.numRows()))
+                        .toList(),
+                metaData.keyValueMetadata(), metaData.createdBy(), metaData.columnOrders()));
     }
 
     private static int footerLength(byte[] file) {

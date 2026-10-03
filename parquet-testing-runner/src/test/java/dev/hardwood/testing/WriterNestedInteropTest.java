@@ -610,6 +610,36 @@ class WriterNestedInteropTest {
         }
     }
 
+    /// Pages of a list column whose records keep outgrowing a small byte target part-way
+    /// through. Every page must still start a record, which the page index's first row indexes
+    /// require and [ParquetJavaReader#assertPageIndex] checks by reading each page's first
+    /// repetition level.
+    @Test
+    void listPagesStartAtRecordBoundaries(@TempDir Path dir) throws IOException {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        int records = 5_000;
+        int[] offsets = new int[records + 1];
+        for (int r = 0; r < records; r++) {
+            offsets[r + 1] = offsets[r] + r % 7;
+        }
+        int[] elements = new int[offsets[records]];
+        for (int e = 0; e < elements.length; e++) {
+            elements[e] = e;
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(100).build();
+        Path file = write(dir, schema, config, batch -> batch.list("v", offsets).ints("v.list.element", elements));
+
+        assertThat(ParquetJavaReader.readPages(file).dataPageCount()).as("data pages").isGreaterThan(10);
+        List<Group> rows = ParquetJavaReader.readGroups(file);
+        assertThat(rows).hasSize(records);
+        for (int r = 0; r < records; r++) {
+            assertThat(readIntList(rows.get(r), "v")).as("record %d", r).hasSize(r % 7);
+        }
+    }
+
     // ==================== Helpers ====================
 
     /// Writes records through the row-oriented layer, which may throw a checked [IOException].
@@ -622,6 +652,7 @@ class WriterNestedInteropTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             filler.accept(writer.rowWriter());
         }
+        ParquetJavaReader.assertPageIndex(file);
         return ParquetJavaReader.readGroups(file);
     }
 
@@ -635,6 +666,7 @@ class WriterNestedInteropTest {
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
             writer.columnWriter().writeBatch(filler);
         }
+        ParquetJavaReader.assertPageIndex(file);
         return file;
     }
 

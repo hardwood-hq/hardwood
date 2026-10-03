@@ -54,6 +54,8 @@ Per file:
 
    This reads the **page** value encodings, not the column chunk's `encodings` list, which always contains `PLAIN` because a dictionary page body is itself `PLAIN`. Within a chunk the page encoding never varies, which is the guarantee of the row-group-wide dictionary decision ([WRITER_ENCODING.md](WRITER_ENCODING.md)). Across chunks the case's intent is pinned on the first, full chunk: a case whose values argue against a dictionary produces none anywhere, while one whose values argue for it may write a short trailing chunk `PLAIN`. The page walk also rejects any page that is not DataPage V1, the only page format the writer produces.
 
+7. **The page index agrees.** parquet-java reads every column chunk's `OffsetIndex` and `ColumnIndex`. The offset index locates exactly the data pages the walk found, back to back from the chunk's first data page to its end, with first row indexes starting at 0 and strictly increasing; every page of a repeated column starts a record, read from its first repetition level. Where a chunk has a column index, it has one entry per page, its null counts add up to the chunk's, its page bounds folded over the file are the case's true extremes under parquet-java's comparator, and a declared ascending or descending boundary order holds. A chunk without a column index is one whose column has no order or a floating-point one, which may hold an all-`NaN` page. The nested group checks the structure of every file it writes; `listPagesStartAtRecordBoundaries` is the case whose pages keep crossing the byte target part-way through a record.
+
 ### The flat matrix
 
 The floor is a **single-entry dictionary per physical type** in every repetition shape. `BOOLEAN`, never dictionary-encoded, writes it `PLAIN`.
@@ -207,4 +209,4 @@ The verdict spans test classes, so it cannot be an `@AfterAll`, and Surefire may
 - Nested shapes are enforced by enumeration in `WriterNestedInteropTest`, not by the coverage assertion.
 - The coverage assertion runs only when `parquet-testing-runner` runs whole; a `-Dtest` selection skips it.
 - `BROTLI` and `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` have no strict-reader coverage while the pinned parquet-java cannot read them.
-- Footer features the writer does not produce (page index, Bloom filters) have no gate assertions; each gains them in the change that adds it (#1291).
+- Bloom filters, which the writer does not produce, have no gate assertions; they gain them in the change that adds them (#1291).
