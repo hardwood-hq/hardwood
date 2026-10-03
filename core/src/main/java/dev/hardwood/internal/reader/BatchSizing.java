@@ -20,10 +20,19 @@ import dev.hardwood.schema.ColumnSchema;
 public final class BatchSizing {
 
     /// Hard upper bound on the batch size returned by
-    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)]. Other components that
-    /// pre-size structures around the worst-case batch size (e.g. the
-    /// `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
-    public static final int MAX_BATCH = 524288;
+    /// [#computeOptimalBatchSize(ProjectedSchema, double[], long)], and on the values per batch
+    /// of a binary column. Other components that pre-size structures around the worst-case
+    /// batch size (e.g. the `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
+    ///
+    /// `ColumnReader.getStrings()` and `getBinaries()` build one reference array per batch,
+    /// holding a binary column's values. G1 allocates an object larger than half a heap region
+    /// as a humongous object, in whole old-generation regions, and allocating one per batch
+    /// makes garbage collection take most of the process CPU. This is the longest reference
+    /// array that stays an ordinary object at G1's smallest region (1 MB) with compressed
+    /// references: half a region less a 24-byte allowance for the array header (16 bytes by
+    /// default, 12 with compact object headers), over 4 bytes per reference.
+    /// Batches from about 128K rows up read equally fast, so the bound costs no throughput.
+    public static final int MAX_BATCH = (512 * 1024 - 24) / 4;
 
     /// Passed as `availableRows` where the rows a read can produce are not known ahead of it,
     /// as for a multi-file read whose later files have not been planned. The batch then follows
@@ -32,7 +41,7 @@ public final class BatchSizing {
 
     private BatchSizing() {}
 
-    /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
+    /// Computes a batch size that keeps all column arrays for one batch within a fixed byte budget.
     ///
     /// Each batch allocates one value array per projected column, sized to the batch's
     /// **value** count. For a flat column that equals the row count, but for a repeated
@@ -41,8 +50,8 @@ public final class BatchSizing {
     /// leaf values per top-level row for projected column `i` (its list fan-out); a `null`
     /// array, a short array, or a non-positive entry falls back to `1.0` (one value per
     /// row). Sizing by rows alone — ignoring fan-out — makes a wide list column's value
-    /// array many times larger than the intended budget, so the batch no longer fits in
-    /// cache and both assembly and the consumer run memory-bound.
+    /// array many times larger than the intended budget, and both assembly and the consumer
+    /// run memory-bound.
     ///
     /// The batch is sized so the total value memory stays under the target (6 MB), clamped
     /// to at least one row and at most [#MAX_BATCH]. No larger row floor is applied: because
@@ -50,21 +59,19 @@ public final class BatchSizing {
     /// batch is roughly constant regardless of fan-out, so a high-fan-out column's small row
     /// count still carries a full batch of values to amortise per-batch overhead.
     ///
-    /// For example, 3 projected DOUBLE columns (8 bytes each, one value per row = 24
-    /// bytes/row) yields `6 MB / 24 = 262 144` rows; a single `LIST<float32>` of 768-wide
-    /// vectors (`768 * 4 = 3072` bytes/row) yields `6 MB / 3072 = 2048` rows.
+    /// For example, 10 projected DOUBLE columns (8 bytes each, one value per row = 80
+    /// bytes/row) yield `6 MB / 80 = 78 643` rows; a single `LIST<float32>` of 768-wide
+    /// vectors (`768 * 4 = 3072` bytes/row) yields `6 MB / 3072 = 2048` rows. A projection
+    /// narrower than 48 bytes/row budgets above [#MAX_BATCH] and is clamped to it.
     private static int budgetedBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow) {
-        // Target 6 MB of value memory per batch (fits comfortably in L2 cache).
+        // Target 6 MB of value memory per batch, enough rows to amortise the per-batch overhead.
         long targetBytes = 6L * 1024 * 1024;
         int maxBatch = MAX_BATCH;
 
         double bytesPerRow = 0;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
             ColumnSchema column = projectedSchema.getProjectedColumn(i);
-            double fanout = valuesPerRow != null && i < valuesPerRow.length && valuesPerRow[i] > 0
-                    ? valuesPerRow[i]
-                    : 1.0;
-            bytesPerRow += fanout * (columnByteWidth(column) + levelBytesPerValue(column));
+            bytesPerRow += fanout(valuesPerRow, i) * (columnByteWidth(column) + levelBytesPerValue(column));
         }
 
         if (bytesPerRow <= 0) {
@@ -74,13 +81,44 @@ public final class BatchSizing {
         return (int) Math.min(maxBatch, Math.max(1, (long) (targetBytes / bytesPerRow)));
     }
 
-    /// Computes a batch size that keeps all column arrays for one batch within the L2 cache,
-    /// capped at `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
+    /// Returns the most rows whose values fit in [#MAX_BATCH] for every projected binary column,
+    /// at least 1, or [#MAX_BATCH] where no column is binary. A primitive column's values are
+    /// bounded by the byte budget alone, so a wide list of numbers keeps its full batch.
+    private static int binaryValueRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
+        long rows = MAX_BATCH;
+        for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
+            if (isBinary(projectedSchema.getProjectedColumn(i))) {
+                rows = Math.min(rows, (long) (MAX_BATCH / fanout(valuesPerRow, i)));
+            }
+        }
+        return (int) Math.max(1, rows);
+    }
+
+    /// Whether `ColumnReader.getBinaries()` reads the column, building a reference array of its
+    /// values.
+    private static boolean isBinary(ColumnSchema column) {
+        return switch (column.type()) {
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
+            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> false;
+        };
+    }
+
+    /// Returns projected column `i`'s list fan-out, falling back to `1.0` for a `null` or short
+    /// array or a non-positive entry.
+    private static double fanout(double[] valuesPerRow, int i) {
+        return valuesPerRow != null && i < valuesPerRow.length && valuesPerRow[i] > 0
+                ? valuesPerRow[i]
+                : 1.0;
+    }
+
+    /// Computes a batch size that keeps all column arrays for one batch within a fixed byte
+    /// budget and a binary column's values per batch within [#MAX_BATCH], capped at
+    /// `availableRows`, the rows the read can produce, or [#ROWS_UNKNOWN] where that
     /// is not known.
     ///
     /// The byte budget sizes a batch from the projected columns' widths alone, so a read
     /// shorter than one batch would carry arrays for rows that cannot arrive: a single `INT64`
-    /// column over a 600-row file budgets [#MAX_BATCH], a 4 MB array per batch to hold 600
+    /// column over a 600-row file budgets [#MAX_BATCH], a 1 MB array per batch to hold 600
     /// values. The cap binds only in that case. Where the read is longer than a batch the
     /// budgeted size is returned unchanged, so batches stay as full as they were.
     ///
@@ -94,7 +132,8 @@ public final class BatchSizing {
     /// @throws IllegalArgumentException if `availableRows` is negative and not [#ROWS_UNKNOWN]
     public static int computeOptimalBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow,
             long availableRows) {
-        int budgeted = budgetedBatchSize(projectedSchema, valuesPerRow);
+        int budgeted = Math.min(budgetedBatchSize(projectedSchema, valuesPerRow),
+                binaryValueRows(projectedSchema, valuesPerRow));
         if (availableRows == ROWS_UNKNOWN) {
             return budgeted;
         }
@@ -150,7 +189,7 @@ public final class BatchSizing {
     /// worker holds per leaf value — one `int` definition level plus one `int`
     /// repetition level. A repeated column drains through [NestedColumnWorker],
     /// which accumulates both `int[]` level arrays alongside the value array, so
-    /// they count toward the batch's cache footprint. Non-repeated columns carry no
+    /// they count toward the batch's byte budget. Non-repeated columns carry no
     /// per-value level arrays (nullability rides a packed validity bitmap), so they
     /// contribute `0`.
     private static int levelBytesPerValue(ColumnSchema column) {

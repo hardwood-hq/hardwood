@@ -1111,9 +1111,11 @@ public class ParquetFileReader implements Closeable {
         /// Set the maximum number of records to return in each batch.
         ///
         /// When unset, the batch size is chosen adaptively from the column's
-        /// physical width so the per-batch arrays stay within the CPU cache —
-        /// the same byte-budgeted sizing the [RowReader] path uses — rather
-        /// than a fixed record count. Set this explicitly to override.
+        /// physical width so the per-batch arrays stay within a fixed memory
+        /// budget — the same sizing the [RowReader] path uses — rather than a
+        /// fixed record count. It is at most 131,066 records, and for a binary
+        /// list column at most 131,066 divided by the column's average list
+        /// length. Set this explicitly to override.
         public ColumnReaderBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
@@ -1185,9 +1187,11 @@ public class ParquetFileReader implements Closeable {
         /// Set the maximum number of records to return in each batch for all columns.
         ///
         /// When unset, the batch size is chosen adaptively from the projected
-        /// columns' physical widths so the per-batch arrays stay within the CPU
-        /// cache — the same byte-budgeted sizing the [RowReader] path uses —
-        /// rather than a fixed record count. Set this explicitly to override.
+        /// columns' physical widths so the per-batch arrays stay within a fixed
+        /// memory budget — the same sizing the [RowReader] path uses — rather
+        /// than a fixed record count. It is at most 131,066 records, and for a
+        /// projection with a binary list column at most 131,066 divided by that
+        /// column's average list length. Set this explicitly to override.
         public ColumnReadersBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);

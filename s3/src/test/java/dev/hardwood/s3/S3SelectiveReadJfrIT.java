@@ -476,9 +476,7 @@ public class S3SelectiveReadJfrIT extends AbstractJfrRecorderTest {
         // ColumnReader has the same lazy row-group fetching as RowReader.
         // Reading a single batch from one column should not scan all 20 row groups.
         // Pin the batch to one row group's worth of rows so the assertion tracks
-        // lazy fetching rather than the (adaptive, width-derived) default batch
-        // size — a single INT64 column would otherwise byte-budget to 524K rows,
-        // i.e. ~11 of the 50K-row row groups, just to fill one batch.
+        // lazy fetching rather than the default batch size.
         S3InputFile s3File = source.inputFile(bucket.name(), LAZY_ROWGROUP_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File);
              ColumnReader col = reader.buildColumnReader("c0").batchSize(LAZY_RG_ROWS).build()) {
