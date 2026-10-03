@@ -270,7 +270,7 @@ public class PageDecoder {
             offset += 4 + repLen;
         }
 
-        // Probe definition level stream — fall back unless all-present
+        // Probe definition level stream
         if (column.maxDefinitionLevel() > 0) {
             int defLen = readSectionLength(uncompressed, offset, uncompressedSize, "definition level");
             offset += 4;
@@ -280,11 +280,25 @@ public class PageDecoder {
             RleBitPackingHybridDecoder probe =
                     new RleBitPackingHybridDecoder(
                             uncompressed, offset, defLen, bitWidth);
-            if (!probe.isSingleRleRunOf(maxDef, numValues)) {
-                // Mixed nulls — fall back to existing path
-                return false;
+            if (probe.isSingleRleRunOf(maxDef, numValues)) {
+                // All-present: no def-levels needed
+                cursor.definitionLevels = null;
+                cursor.nonNullsLeft = numValues;
+            } else {
+                // Mixed nulls: decode the full def-level stream into the cursor.
+                // A fresh decoder is needed — the probe consumed the first run.
+                cursor.ensureDefLevels(numValues);
+                RleBitPackingHybridDecoder fullDecoder =
+                        new RleBitPackingHybridDecoder(
+                                uncompressed, offset, defLen, bitWidth);
+                fullDecoder.readInts(cursor.definitionLevels, 0, numValues);
+                cursor.defLevelPos = 0;
+                cursor.nonNullsLeft = countNonNull(cursor.definitionLevels, numValues, maxDef);
             }
             offset += defLen;
+        } else {
+            cursor.definitionLevels = null;
+            cursor.nonNullsLeft = numValues;
         }
         // offset now points at the first value byte
 
@@ -294,10 +308,10 @@ public class PageDecoder {
         cursor.srcLimit = uncompressedSize;
         cursor.valuesLeft = numValues;
         cursor.encoding = enc;
-        // BSS straddle tracking: record the stream base and total values
+        // BSS straddle tracking: record the stream base and total non-null values
         if (enc == Encoding.BYTE_STREAM_SPLIT) {
             cursor.bssBaseOffset = offset;
-            cursor.bssTotalValues = numValues;
+            cursor.bssTotalValues = cursor.nonNullsLeft;
             cursor.bssCurrentIndex = 0;
         }
 
@@ -326,11 +340,6 @@ public class PageDecoder {
             return false;
         }
 
-        // All-present check: V2 header carries numNulls directly
-        if (v2Header.numNulls() != 0) {
-            return false;
-        }
-
         int compressedSize = pageHeader.compressedPageSize();
         int uncompressedSize = pageHeader.uncompressedPageSize();
         ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
@@ -344,6 +353,25 @@ public class PageDecoder {
         int defLevelLen = v2Header.definitionLevelsByteLength();
         int valuesOffset = repLevelLen + defLevelLen;
         int compressedValuesLen = pageData.remaining() - valuesOffset;
+
+        // Decode definition levels: V2 levels are raw (uncompressed) in pageData
+        if (v2Header.numNulls() != 0) {
+            // Nullable page: decode the def-level stream into the cursor
+            byte[] defBytes = new byte[defLevelLen];
+            pageData.slice(repLevelLen, defLevelLen).get(defBytes);
+            int maxDef = column.maxDefinitionLevel();
+            int bitWidth = getBitWidth(maxDef);
+            cursor.ensureDefLevels(numValues);
+            RleBitPackingHybridDecoder decoder =
+                    new RleBitPackingHybridDecoder(defBytes, 0, defLevelLen, bitWidth);
+            decoder.readInts(cursor.definitionLevels, 0, numValues);
+            cursor.defLevelPos = 0;
+            cursor.nonNullsLeft = numValues - v2Header.numNulls();
+        } else {
+            // All-present: no def-levels needed
+            cursor.definitionLevels = null;
+            cursor.nonNullsLeft = numValues;
+        }
 
         // Decompress only the value region (levels are stored raw in V2)
         byte[] valueBytes;
@@ -366,9 +394,10 @@ public class PageDecoder {
         cursor.srcLimit = valuesLen;
         cursor.valuesLeft = numValues;
         cursor.encoding = enc;
+        // BSS straddle tracking: record the stream base and total non-null values
         if (enc == Encoding.BYTE_STREAM_SPLIT) {
             cursor.bssBaseOffset = 0;
-            cursor.bssTotalValues = numValues;
+            cursor.bssTotalValues = cursor.nonNullsLeft;
             cursor.bssCurrentIndex = 0;
         }
 
@@ -384,6 +413,22 @@ public class PageDecoder {
         event.compressedSize = compressedSize;
         event.uncompressedSize = uncompressedSize;
         event.commit();
+    }
+
+    /// Count values where {@code defLevels[i] == maxDef}.  Returns
+    /// {@code numValues} when {@code defLevels} is {@code null}
+    /// (all-present convention).
+    private static int countNonNull(int[] defLevels, int numValues, int maxDef) {
+        if (defLevels == null) {
+            return numValues;
+        }
+        int count = 0;
+        for (int i = 0; i < numValues; i++) {
+            if (defLevels[i] == maxDef) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// Whether `type` is directly decodable (numeric primitive only).

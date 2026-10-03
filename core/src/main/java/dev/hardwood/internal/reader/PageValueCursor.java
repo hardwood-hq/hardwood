@@ -53,15 +53,34 @@ final class PageValueCursor {
     /// whether the direct path applies.  {@code null} when idle.
     Encoding encoding;
 
+    // === Nullable page state ===
+    /// Decoded definition levels for the page, or {@code null} when all values
+    /// are present (same convention as [Page]'s definitionLevels).  Length
+    /// {@code >= numValues}; only {@code [0, numValues)} is valid.  Owned by
+    /// the cursor; survives batch-boundary publishes (straddle).
+    int[] definitionLevels;
+
+    /// Index into [#definitionLevels] of the next value to be assembled.
+    /// Starts at 0; advanced by {@code count} in each decodeDirectly call.
+    /// Survives batch-boundary publishes (straddle).
+    int defLevelPos;
+
+    /// Number of non-null values remaining on the page from [#defLevelPos]
+    /// to the end.  Set at fill time; decremented by the non-null count in
+    /// each decodeDirectly chunk.  Needed so BSS can be constructed with
+    /// the correct stream size on straddle resume.
+    int nonNullsLeft;
+
     // === BYTE_STREAM_SPLIT straddle state ===
     /// Base byte offset of the first BSS stream within [#data].
     /// Only valid when [#encoding] == BYTE_STREAM_SPLIT.
     int bssBaseOffset;
-    /// Total number of values on the page for BSS stream sizing.
+    /// Total number of non-null values on the page for BSS stream sizing.
     /// Only valid when [#encoding] == BYTE_STREAM_SPLIT.
+    /// For nullable pages this is the non-null count, not numValues.
     int bssTotalValues;
-    /// Current decode index within the BSS stream (values already consumed).
-    /// Starts at 0; incremented by each decodeDirectly call.
+    /// Current decode index within the BSS stream (non-null values already consumed).
+    /// Starts at 0; incremented by the non-null count in each decodeDirectly call.
     /// Only valid when [#encoding] == BYTE_STREAM_SPLIT.
     int bssCurrentIndex;
 
@@ -77,11 +96,23 @@ final class PageValueCursor {
         this.dataLen = dataLen;
     }
 
+    /// Grows the definition-level buffer if needed.  The buffer is kept
+    /// across pages on the same slot (like [#data]) to avoid repeated
+    /// allocation.
+    void ensureDefLevels(int capacity) {
+        if (definitionLevels == null || definitionLevels.length < capacity) {
+            definitionLevels = new int[capacity];
+        }
+    }
+
     /// Resets the cursor to idle (called when the page is finished or the worker
     /// falls back to the existing path).
     void reset() {
         valuesLeft = 0;
         encoding = null;
+        definitionLevels = null;
+        defLevelPos = 0;
+        nonNullsLeft = 0;
     }
 
     /// Whether the cursor is currently tracking an in-flight page.

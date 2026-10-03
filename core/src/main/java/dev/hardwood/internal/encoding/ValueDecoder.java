@@ -75,47 +75,58 @@ public interface ValueDecoder {
     }
 
     // -----------------------------------------------------------------------
-    // Direct-into-batch overloads
+    // Unified direct-into-batch overloads
     //
-    // These decode exactly `count` non-null values from the raw byte slice
-    // [srcPos, srcPos + count*elementBytes) and place them at dest[destOffset].
-    // The caller guarantees:
-    //   - definitionLevels is null  (all-present path only)
-    //   - dest[destOffset .. destOffset+count) is within bounds
-    //   - srcPos + count*elementBytes <= srcLimit
+    // Process `count` slots and place decoded values at dest[destOffset+i].
     //
-    // Default: UnsupportedOperationException — callers must fall back to the
-    // existing decodePage + arraycopy path when this is thrown.
+    //   defLevels == null   →  all-present (required column or page):  decode
+    //                          `count` values densely; return value == count.
+    //   defLevels != null   →  nullable page:  iterate `count` def-level slots
+    //                          starting at defLevels[defLevelOffset]; read a
+    //                          value from the byte stream only when the slot
+    //                          equals maxDefLevel; leave null positions in dest
+    //                          untouched.  Return value == non-null count.
+    //
+    // The decoder manages its own byte-stream position internally; the caller
+    // must advance cursor.srcPos / cursor.bssCurrentIndex by the returned
+    // non-null count after each call.
+    //
+    // Default: UnsupportedOperationException — callers fall back to the
+    // existing decodePage + arraycopy path.
     // -----------------------------------------------------------------------
 
-    /// Decode `count` DOUBLE values from `src[srcPos..)` into `dest[destOffset..)`.
+    /// Decode up to `count` DOUBLE values into dest[destOffset+i].
     ///
-    /// @param dest the destination array (batch values array)
-    /// @param destOffset first index to write into `dest`
-    /// @param count number of values to decode
-    /// @param src raw decompressed page bytes
-    /// @param srcPos byte offset in `src` of the first value
-    /// @param srcLimit exclusive byte bound of the value region in `src`
-    default void readDoubles(double[] dest, int destOffset, int count,
-                             byte[] src, int srcPos, int srcLimit) {
+    /// @param dest           batch values array
+    /// @param destOffset     first index to write into {@code dest}
+    /// @param count          def-level slots to process (== values when all-present)
+    /// @param defLevels      definition levels for the page, or {@code null} when all-present
+    /// @param defLevelOffset index into {@code defLevels} of the first slot (ignored when null)
+    /// @param maxDefLevel    the level that indicates a present value
+    /// @return number of non-null values decoded
+    default int readDoubles(double[] dest, int destOffset, int count,
+                            int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readDoubles not supported by this decoder");
     }
 
-    /// Decode `count` INT64 values from `src[srcPos..)` into `dest[destOffset..)`.
-    default void readLongs(long[] dest, int destOffset, int count,
-                           byte[] src, int srcPos, int srcLimit) {
+    /// Decode up to `count` INT64 values into dest[destOffset+i].
+    /// {@code defLevels == null} means all-present; returns {@code count}.
+    default int readLongs(long[] dest, int destOffset, int count,
+                          int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readLongs not supported by this decoder");
     }
 
-    /// Decode `count` INT32 values from `src[srcPos..)` into `dest[destOffset..)`.
-    default void readInts(int[] dest, int destOffset, int count,
-                          byte[] src, int srcPos, int srcLimit) {
+    /// Decode up to `count` INT32 values into dest[destOffset+i].
+    /// {@code defLevels == null} means all-present; returns {@code count}.
+    default int readInts(int[] dest, int destOffset, int count,
+                         int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readInts not supported by this decoder");
     }
 
-    /// Decode `count` FLOAT values from `src[srcPos..)` into `dest[destOffset..)`.
-    default void readFloats(float[] dest, int destOffset, int count,
-                            byte[] src, int srcPos, int srcLimit) {
+    /// Decode up to `count` FLOAT values into dest[destOffset+i].
+    /// {@code defLevels == null} means all-present; returns {@code count}.
+    default int readFloats(float[] dest, int destOffset, int count,
+                           int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readFloats not supported by this decoder");
     }
 }
