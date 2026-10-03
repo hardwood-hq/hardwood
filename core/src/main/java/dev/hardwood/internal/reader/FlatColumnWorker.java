@@ -214,27 +214,52 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             }
             case Page.ByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
-                byte[][] pageValues = p.values();
-                boolean fixedLen = physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY;
-                for (int i = 0; i < length; i++) {
-                    byte[] val = pageValues[srcPos + i];
-                    int dest = destPos + i;
-                    if (val != null) {
-                        bbv.appendAt(dest, val, 0, val.length);
-                    }
-                    else if (!fixedLen) {
-                        bbv.appendAt(dest, EMPTY_BYTES, 0, 0);
-                    }
-                    // FIXED_LEN null: pre-filled trivial offsets are kept;
-                    // bytes content at this slot is undefined scratch.
-                }
+                copyPlainBinaries(bbv, p.values(), srcPos, destPos, length);
+                // Plain values carry no entry index; in a batch that already holds a
+                // dictionary they fall back to the packed-byte path
+                // (see BinaryBatchValues#recordDictIndices).
+                bbv.recordDictIndices(null, null, srcPos, destPos, length);
+                markNulls(p.definitionLevels(), srcPos, destPos, length);
+            }
+            case Page.DictionaryByteArrayPage p -> {
+                BinaryBatchValues bbv = (BinaryBatchValues) values;
+                copyDictionaryBinaries(bbv, p.dictionary().values(), p.dictIndices(), srcPos, destPos, length);
                 // Record per-value dictionary indices so stringAt can intern; a
-                // no-op for non-string columns, and plain/null values fall back
-                // to the packed-byte path (see BinaryBatchValues#recordDictIndices).
+                // no-op for non-string columns, and null values fall back to the
+                // packed-byte path (see BinaryBatchValues#recordDictIndices).
                 bbv.recordDictIndices(p.dictIndices(), p.dictionary(), srcPos, destPos, length);
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }
         }
+    }
+
+    private void copyPlainBinaries(BinaryBatchValues bbv, byte[][] pageValues, int srcPos, int destPos,
+                                   int length) {
+        for (int i = 0; i < length; i++) {
+            appendBinary(bbv, destPos + i, pageValues[srcPos + i]);
+        }
+    }
+
+    /// Resolves each value through the dictionary in the loop itself, so the entry array and
+    /// the index array are read once per page rather than through [Page.BinaryPage#get]
+    /// per value. An index of `-1` marks a null position.
+    private void copyDictionaryBinaries(BinaryBatchValues bbv, byte[][] entries, int[] dictIndices,
+                                        int srcPos, int destPos, int length) {
+        for (int i = 0; i < length; i++) {
+            int entry = dictIndices[srcPos + i];
+            appendBinary(bbv, destPos + i, entry < 0 ? null : entries[entry]);
+        }
+    }
+
+    private void appendBinary(BinaryBatchValues bbv, int dest, byte[] val) {
+        if (val != null) {
+            bbv.appendAt(dest, val, 0, val.length);
+        }
+        else if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            bbv.appendAt(dest, EMPTY_BYTES, 0, 0);
+        }
+        // FIXED_LEN null: pre-filled trivial offsets are kept;
+        // bytes content at this slot is undefined scratch.
     }
 
     /// Records a validity bit for each value just copied. Set bit means the

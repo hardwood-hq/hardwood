@@ -248,9 +248,10 @@ public class PageDecodeAllocationProfileTest {
             case Page.IntPage p -> p.size() * 4;
             case Page.FloatPage p -> p.size() * 4;
             case Page.BooleanPage p -> p.size(); // 1 byte per boolean in array
-            case Page.ByteArrayPage p -> {
+            case Page.BinaryPage p -> {
                 int total = 0;
-                for (byte[] v : p.values()) {
+                for (int i = 0; i < p.size(); i++) {
+                    byte[] v = p.get(i);
                     if (v != null) {
                         total += v.length;
                     }

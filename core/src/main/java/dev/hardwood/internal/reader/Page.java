@@ -19,7 +19,8 @@ package dev.hardwood.internal.reader;
 /// - [LongPage] - INT64
 /// - [FloatPage] - FLOAT
 /// - [DoublePage] - DOUBLE
-/// - [ByteArrayPage] - BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96
+/// - [BinaryPage] - BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96, as a [ByteArrayPage] or a
+///   [DictionaryByteArrayPage]
 public sealed interface Page {
 
     /// The number of values (leaves) on this page — the logical length of the
@@ -85,7 +86,9 @@ public sealed interface Page {
             case DoublePage p -> new DoublePage(p.values(), p.definitionLevels(), p.repetitionLevels(),
                     p.maxDefinitionLevel(), p.size(), fixedListK);
             case ByteArrayPage p -> new ByteArrayPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
-                    p.maxDefinitionLevel(), p.size(), p.dictionary(), p.dictIndices(), fixedListK);
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case DictionaryByteArrayPage p -> new DictionaryByteArrayPage(p.dictionary(), p.dictIndices(),
+                    p.definitionLevels(), p.repetitionLevels(), p.maxDefinitionLevel(), p.size(), fixedListK);
         };
     }
 
@@ -144,23 +147,46 @@ public sealed interface Page {
         }
     }
 
+    /// A page of `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` values, in one of two
+    /// forms: [ByteArrayPage] holds one array per value, [DictionaryByteArrayPage] resolves
+    /// each value through its dictionary. [#get(int)] reads either.
+    sealed interface BinaryPage extends Page permits ByteArrayPage, DictionaryByteArrayPage {
+
+        /// Returns value `index`, or `null` at a null position.
+        byte[] get(int index);
+    }
+
+    /// Byte-array page decoded without a dictionary (`PLAIN`, delta): one array per value,
+    /// `null` at a null position.
     record ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
-            int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices, int fixedListK)
-            implements Page {
-        /// Page from a non-dictionary (`PLAIN`) decode: no shared dictionary, so
-        /// values cannot be interned per entry (`dictionary` / `dictIndices` null).
+            int size, int fixedListK) implements BinaryPage {
         ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
                 int size) {
-            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, null, null, 0);
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
         }
 
-        ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
-                int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices) {
-            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, dictionary, dictIndices, 0);
-        }
-
+        @Override
         public byte[] get(int index) {
             return values[index];
+        }
+    }
+
+    /// Byte-array page decoded through a dictionary. It holds the chunk's `dictionary` and
+    /// one entry index per value in `dictIndices` (`-1` at a null position) rather than a
+    /// reference per value. The indices also let the row reader intern repeated values by
+    /// entry.
+    record DictionaryByteArrayPage(Dictionary.ByteArrayDictionary dictionary, int[] dictIndices,
+            int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size, int fixedListK)
+            implements BinaryPage {
+        DictionaryByteArrayPage(Dictionary.ByteArrayDictionary dictionary, int[] dictIndices,
+                int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(dictionary, dictIndices, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
+        @Override
+        public byte[] get(int index) {
+            int entry = dictIndices[index];
+            return entry < 0 ? null : dictionary.values()[entry];
         }
     }
 }

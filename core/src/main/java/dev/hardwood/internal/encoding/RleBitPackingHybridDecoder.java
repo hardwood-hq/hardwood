@@ -126,13 +126,42 @@ public class RleBitPackingHybridDecoder {
         applyDictionary(output, dictionary, indices, defLevels, maxDef);
     }
 
-    /// Resolves dictionary-encoded byte-array values, also writing each value's
-    /// dictionary entry index into `outDictIndices` (`-1` at null positions) so the
-    /// row reader can intern values by entry.
-    public void readDictionaryByteArrays(byte[][] output, int[] outDictIndices, byte[][] dictionary,
-                                         int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, outDictIndices, dictionary, indices, defLevels, maxDef);
+    /// Decodes each value's dictionary entry index into `outDictIndices`, `-1` at null
+    /// positions, for a page that resolves its byte-array values through the dictionary
+    /// rather than holding one reference per value. An index outside
+    /// `[0, dictionarySize)` fails here, at decode, as the lookup into the dictionary
+    /// would.
+    public void readDictionaryIndices(int[] outDictIndices, int dictionarySize, int[] defLevels, int maxDef) {
+        int length = outDictIndices.length;
+        int[] indices = decodeIndices(length, defLevels, maxDef);
+        int min = 0;
+        int max = -1;
+        if (defLevels == null) {
+            for (int i = 0; i < length; i++) {
+                int d = indices[i];
+                outDictIndices[i] = d;
+                min = Math.min(min, d);
+                max = Math.max(max, d);
+            }
+        }
+        else {
+            int idx = 0;
+            for (int i = 0; i < length; i++) {
+                if (defLevels[i] == maxDef) {
+                    int d = indices[idx++];
+                    outDictIndices[i] = d;
+                    min = Math.min(min, d);
+                    max = Math.max(max, d);
+                }
+                else {
+                    outDictIndices[i] = -1;
+                }
+            }
+        }
+        if (min < 0 || max >= dictionarySize) {
+            throw new ArrayIndexOutOfBoundsException("Dictionary index " + (min < 0 ? min : max)
+                    + " out of bounds for a dictionary of " + dictionarySize + " entries");
+        }
     }
 
     public void readBooleans(boolean[] output, int[] defLevels, int maxDef) {
@@ -224,30 +253,6 @@ public class RleBitPackingHybridDecoder {
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
                     output[i] = dict[indices[idx++]];
-                }
-            }
-        }
-    }
-
-    private void applyDictionary(byte[][] output, int[] outDictIndices, byte[][] dict, int[] indices,
-                                 int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                int d = indices[i];
-                output[i] = dict[d];
-                outDictIndices[i] = d;
-            }
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    int d = indices[idx++];
-                    output[i] = dict[d];
-                    outDictIndices[i] = d;
-                }
-                else {
-                    outDictIndices[i] = -1;
                 }
             }
         }

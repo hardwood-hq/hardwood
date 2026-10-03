@@ -281,7 +281,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         // record-aligned run that can be bulk-copied instead of walked per element.
         // Byte-array leaves stay on the per-element path — their values are appended
         // into a shared buffer, not arraycopy-able.
-        if (page.allPresent() && mask.isAll() && !(page instanceof Page.ByteArrayPage)) {
+        if (page.allPresent() && mask.isAll() && !(page instanceof Page.BinaryPage)) {
             assembleAllPresentPage(page, pageRepLevels);
             return;
         }
@@ -654,22 +654,31 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case Page.DoublePage p -> ((double[]) destValues)[destIndex] = p.values()[srcIndex];
             case Page.BooleanPage p -> ((boolean[]) destValues)[destIndex] = p.values()[srcIndex];
             case Page.ByteArrayPage p -> {
-                byte[] val = p.values()[srcIndex];
                 BinaryBatchValues bbv = (BinaryBatchValues) destValues;
-                if (val != null) {
-                    bbv.appendAt(destIndex, val, 0, val.length);
-                }
-                else if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                    // Variable-length null: zero-length span at this index.
-                    bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
-                }
-                // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
+                appendBinary(bbv, destIndex, p.values()[srcIndex]);
+                // Plain values carry no entry index (see BinaryBatchValues#recordDictIndex).
+                bbv.recordDictIndex(null, null, srcIndex, destIndex);
+            }
+            case Page.DictionaryByteArrayPage p -> {
+                BinaryBatchValues bbv = (BinaryBatchValues) destValues;
+                appendBinary(bbv, destIndex, p.get(srcIndex));
                 // Record the per-value dictionary index so stringAt can intern; a
-                // no-op for non-string columns, and plain/null values fall back
-                // to the packed-byte path (see BinaryBatchValues#recordDictIndex).
+                // no-op for non-string columns, and null values fall back to the
+                // packed-byte path (see BinaryBatchValues#recordDictIndex).
                 bbv.recordDictIndex(p.dictIndices(), p.dictionary(), srcIndex, destIndex);
             }
         }
+    }
+
+    private void appendBinary(BinaryBatchValues bbv, int destIndex, byte[] val) {
+        if (val != null) {
+            bbv.appendAt(destIndex, val, 0, val.length);
+        }
+        else if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            // Variable-length null: zero-length span at this index.
+            bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
+        }
+        // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
     }
 
     /// Ensures both the value and level accumulators hold at least `needed`
@@ -744,8 +753,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // Both callers exclude byte-array pages: the fixed-size-list fast path
             // is gated to primitive element types
             // (PageDecoder#isFixedListElementSupported), and the all-present bulk
-            // copy is taken only for a page that is not a ByteArrayPage.
-            case Page.ByteArrayPage p -> throw new IllegalStateException(
+            // copy is taken only for a page that is not a BinaryPage.
+            case Page.BinaryPage p -> throw new IllegalStateException(
                     "byte-array element unexpected on the fixed-size-list fast path");
         }
     }

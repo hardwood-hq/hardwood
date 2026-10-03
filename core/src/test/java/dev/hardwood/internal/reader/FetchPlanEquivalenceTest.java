@@ -213,6 +213,11 @@ public class FetchPlanEquivalenceTest {
         else if (expected instanceof Page.ByteArrayPage seqBytes && actual instanceof Page.ByteArrayPage idxBytes) {
             assertThat(idxBytes.values()).as(desc).isEqualTo(seqBytes.values());
         }
+        else if (expected instanceof Page.DictionaryByteArrayPage seqDict
+                && actual instanceof Page.DictionaryByteArrayPage idxDict) {
+            assertThat(idxDict.dictIndices()).as(desc).isEqualTo(seqDict.dictIndices());
+            assertThat(idxDict.dictionary().values()).as(desc).isEqualTo(seqDict.dictionary().values());
+        }
         else {
             assertThat(actual.getClass()).as(desc + " type mismatch").isEqualTo(expected.getClass());
         }

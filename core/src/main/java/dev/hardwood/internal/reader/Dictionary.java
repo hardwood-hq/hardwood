@@ -173,13 +173,10 @@ public sealed interface Dictionary {
         @Override
         public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
                                int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            byte[][] output = new byte[numValues][];
             int[] dictIndices = new int[numValues];
-            indexDecoder.readDictionaryByteArrays(output, dictIndices, values, definitionLevels, maxDefLevel);
-            // Carry the dictionary and per-value entry indices so the row reader
-            // can intern repeated values to one String per chunk.
-            return new Page.ByteArrayPage(output, definitionLevels, repetitionLevels, maxDefLevel,
-                    numValues, this, dictIndices);
+            indexDecoder.readDictionaryIndices(dictIndices, values.length, definitionLevels, maxDefLevel);
+            return new Page.DictionaryByteArrayPage(this, dictIndices, definitionLevels, repetitionLevels,
+                    maxDefLevel, numValues);
         }
     }
 }

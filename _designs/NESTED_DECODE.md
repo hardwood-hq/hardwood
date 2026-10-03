@@ -137,7 +137,7 @@ A page whose leaves are all present stores its values as one contiguous block, 1
 
 - `page.allPresent()`: the definition-level array is `null` (the O(1) gate above, or a column with `maxDefinitionLevel == 0`).
 - `mask.isAll()`: the page is read unmasked, so its kept values are one record-aligned span.
-- The page is not a `Page.ByteArrayPage`: `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves append into a shared byte buffer and stay per element.
+- The page is not a `Page.BinaryPage`: `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves append into a shared byte buffer and stay per element.
 
 A page that fails any condition takes the per-element path in full; there is no sub-page run detection.
 
