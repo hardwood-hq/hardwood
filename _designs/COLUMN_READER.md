@@ -1,6 +1,6 @@
 # Column reader
 
-Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed offsets, the `Validity` bitmap, fixed-width and variable-length leaf values, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
+Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed layer offsets, the `Validity` bitmap, fixed-width and variable-length leaf values, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
 
 Related documents:
 
@@ -92,15 +92,18 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 
 ### Variable-length
 
-`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader`), a `(byte[] bytes, int[] offsets)` pair, instead of one `byte[]` per value:
+`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader`): one `byte[]` buffer and, per value, a view `[starts[i], ends[i])` into it, instead of one `byte[]` per value:
 
-- `getBinaryOffsets()` has length `getValueCount() + 1` and is sentinel-suffixed; value `i` occupies `[offsets[i], offsets[i+1])`. For `FIXED_LEN_BYTE_ARRAY` the offsets are `i * width`.
-- `getBinaryValues()` is **capacity-sized**: only `[0, offsets[getValueCount()])` is meaningful, and bytes past it are unspecified. Consumers bound reads by the offsets, never by `bytes.length`.
-- Both accessors throw `IllegalStateException` on a fixed-width column.
+- `getBinaryStarts()` and `getBinaryEnds()` have length `getValueCount()`; value `i` occupies `[starts[i], ends[i])` of `getBinaryValues()`. A null value's range is empty.
+- Views are not contiguous or ordered, and may overlap. A value from a dictionary-encoded page points at its entry in the batch's single copy of that dictionary once the batch holds one, so values naming one entry may cover the same bytes; a value from a plain page is appended to the buffer.
+- `getBinaryValues()` is not sized to the values: bytes outside every view are unspecified. Consumers bound reads by each value's view, never by `bytes.length`.
+- All three accessors throw `IllegalStateException` on a fixed-width column.
 
-Layer offsets and binary offsets are orthogonal: layer offsets say which leaf values belong to a container, binary offsets say which bytes belong to a leaf value.
+Views are what keep a dictionary-encoded column from costing a byte copy per value. The batch copies each dictionary it draws values from once and records two `int`s per value after that. It appends a dictionary's values until their bytes reach the dictionary's size, and only then copies the dictionary in, so a batch holds at most twice the bytes that appending every value would take, however many dictionaries it spans and however large they are. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
 
-The total bytes of one batch are capped at `Integer.MAX_VALUE`, since offsets are `int`. The append path (`BinaryBatchValues.appendAt`) fails the read when a batch would exceed it; the remedy is a smaller batch size for that column. Where a batch has phantom positions, the drain gathers the real values into a second buffer while the raw one stays referenced by the batch, so peak binary memory for such a batch is up to twice its raw bytes.
+Layer offsets and binary views are orthogonal: layer offsets say which leaf values belong to a container, binary views say which bytes belong to a leaf value.
+
+The total bytes of one batch are capped at `Integer.MAX_VALUE`, since views are `int`. The append path (`BinaryBatchValues.appendAt`) fails the read when a batch would exceed it; the remedy is a smaller batch size for that column. Where a batch has phantom positions, the drain gathers the real values' views; the gathered batch shares the raw batch's bytes, which it never outlives.
 
 `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf, `null` at null positions, and cache the result per batch. `getStrings()` requires a text column (`BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated) and throws `IllegalArgumentException` otherwise; on a dictionary-encoded `STRING`, `ENUM` or `JSON` column it returns one interned `String` per dictionary entry through the batch's dictionary indices (see [VALUE_DECODE.md](VALUE_DECODE.md)), and on an unannotated column one `String` per value. Both arrays have length `getValueCount()`, not `getRecordCount()`.
 
@@ -133,7 +136,7 @@ Every column-reader read (one `ColumnReader`, an unfiltered `ColumnReaders` grou
 
 - **`ColumnCursor`** (package-private) owns one decoded column's worker, its `BatchExchange` and its current raw batch. `advance()` polls the exchange, rethrows a pipeline error, and returns `false` at end of stream and on every call after it. It exposes the current batch, record count, file name and `filterAlwaysMatches`, and `close()` stops the worker. It holds no accessor or cache state.
 - **`ColumnScan`** (package-private) owns the cursors of every decoded column, in `ReadProjection.decoded()` order (payload columns first, then filter-only predicate columns), the shared `RowGroupIterator`, and for a filtered read the `SelectionEngine`. One iterator feeds every cursor, which is what keeps the columns row-aligned.
-- **Views.** `ColumnReader` holds its scan and the index of its payload cursor plus per-batch caches (the real view, trimmed or gathered leaf arrays, trimmed binary offsets, materialised binaries and strings). `ColumnReaders` holds the scan and one `ColumnReader` per payload column. Views own no pipeline state.
+- **Views.** `ColumnReader` holds its scan and the index of its payload cursor plus per-batch caches (the real view, trimmed or gathered leaf arrays, trimmed binary views, materialised binaries and strings). `ColumnReaders` holds the scan and one `ColumnReader` per payload column. Views own no pipeline state.
 
 Each scan has one owner, which advances and closes it. A single `ColumnReader` owns a one-column scan (`ParquetFileReader.buildSingleColumnReader`) and is its only view; a filtered single column's scan also holds the predicate columns' cursors, which have no view. A `ColumnReaders` owns its scan, and its `ColumnReader`s are group members: views that neither advance nor close it. Single-column readers are single-file; `ColumnReaders` spans the files of an `openAll` reader.
 
@@ -172,9 +175,9 @@ Tests: `ColumnReaderBatchArrayIdentityTest`. Freshness on the filtered path is u
 
 ## Boundaries
 
-- **Arrow-compatible buffers (#153).** Validity, offsets and value bytes are Java arrays, and the public accessors return them as arrays (`Validity.words()`, `getInts()`, `getBinaryValues()`, `getLayerOffsets()`). A layout Arrow consumers could take without a copy needs accessors of its own, since these signatures cannot expose off-heap buffers without copying each batch; the model (validity polarity, sentinel offsets, real items only) carries over unchanged.
+- **Arrow-compatible buffers (#153).** Validity, offsets and value bytes are Java arrays, and the public accessors return them as arrays (`Validity.words()`, `getInts()`, `getBinaryValues()`, `getLayerOffsets()`). A layout Arrow consumers could take without a copy needs accessors of its own, since these signatures cannot expose off-heap buffers without copying each batch; the model (validity polarity, sentinel layer offsets, real items only) carries over unchanged.
 - **Caller-provided buffers (#737).** Every batch allocates fresh arrays; a fill-into-caller-buffers contract for zero-allocation reads does not exist.
 - **Logical types (#514).** The accessors return physical values only; logical conversion for columnar consumers is not exposed.
 - **API stability (#522).** `ColumnReader`, `LayerKind` and `Validity` are `@Experimental`.
-- **Per-batch `int` offsets.** Layer and binary offsets are `int[]`, which bounds one batch to `Integer.MAX_VALUE` leaf values and bytes. Offsets are per batch, so a file larger than that is not affected; a batch beyond it would need a separate API decision.
-- **Compressed leaf shapes.** Leaves are materialised as typed arrays or `(bytes, offsets)`. Dictionary or run-end encoded leaves are not part of the public shape.
+- **Per-batch `int` offsets.** Layer offsets and binary views are `int[]`, which bounds one batch to `Integer.MAX_VALUE` leaf values and bytes. They are per batch, so a file larger than that is not affected; a batch beyond it would need a separate API decision.
+- **Compressed leaf shapes.** Leaves are materialised as typed arrays or binary views. Dictionary entry ids and run-end encoded leaves are not part of the public shape (#513).

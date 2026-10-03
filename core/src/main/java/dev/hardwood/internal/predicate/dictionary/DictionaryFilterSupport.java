@@ -10,8 +10,8 @@ package dev.hardwood.internal.predicate.dictionary;
 import java.util.Arrays;
 
 import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.BinaryComparator;
-import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.reader.Dictionary;
 
 /// Shared utilities for evaluating equality / membership predicates against a row group's
@@ -104,8 +104,12 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        for (byte[] entry : dict.values()) {
-            if (entry.length == FixedWidths.FLOAT16 && Float.compare(StatisticsDecoder.decodeFloat16(entry), value) == 0) {
+        byte[] bytes = dict.entryBytes();
+        int[] offsets = dict.entryOffsets();
+        for (int i = 0; i < dict.size(); i++) {
+            int from = offsets[i];
+            if (offsets[i + 1] - from == FixedWidths.FLOAT16
+                    && Float.compare(LogicalTypeConverter.float16At(bytes, from), value) == 0) {
                 return false;
             }
         }
@@ -118,11 +122,14 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        for (byte[] entry : dict.values()) {
-            if (entry.length != FixedWidths.FLOAT16) {
+        byte[] bytes = dict.entryBytes();
+        int[] offsets = dict.entryOffsets();
+        for (int i = 0; i < dict.size(); i++) {
+            int from = offsets[i];
+            if (offsets[i + 1] - from != FixedWidths.FLOAT16) {
                 continue;
             }
-            float stored = StatisticsDecoder.decodeFloat16(entry);
+            float stored = LogicalTypeConverter.float16At(bytes, from);
             for (float value : values) {
                 if (Float.compare(stored, value) == 0) {
                     return false;
@@ -136,8 +143,10 @@ public final class DictionaryFilterSupport {
         if (!(dictionary instanceof Dictionary.ByteArrayDictionary dict)) {
             return false;
         }
-        for (byte[] entry : dict.values()) {
-            if (Arrays.equals(entry, value)) {
+        byte[] bytes = dict.entryBytes();
+        int[] offsets = dict.entryOffsets();
+        for (int i = 0; i < dict.size(); i++) {
+            if (BinaryComparator.sliceEquals(bytes, offsets[i], offsets[i + 1], value)) {
                 return false;
             }
         }
@@ -183,12 +192,34 @@ public final class DictionaryFilterSupport {
         // applies.
         byte[][] probes = values.clone();
         Arrays.sort(probes, BinaryComparator::compareUnsigned);
-        for (byte[] entry : dict.values()) {
-            if (Arrays.binarySearch(probes, entry, BinaryComparator::compareUnsigned) >= 0) {
+        byte[] bytes = dict.entryBytes();
+        int[] offsets = dict.entryOffsets();
+        for (int i = 0; i < dict.size(); i++) {
+            if (containsSorted(probes, bytes, offsets[i], offsets[i + 1])) {
                 return false;
             }
         }
         return true;
+    }
+
+    /// Whether `sortedProbes`, in unsigned lexicographic order, holds the bytes `[from, to)`.
+    private static boolean containsSorted(byte[][] sortedProbes, byte[] bytes, int from, int to) {
+        int low = 0;
+        int high = sortedProbes.length - 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            int cmp = BinaryComparator.compareUnsigned(bytes, from, to, sortedProbes[mid]);
+            if (cmp == 0) {
+                return true;
+            }
+            if (cmp > 0) {
+                low = mid + 1;
+            }
+            else {
+                high = mid - 1;
+            }
+        }
+        return false;
     }
 
     /// `IN`-list dictionary check for `FLOAT` values.

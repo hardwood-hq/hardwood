@@ -59,8 +59,8 @@ import dev.hardwood.schema.FileSchema;
 /// reuses or overwrites an array returned for an earlier batch — so a
 /// returned array may be kept and read after the reader has advanced,
 /// including handed off to another thread for processing. The reader itself
-/// is still a single-threaded cursor: only one consumer thread may advance it. (The capacity-sizing note on [#getBinaryValues()]
-/// is about array *length*, not reuse; that buffer is fresh per batch too.)
+/// is still a single-threaded cursor: only one consumer thread may advance it. (The note on [#getBinaryValues()] that the
+/// array is not sized to the values is about its *length*, not reuse; that buffer is fresh per batch too.)
 ///
 /// **This API is [Experimental]:** the shape of the batch accessors and
 /// layer representation may change in future releases without prior
@@ -93,7 +93,8 @@ public class ColumnReader implements Closeable {
     // on first access and invalidated when a step is adopted.
     private Object cachedRealValues;
     private byte[] cachedRealBinaryBytes;
-    private int[] cachedRealBinaryOffsets;
+    private int[] cachedRealBinaryStarts;
+    private int[] cachedRealBinaryEnds;
     private byte[][] cachedBinaries;
     private String[] cachedStrings;
 
@@ -181,7 +182,8 @@ public class ColumnReader implements Closeable {
         currentRealView = null;
         cachedRealValues = null;
         cachedRealBinaryBytes = null;
-        cachedRealBinaryOffsets = null;
+        cachedRealBinaryStarts = null;
+        cachedRealBinaryEnds = null;
         cachedBinaries = null;
         cachedStrings = null;
     }
@@ -310,9 +312,13 @@ public class ColumnReader implements Closeable {
 
     // ==================== Varlength Leaf Buffers ====================
 
-    /// Backing byte buffer for a varlength leaf. Capacity-sized: only bytes
-    /// in the half-open range `[0, getBinaryOffsets()[getValueCount()])` are
-    /// valid; bytes beyond that position are unspecified.
+    /// The bytes a varlength leaf's values are read from. Value `i` occupies
+    /// `[getBinaryStarts()[i], getBinaryEnds()[i])`.
+    ///
+    /// Values need not be contiguous or in value order, and several may cover the
+    /// same bytes, as values of a dictionary-encoded column naming the same
+    /// dictionary entry may. The array is not sized to the values; bytes outside
+    /// every value's range are unspecified.
     ///
     /// @throws IllegalStateException for non-byte-array leaves
     public byte[] getBinaryValues() {
@@ -321,16 +327,24 @@ public class ColumnReader implements Closeable {
         return cachedRealBinaryBytes;
     }
 
-    /// Sentinel-suffixed offsets into [#getBinaryValues()]. Length ==
-    /// `getValueCount() + 1`; the byte length of value `i` is
-    /// `offsets[i+1] - offsets[i]`. For `FIXED_LEN_BYTE_ARRAY` columns the
-    /// offsets are trivially `i * width`.
+    /// Start of each value in [#getBinaryValues()], inclusive. Length ==
+    /// `getValueCount()`. A null value's range is empty.
     ///
     /// @throws IllegalStateException for non-byte-array leaves
-    public int[] getBinaryOffsets() {
+    public int[] getBinaryStarts() {
         checkBatchAvailable();
         ensureRealBinary();
-        return cachedRealBinaryOffsets;
+        return cachedRealBinaryStarts;
+    }
+
+    /// End of each value in [#getBinaryValues()], exclusive. Length ==
+    /// `getValueCount()`; the byte length of value `i` is `ends[i] - starts[i]`.
+    ///
+    /// @throws IllegalStateException for non-byte-array leaves
+    public int[] getBinaryEnds() {
+        checkBatchAvailable();
+        ensureRealBinary();
+        return cachedRealBinaryEnds;
     }
 
     // ==================== Convenience Accessors ====================
@@ -338,7 +352,7 @@ public class ColumnReader implements Closeable {
     /// Materialises one `byte[]` per leaf value, copying out of the binary
     /// buffer. Returns `null` at indexes where [#getLeafValidity()] is unset.
     /// Allocates one byte array per leaf — hot loops should consult
-    /// [#getBinaryValues()] + [#getBinaryOffsets()] directly.
+    /// [#getBinaryValues()] with [#getBinaryStarts()] and [#getBinaryEnds()] directly.
     ///
     /// The returned array has length [#getValueCount()] — i.e. the **real
     /// leaf count**, not [#getRecordCount()]. For a flat column the two
@@ -359,11 +373,7 @@ public class ColumnReader implements Closeable {
                 result[i] = null;
                 continue;
             }
-            int start = cachedRealBinaryOffsets[i];
-            int len = cachedRealBinaryOffsets[i + 1] - start;
-            byte[] copy = new byte[len];
-            System.arraycopy(cachedRealBinaryBytes, start, copy, 0, len);
-            result[i] = copy;
+            result[i] = Arrays.copyOfRange(cachedRealBinaryBytes, cachedRealBinaryStarts[i], cachedRealBinaryEnds[i]);
         }
         cachedBinaries = result;
         return result;
@@ -509,7 +519,7 @@ public class ColumnReader implements Closeable {
     /// Trims a primitive leaf array to exactly [#getValueCount()] entries so the
     /// capacity tail — stale or zero-filled values past the batch's real leaf
     /// count — is never exposed through the typed accessors. Already-exact arrays
-    /// and non-array payloads ([BinaryBatchValues], whose offsets are trimmed on
+    /// and non-array payloads ([BinaryBatchValues], whose views are trimmed on
     /// their own path) pass through untouched, so only the final short batch of a
     /// column ever pays a copy.
     private Object trimToValueCount(Object values) {
@@ -531,7 +541,8 @@ public class ColumnReader implements Closeable {
         BinaryBatchValues bbv = realLeafBinary();
         int leafCount = nested ? getValueCount() : recordCount;
         cachedRealBinaryBytes = bbv.bytes;
-        cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, leafCount);
+        cachedRealBinaryStarts = trimToLeafCount(bbv.starts, leafCount);
+        cachedRealBinaryEnds = trimToLeafCount(bbv.ends, leafCount);
     }
 
     /// The current batch's varlength leaf values, after any nested compaction.
@@ -544,15 +555,14 @@ public class ColumnReader implements Closeable {
     }
 
     /// The per-batch [BinaryBatchValues] is sized to the worker's batch
-    /// capacity; only the prefix `[0, valueCount + 1]` of the offsets is
-    /// meaningful at the public-API surface. Trim if needed (the bytes
-    /// buffer itself stays capacity-sized — the public contract documents
-    /// it that way).
-    private static int[] trimOffsetsToLeafCount(int[] offsets, int leafCount) {
-        if (offsets.length == leafCount + 1) {
-            return offsets;
+    /// capacity; only the first `leafCount` views are meaningful at the
+    /// public-API surface. Trim if needed (the bytes buffer itself is not
+    /// trimmed — the public contract documents it that way).
+    private static int[] trimToLeafCount(int[] views, int leafCount) {
+        if (views.length == leafCount) {
+            return views;
         }
-        return Arrays.copyOf(offsets, leafCount + 1);
+        return Arrays.copyOf(views, leafCount);
     }
 
     private void checkBatchAvailable() {

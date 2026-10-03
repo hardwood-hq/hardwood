@@ -18,7 +18,8 @@ public final class LeafCompaction {
     }
 
     /// Returns a fresh array holding `raw[map[i]]` for each real-leaf index `i`.
-    /// The result is sized to `map.length`; the caller owns it outright.
+    /// The result is sized to `map.length`; the caller owns it outright, except
+    /// that a varlength leaf shares `raw`'s bytes (see [#compactBinary]).
     public static Object compact(Object raw, int[] map) {
         int n = map.length;
         return switch (raw) {
@@ -64,32 +65,25 @@ public final class LeafCompaction {
 
     /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
-    /// (nested path); only its `[0, count)` prefix is read. A dictionary-encoded
-    /// string leaf carries its chunk dictionary and gathered entry indices through,
-    /// so `getStrings()` still reuses the interned instances.
+    /// (nested path); only its `[0, count)` prefix is read. Only the views are
+    /// gathered: the result shares `raw`'s bytes, which a compacted batch never
+    /// outlives. A dictionary-encoded string leaf carries its chunk dictionary and
+    /// gathered entry indices through, so `getStrings()` still reuses the interned
+    /// instances.
     public static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
-        int totalBytes = 0;
-        int[] outOffsets = new int[count + 1];
-        for (int i = 0; i < count; i++) {
-            int rawIdx = map[i];
-            int len = raw.offsets[rawIdx + 1] - raw.offsets[rawIdx];
-            outOffsets[i] = totalBytes;
-            totalBytes += len;
-        }
-        outOffsets[count] = totalBytes;
-        byte[] outBytes = new byte[totalBytes];
+        int[] outStarts = new int[count];
+        int[] outEnds = new int[count];
         boolean interned = raw.dictionary != null;
         int[] outDictIndices = interned ? new int[count] : null;
         for (int i = 0; i < count; i++) {
             int rawIdx = map[i];
-            int rawStart = raw.offsets[rawIdx];
-            int len = raw.offsets[rawIdx + 1] - rawStart;
-            System.arraycopy(raw.bytes, rawStart, outBytes, outOffsets[i], len);
+            outStarts[i] = raw.starts[rawIdx];
+            outEnds[i] = raw.ends[rawIdx];
             if (interned) {
                 outDictIndices[i] = raw.dictIndices[rawIdx];
             }
         }
-        BinaryBatchValues out = new BinaryBatchValues(outBytes, outOffsets);
+        BinaryBatchValues out = new BinaryBatchValues(raw.bytes, outStarts, outEnds, raw.byteCount);
         if (interned) {
             out.dictionary = raw.dictionary;
             out.dictIndices = outDictIndices;

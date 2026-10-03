@@ -36,6 +36,7 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.BinaryBatchValuesFixtures;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -395,7 +396,7 @@ class ColumnBatchMatcherTest {
             }
         }
         BatchExchange.Batch batch = new BatchExchange.Batch();
-        batch.values = new BinaryBatchValues(bytes, offsets);
+        batch.values = BinaryBatchValuesFixtures.contiguous(bytes, offsets);
         batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
         return batch;

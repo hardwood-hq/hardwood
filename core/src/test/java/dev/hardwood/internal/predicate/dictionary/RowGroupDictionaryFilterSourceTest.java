@@ -237,13 +237,15 @@ class RowGroupDictionaryFilterSourceTest {
 
     private static int entryCount(Dictionary dictionary) {
         assertThat(dictionary).isInstanceOf(Dictionary.ByteArrayDictionary.class);
-        return ((Dictionary.ByteArrayDictionary) dictionary).values().length;
+        return dictionary.size();
     }
 
     private static void assertSameEntries(Dictionary actual, Dictionary expected) {
         assertThat(actual).isNotNull();
-        assertThat(((Dictionary.ByteArrayDictionary) actual).values())
-                .isDeepEqualTo(((Dictionary.ByteArrayDictionary) expected).values());
+        Dictionary.ByteArrayDictionary actualEntries = (Dictionary.ByteArrayDictionary) actual;
+        Dictionary.ByteArrayDictionary expectedEntries = (Dictionary.ByteArrayDictionary) expected;
+        assertThat(actualEntries.entryOffsets()).isEqualTo(expectedEntries.entryOffsets());
+        assertThat(actualEntries.entryBytes()).isEqualTo(expectedEntries.entryBytes());
     }
 
     private static void withFixture(Path path, FixtureTest test) throws Exception {

@@ -48,7 +48,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
 The [Validity](/api/latest/dev/hardwood/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton, with no per-batch allocation. Its `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
 
-Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryOffsets()` (a sentinel-suffixed `int[]` of length `getValueCount() + 1`); the byte slice for value `i` is `[offsets[i], offsets[i+1])`. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. They suit low-volume / debug paths; hot loops should read the buffers directly. `getBinaries()` reads all three physical types; `getStrings()` reads a column that holds text (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation) and throws `IllegalArgumentException` on any other, a `DECIMAL`, a `UUID`, a `BSON` or an `INT96` among them (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where repeated values reuse a single interned `String` per dictionary entry.
+Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryStarts()` and `getBinaryEnds()` (each an `int[]` of length `getValueCount()`); the bytes of value `i` are `[starts[i], ends[i])`. Values need not be contiguous or in value order, and values of a dictionary-encoded column naming the same dictionary entry may cover the same bytes. Bound reads by each value's range, never by the buffer's length; a null value's range is empty. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. They suit low-volume / debug paths; hot loops should read the buffers directly. `getBinaries()` reads all three physical types; `getStrings()` reads a column that holds text (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation) and throws `IllegalArgumentException` on any other, a `DECIMAL`, a `UUID`, a `BSON` or an `INT96` among them (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where repeated values reuse a single interned `String` per dictionary entry.
 
 Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
@@ -118,7 +118,7 @@ while (columns.nextBatch()) {
 }
 ```
 
-The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. The *returned arrays* are detached and safe to read on other threads. (For `getBinaryValues()` the byte buffer is capacity-sized, as described above, but it too is fresh per batch.)
+The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. The *returned arrays* are detached and safe to read on other threads. (The `getBinaryValues()` buffer is fresh per batch too.)
 
 ### Nested and Repeated Columns
 
@@ -314,7 +314,7 @@ try (ColumnReader col = reader.columnReader("matrix.list.element.list.element"))
 
 #### List of strings
 
-Layer offsets and binary offsets are orthogonal axes: layer offsets walk which leaf values belong to a record (across the `getValueCount()` axis); binary offsets walk byte spans within a single varlength leaf (across the byte axis of the values buffer).
+Layer offsets and binary ranges are orthogonal axes: layer offsets walk which leaf values belong to a record (across the `getValueCount()` axis); the binary starts and ends locate the bytes of a single varlength leaf (in the values buffer).
 
 ```java
 try (ColumnReader col = reader.columnReader("tags.list.element")) {
@@ -322,8 +322,9 @@ try (ColumnReader col = reader.columnReader("tags.list.element")) {
         int recordCount = col.getRecordCount();
         int[] layerOffsets     = col.getLayerOffsets(0);
         Validity listValidity  = col.getLayerValidity(0);
-        byte[] bytes           = col.getBinaryValues();    // capacity-sized
-        int[] binaryOffsets    = col.getBinaryOffsets();   // length valueCount + 1
+        byte[] bytes           = col.getBinaryValues();
+        int[] byteStarts       = col.getBinaryStarts();    // length valueCount
+        int[] byteEnds         = col.getBinaryEnds();      // length valueCount
         Validity leafValidity  = col.getLeafValidity();
         boolean anyNullList = listValidity.hasNulls();
         boolean anyNullLeaf = leafValidity.hasNulls();
@@ -334,8 +335,8 @@ try (ColumnReader col = reader.columnReader("tags.list.element")) {
             int lastValue  = layerOffsets[r + 1];
             for (int i = firstValue; i < lastValue; i++) {
                 if (anyNullLeaf && leafValidity.isNull(i)) continue;
-                int byteStart = binaryOffsets[i];
-                int byteLen   = binaryOffsets[i + 1] - byteStart;
+                int byteStart = byteStarts[i];
+                int byteLen   = byteEnds[i] - byteStart;
                 if (matches(bytes, byteStart, byteLen)) hits++;
             }
         }
@@ -361,7 +362,8 @@ try (ColumnReaders columns = reader.columnReaders(
         int[]    entryOffsets  = keys.getLayerOffsets(0);
         Validity mapValidity   = keys.getLayerValidity(0);
         byte[]   keyBytes      = keys.getBinaryValues();
-        int[]    keyOffsets    = keys.getBinaryOffsets();
+        int[]    keyStarts     = keys.getBinaryStarts();
+        int[]    keyEnds       = keys.getBinaryEnds();
         int[]    valueInts     = values.getInts();
         Validity valueValidity = values.getLeafValidity();
         boolean  anyNullMap   = mapValidity.hasNulls();
@@ -372,8 +374,8 @@ try (ColumnReaders columns = reader.columnReaders(
             int start = entryOffsets[r];
             int end   = entryOffsets[r + 1];
             for (int i = start; i < end; i++) {
-                int keyStart = keyOffsets[i];
-                int keyLen   = keyOffsets[i + 1] - keyStart;
+                int keyStart = keyStarts[i];
+                int keyLen   = keyEnds[i] - keyStart;
                 String key   = new String(keyBytes, keyStart, keyLen, StandardCharsets.UTF_8);
 
                 if (anyNullValue && valueValidity.isNull(i)) {
@@ -387,7 +389,7 @@ try (ColumnReaders columns = reader.columnReaders(
 }
 ```
 
-Two orthogonal offset axes show up here, as in `list<string>`: `entryOffsets` walks map entries within a record (across the `getValueCount()` axis), `keyOffsets` walks byte spans within a single key (across the byte axis of `getBinaryValues()`).
+Two orthogonal axes show up here, as in `list<string>`: `entryOffsets` walks map entries within a record (across the `getValueCount()` axis), `keyStarts` and `keyEnds` locate the bytes of a single key in `getBinaryValues()`.
 
 If the map sits under an `OPTIONAL` group (e.g. `optional group meta { map<string, int> tags }`), the chain gains a `STRUCT` layer on top. The same key/value walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
 

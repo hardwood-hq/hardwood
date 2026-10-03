@@ -11,7 +11,6 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -492,11 +491,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         // A page can span batches, so the next batch inherits the in-flight page's
         // presence; later pages AND into it (see assemblePage).
         currentBatchAllPresent = currentPageAllPresent;
-        // The accumulator is reused for the next batch; clear its dictionary
-        // slot so dictIndex state is rebuilt from scratch (the dictIndices array
-        // is retained and overwritten in place).
+        // The accumulator is reused for the next batch; reset its byte buffer and
+        // dictionary state so they are rebuilt from scratch (the arrays are
+        // retained and overwritten in place).
         if (nestedValues instanceof BinaryBatchValues bbv) {
-            bbv.dictionary = null;
+            bbv.reset();
         }
     }
 
@@ -619,15 +618,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     // ==================== Nested Helpers ====================
-
-    private static final byte[] EMPTY_BYTES = new byte[0];
-
     /// Copies a single value from a page into the batch values array.
-    /// For byte-array physical types, the value is appended into the
-    /// shared bytes buffer of [BinaryBatchValues] and its offsets are
-    /// updated; null entries collapse to a zero-length span (or, for
-    /// `FIXED_LEN_BYTE_ARRAY`, leave the pre-filled trivial offsets
-    /// unchanged).
+    /// For byte-array physical types, a plain value is appended into the
+    /// bytes buffer of [BinaryBatchValues] and a dictionary value is viewed
+    /// in the batch's copy of its dictionary; a null gets an empty view.
     private void copyOneValue(Page page, int srcIndex, Object destValues, int destIndex) {
         switch (page) {
             case Page.IntPage p -> ((int[]) destValues)[destIndex] = p.values()[srcIndex];
@@ -637,30 +631,25 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case Page.BooleanPage p -> ((boolean[]) destValues)[destIndex] = p.values()[srcIndex];
             case Page.ByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) destValues;
-                appendBinary(bbv, destIndex, p.values()[srcIndex]);
+                byte[] val = p.values()[srcIndex];
+                if (val != null) {
+                    bbv.appendAt(destIndex, val, 0, val.length);
+                }
+                else {
+                    bbv.appendEmpty(destIndex);
+                }
                 // Plain values carry no entry index (see BinaryBatchValues#recordDictIndex).
                 bbv.recordDictIndex(null, null, srcIndex, destIndex);
             }
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) destValues;
-                appendBinary(bbv, destIndex, p.get(srcIndex));
+                bbv.viewDictionaryValue(p, srcIndex, destIndex);
                 // Record the per-value dictionary index so stringAt can intern; a
                 // no-op for non-string columns, and null values fall back to the
                 // packed-byte path (see BinaryBatchValues#recordDictIndex).
                 bbv.recordDictIndex(p.dictIndices(), p.dictionary(), srcIndex, destIndex);
             }
         }
-    }
-
-    private void appendBinary(BinaryBatchValues bbv, int destIndex, byte[] val) {
-        if (val != null) {
-            bbv.appendAt(destIndex, val, 0, val.length);
-        }
-        else if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            // Variable-length null: zero-length span at this index.
-            bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
-        }
-        // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
     }
 
     /// Ensures both the value and level accumulators hold at least `needed`
@@ -691,7 +680,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     /// Ensures the value accumulator holds at least `needed` slots, growing it
-    /// (and, for [BinaryBatchValues], its offsets/bytes) independently of the
+    /// (and, for [BinaryBatchValues], its views) independently of the
     /// level arrays. The fixed-size-list fast path grows only this array.
     private void ensureValueCapacity(int needed) {
         if (needed <= nestedValuesCapacity) {
@@ -742,11 +731,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     /// Grows a typed values array to the new capacity. For
-    /// [BinaryBatchValues], the offsets array is grown to `newCapacity + 1`
-    /// (re-filling the trivial `i * width` mapping for
-    /// `FIXED_LEN_BYTE_ARRAY`); the bytes buffer for variable-length types
-    /// grows lazily on overflow inside [BinaryBatchValues#appendAt], but for
-    /// fixed-width it grows here to keep `width * newCapacity`.
+    /// [BinaryBatchValues] only the per-value views grow; the bytes buffer
+    /// grows on its own as values are appended.
     private Object growValues(Object values, int newCapacity) {
         return switch (values) {
             case int[] a -> Arrays.copyOf(a, newCapacity);
@@ -754,38 +740,12 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case float[] a -> Arrays.copyOf(a, newCapacity);
             case double[] a -> Arrays.copyOf(a, newCapacity);
             case boolean[] a -> Arrays.copyOf(a, newCapacity);
-            case BinaryBatchValues bbv -> growBinaryBatchValues(bbv, newCapacity);
+            case BinaryBatchValues bbv -> {
+                bbv.growCapacity(newCapacity);
+                yield bbv;
+            }
             default -> throw new IllegalStateException("Unexpected values array type: " + values.getClass());
         };
-    }
-
-    /// Grows a byte-array-shaped value buffer to `newCapacity`.
-    ///
-    /// For `FIXED_LEN_BYTE_ARRAY` the new offsets stay `i * width`, with the width taken
-    /// from the column — present and positive, validated for every touched column by
-    /// [RowGroupIterator#initialize] before this worker was built.
-    private BinaryBatchValues growBinaryBatchValues(BinaryBatchValues bbv, int newCapacity) {
-        int oldCapacity = bbv.offsets.length - 1;
-        if (newCapacity <= oldCapacity) {
-            return bbv;
-        }
-        int[] newOffsets = Arrays.copyOf(bbv.offsets, newCapacity + 1);
-        if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            int width = column.typeLength();
-            for (int i = oldCapacity + 1; i <= newCapacity; i++) {
-                newOffsets[i] = Math.multiplyExact(i, width);
-            }
-            byte[] newBytes = new byte[Math.multiplyExact(width, newCapacity)];
-            System.arraycopy(bbv.bytes, 0, newBytes, 0, bbv.bytes.length);
-            bbv.bytes = newBytes;
-        }
-        // Keep dictIndices sized to the value capacity once the accumulator has
-        // switched onto the dictionary representation.
-        if (bbv.dictIndices != null) {
-            bbv.dictIndices = Arrays.copyOf(bbv.dictIndices, newCapacity);
-        }
-        bbv.offsets = newOffsets;
-        return bbv;
     }
 
     /// Snapshots the assembled values for `[0, size)` into an independent array
@@ -794,10 +754,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// The drain reuses its accumulators ([#nestedValues] and friends) for the
     /// next batch — [#publishCurrentBatch] only resets the counts, not the
     /// backing storage — so the published batch must not alias them. For
-    /// [BinaryBatchValues] that means copying the meaningful **bytes** prefix as
-    /// well as the offsets: sharing the bytes buffer would let the next batch's
-    /// `appendAt` (which restarts at byte offset 0) overwrite the still-unread
-    /// rows of the batch just published.
+    /// [BinaryBatchValues] that means copying the bytes in use as well as the
+    /// views: sharing the bytes buffer would let the next batch's appends (which
+    /// restart at byte offset 0) overwrite the still-unread rows of the batch
+    /// just published.
     private Object trimValues(Object values, int size) {
         return switch (values) {
             case int[] a -> Arrays.copyOf(a, size);
@@ -806,10 +766,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case double[] a -> Arrays.copyOf(a, size);
             case boolean[] a -> Arrays.copyOf(a, size);
             case BinaryBatchValues bbv -> {
-                int byteLength = bbv.offsets[size];
                 BinaryBatchValues trimmed = new BinaryBatchValues(
-                        Arrays.copyOf(bbv.bytes, byteLength),
-                        Arrays.copyOf(bbv.offsets, size + 1));
+                        Arrays.copyOf(bbv.bytes, bbv.byteCount),
+                        Arrays.copyOf(bbv.starts, size),
+                        Arrays.copyOf(bbv.ends, size),
+                        bbv.byteCount);
                 if (bbv.dictionary != null) {
                     trimmed.dictionary = bbv.dictionary;
                     trimmed.dictIndices = Arrays.copyOf(bbv.dictIndices, size);
