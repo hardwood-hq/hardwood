@@ -7186,3 +7186,27 @@ pq.write_table(
     write_page_index=True,
 )
 print(f"\nGenerated {index_windows_path}: {index_windows_rgs} row groups x {index_windows_rg_rows} rows, 20 INT64 columns, pages of 100 rows, page index")
+
+# Dictionary fallback part-way through a chunk: one row group whose string column
+# starts with a few repeated values (dictionary-encoded pages) and then turns to
+# distinct ones, so the dictionary outgrows its page size limit and the remaining
+# data pages go out PLAIN. A column reader exposes dictionary ids only for batches
+# whose every value came from the dictionary.
+FALLBACK_REPEATED_ROWS = 2000
+FALLBACK_DISTINCT_ROWS = 2000
+fallback_labels = (
+    [['alpha', 'bravo', 'charlie'][i % 3] for i in range(FALLBACK_REPEATED_ROWS)]
+    + [f'distinct-{i:06d}' for i in range(FALLBACK_DISTINCT_ROWS)]
+)
+pq.write_table(
+    pa.table({'label': fallback_labels}),
+    'core/src/test/resources/dict_plain_fallback.parquet',
+    use_dictionary=True,
+    compression='none',
+    data_page_version='1.0',
+    dictionary_pagesize_limit=1024,
+    write_batch_size=500,
+    data_page_size=1,
+)
+print("\nGenerated dict_plain_fallback.parquet:")
+print(f"  - {FALLBACK_REPEATED_ROWS + FALLBACK_DISTINCT_ROWS} rows, label: dictionary pages, then PLAIN once the dictionary outgrows 1 KiB")

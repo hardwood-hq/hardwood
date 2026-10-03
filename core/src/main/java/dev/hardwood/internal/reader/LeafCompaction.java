@@ -67,9 +67,9 @@ public final class LeafCompaction {
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
     /// (nested path); only its `[0, count)` prefix is read. Only the views are
     /// gathered: the result shares `raw`'s bytes, which a compacted batch never
-    /// outlives. A dictionary-encoded string leaf carries its chunk dictionary and
-    /// gathered entry indices through, so `getStrings()` still reuses the interned
-    /// instances.
+    /// outlives. A dictionary-encoded leaf carries its chunk dictionary and gathered
+    /// entry indices through, so `getStrings()` still reuses the interned instances
+    /// and the column reader's dictionary ids describe the compacted values.
     public static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
         int[] outStarts = new int[count];
         int[] outEnds = new int[count];

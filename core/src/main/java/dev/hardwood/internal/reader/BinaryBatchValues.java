@@ -55,16 +55,11 @@ public final class BinaryBatchValues {
     private long[] appendedDictionaryBytes = new long[2];
     private int drawnDictionaryCount;
 
-    /// Whether this column's values are interned `UTF8` / `ENUM` / `JSON` `String`s. Set
-    /// once at batch allocation ([BatchExchange#allocateArray]); only these
-    /// columns record dictionary indices and reuse cached `String`s. When
-    /// `false`, [#stringAt] always materialises from [#bytes].
-    public boolean internStrings;
-
     /// The chunk dictionary backing [#dictIndices], or `null` when no dictionary
     /// page has contributed to this batch (every value then materialises from
     /// [#bytes]). Holds the per-entry `String` cache that lets [#stringAt] reuse
-    /// one instance per dictionary entry per chunk.
+    /// one instance per dictionary entry per chunk, and is what
+    /// `ColumnReader.getBinaryDictionary()` exposes.
     public Dictionary.ByteArrayDictionary dictionary;
 
     /// Per-value dictionary entry index, meaningful only when [#dictionary] is
@@ -364,8 +359,8 @@ public final class BinaryBatchValues {
 
     /// Records dictionary entry indices for a contiguous page range
     /// `[srcPos, srcPos + length)` landing at `[destPos, destPos + length)`, so
-    /// [#stringAt] can reuse one materialised `String` per entry. A no-op for a
-    /// non-interned column ([#internStrings] `false`).
+    /// [#stringAt] can reuse one materialised `String` per entry and
+    /// `ColumnReader.getDictionaryIndices()` can expose them.
     ///
     /// `pageDictIndices` is `null` for a plain (non-dictionary) page; such
     /// values are recorded as `-1` only once the batch is already on the
@@ -373,9 +368,6 @@ public final class BinaryBatchValues {
     /// The first dictionary page switches the batch on (see [#ensureDictionary]).
     public void recordDictIndices(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
                                   int srcPos, int destPos, int length) {
-        if (!internStrings) {
-            return;
-        }
         if (pageDictIndices == null) {
             if (dictionary != null) {
                 Arrays.fill(dictIndices, destPos, destPos + length, -1);
@@ -394,12 +386,9 @@ public final class BinaryBatchValues {
     /// `destPos`. Used by nested assembly, where kept values are scattered by
     /// the rep/def-level walk rather than copied as a contiguous range. See
     /// [#recordDictIndices] for the range form; the dictionary-switch rules are
-    /// identical. A no-op for a non-interned column ([#internStrings] `false`).
+    /// identical.
     public void recordDictIndex(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
                                 int srcPos, int destPos) {
-        if (!internStrings) {
-            return;
-        }
         if (pageDictIndices == null) {
             if (dictionary != null) {
                 dictIndices[destPos] = -1;

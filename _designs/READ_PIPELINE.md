@@ -85,10 +85,11 @@ The drain takes slots in sequence order, whatever order the decode tasks finish 
 | The batch holds its capacity in rows (flat) or records (nested) | always |
 | The next page comes from a file with another name | always |
 | The next page's always-match flag differs from the batch's | filtered reads only ([RECORD_FILTERING.md](RECORD_FILTERING.md#homogeneous-batches)) |
+| The next page comes from another row group | column readers only (`ColumnWorker.endBatchesAtRowGroupBoundaries`), so a batch draws on one column chunk's dictionary ([COLUMN_READER.md](COLUMN_READER.md#dictionary-ids)) |
 | The row cap is reached | reads with a cap the drain holds |
 | End of stream | always; the partial batch is published |
 
-A batch may span row groups of one file, but **never straddles files**. `RecordFilterTally` attributes counts per file from the batch's file name, both row readers take their current file name (for `FileAwareRowReader` and error context) from the first column's batch, and a boundary marker takes part in the change-of-file flush like any page. The change is detected by file name, so a path listed twice in a row reads as one file.
+A row reader's batch may span row groups of one file, a column reader's never does, and **no batch straddles files**. `RecordFilterTally` attributes counts per file from the batch's file name, both row readers take their current file name (for `FileAwareRowReader` and error context) from the first column's batch, and a boundary marker takes part in the change-of-file flush like any page. The change is detected by file name, so a path listed twice in a row reads as one file.
 
 **Alignment.** Every worker of a read applies the same rules to the same sequence of row groups, pages, masks and capacity, so all decoded columns close their batches at the same rows. Nothing coordinates the workers; the readers poll one batch per payload column per step, and one per filter-only column in steps statistics did not prove ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)), and raise `IllegalStateException` when a column has no batch or a batch of another record count. Any new flush rule must be one every column evaluates identically.
 
@@ -252,4 +253,4 @@ Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 - **Schema drift across files (#941).** Every file must match the reference schema for the columns a read touches.
 - **`BYTE_ARRAY` width estimate (#899).** Batch sizing guesses a fixed width per `BYTE_ARRAY` value instead of reading the recorded unencoded size.
 - **Row caps on the column readers (#433).** `ColumnReaderBuilder` and `ColumnReadersBuilder` have no `head`, so no cap reaches their workers.
-- **Batches spanning row groups (#1199).** A batch that spans two column chunks keeps one chunk's dictionary for string reuse.
+- **Batches spanning row groups (#1199).** A row reader's batch that spans two column chunks keeps one chunk's dictionary for string reuse.

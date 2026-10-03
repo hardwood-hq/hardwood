@@ -341,24 +341,8 @@ public class BatchExchange<B> {
             case FLOAT -> new float[capacity];
             case DOUBLE -> new double[capacity];
             case BOOLEAN -> new boolean[capacity];
-            case BYTE_ARRAY, INT96 -> {
-                BinaryBatchValues bbv = new BinaryBatchValues(capacity, BINARY_BYTES_PER_VALUE_HINT);
-                // String leaves carry per-value dictionary indices so the row
-                // reader reuses one interned String per entry; the backing array
-                // is allocated lazily on the first dictionary page (see
-                // BinaryBatchValues#ensureDictionary).
-                bbv.internStrings = isStringColumn(column);
-                yield bbv;
-            }
+            case BYTE_ARRAY, INT96 -> new BinaryBatchValues(capacity, BINARY_BYTES_PER_VALUE_HINT);
             case FIXED_LEN_BYTE_ARRAY -> new BinaryBatchValues(capacity, column.typeLength());
         };
-    }
-
-    /// Whether `column` is a `UTF8` / `ENUM` / `JSON` `BYTE_ARRAY` column — the leaves
-    /// whose row-reader values are materialised as `String` and so benefit from
-    /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves
-    /// through [LeafKind] so the recording gate matches the consumer gate exactly.
-    private static boolean isStringColumn(ColumnSchema column) {
-        return LeafKind.of(column.type(), column.logicalType()) == LeafKind.STRING;
     }
 }

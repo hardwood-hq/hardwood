@@ -100,6 +100,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // same slot-reuse rule. Together they say where a page came from, which is what a
     // failure met at a thread boundary needs in order to place itself.
     private final int[] rowGroupBuffer;
+    // Work-item ordinal per slot, written and read alongside rowGroupBuffer[slot]: keys the
+    // row-group flush, since a row-group index repeats across inputs.
+    private final int[] workItemBuffer;
     private final int[] pageBuffer;
 
     // Per-slot filter-always-matches flag, written by the retriever alongside
@@ -159,6 +162,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// where the one it is assembling came from. Written only by the drain thread.
     int currentPageRowGroup = ExceptionContext.UNKNOWN_ROW_GROUP;
 
+    /// Whether a batch ends at every row-group boundary, set by [#endBatchesAtRowGroupBoundaries()]
+    /// before the worker starts.
+    private boolean rowGroupFlush;
+
+    /// The work item (row group of one input) the current batch's rows come from, tracked
+    /// when [#rowGroupFlush] is set.
+    private int currentBatchWorkItem = -1;
+
     /// Page ordinal of the page the drain last took, or [ExceptionContext#UNKNOWN_PAGE]
     /// before it has taken one. Written only by the drain thread.
     int currentPageIndex = ExceptionContext.UNKNOWN_PAGE;
@@ -204,6 +215,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         }
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
         this.rowGroupBuffer = new int[MAX_INFLIGHT_PAGES];
+        this.workItemBuffer = new int[MAX_INFLIGHT_PAGES];
         this.pageBuffer = new int[MAX_INFLIGHT_PAGES];
         this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
     }
@@ -227,6 +239,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// batches for nothing.
     boolean flushOnFilterAlwaysMatchesTransition() {
         return filterActive;
+    }
+
+    /// Ends every batch at a row-group boundary, so a batch never holds rows of two column
+    /// chunks and so never values of two dictionaries. Every column of a read must be configured
+    /// alike, which keeps their batches row-aligned: all columns cross a row-group boundary at
+    /// the same row. Must be called before [#start()].
+    public void endBatchesAtRowGroupBoundaries() {
+        if (drainThread != null) {
+            throw new IllegalStateException("Column worker for '" + column.name() + "' already started");
+        }
+        rowGroupFlush = true;
     }
 
     /// Starts both virtual threads. Must be called once.
@@ -388,6 +411,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 int slot = seq % MAX_INFLIGHT_PAGES;
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 rowGroupBuffer[slot] = pageSource.getCurrentRowGroupIndex();
+                workItemBuffer[slot] = pageSource.getCurrentWorkItemOrdinal();
                 pageBuffer[slot] = pageSource.getCurrentPageIndex();
                 filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
                 if (pageInfo.isBoundaryMarker()) {
@@ -558,6 +582,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     publishCurrentBatch();
                 }
                 currentBatchFileName = pageFileName;
+            }
+
+            // Row-group boundary: a reader exposing dictionary ids needs every batch to draw on
+            // one column chunk's dictionary. Composes with the file flush above, which already
+            // closed a batch whose next page comes from another file.
+            if (rowGroupFlush) {
+                int pageWorkItem = workItemBuffer[slot];
+                if (pageWorkItem != currentBatchWorkItem && rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                currentBatchWorkItem = pageWorkItem;
             }
 
             boolean pageAlwaysMatches = filterAlwaysMatchesBuffer[slot];

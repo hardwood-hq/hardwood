@@ -1,6 +1,6 @@
 # Column reader
 
-Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed layer offsets, the `Validity` bitmap, fixed-width and variable-length leaf values, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
+Describes what `ColumnReader` exposes and how a batch reaches it: the layer model of a column's schema chain, sentinel-suffixed layer offsets, the `Validity` bitmap, fixed-width and variable-length leaf values and dictionary ids, the real-items view that turns the pipeline's raw batches into that shape, and the cursor/scan/view split that advances one or several readers over one decode pipeline.
 
 Related documents:
 
@@ -109,6 +109,17 @@ The total bytes of one batch are capped at `Integer.MAX_VALUE`, since views are 
 
 Tests: `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 
+### Dictionary ids
+
+`getDictionaryIndices()` gives each value's entry in the batch's dictionary, and `getBinaryDictionary()` the dictionary itself: a `BinaryDictionary` (`size()`, `getBinary(e)`, `getString(e)`) over the chunk's `ByteArrayDictionary`. `BinaryDictionary` is the one subtype so far of the sealed `ColumnDictionary`; a primitive dictionary would join it as its own subtype with a typed accessor (`getIntDictionary()` and so on), the way the leaf accessors are typed per physical storage, while `getDictionaryIndices()` stays type-neutral. A consumer that works per entry (aggregating, grouping, mapping to its own keys) does that work once per dictionary instead of once per value.
+
+- **One dictionary per batch.** Column-reader workers end every batch at a row-group boundary ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), so a batch never draws on two column chunks' dictionaries. Every column of a read applies the rule, which keeps them row-aligned.
+- **All or nothing.** The ids are returned only when every non-null value of the batch has one; a batch holding a value a writer stored plain after its dictionary filled up returns `null` from both accessors, and the consumer reads the binary views. `ColumnReader` checks this against the leaf validity once per batch, after any compaction, so a filtered batch is judged by the values it kept. Both assembly paths record `-1` at a null; the public contract leaves the id at a null unspecified.
+- **One object per dictionary.** `ColumnReader` keeps the last `BinaryDictionary` it handed out and reuses it while the batch's `ByteArrayDictionary` is the same, so a consumer detects a new dictionary by identity. Its entries never change, and it hands out copies (`getBinary`) or the cached `String`s (`getString`), never the dictionary's own arrays, so it needs no exception to the ownership rule below. The `String` cache is filled lazily with plain writes, shared with string reuse on the row readers; values are always correct, but two threads may decode the same entry once each, so the contract promises equal strings, not one instance. `getString` refuses a column that does not hold text, which is why the public type wraps the internal dictionary together with the column rather than exposing it.
+- **Binary columns only.** Primitive dictionaries are decoded to typed arrays on the decode thread and keep no indices.
+
+Tests: `ColumnReaderDictionaryIndicesTest`.
+
 ## Real view
 
 Internally a nested batch (`NestedBatch`) is **raw-counting**: every position in the definition/repetition-level stream occupies a slot, including phantom positions for null or empty parents. The row readers read that shape directly. `ColumnReader` exposes the real-items shape, and `NestedLevelComputer.RealView` is the translation: per-layer sentinel-suffixed offsets, per-layer and leaf validity (all over real-item indices, `null` when all present), the real leaf count, and `realToRawLeaf`, the gather map from real leaf index to raw position, `null` when the map would be the identity (no `REPEATED` layer, or no phantom positions in the batch) and the raw values pass through.
@@ -162,7 +173,7 @@ Tests: `ColumnReadersTest`, `IteratorTrackingTest`, `PrunedToEmptyReadTest`. The
 
 ## Lifetime and ownership of batch buffers
 
-Column-reader cursors publish through a **detaching** `BatchExchange`: every published batch is freshly allocated and never recycled, and back-pressure comes from the bounded ready queue ([READ_PIPELINE.md](READ_PIPELINE.md)). Every array and `Validity` a `ColumnReader` accessor returns belongs to the current batch and is never reused or overwritten by a later `nextBatch()`. A consumer may keep a returned array after advancing and hand it to another thread. The public contract is stated in the `ColumnReader` JavaDoc and the how-to.
+Column-reader cursors publish through a **detaching** `BatchExchange`: every published batch is freshly allocated and never recycled, and back-pressure comes from the bounded ready queue ([READ_PIPELINE.md](READ_PIPELINE.md)). Every array and `Validity` a `ColumnReader` accessor returns belongs to the current batch and is never reused or overwritten by a later `nextBatch()`, except `Validity.NO_NULLS`; the `BinaryDictionary` from `getBinaryDictionary()` is shared by the batches of one dictionary and its entries never change ([Dictionary ids](#dictionary-ids)). A consumer may keep a returned array after advancing and hand it to another thread. The public contract is stated in the `ColumnReader` JavaDoc and the how-to.
 
 Two mechanisms rely on this ownership and must keep it:
 
@@ -180,4 +191,4 @@ Tests: `ColumnReaderBatchArrayIdentityTest`. Freshness on the filtered path is u
 - **Logical types (#514).** The accessors return physical values only; logical conversion for columnar consumers is not exposed.
 - **API stability (#522).** `ColumnReader`, `LayerKind` and `Validity` are `@Experimental`.
 - **Per-batch `int` offsets.** Layer offsets and binary views are `int[]`, which bounds one batch to `Integer.MAX_VALUE` leaf values and bytes. They are per batch, so a file larger than that is not affected; a batch beyond it would need a separate API decision.
-- **Compressed leaf shapes.** Leaves are materialised as typed arrays or binary views. Dictionary entry ids and run-end encoded leaves are not part of the public shape (#513).
+- **Compressed leaf shapes.** Leaves are materialised as typed arrays or binary views, with dictionary ids for binary leaves. Primitive dictionary ids and run-end encoded leaves are not part of the public shape.

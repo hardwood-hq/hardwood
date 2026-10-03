@@ -662,9 +662,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) destValues;
                 bbv.viewDictionaryValue(p, srcIndex, destIndex);
-                // Record the per-value dictionary index so stringAt can intern; a
-                // no-op for non-string columns, and null values fall back to the
-                // packed-byte path (see BinaryBatchValues#recordDictIndex).
+                // Record the per-value dictionary index, for string interning and the
+                // column reader's dictionary ids; a null records -1
+                // (see BinaryBatchValues#recordDictIndex).
                 bbv.recordDictIndex(p.dictIndices(), p.dictionary(), srcIndex, destIndex);
             }
         }
