@@ -7,16 +7,21 @@
  */
 package dev.hardwood.internal.writer;
 
-/// A [ColumnSource] over a column's binary values (`BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY`),
-/// each value a `byte[]`, read in page-sized chunks of references.
+/// A [ColumnSource] over a column's binary values (`BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY`). A
+/// value is addressed as a slice, `arrayAt(i)[offsetAt(i), offsetAt(i) + valueBytesAt(i))`, so a
+/// source over one packed buffer hands its values to the encoder without a `byte[]` per value.
 public interface BinaryColumnSource extends ColumnSource {
 
-    /// The bytes the value at `index` holds, its length prefix excluded, and 0 where the position
-    /// holds no value. Every other column's width follows from the schema; this is the one that
+    /// The bytes the value at `index` holds, its length prefix excluded. Where the position holds
+    /// no value it is 0 or the bytes a packed source spans there, which the writer only ever sums
+    /// as an upper bound. Every other column's width follows from the schema; this is the one that
     /// has to be read, and reading it is what lets the writer bound a slice before appending it.
     int valueBytesAt(int index);
 
-    /// Copies references to `length` values starting at `srcPos` into `dest` starting at
-    /// `destPos`. The referenced arrays are not copied, only the references.
-    void copyInto(int srcPos, byte[][] dest, int destPos, int length);
+    /// The array holding the value at `index`. Only called at a position that holds a value.
+    byte[] arrayAt(int index);
+
+    /// Where the value at `index` starts in [#arrayAt]. Only called at a position that holds a
+    /// value.
+    int offsetAt(int index);
 }

@@ -28,8 +28,8 @@ final class Float16StatisticsCollector implements BinaryStatistics {
     private boolean hasValues;
 
     @Override
-    public void accept(byte[] value) {
-        float half = decode(value);
+    public void accept(byte[] array, int offset, int length) {
+        float half = decode(array, offset, length);
         if (Float.isNaN(half)) {
             nanCount++;
             return; // NaN never participates in min/max
@@ -64,12 +64,12 @@ final class Float16StatisticsCollector implements BinaryStatistics {
         return new Statistics(minValue, maxValue, nullCount, null, false, true, true, nanCount);
     }
 
-    private static float decode(byte[] value) {
-        if (value.length != FixedWidths.FLOAT16) {
+    private static float decode(byte[] array, int offset, int length) {
+        if (length != FixedWidths.FLOAT16) {
             throw new IllegalArgumentException("A FLOAT16 value is " + FixedWidths.FLOAT16
-                    + " bytes, not " + value.length);
+                    + " bytes, not " + length);
         }
-        return LogicalTypeConverter.float16At(value, 0);
+        return LogicalTypeConverter.float16At(array, offset);
     }
 
     private static byte[] encode(float value) {

@@ -37,21 +37,18 @@ final class BinaryValueEncoder extends ValueEncoder {
     /// rather than recomputed: a variable-width value's size is the one the schema cannot state.
     private long plainValueBits;
 
-    private final byte[][] window;
     private final BinaryDictionaryEncoder dictionary; // null when dictionary encoding is disabled
     private final Supplier<BinaryStatistics> statisticsFactory;
     private BinaryStatistics statistics;
     private final Integer typeLength; // null for BYTE_ARRAY, the fixed width for FIXED_LEN_BYTE_ARRAY
 
+    /// The current batch's values, read in place as slices: a packed source hands over its
+    /// buffer, so no value is materialized as a `byte[]` of its own on the way in.
     private BinaryColumnSource source;
-    private int size;
-    private int windowBase;
-    private int windowLength;
 
     BinaryValueEncoder(boolean buildDictionary, Integer typeLength, int startingCapacity,
                        Supplier<BinaryStatistics> statisticsFactory) {
         this.plainOffsets = new int[startingCapacity + 1];
-        this.window = new byte[windowCapacity(startingCapacity)][];
         this.dictionary = buildDictionary ? new BinaryDictionaryEncoder() : null;
         // FIXED_LEN_BYTE_ARRAY bounds are written whole and always exact — a fixed width already
         // bounds them — so only BYTE_ARRAY truncates. Integer.MAX_VALUE disables truncation, since
@@ -68,18 +65,6 @@ final class BinaryValueEncoder extends ValueEncoder {
     @Override
     void reset(ColumnSource source) {
         this.source = (BinaryColumnSource) source;
-        this.size = source.size();
-        this.windowBase = 0;
-        this.windowLength = 0;
-    }
-
-    private byte[] valueAt(int index) {
-        if (index >= windowBase + windowLength) {
-            windowBase = index;
-            windowLength = Math.min(window.length, size - index);
-            source.copyInto(windowBase, window, 0, windowLength);
-        }
-        return window[index - windowBase];
     }
 
     @Override
@@ -89,9 +74,9 @@ final class BinaryValueEncoder extends ValueEncoder {
 
     @Override
     int intern(int valueIndex) {
-        byte[] value = valueAt(valueIndex);
-        plainValueBits += (long) (Integer.BYTES + value.length) * Byte.SIZE;
-        return dictionary.intern(value);
+        int length = source.valueBytesAt(valueIndex);
+        plainValueBits += (long) (Integer.BYTES + length) * Byte.SIZE;
+        return dictionary.intern(source.arrayAt(valueIndex), source.offsetAt(valueIndex), length);
     }
 
     @Override
@@ -124,14 +109,15 @@ final class BinaryValueEncoder extends ValueEncoder {
 
     @Override
     void store(int valueIndex) {
-        byte[] value = valueAt(valueIndex);
-        plainValueBits += (long) (Integer.BYTES + value.length) * Byte.SIZE;
-        append(value);
+        int length = source.valueBytesAt(valueIndex);
+        plainValueBits += (long) (Integer.BYTES + length) * Byte.SIZE;
+        append(source.arrayAt(valueIndex), source.offsetAt(valueIndex), length);
     }
 
     @Override
     void storeDictionaryValue(int dictionaryIndex) {
-        append(dictionary.values()[dictionaryIndex]);
+        byte[] value = dictionary.values()[dictionaryIndex];
+        append(value, 0, value.length);
     }
 
     @Override
@@ -146,11 +132,11 @@ final class BinaryValueEncoder extends ValueEncoder {
         dictionary.clear();
     }
 
-    private void append(byte[] value) {
+    private void append(byte[] array, int offset, int length) {
         if (plainCount + 1 == plainOffsets.length) {
             plainOffsets = Arrays.copyOf(plainOffsets, grownCapacity(plainOffsets.length));
         }
-        plainData.write(value, 0, value.length);
+        plainData.write(array, offset, length);
         plainOffsets[++plainCount] = plainData.length();
     }
 
@@ -199,7 +185,8 @@ final class BinaryValueEncoder extends ValueEncoder {
 
     @Override
     void stat(int valueIndex) {
-        statistics.accept(valueAt(valueIndex));
+        statistics.accept(source.arrayAt(valueIndex), source.offsetAt(valueIndex),
+                source.valueBytesAt(valueIndex));
     }
 
     @Override

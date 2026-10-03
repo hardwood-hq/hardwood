@@ -63,13 +63,15 @@ Data arrives as `ColumnBatch` objects, an aligned slice carrying one typed array
 | Every leaf column is set | `IllegalArgumentException` at submit (`completedSources`) |
 | Every flat leaf (max repetition level `0`) has the same length, the batch's row count | ragged batch: `IllegalArgumentException` |
 | A binary column holds no Java `null` at a present row; a `FIXED_LEN_BYTE_ARRAY` value is exactly the declared length | `IllegalArgumentException` naming the row |
+| Packed binary offsets are non-decreasing and lie within the values array, a null row's span included | `IllegalArgumentException` naming the offset |
+| `strings` addresses a column that holds text (`TextColumns.holdsText`) | `IllegalArgumentException` naming the column's type |
 | A value lies in the range its annotation declares | see [Annotation ranges](#annotation-ranges) |
 
 A leaf under a `LIST` or `MAP` is exempt from the row-count agreement: its array holds the concatenated entries of every record, and its length is what the offsets account for. The record count of a nested batch is derived and cross-checked by the shredder when it binds the batch (see [Batch validation](#batch-validation)).
 
 Arrays are referenced, not copied, and must not be mutated until the batch has been written. The batch is single-use: `writeBatch` marks it consumed, so a filler that stashes a reference and mutates it after `writeBatch` returns fails loudly. `writeBatch` consumes its sources synchronously: the batch is shredded, encoded and buffered within the call, which is what lets a caller, and the row layer, refill the arrays as soon as it returns. The batch is an arrival unit only and leaves no trace in the file; how its records are banded into row groups is in [WRITER.md](WRITER.md).
 
-The columnar API takes physical values and converts nothing: a `STRING` column is written through `bytes(...)` as UTF-8, a `DATE` column through `ints(...)` as epoch days. The bytes of a binary column are written as given; the writer does not check UTF-8 validity or the well-formedness of `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY` payloads.
+The columnar API takes physical values, with one conversion: `strings(...)` encodes a `String[]` as UTF-8, on the text columns `ColumnReader.getStrings()` reads and `StructBuilder.setString` writes. Every other value is physical: a `DATE` column is written through `ints(...)` as epoch days. A binary column also takes the reader's packed form, one `byte[]` and the `int[]` offsets delimiting each value in it, so a column copied from `getBinaryValues()` / `getBinaryOffsets()` stays packed until the encoder copies its bytes. The bytes of a binary column are written as given; the writer does not check UTF-8 validity or the well-formedness of `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY` payloads.
 
 ### Null representation
 
@@ -81,9 +83,9 @@ How a mask becomes a definition-level stream is in [Shredding](#shredding).
 
 ### Value sources
 
-Behind the public setters, each column's array sits behind a bulk value-source seam: `ColumnSource` carries `size()`, all the shredder needs, and a typed sub-interface per storage family (`IntColumnSource`, `LongColumnSource`, `FloatColumnSource`, `DoubleColumnSource`, `BooleanColumnSource`, `BinaryColumnSource`) carries a `copyInto` that fills a reused page-sized primitive buffer. `BYTE_ARRAY` and `FIXED_LEN_BYTE_ARRAY` share `BinaryColumnSource`. Encoders, statistics and dictionary building consume page-sized ranges through this seam, so no value is boxed and intermediate memory stays bounded. The primitive-array setters are sugar over the seam, so a public source SPI over a caller's own container would be additive and would not change the `writeBatch` signature.
+Behind the public setters, each column's array sits behind a bulk value-source seam: `ColumnSource` carries `size()`, all the shredder needs, and a typed sub-interface per storage family (`IntColumnSource`, `LongColumnSource`, `FloatColumnSource`, `DoubleColumnSource`, `BooleanColumnSource`, `BinaryColumnSource`) carries the typed read. A fixed-width family's `copyInto` fills a reused page-sized primitive buffer. `BYTE_ARRAY` and `FIXED_LEN_BYTE_ARRAY` share `BinaryColumnSource`, which addresses each value as a slice (`arrayAt`, `offsetAt`, `valueBytesAt`) instead: `BinaryArrayColumnSource` serves a `byte[][]`, `PackedBinaryColumnSource` the packed form, and the dictionary, statistics and value store copy a value's bytes straight from the slice, so the packed form reaches the chunk with no `byte[]` per value. Through this seam no value is boxed and intermediate memory stays bounded. The primitive-array setters are sugar over the seam, so a public source SPI over a caller's own container would be additive and would not change the `writeBatch` signature.
 
-Tests: `WriterBatchContractTest`, `WriterRoundTripTest`, `WriterFixedWidthTypeRoundTripTest`, `WriterVariableWidthTypeRoundTripTest`.
+Tests: `WriterBatchContractTest`, `WriterRoundTripTest`, `WriterFixedWidthTypeRoundTripTest`, `WriterVariableWidthTypeRoundTripTest`, `WriterStringAndPackedBinaryTest`.
 
 ## Nested input and shredding
 
@@ -237,7 +239,7 @@ Two annotations admit fewer values than a range expresses:
 - **`ColumnBatch`** takes the ranges `ParquetFileWriter` resolves once per file and scans the values a setter is handed, skipping the rows the column's `Validity` marks null, in the same pass that checks fixed byte lengths. The rejection names the column and the row (`Column 3 (zip) has value 300 at row 17, out of range for a UINT_8 column`).
 - **`RowWriter`** resolves the range per leaf when its plan is built and checks in the setter, before anything is staged. The rejection names the field the caller set. The batch scan then runs again over the staged values as a backstop.
 
-A slot an absent ancestor makes unreachable is not a value either API checks. The row layer marks that slot null when the leaf is `OPTIONAL`; only a `REQUIRED` leaf, which has no null bit to set, keeps a placeholder, and its placeholder is a value the column can hold: the declared width for a `FIXED_LEN_BYTE_ARRAY` and a decodable zero (`{0}`) under a binary `DECIMAL`.
+The row layer never checks a slot an absent ancestor makes unreachable. It marks that slot null when the leaf is `OPTIONAL`; only a `REQUIRED` leaf, which has no null bit to set, keeps a placeholder, and its placeholder is a value the column can hold: the declared width for a `FIXED_LEN_BYTE_ARRAY` and a decodable zero (`{0}`) under a binary `DECIMAL`. `ColumnBatch` validates a leaf against its own repetition only, so an all-present setter checks every slot, an ancestor-absent one included. The reader spans such a slot of a `BYTE_ARRAY` leaf with zero bytes, which is no unscaled value, so a `REQUIRED` binary `DECIMAL` beneath an absent struct instance cannot be copied from the reader's packed form unchanged.
 
 An unannotated or unbounded column pays one `isBounded()` test per setter call and nothing per value. A bounded integral column pays two compares per value. A binary `DECIMAL` constructs a `BigInteger` only for a value long enough to possibly exceed the precision: a value of `L` bytes cannot exceed `10^p - 1` when `2^(8L-1) <= 10^p - 1`, so the longest always-safe length is derived once per column from the bound's bit length.
 

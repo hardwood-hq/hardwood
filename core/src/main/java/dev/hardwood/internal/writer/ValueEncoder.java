@@ -14,7 +14,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.writer.ColumnEncoding;
 
 /// The per-physical-type half of a column chunk's value section: the typed value read window
-/// over the batch source, the typed `PLAIN` buffer, the (optional) dictionary, and the typed
+/// over the batch source (a binary column reads its source in place instead), the typed `PLAIN` buffer, the (optional) dictionary, and the typed
 /// statistics. [ColumnChunkBuffer] owns the type-agnostic half — repetition / definition level
 /// streams, page sealing, compression, CRC, and the dictionary-index stream — and drives this
 /// encoder value by value as the [RecordShredder] streams a record range in.
@@ -99,8 +99,8 @@ abstract class ValueEncoder {
     /// allocates before a record arrives.
     ///
     /// The value store is one of four. A column that may build a dictionary keeps an index beside
-    /// each value, every column reads its source through a window, and a levelled column keeps a
-    /// byte per entry per level stream — so a capacity derived from the store alone reserves
+    /// each value, a fixed-width column reads its source through a window, and a levelled column
+    /// keeps a byte per entry per level stream — so a capacity derived from the store alone reserves
     /// several times the share it was given, and the more columns a schema has the further the
     /// total lands from the target. The window is charged its full width although it is capped at
     /// a slice, which errs towards a smaller capacity.
@@ -111,7 +111,11 @@ abstract class ValueEncoder {
     /// @param levelBytesPerEntry a byte for each level stream the column has
     static long eagerBytesPerValue(ColumnSchema column, boolean dictionaryCapable, int levelBytesPerEntry) {
         long store = storeBytesPerValue(column);
-        // A binary column reads through a window of references rather than of values.
+        // A binary column reads its source in place and holds no window. It is charged a reference
+        // per value regardless: a fixed-width column's window, charged at its full width, leaves
+        // room for the allocations every column makes whatever its capacity (the page body, the
+        // dictionary's table), and without this term a binary column's buffers would fill its
+        // share exactly and those allocations would land above the target.
         long window = switch (column.type()) {
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> REFERENCE_BYTES;
             default -> store;
@@ -119,7 +123,7 @@ abstract class ValueEncoder {
         return store + window + levelBytesPerEntry + (dictionaryCapable ? INDEX_BYTES : 0);
     }
 
-    /// A reference in a window of `byte[]`, under compressed oops.
+    /// A reference to a `byte[]`, under compressed oops.
     private static final long REFERENCE_BYTES = 4;
 
     /// What one value occupies in a column's store *before a record arrives*, which is what the

@@ -18,7 +18,7 @@ final class NullCountStatistics implements BinaryStatistics {
     private long nullCount;
 
     @Override
-    public void accept(byte[] value) {
+    public void accept(byte[] array, int offset, int length) {
         // No ordering to extend bounds in.
     }
 

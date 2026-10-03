@@ -40,16 +40,17 @@ public final class BinaryDictionaryEncoder {
         this.values = new byte[16][];
     }
 
-    /// The index `value` is assigned, assigning the next one if it has not been seen.
+    /// The index the value `array[offset, offset + length)` is assigned, assigning the next one
+    /// if it has not been seen.
     ///
     /// Lookup and assignment are one operation because they are one hash. Asking first and
     /// adding after hashes every value that turns out to be new a second time, which for a column
     /// of largely distinct values is every value.
-    public int intern(byte[] value) {
-        int hash = hash(value);
+    public int intern(byte[] array, int offset, int length) {
+        int hash = hash(array, offset, length);
         int slot = hash & mask;
         while (slotIndex[slot] != EMPTY) {
-            if (slotHash[slot] == hash && Arrays.equals(values[slotIndex[slot]], value)) {
+            if (slotHash[slot] == hash && holds(values[slotIndex[slot]], array, offset, length)) {
                 return slotIndex[slot];
             }
             slot = (slot + 1) & mask;
@@ -58,10 +59,10 @@ public final class BinaryDictionaryEncoder {
             values = Arrays.copyOf(values, values.length * 2);
         }
         int index = size;
-        // Copy: the caller's array is a window over the batch it came from, which the writer must
-        // not still be referencing when the dictionary page is encoded at row-group flush.
-        values[size++] = Arrays.copyOf(value, value.length);
-        contentBytes += value.length;
+        // Copy: the caller's array belongs to the batch it came from, which the writer must not
+        // still be referencing when the dictionary page is encoded at row-group flush.
+        values[size++] = Arrays.copyOfRange(array, offset, offset + length);
+        contentBytes += length;
         slotIndex[slot] = index;
         slotHash[slot] = hash;
         if (size > threshold) {
@@ -127,8 +128,31 @@ public final class BinaryDictionaryEncoder {
         this.threshold = capacity - (capacity >> 2); // 75%
     }
 
-    private static int hash(byte[] value) {
-        return Arrays.hashCode(value) * 0x9E3779B1;
+    /// Whether `entry` holds the slice `array[offset, offset + length)`. A value that is its whole
+    /// array is compared through the whole-array `Arrays.equals`, which costs a column of
+    /// `byte[]` values measurably less per probe than the range form.
+    private static boolean holds(byte[] entry, byte[] array, int offset, int length) {
+        if (offset == 0 && length == array.length) {
+            return Arrays.equals(entry, array);
+        }
+        return Arrays.equals(entry, 0, entry.length, array, offset, offset + length);
+    }
+
+    /// The slice's `Arrays.hashCode`, spread. A value that is its whole array takes the JDK's
+    /// vectorized `Arrays.hashCode`, which has no range form; a slice of a packed buffer computes
+    /// the same polynomial by hand, so a value hashes alike whichever way it arrives.
+    private static int hash(byte[] array, int offset, int length) {
+        int h;
+        if (offset == 0 && length == array.length) {
+            h = Arrays.hashCode(array);
+        }
+        else {
+            h = 1;
+            for (int i = offset, end = offset + length; i < end; i++) {
+                h = 31 * h + array[i];
+            }
+        }
+        return h * 0x9E3779B1;
     }
 
     /// The bytes this dictionary retains: the distinct values' own bytes and the `byte[]` holding

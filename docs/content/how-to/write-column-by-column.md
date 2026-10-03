@@ -25,7 +25,6 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnWriter;
 import dev.hardwood.writer.ParquetFileWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 FileSchema schema = FileSchema.builder("measurement")
@@ -33,13 +32,13 @@ FileSchema schema = FileSchema.builder("measurement")
         .addColumn("temperature", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
         .build();
 
-byte[][] stations = { "Hamburg".getBytes(StandardCharsets.UTF_8), "Aarhus".getBytes(StandardCharsets.UTF_8) };
+String[] stations = { "Hamburg", "Aarhus" };
 double[] temperatures = { 12.3, 9.8 };
 
 try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("measurements.parquet")), schema)) {
     ColumnWriter columns = writer.columnWriter();
     columns.writeBatch(batch -> batch
-            .bytes("station", stations)
+            .strings("station", stations)
             .doubles("temperature", temperatures));
 }
 ```
@@ -61,7 +60,7 @@ Columns can be addressed by name or by zero-based leaf-column index, which is th
 
 ```java
 columns.writeBatch(batch -> batch
-        .bytes(0, stations)
+        .strings(0, stations)
         .doubles(1, temperatures));
 ```
 
@@ -98,14 +97,14 @@ A null mask on a `REQUIRED` column is rejected. A `boolean[]` mask is length-che
 
 ## Binary and Fixed-Width Values
 
-`bytes(...)` writes a `BYTE_ARRAY` column and `fixed(...)` a `FIXED_LEN_BYTE_ARRAY` column, both taking `byte[][]`. A `STRING` column is a `BYTE_ARRAY` column annotated `STRING`, so its values are written as UTF-8 bytes — the columnar API has no `String` overload, and the encoding is the caller's to perform:
+`bytes(...)` writes a `BYTE_ARRAY` column and `fixed(...)` a `FIXED_LEN_BYTE_ARRAY` column. Both take the values as a `byte[][]`, or packed into one `byte[]` with an `int[]` of offsets, where value `i` is `values[offsets[i], offsets[i + 1])`. The packed form is what `ColumnReader.getBinaryValues()` and `getBinaryOffsets()` return, so a column read that way is written without copying each value into an array of its own:
 
 ```java
-byte[][] names = new byte[people.size()][];
-for (int i = 0; i < names.length; i++) {
-    names[i] = people.get(i).name().getBytes(StandardCharsets.UTF_8);
-}
+columns.writeBatch(batch -> batch
+        .bytes("payload", payloads.getBinaryValues(), payloads.getBinaryOffsets()));
 ```
+
+`strings(...)` writes a text column from a `String[]`, encoding each value as UTF-8. It takes the columns `ColumnReader.getStrings()` reads; the packed form's offset rules and the text columns are listed in the [writer reference](../reference/writer.md#physical-types-and-columnar-setters).
 
 Every present value of a `FIXED_LEN_BYTE_ARRAY` column must be exactly the length the column declares. The bytes themselves are written as given: the writer does not check that a `STRING` column's values are valid UTF-8, or that a `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY` column's payloads are well formed.
 

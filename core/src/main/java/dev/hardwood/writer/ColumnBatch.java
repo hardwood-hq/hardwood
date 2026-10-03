@@ -7,12 +7,14 @@
  */
 package dev.hardwood.writer;
 
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
+import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.writer.BinaryArrayColumnSource;
 import dev.hardwood.internal.writer.BooleanArrayColumnSource;
 import dev.hardwood.internal.writer.ColumnSource;
@@ -21,6 +23,7 @@ import dev.hardwood.internal.writer.FloatArrayColumnSource;
 import dev.hardwood.internal.writer.IntArrayColumnSource;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
 import dev.hardwood.internal.writer.LongArrayColumnSource;
+import dev.hardwood.internal.writer.PackedBinaryColumnSource;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -642,6 +645,149 @@ public final class ColumnBatch {
         return bytes(schema.getColumn(columnName).columnIndex(), values, nulls);
     }
 
+    /// Adds the values for a `REQUIRED BYTE_ARRAY` column, addressed by index, packed into one
+    /// array: value `i` is `values[offsets[i], offsets[i + 1])`, and the column holds
+    /// `offsets.length - 1` values. This is the shape [dev.hardwood.reader.ColumnReader#getBinaryValues()]
+    /// and [dev.hardwood.reader.ColumnReader#getBinaryOffsets()] return, so a column read that way
+    /// is written without a `byte[]` per value. `values` may extend past `offsets[offsets.length - 1]`;
+    /// the bytes beyond it are ignored. Both arrays are referenced, not copied.
+    ///
+    /// @param columnIndex the leaf-column index
+    /// @param values the packed value bytes
+    /// @param offsets the non-decreasing start of each value in `values`, followed by the end of
+    ///        the last one
+    /// @return this batch, for chaining
+    public ColumnBatch bytes(int columnIndex, byte[] values, int[] offsets) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        validatePackedValues(idx, values, offsets, null, false);
+        store(idx, PhysicalType.BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets), offsets.length - 1, null);
+        return this;
+    }
+
+    /// Adds the packed values for a `REQUIRED BYTE_ARRAY` column, addressed by name.
+    ///
+    /// @see #bytes(int, byte[], int[])
+    public ColumnBatch bytes(String columnName, byte[] values, int[] offsets) {
+        return bytes(schema.getColumn(columnName).columnIndex(), values, offsets);
+    }
+
+    /// Adds the packed values for an `OPTIONAL BYTE_ARRAY` column, addressed by index. The offsets
+    /// span every row, a null row included; the bytes a null row spans are ignored.
+    ///
+    /// @see #bytes(int, byte[], int[])
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch bytes(int columnIndex, byte[] values, int[] offsets, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        validatePackedValues(idx, values, offsets, nulls, false);
+        storeNullable(idx, PhysicalType.BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets),
+                offsets.length - 1, nulls);
+        return this;
+    }
+
+    /// Adds the packed values for an `OPTIONAL BYTE_ARRAY` column, addressed by name.
+    ///
+    /// @see #bytes(int, byte[], int[], Validity)
+    @Experimental
+    public ColumnBatch bytes(String columnName, byte[] values, int[] offsets, Validity nulls) {
+        return bytes(schema.getColumn(columnName).columnIndex(), values, offsets, nulls);
+    }
+
+    /// Adds the packed values for an `OPTIONAL BYTE_ARRAY` column, addressed by index, with a plain
+    /// mask.
+    ///
+    /// @see #bytes(int, byte[], int[], Validity)
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch bytes(int columnIndex, byte[] values, int[] offsets, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        Validity validity = maskToValidity(idx, offsets.length - 1, nulls);
+        validatePackedValues(idx, values, offsets, validity, false);
+        storeNullable(idx, PhysicalType.BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets),
+                offsets.length - 1, validity);
+        return this;
+    }
+
+    /// Adds the packed values for an `OPTIONAL BYTE_ARRAY` column, addressed by name, with a plain
+    /// mask.
+    ///
+    /// @see #bytes(int, byte[], int[], boolean[])
+    @Experimental
+    public ColumnBatch bytes(String columnName, byte[] values, int[] offsets, boolean[] nulls) {
+        return bytes(schema.getColumn(columnName).columnIndex(), values, offsets, nulls);
+    }
+
+    /// Adds the values for a `REQUIRED BYTE_ARRAY` column that holds text, addressed by index,
+    /// encoding each as UTF-8. The column is annotated `STRING`, `ENUM` or `JSON`, or carries no
+    /// annotation: the columns [StructBuilder#setString(String, String)] writes and
+    /// [dev.hardwood.reader.ColumnReader#getStrings()] reads.
+    ///
+    /// @param columnIndex the leaf-column index
+    /// @param values one string per row
+    /// @return this batch, for chaining
+    public ColumnBatch strings(int columnIndex, String[] values) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        byte[][] encoded = encodeStrings(idx, values, null);
+        store(idx, PhysicalType.BYTE_ARRAY, new BinaryArrayColumnSource(encoded), encoded.length, null);
+        return this;
+    }
+
+    /// Adds the values for a `REQUIRED BYTE_ARRAY` column that holds text, addressed by name.
+    ///
+    /// @see #strings(int, String[])
+    public ColumnBatch strings(String columnName, String[] values) {
+        return strings(schema.getColumn(columnName).columnIndex(), values);
+    }
+
+    /// Adds the values for an `OPTIONAL BYTE_ARRAY` column that holds text, addressed by index.
+    ///
+    /// @see #strings(int, String[])
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch strings(int columnIndex, String[] values, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        byte[][] encoded = encodeStrings(idx, values, nulls);
+        storeNullable(idx, PhysicalType.BYTE_ARRAY, new BinaryArrayColumnSource(encoded), encoded.length, nulls);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL BYTE_ARRAY` column that holds text, addressed by name.
+    ///
+    /// @see #strings(int, String[], Validity)
+    @Experimental
+    public ColumnBatch strings(String columnName, String[] values, Validity nulls) {
+        return strings(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for an `OPTIONAL BYTE_ARRAY` column that holds text, addressed by index,
+    /// with a plain mask.
+    ///
+    /// @see #strings(int, String[], Validity)
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch strings(int columnIndex, String[] values, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        Validity validity = maskToValidity(idx, values.length, nulls);
+        byte[][] encoded = encodeStrings(idx, values, validity);
+        storeNullable(idx, PhysicalType.BYTE_ARRAY, new BinaryArrayColumnSource(encoded), encoded.length, validity);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL BYTE_ARRAY` column that holds text, addressed by name, with
+    /// a plain mask.
+    ///
+    /// @see #strings(int, String[], boolean[])
+    @Experimental
+    public ColumnBatch strings(String columnName, String[] values, boolean[] nulls) {
+        return strings(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
     /// Adds the values for a `REQUIRED FIXED_LEN_BYTE_ARRAY` column, addressed by index. Every
     /// present value must be exactly the column's declared type length.
     ///
@@ -704,35 +850,180 @@ public final class ColumnBatch {
         return fixed(schema.getColumn(columnName).columnIndex(), values, nulls);
     }
 
+    /// Adds the packed values for a `REQUIRED FIXED_LEN_BYTE_ARRAY` column, addressed by index.
+    /// Every present value must be exactly the column's declared type length.
+    ///
+    /// @see #bytes(int, byte[], int[])
+    public ColumnBatch fixed(int columnIndex, byte[] values, int[] offsets) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        validatePackedValues(idx, values, offsets, null, true);
+        store(idx, PhysicalType.FIXED_LEN_BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets),
+                offsets.length - 1, null);
+        return this;
+    }
+
+    /// Adds the packed values for a `REQUIRED FIXED_LEN_BYTE_ARRAY` column, addressed by name.
+    ///
+    /// @see #fixed(int, byte[], int[])
+    public ColumnBatch fixed(String columnName, byte[] values, int[] offsets) {
+        return fixed(schema.getColumn(columnName).columnIndex(), values, offsets);
+    }
+
+    /// Adds the packed values for an `OPTIONAL FIXED_LEN_BYTE_ARRAY` column, addressed by index.
+    ///
+    /// @see #fixed(int, byte[], int[])
+    /// @see #bytes(int, byte[], int[], Validity)
+    @Experimental
+    public ColumnBatch fixed(int columnIndex, byte[] values, int[] offsets, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        validatePackedValues(idx, values, offsets, nulls, true);
+        storeNullable(idx, PhysicalType.FIXED_LEN_BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets),
+                offsets.length - 1, nulls);
+        return this;
+    }
+
+    /// Adds the packed values for an `OPTIONAL FIXED_LEN_BYTE_ARRAY` column, addressed by name.
+    ///
+    /// @see #fixed(int, byte[], int[], Validity)
+    @Experimental
+    public ColumnBatch fixed(String columnName, byte[] values, int[] offsets, Validity nulls) {
+        return fixed(schema.getColumn(columnName).columnIndex(), values, offsets, nulls);
+    }
+
+    /// Adds the packed values for an `OPTIONAL FIXED_LEN_BYTE_ARRAY` column, addressed by index,
+    /// with a plain mask.
+    ///
+    /// @see #fixed(int, byte[], int[], Validity)
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch fixed(int columnIndex, byte[] values, int[] offsets, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requirePacked(idx, values, offsets);
+        Validity validity = maskToValidity(idx, offsets.length - 1, nulls);
+        validatePackedValues(idx, values, offsets, validity, true);
+        storeNullable(idx, PhysicalType.FIXED_LEN_BYTE_ARRAY, new PackedBinaryColumnSource(values, offsets),
+                offsets.length - 1, validity);
+        return this;
+    }
+
+    /// Adds the packed values for an `OPTIONAL FIXED_LEN_BYTE_ARRAY` column, addressed by name,
+    /// with a plain mask.
+    ///
+    /// @see #fixed(int, byte[], int[], boolean[])
+    @Experimental
+    public ColumnBatch fixed(String columnName, byte[] values, int[] offsets, boolean[] nulls) {
+        return fixed(schema.getColumn(columnName).columnIndex(), values, offsets, nulls);
+    }
+
     /// Validates a binary column's present values: none may be `null`, for a
     /// `FIXED_LEN_BYTE_ARRAY` (`fixed` true) each must be exactly the column's type length, and
     /// under a `DECIMAL` annotation each must be an unscaled value the declared precision holds.
     /// A null-row value (per `validity`) is ignored. Failing here, at the public boundary, beats
     /// a late error at encode time.
     private void validateBinaryValues(int columnIndex, byte[][] values, Validity validity, boolean fixed) {
-        Integer typeLength = schema.getColumn(columnIndex).typeLength();
-        LogicalTypeValueRange range = ranges[columnIndex];
         for (int i = 0; i < values.length; i++) {
             if (validity != null && validity.isNull(i)) {
                 continue;
             }
             if (values[i] == null) {
-                throw new IllegalArgumentException(
-                        "Column " + describe(columnIndex) + " has a null value at present row " + i);
+                throw nullAtPresentRow(columnIndex, i);
             }
-            // A null typeLength here means the column is not FIXED_LEN_BYTE_ARRAY; leave the
-            // wrong-type report to store(), which names the actual type, rather than unboxing null.
-            if (fixed && typeLength != null && values[i].length != typeLength) {
-                throw new IllegalArgumentException("Column " + describe(columnIndex)
-                        + " has a value of length " + values[i].length + " at row " + i
-                        + " but the FIXED_LEN_BYTE_ARRAY type length is " + typeLength);
+            validateBinaryValue(columnIndex, i, values[i], 0, values[i].length, fixed);
+        }
+    }
+
+    /// Validates a packed binary column's present values as [#validateBinaryValues] does an
+    /// array of them; [#requirePacked] has already checked that every slice lies in `values`.
+    private void validatePackedValues(int columnIndex, byte[] values, int[] offsets, Validity validity,
+                                      boolean fixed) {
+        for (int i = 0; i < offsets.length - 1; i++) {
+            if (validity != null && validity.isNull(i)) {
+                continue;
             }
-            if (range.isBounded() && !range.containsUnscaled(values[i])) {
+            validateBinaryValue(columnIndex, i, values, offsets[i], offsets[i + 1] - offsets[i], fixed);
+        }
+    }
+
+    /// Validates the present value at `row`, `array[offset, offset + length)`: its length against a
+    /// `FIXED_LEN_BYTE_ARRAY` (`fixed` true) type length, and its unscaled value against a
+    /// `DECIMAL`'s precision.
+    private void validateBinaryValue(int columnIndex, int row, byte[] array, int offset, int length,
+                                     boolean fixed) {
+        // A null typeLength here means the column is not FIXED_LEN_BYTE_ARRAY; leave the
+        // wrong-type report to store(), which names the actual type, rather than unboxing null.
+        Integer typeLength = schema.getColumn(columnIndex).typeLength();
+        if (fixed && typeLength != null && length != typeLength) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex)
+                    + " has a value of length " + length + " at row " + row
+                    + " but the FIXED_LEN_BYTE_ARRAY type length is " + typeLength);
+        }
+        LogicalTypeValueRange range = ranges[columnIndex];
+        if (range.isBounded() && !range.containsUnscaled(array, offset, length)) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex)
+                    + " has a value at row " + row + " that is not an unscaled value the column's "
+                    + range.annotation() + " can hold");
+        }
+    }
+
+    /// Checks the packed form's structure: both arrays present, and the offsets a non-decreasing
+    /// run that starts and ends within `values`. A null row's span is checked as well, since the
+    /// offsets after it depend on it.
+    private void requirePacked(int columnIndex, byte[] values, int[] offsets) {
+        requireValues(columnIndex, values == null);
+        if (offsets == null) {
+            throw new IllegalArgumentException("offsets must not be null for column " + describe(columnIndex));
+        }
+        if (offsets.length == 0) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex)
+                    + " has no offsets; they hold one entry more than the values they delimit");
+        }
+        if (offsets[0] < 0) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex)
+                    + " has offset " + offsets[0] + " at index 0, before the start of the values");
+        }
+        for (int i = 1; i < offsets.length; i++) {
+            if (offsets[i] < offsets[i - 1]) {
                 throw new IllegalArgumentException("Column " + describe(columnIndex)
-                        + " has a value at row " + i + " that is not an unscaled value the column's "
-                        + range.annotation() + " can hold");
+                        + " has offset " + offsets[i] + " at index " + i
+                        + ", below the offset " + offsets[i - 1] + " before it");
             }
         }
+        int end = offsets[offsets.length - 1];
+        if (end > values.length) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex)
+                    + " has offset " + end + " at index " + (offsets.length - 1)
+                    + ", past the end of the " + values.length + " value bytes");
+        }
+    }
+
+    /// Encodes a text column's present strings as UTF-8, leaving a null row's slot `null`. A
+    /// column that does not hold text is refused here, before any value is encoded.
+    private byte[][] encodeStrings(int columnIndex, String[] values, Validity validity) {
+        ColumnSchema column = schema.getColumn(columnIndex);
+        if (!TextColumns.holdsText(column.type(), column.logicalType())) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex) + " is " + column.type()
+                    + (column.logicalType() == null ? "" : " annotated " + column.logicalType())
+                    + ", which does not hold text; strings(...) takes a BYTE_ARRAY column annotated"
+                    + " STRING, ENUM or JSON, or unannotated");
+        }
+        byte[][] encoded = new byte[values.length][];
+        for (int i = 0; i < values.length; i++) {
+            if (validity != null && validity.isNull(i)) {
+                continue;
+            }
+            if (values[i] == null) {
+                throw nullAtPresentRow(columnIndex, i);
+            }
+            encoded[i] = values[i].getBytes(StandardCharsets.UTF_8);
+        }
+        return encoded;
+    }
+
+    private IllegalArgumentException nullAtPresentRow(int columnIndex, int row) {
+        return new IllegalArgumentException(
+                "Column " + describe(columnIndex) + " has a null value at present row " + row);
     }
 
     /// Checks an `INT32` column's present values against the range its annotation declares. A

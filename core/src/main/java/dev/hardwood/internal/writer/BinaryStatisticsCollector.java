@@ -44,23 +44,19 @@ final class BinaryStatisticsCollector implements BinaryStatistics {
     }
 
     @Override
-    public void accept(byte[] value) {
+    public void accept(byte[] array, int offset, int length) {
         if (!hasValues) {
-            min = value.clone();
-            max = value.clone();
+            min = Arrays.copyOfRange(array, offset, offset + length);
+            max = min.clone();
             hasValues = true;
             return;
         }
-        if (compare(value, min) < 0) {
-            min = value.clone();
+        if (BinaryComparator.compare(array, offset, offset + length, min, order) < 0) {
+            min = Arrays.copyOfRange(array, offset, offset + length);
         }
-        if (compare(value, max) > 0) {
-            max = value.clone();
+        if (BinaryComparator.compare(array, offset, offset + length, max, order) > 0) {
+            max = Arrays.copyOfRange(array, offset, offset + length);
         }
-    }
-
-    private int compare(byte[] left, byte[] right) {
-        return BinaryComparator.compare(left, 0, left.length, right, order);
     }
 
     @Override

@@ -30,8 +30,12 @@ public final class BinaryArrayColumnSource implements BinaryColumnSource {
     }
 
     @Override
-    public void copyInto(int srcPos, byte[][] dest, int destPos, int length) {
-        System.arraycopy(values, srcPos, dest, destPos, length);
+    public byte[] arrayAt(int index) {
+        return values[index];
     }
 
+    @Override
+    public int offsetAt(int index) {
+        return 0;
+    }
 }

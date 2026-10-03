@@ -44,8 +44,13 @@ import dev.hardwood.schema.SchemaNode;
 /// - **Leaf validity is not the writer's leaf null mask.** `getLeafValidity()` answers "is
 ///   there a value in this slot", which is false wherever an `OPTIONAL` ancestor is absent, so
 ///   a `REQUIRED` leaf under an `OPTIONAL` struct reports nulls — and the writer refuses a mask
-///   on a `REQUIRED` column. For `BYTE_ARRAY` the same slots come back as Java `null`s that the
-///   all-present setter rejects, so they must be plugged with a placeholder first.
+///   on a `REQUIRED` column.
+///
+/// Binary leaves are copied in the reader's packed form (`getBinaryValues()` /
+/// `getBinaryOffsets()`), which spans an absent slot as an ordinary slice rather than a Java
+/// `null`, so the all-present setter takes a `REQUIRED` leaf's slots as they are. A binary
+/// `DECIMAL` is the exception: its zero-byte span at an absent slot is no unscaled value, and
+/// the setter refuses it.
 final class NestedColumnCopier {
 
     private NestedColumnCopier() {
@@ -110,9 +115,8 @@ final class NestedColumnCopier {
                 case FLOAT -> batch.floats(index, col.getFloats());
                 case DOUBLE -> batch.doubles(index, col.getDoubles());
                 case BOOLEAN -> batch.booleans(index, col.getBooleans());
-                case BYTE_ARRAY -> batch.bytes(index, plugHoles(col.getBinaries(), 0));
-                case FIXED_LEN_BYTE_ARRAY -> batch.fixed(index,
-                        plugHoles(col.getBinaries(), col.getColumnSchema().typeLength()));
+                case BYTE_ARRAY -> batch.bytes(index, col.getBinaryValues(), col.getBinaryOffsets());
+                case FIXED_LEN_BYTE_ARRAY -> batch.fixed(index, col.getBinaryValues(), col.getBinaryOffsets());
                 default -> throw new UnsupportedOperationException("INT96 is not writable");
             }
             return;
@@ -123,29 +127,10 @@ final class NestedColumnCopier {
             case FLOAT -> batch.floats(index, col.getFloats(), nulls);
             case DOUBLE -> batch.doubles(index, col.getDoubles(), nulls);
             case BOOLEAN -> batch.booleans(index, col.getBooleans(), nulls);
-            case BYTE_ARRAY -> batch.bytes(index, col.getBinaries(), nulls);
-            case FIXED_LEN_BYTE_ARRAY -> batch.fixed(index, col.getBinaries(), nulls);
+            case BYTE_ARRAY -> batch.bytes(index, col.getBinaryValues(), col.getBinaryOffsets(), nulls);
+            case FIXED_LEN_BYTE_ARRAY -> batch.fixed(index, col.getBinaryValues(), col.getBinaryOffsets(), nulls);
             default -> throw new UnsupportedOperationException("INT96 is not writable");
         }
-    }
-
-    /// A `REQUIRED` leaf under an `OPTIONAL` ancestor has no value where the ancestor is
-    /// absent, and the reader reports that as a Java `null` in the `byte[][]`. The writer
-    /// validates every slot of an all-present array before the levels get a chance to mark it
-    /// ignorable, so the holes have to be plugged with a placeholder it will never encode.
-    ///
-    /// Plugged into a copy of the array, not in place: [ColumnReader#getBinaries] memoizes
-    /// what it returns for the batch, so writing placeholders into it would leave a second
-    /// reader of the same column seeing empty arrays where the reader reported absence.
-    private static byte[][] plugHoles(byte[][] source, int fixedLength) {
-        byte[][] values = source.clone();
-        byte[] filler = new byte[fixedLength];
-        for (int i = 0; i < values.length; i++) {
-            if (values[i] == null) {
-                values[i] = filler;
-            }
-        }
-        return values;
     }
 
     /// A group the writer must be told about, and which layer of which leaf carries its data.

@@ -192,10 +192,13 @@ Every physical type Parquet defines is written except `INT96`, which is deprecat
 | `INT64` | `longs` | `long[]` |
 | `FLOAT` | `floats` | `float[]` |
 | `DOUBLE` | `doubles` | `double[]` |
-| `BYTE_ARRAY` | `bytes` | `byte[][]` |
-| `FIXED_LEN_BYTE_ARRAY` | `fixed` | `byte[][]`, each exactly the declared length |
+| `BYTE_ARRAY` | `bytes` | `byte[][]`, or `byte[]` with `int[]` offsets |
+| `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or unannotated | `strings` | `String[]`, written as UTF-8 |
+| `FIXED_LEN_BYTE_ARRAY` | `fixed` | `byte[][]`, or `byte[]` with `int[]` offsets; each value exactly the declared length |
 
-The columnar API takes physical values and converts nothing: a `STRING` column is written through `bytes(...)` as UTF-8, a `DATE` column through `ints(...)` as days since the Unix epoch. Nesting is described through `struct(path, Validity)`, `list(path, offsets[, Validity])` and `map(path, offsets[, Validity])`.
+In the packed form, value `i` is `values[offsets[i], offsets[i + 1])` and the column holds `offsets.length - 1` values. The offsets are non-decreasing, the first is at least `0` and the last at most `values.length`; bytes outside that run are ignored. A null row spans bytes like any other row, and those bytes are ignored. `strings` on any other column fails with an error.
+
+The columnar API converts no value except a `String` passed to `strings(...)`: a `DATE` column is written through `ints(...)` as days since the Unix epoch. Nesting is described through `struct(path, Validity)`, `list(path, offsets[, Validity])` and `map(path, offsets[, Validity])`.
 
 ## Logical Types and Row Setters
 
@@ -250,9 +253,9 @@ Every other annotation narrows nothing, and its column is not scanned per value.
 
 Two checks are not annotations and always apply: a `FIXED_LEN_BYTE_ARRAY` value must be exactly the length the column declares, and a present value of a binary column must not be `null`. The value at a row a `Validity` marks null is never encoded, so it is never checked.
 
-An annotation over binary *content* is not a range, and the writer does not inspect it. A value passed to `bytes(...)` or `fixed(...)` is written as given, whether the column is annotated `STRING`, `ENUM`, `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY`. Encoding a `STRING` column's values as UTF-8, and producing well-formed payloads under the others, is the caller's to do. Bytes that are not valid UTF-8 are written and read back as replacement characters rather than rejected. `StructBuilder.setString` takes a `String` and encodes it, so the row-oriented layer cannot produce that.
+An annotation over binary *content* is not a range, and the writer does not inspect it. A value passed to `bytes(...)` or `fixed(...)` is written as given, whether the column is annotated `STRING`, `ENUM`, `JSON`, `BSON`, `VARIANT`, `GEOMETRY` or `GEOGRAPHY`. Encoding a `STRING` column's values as UTF-8, and producing well-formed payloads under the others, is the caller's to do. Bytes that are not valid UTF-8 are written and read back as replacement characters rather than rejected. `ColumnBatch.strings` and `StructBuilder.setString` take a `String` and encode it, so neither can produce that.
 
-`PrecisionLossPolicy` governs **precision** only, and only on the row-oriented layer. The columnar API converts nothing, so nothing there can lose precision:
+`PrecisionLossPolicy` governs **precision** only, and only on the row-oriented layer. The columnar API converts no numeric or temporal value, so nothing there can lose precision:
 
 | Policy | Behaviour |
 |---|---|
@@ -343,7 +346,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; packed binary offsets that are empty, start below `0`, decrease, or end past the values; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |

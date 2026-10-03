@@ -49,8 +49,9 @@ interface BinaryStatistics {
         };
     }
 
-    /// Extends the bounds with a present value.
-    void accept(byte[] value);
+    /// Extends the bounds with a present value, `array[offset, offset + length)`. The slice is
+    /// copied where it is kept, since the array belongs to the batch it arrived in.
+    void accept(byte[] array, int offset, int length);
 
     /// Counts an absent (null) slot.
     void acceptNull();

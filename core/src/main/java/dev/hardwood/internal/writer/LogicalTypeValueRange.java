@@ -189,13 +189,21 @@ public final class LogicalTypeValueRange {
     /// An empty value is not: two's complement has no zero-byte encoding, so it denotes no
     /// unscaled value at all and the reader raises `Zero length BigInteger` on it.
     public boolean containsUnscaled(byte[] value) {
-        if (value.length == 0) {
+        return containsUnscaled(value, 0, value.length);
+    }
+
+    /// Whether the slice `array[offset, offset + length)` is an unscaled value within the declared
+    /// precision.
+    ///
+    /// @see #containsUnscaled(byte[])
+    public boolean containsUnscaled(byte[] array, int offset, int length) {
+        if (length == 0) {
             return false;
         }
-        if (value.length <= alwaysSafeBytes) {
+        if (length <= alwaysSafeBytes) {
             return true;
         }
-        return new BigInteger(value).abs().compareTo(unscaledBound) <= 0;
+        return new BigInteger(array, offset, length).abs().compareTo(unscaledBound) <= 0;
     }
 
     /// The range of an `INT(n)` column. One narrower than its physical type bounds the value to

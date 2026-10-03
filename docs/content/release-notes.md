@@ -24,6 +24,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
+- `ColumnBatch` takes a text column as a `String[]` through `strings(...)`, and binary values packed into one `byte[]` with offsets, the form `ColumnReader.getBinaryValues()` and `getBinaryOffsets()` return ([#1424](https://github.com/hardwood-hq/hardwood/issues/1424)).
+
 - `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)`, which span the years 0001 to 9999 at nanosecond precision, are read, filtered and written ([#921](https://github.com/hardwood-hq/hardwood/issues/921)).
 
 - Bloom filters are fetched when the read reaches a row group, together with those of the neighbouring row groups, instead of one request per row group before the first row ([#735](https://github.com/hardwood-hq/hardwood/issues/735)).
