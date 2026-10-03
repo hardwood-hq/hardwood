@@ -267,7 +267,9 @@ class ParquetReaderTest {
                 batches++;
             }
             assertThat(totalRows).isEqualTo(9);
-            assertThat(batches).isEqualTo(5); // ceil(9 / 2)
+            // Three row groups of three rows, and a batch ends at each row-group boundary:
+            // 2 + 1 per row group.
+            assertThat(batches).isEqualTo(6);
         }
     }
 

@@ -48,7 +48,15 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
 The [Validity](/api/latest/dev/hardwood/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton, with no per-batch allocation. Its `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
 
-Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryStarts()` and `getBinaryEnds()` (each an `int[]` of length `getValueCount()`); the bytes of value `i` are `[starts[i], ends[i])`. Values need not be contiguous or in value order, and values of a dictionary-encoded column naming the same dictionary entry may cover the same bytes. Bound reads by each value's range, never by the buffer's length; a null value's range is empty. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. They suit low-volume / debug paths; hot loops should read the buffers directly. `getBinaries()` reads all three physical types; `getStrings()` reads a column that holds text (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation) and throws `IllegalArgumentException` on any other, a `DECIMAL`, a `UUID`, a `BSON` or an `INT96` among them (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where repeated values reuse a single interned `String` per dictionary entry.
+Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryStarts()` and `getBinaryEnds()` (each an `int[]` of length `getValueCount()`); the bytes of value `i` are `[starts[i], ends[i])`. Values need not be contiguous or in value order, and values of a dictionary-encoded column naming the same dictionary entry may cover the same bytes. Bound reads by each value's range, never by the buffer's length; a null value's range is empty. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf. `getBinaries()` reads all three physical types; `getStrings()` reads a column that holds text (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or one carrying no annotation) and throws `IllegalArgumentException` on any other, a `DECIMAL`, a `UUID`, a `BSON` or an `INT96` among them (see [Text columns](../reference/accessors.md#text-columns)). `getBinaries()` allocates a fresh `byte[]` per value; `getStrings()` likewise allocates per value, except on dictionary-encoded columns, where each dictionary entry's `String` is cached and reused for every value that refers to it. Compare the strings with `equals`.
+
+Pick a binary column's accessor by what you do with its values:
+
+| To | Use |
+|---|---|
+| work once per distinct value of a dictionary-encoded column, e.g. to hash, compare or group | `getDictionaryIds()` and `getBinaryDictionary()` ([Dictionary-Encoded Columns](#dictionary-encoded-columns)) |
+| read every value in place, e.g. to hash, compare, parse or copy it into an engine's vector | `getBinaryValues()`, `getBinaryStarts()` and `getBinaryEnds()` |
+| keep values or pass them to an API that takes `byte[]` or `String` | `getBinaries()` or `getStrings()` |
 
 Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
@@ -98,6 +106,8 @@ try (ColumnReaders columns = parquet.buildColumnReaders(
 }
 ```
 
+A batch ends at every row-group boundary, so the last batch of a row group can hold fewer records than the batch size.
+
 The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record, including all the leaf values a repeated column holds for it, is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
 
 `ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when the readers are exhausted. Partial advancement isn't possible because all readers consume from one shared decode pipeline. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-column record counts throw `IllegalStateException`.
@@ -106,7 +116,7 @@ The readers from `getColumnReader(...)` show the group's current batch. `ColumnR
 
 ### Retaining and Handing Off Batch Arrays
 
-The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`, except `Validity.NO_NULLS`, which is a shared immutable instance. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing, including by handing it to another thread:
+The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`, except `Validity.NO_NULLS`, which is a shared immutable instance, and the `BinaryDictionary` from `getBinaryDictionary()` (see [Dictionary-Encoded Columns](#dictionary-encoded-columns)), whose entries never change. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing, including by handing it to another thread:
 
 ```java
 while (columns.nextBatch()) {
@@ -119,6 +129,76 @@ while (columns.nextBatch()) {
 ```
 
 The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. The *returned arrays* are detached and safe to read on other threads. (The `getBinaryValues()` buffer is fresh per batch too.)
+
+### Dictionary-Encoded Columns
+
+For a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, `getDictionaryIds()` returns each value's entry in the column chunk's dictionary, and `getBinaryDictionary()` returns that dictionary, a `BinaryDictionary` with `size()`, `getBinary(e)` and `getString(e)`. Work done per entry then runs once per dictionary instead of once per value. This example counts the rows of each station, tallying per entry and adding the tallies up by name whenever the dictionary changes:
+
+```java
+import java.util.HashMap;
+import java.util.Map;
+
+import dev.hardwood.InputFile;
+import dev.hardwood.reader.BinaryDictionary;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ParquetFileReader;
+
+Map<String, Long> rowsPerStation = new HashMap<>();
+try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path));
+     ColumnReader station = reader.columnReader("station")) {
+
+    BinaryDictionary dictionary = null; // the dictionary the tallies below belong to
+    long[] rowsPerEntry = null;         // one tally per entry of that dictionary
+
+    while (station.nextBatch()) {
+        int count = station.getValueCount();
+        int[] ids = station.getDictionaryIds();
+
+        if (ids == null) {
+            // A value of this batch has no dictionary entry: count it by name.
+            String[] names = station.getStrings();
+            for (int i = 0; i < count; i++) {
+                if (names[i] != null) {
+                    rowsPerStation.merge(names[i], 1L, Long::sum);
+                }
+            }
+            continue;
+        }
+
+        if (station.getBinaryDictionary() != dictionary) {
+            // The next row group's dictionary: add up the previous one's tallies.
+            addTallies(dictionary, rowsPerEntry, rowsPerStation);
+            dictionary = station.getBinaryDictionary();
+            rowsPerEntry = new long[dictionary.size()];
+        }
+        for (int i = 0; i < count; i++) {
+            if (ids[i] >= 0) { // -1 marks a null
+                rowsPerEntry[ids[i]]++;
+            }
+        }
+    }
+    addTallies(dictionary, rowsPerEntry, rowsPerStation);
+}
+
+static void addTallies(BinaryDictionary dictionary, long[] rowsPerEntry, Map<String, Long> rowsPerStation) {
+    if (dictionary == null) {
+        return;
+    }
+    for (int e = 0; e < dictionary.size(); e++) {
+        if (rowsPerEntry[e] > 0) {
+            rowsPerStation.merge(dictionary.getString(e), rowsPerEntry[e], Long::sum);
+        }
+    }
+}
+```
+
+- Both accessors return `null` for a batch holding any non-null value without an entry: every batch of a column with no dictionary, and, where a writer switched to plain encoding after its dictionary filled up, the batch holding the switch and the rest of that row group. Such a batch is read like a plain one, through `getStrings()` or the binary accessors; the next row group's batches have ids again.
+- A batch draws on one dictionary, because batches end at row-group boundaries. Each row group has its own dictionary, so the same value can have different ids in different row groups.
+- Every batch drawn from the same dictionary returns the same `BinaryDictionary`, which is how the example detects the next row group's dictionary (`!=`).
+- The id at a null value is `-1`.
+- `getString(e)` reads a column that holds text, as `getStrings()` does, and caches each entry's `String`; `getBinary(e)` returns a copy of the entry's bytes.
+- On an `INT32`, `INT64`, `FLOAT`, `DOUBLE` or `BOOLEAN` column, `getDictionaryIds()` returns `null` and `getBinaryDictionary()` throws `IllegalStateException`.
+- Treat the returned ids as read-only: they also back `getStrings()` for the same batch.
 
 ### Nested and Repeated Columns
 

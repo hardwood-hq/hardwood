@@ -20,6 +20,7 @@ import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.LogicalAccessorKind;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedLevelComputer;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -55,12 +56,18 @@ import dev.hardwood.schema.FileSchema;
 /// [#getLeafValidity()], and the rest) belongs to the current batch and is
 /// freshly allocated by the call that produced it — [#nextBatch()], or
 /// [ColumnReaders#nextBatch()] for a reader of a group — except
-/// [Validity#NO_NULLS], a shared immutable singleton. A later advance never
-/// reuses or overwrites an array returned for an earlier batch — so a
+/// [Validity#NO_NULLS], a shared immutable singleton. [#getBinaryDictionary()]
+/// returns an object whose entries never change, the same for every batch drawn
+/// from one dictionary. A later advance never reuses or overwrites an array
+/// returned for an earlier batch — so a
 /// returned array may be kept and read after the reader has advanced,
 /// including handed off to another thread for processing. The reader itself
-/// is still a single-threaded cursor: only one consumer thread may advance it. (The note on [#getBinaryValues()] that the
-/// array is not sized to the values is about its *length*, not reuse; that buffer is fresh per batch too.)
+/// is still a single-threaded cursor: only one consumer thread may advance it.
+/// (The note on [#getBinaryValues()] that the array is not sized to the values is
+/// about its *length*, not reuse; that buffer is fresh per batch too.) Treat returned
+/// arrays as read-only: the accessors of one batch share arrays (the dictionary ids,
+/// for instance, back [#getStrings()]'s reuse of `String`s), so changing one can
+/// change what another accessor of the batch returns.
 ///
 /// **This API is [Experimental]:** the shape of the batch accessors and
 /// layer representation may change in future releases without prior
@@ -95,6 +102,12 @@ public class ColumnReader implements Closeable {
     private byte[] cachedRealBinaryBytes;
     private int[] cachedRealBinaryStarts;
     private int[] cachedRealBinaryEnds;
+    private boolean dictionaryResolved;
+    private int[] cachedDictionaryIds;
+    private BinaryDictionary cachedBinaryDictionary;
+    /// The last dictionary handed out, kept across batches so every batch drawn from the same
+    /// chunk dictionary returns the same instance.
+    private BinaryDictionary lastBinaryDictionary;
     private byte[][] cachedBinaries;
     private String[] cachedStrings;
 
@@ -184,6 +197,9 @@ public class ColumnReader implements Closeable {
         cachedRealBinaryBytes = null;
         cachedRealBinaryStarts = null;
         cachedRealBinaryEnds = null;
+        dictionaryResolved = false;
+        cachedDictionaryIds = null;
+        cachedBinaryDictionary = null;
         cachedBinaries = null;
         cachedStrings = null;
     }
@@ -345,6 +361,39 @@ public class ColumnReader implements Closeable {
         checkBatchAvailable();
         ensureRealBinary();
         return cachedRealBinaryEnds;
+    }
+
+    // ==================== Dictionary ====================
+
+    /// Each value's entry in the batch's dictionary: value `i` is entry
+    /// `getDictionaryIds()[i]` of [#getBinaryDictionary()], and `-1` at a null value.
+    /// Length == `getValueCount()`.
+    ///
+    /// Returns `null` unless every non-null value of the batch was decoded from the
+    /// column chunk's dictionary: for every batch of a column without a dictionary, and,
+    /// where a writer switched to plain encoding after its dictionary filled up, for the
+    /// batch holding the switch and the rest of that row group. Read such a batch through
+    /// the value accessors. A batch never draws on two dictionaries: batches end at
+    /// row-group boundaries. Dictionary ids are exposed for `BYTE_ARRAY`,
+    /// `FIXED_LEN_BYTE_ARRAY` and `INT96` columns; for any other column this returns `null`.
+    public int[] getDictionaryIds() {
+        checkBatchAvailable();
+        if (!hasBinaryLeaf()) {
+            return null;
+        }
+        ensureDictionary();
+        return cachedDictionaryIds;
+    }
+
+    /// The dictionary [#getDictionaryIds()] refers to, or `null` when the ids are
+    /// `null`. Every batch drawn from the same dictionary returns the same instance, so
+    /// comparing it with the previous batch's (`!=`) tells when the dictionary changed.
+    ///
+    /// @throws IllegalStateException for non-byte-array leaves
+    public BinaryDictionary getBinaryDictionary() {
+        checkBatchAvailable();
+        ensureDictionary();
+        return cachedBinaryDictionary;
     }
 
     // ==================== Convenience Accessors ====================
@@ -543,6 +592,39 @@ public class ColumnReader implements Closeable {
         cachedRealBinaryBytes = bbv.bytes;
         cachedRealBinaryStarts = trimToLeafCount(bbv.starts, leafCount);
         cachedRealBinaryEnds = trimToLeafCount(bbv.ends, leafCount);
+    }
+
+    /// Resolves the dictionary view of the current batch: ids only when every non-null
+    /// value has one.
+    private boolean hasBinaryLeaf() {
+        PhysicalType type = column.type();
+        return type == PhysicalType.BYTE_ARRAY || type == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                || type == PhysicalType.INT96;
+    }
+
+    private void ensureDictionary() {
+        if (dictionaryResolved) {
+            return;
+        }
+        BinaryBatchValues bbv = realLeafBinary();
+        dictionaryResolved = true;
+        if (bbv.dictionary == null) {
+            return;
+        }
+        int leafCount = nested ? getValueCount() : recordCount;
+        int[] ids = trimToLeafCount(bbv.dictIndices, leafCount);
+        Validity validity = getLeafValidity();
+        boolean anyNull = validity.hasNulls();
+        for (int i = 0; i < leafCount; i++) {
+            if (ids[i] < 0 && (!anyNull || validity.isNotNull(i))) {
+                return;
+            }
+        }
+        cachedDictionaryIds = ids;
+        if (lastBinaryDictionary == null || !lastBinaryDictionary.wraps(bbv.dictionary)) {
+            lastBinaryDictionary = new BinaryDictionary(bbv.dictionary, column, currentFileName);
+        }
+        cachedBinaryDictionary = lastBinaryDictionary;
     }
 
     /// The current batch's varlength leaf values, after any nested compaction.

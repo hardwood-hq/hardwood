@@ -55,6 +55,24 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     void initDrainState() {
         currentValidity = maxDefinitionLevel > 0 ? new long[(batchCapacity + 63) >>> 6] : null;
         currentBatchHasAbsents = false;
+        currentCapacity = capacityOfTakenBatch();
+    }
+
+    /// Rows the current batch's value array holds; `0` until a batch taken without values
+    /// gets them on its first rows ([#allocateValues]).
+    private int currentCapacity;
+
+    private int capacityOfTakenBatch() {
+        return currentBatch != null && currentBatch.values != null ? batchCapacity : 0;
+    }
+
+    /// Gives a batch the column readers' exchange hands out without values its value array,
+    /// sized to the rows it can still receive: at most the batch capacity, and no more than
+    /// the row group has left, since a column-reader batch ends with its row group. A file of
+    /// small row groups then allocates per batch what the batch can hold.
+    private void allocateValues() {
+        currentCapacity = (int) Math.max(1, Math.min(batchCapacity, rowGroupRowsLeft));
+        currentBatch.values = BatchExchange.allocateArray(column, currentCapacity);
     }
 
     /// Writes the mask a matcher would produce when every record matches: all-ones
@@ -91,7 +109,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         int pagePosition = rangeStart;
 
         while (pagePosition < rangeEnd) {
-            int spaceInBatch = batchCapacity - rowsInCurrentBatch;
+            if (currentBatch.values == null) {
+                allocateValues();
+            }
+            int spaceInBatch = currentCapacity - rowsInCurrentBatch;
             int toCopy = Math.min(spaceInBatch, rangeEnd - pagePosition);
 
             // Respect the active row cap: limit the copy to the remaining budget
@@ -108,9 +129,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
             rowsInCurrentBatch += toCopy;
             totalRowsAssembled += toCopy;
+            rowGroupRowsLeft -= toCopy;
             pagePosition += toCopy;
 
-            if (rowsInCurrentBatch >= batchCapacity) {
+            if (rowsInCurrentBatch >= currentCapacity) {
                 publishCurrentBatch();
                 if (done) {
                     return;
@@ -174,6 +196,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         batchesPublished++;
 
         rowsInCurrentBatch = 0;
+        currentCapacity = capacityOfTakenBatch();
         if (currentValidity != null) {
             Arrays.fill(currentValidity, 0L);
         }
@@ -221,9 +244,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
                 bbv.viewDictionaryRange(p, srcPos, destPos, length);
-                // Record per-value dictionary indices so stringAt can intern; a
-                // no-op for non-string columns, and null values fall back to the
-                // packed-byte path (see BinaryBatchValues#recordDictIndices).
+                // Record per-value dictionary indices, for string interning and the
+                // column reader's dictionary ids; a null records -1
+                // (see BinaryBatchValues#recordDictIndices).
                 bbv.recordDictIndices(p.dictIndices(), p.dictionary(), srcPos, destPos, length);
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }

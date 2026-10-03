@@ -10,6 +10,8 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -676,6 +678,67 @@ class ColumnWorkerTest {
     }
 
     // ==================== Helpers ====================
+
+    /// A worker that ends batches at row-group boundaries gives each batch value arrays sized
+    /// to what its row group has left, not the full batch capacity: 100-row row groups read
+    /// with a capacity of 1024 yield 100-value arrays.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void rowGroupBoundedBatchesAreSizedToTheirRowGroup() throws Exception {
+        Path file = Path.of("src/test/resources/dict_cross_chunk.parquet");
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(file, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                    column.name(), BatchExchange.Batch::new);
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 1024,
+                    context.decompressorFactory(), context.executor(), 0, null);
+            worker.endBatchesAtRowGroupBoundaries();
+            worker.start();
+
+            List<Integer> counts = new ArrayList<>();
+            List<Integer> capacities = new ArrayList<>();
+            BatchExchange.Batch batch;
+            while ((batch = exchange.poll()) != null) {
+                counts.add(batch.recordCount);
+                capacities.add(((BinaryBatchValues) batch.values).starts.length);
+            }
+            exchange.checkError();
+            worker.close();
+
+            assertThat(counts).containsExactly(100, 100);
+            assertThat(capacities).containsExactly(100, 100);
+        }
+    }
+
+    @Test
+    void theRowGroupCutCannotBeEnabledOnceStarted() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            ColumnSchema column = schema.getColumn(0);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                    column.name(), BatchExchange.Batch::new);
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(createIterator(TEST_FILE, schema, context), 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0, null);
+            worker.start();
+            try {
+                assertThatThrownBy(worker::endBatchesAtRowGroupBoundaries)
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessage("Column worker for '" + column.name() + "' already started");
+            }
+            finally {
+                worker.close();
+            }
+        }
+    }
 
     private static RowGroupIterator createIterator(Path file, FileSchema schema,
                                                     HardwoodContextImpl context) throws Exception {

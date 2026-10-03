@@ -141,7 +141,7 @@ public sealed interface Dictionary {
         private final int[] entryOffsets;
 
         /// Interned `String` per entry, decoded once per chunk and reused. Lazily
-        /// allocated; populated only for UTF8 / ENUM / JSON columns via [#internedString(int)].
+        /// allocated; populated only for columns read as text, via [#internedString(int)].
         private String[] interned;
 
         /// Flattens `values`, which the dictionary does not keep.
@@ -185,7 +185,7 @@ public sealed interface Dictionary {
         /// `ColumnReader.getStrings()` reach this only via
         /// [BinaryBatchValues#stringAt] for a non-null dictionary value, so a wiring
         /// bug surfaces immediately as an out-of-bounds access here.
-        String internedString(int index) {
+        public String internedString(int index) {
             String[] cache = interned;
             if (cache == null) {
                 cache = new String[size()];

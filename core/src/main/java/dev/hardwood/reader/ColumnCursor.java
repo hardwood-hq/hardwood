@@ -60,7 +60,8 @@ final class ColumnCursor {
 
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
-    /// detached, so every batch the cursor hands out is fresh and never reused.
+    /// detached, so every batch the cursor hands out is fresh and never reused, and end
+    /// at every row-group boundary, so a batch draws on one column chunk's dictionary.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
@@ -73,28 +74,25 @@ final class ColumnCursor {
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
 
         if (isNested(layers, column)) {
-            BatchExchange<NestedBatch> exchange = BatchExchange.detaching(
-                    column.name(), () -> {
-                        NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(column, batchSize);
-                        return b;
-                    });
+            // The nested worker publishes its own copy of the values, so a batch is
+            // handed out without any.
+            BatchExchange<NestedBatch> exchange = BatchExchange.detaching(column.name(), NestedBatch::new);
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
                     layers, indexMode, fixedListFastPathEnabled);
+            worker.endBatchesAtRowGroupBoundaries();
             worker.start();
             return new ColumnCursor(column, null, exchange, worker);
         }
+        // The flat worker gives a batch its values on the batch's first rows, sized to what
+        // the row group has left.
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                column.name(), () -> {
-                    BatchExchange.Batch b = new BatchExchange.Batch();
-                    b.values = BatchExchange.allocateArray(column, batchSize);
-                    return b;
-                });
+                column.name(), BatchExchange.Batch::new);
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), 0, null);
+        worker.endBatchesAtRowGroupBoundaries();
         worker.start();
         return new ColumnCursor(column, exchange, null, worker);
     }

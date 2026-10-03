@@ -417,6 +417,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Direct column chunk access (`ColumnReader` — batch-oriented, zero-boxing primitive access)
 - [x] Page-level iteration (`PageCursor` with async prefetching)
 - [x] Raw value reading with levels (multi-level offsets and per-level null bitmaps)
+- [x] Dictionary entry ids for binary columns on `ColumnReader` (`getDictionaryIds()`, #513)
 
 ---
 

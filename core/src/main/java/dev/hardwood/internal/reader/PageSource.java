@@ -65,6 +65,20 @@ public class PageSource {
                 : ExceptionContext.UNKNOWN_ROW_GROUP;
     }
 
+    /// Position of the current work item in the read's work list, or `-1` if no work item
+    /// is active. Every column of a read walks the same list, so equal ordinals mean the same
+    /// row group of the same input, even across inputs that share a name. Only valid on the
+    /// retriever thread.
+    public int getCurrentWorkItemOrdinal() {
+        return currentWorkItem != null ? workItemCursor - 1 : -1;
+    }
+
+    /// Rows of the current work item's row group, or `0` if no work item is active. Only valid
+    /// on the retriever thread.
+    public long getCurrentRowGroupRowCount() {
+        return currentWorkItem != null ? currentWorkItem.rowGroup().numRows() : 0;
+    }
+
     /// Which page of the current column chunk is being read, or
     /// [dev.hardwood.internal.ExceptionContext#UNKNOWN_PAGE] when no plan is walking one.
     /// Only valid on the retriever thread.
