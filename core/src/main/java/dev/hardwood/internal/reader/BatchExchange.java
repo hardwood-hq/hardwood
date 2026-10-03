@@ -37,9 +37,10 @@ public class BatchExchange<B> {
     static final int READY_QUEUE_CAPACITY = 2;
 
     /// Per-value byte budget for variable-length `BYTE_ARRAY` / `INT96`
-    /// buffers allocated by [#allocateArray]. The bytes buffer is pre-sized
-    /// to `BINARY_BYTES_PER_VALUE_HINT * capacity` and grown on overflow by
-    /// the worker append path.
+    /// buffers allocated by [#allocateArray]. The bytes buffer is sized to
+    /// `BINARY_BYTES_PER_VALUE_HINT * capacity` when the first value is appended
+    /// and grown on overflow; a batch whose values are all views into a
+    /// dictionary never allocates it at that size.
     public static final int BINARY_BYTES_PER_VALUE_HINT = 32;
 
     /// A mutable batch holder for flat columns. Pre-allocated and reused — no per-batch allocation.
@@ -326,17 +327,12 @@ public class BatchExchange<B> {
     ///
     /// For fixed-width physical types this returns the typed primitive
     /// array (`int[]`, `long[]`, …). For byte-array-shaped types it returns
-    /// a [BinaryBatchValues] holding the concatenated byte buffer and a
-    /// sentinel-suffixed offsets array of length `capacity + 1`:
-    ///
-    /// - `BYTE_ARRAY` / `INT96`: bytes buffer is **capacity-sized** to
-    ///   `BINARY_BYTES_PER_VALUE_HINT * capacity` and grows on overflow
-    ///   via [BinaryBatchValues#appendAt].
-    /// - `FIXED_LEN_BYTE_ARRAY`: bytes buffer is sized exactly to
-    ///   `width * capacity` (`width = column.typeLength()`); offsets are
-    ///   filled trivially as `i * width`. The width is present and positive —
-    ///   [RowGroupIterator#initialize] validates it for every column a read
-    ///   touches before the first batch is allocated for it.
+    /// an empty [BinaryBatchValues] with views for `capacity` values. Its
+    /// bytes buffer is allocated on first use, sized for appended values by
+    /// `BINARY_BYTES_PER_VALUE_HINT` per value (`BYTE_ARRAY`, `INT96`) or by
+    /// the column's width (`FIXED_LEN_BYTE_ARRAY`). The width is present and
+    /// positive — [RowGroupIterator#initialize] validates it for every column
+    /// a read touches before the first batch is allocated for it.
     public static Object allocateArray(ColumnSchema column, int capacity) {
         PhysicalType type = column.type();
         return switch (type) {
@@ -346,9 +342,7 @@ public class BatchExchange<B> {
             case DOUBLE -> new double[capacity];
             case BOOLEAN -> new boolean[capacity];
             case BYTE_ARRAY, INT96 -> {
-                BinaryBatchValues bbv = new BinaryBatchValues(
-                        new byte[Math.multiplyExact(BINARY_BYTES_PER_VALUE_HINT, capacity)],
-                        new int[capacity + 1]);
+                BinaryBatchValues bbv = new BinaryBatchValues(capacity, BINARY_BYTES_PER_VALUE_HINT);
                 // String leaves carry per-value dictionary indices so the row
                 // reader reuses one interned String per entry; the backing array
                 // is allocated lazily on the first dictionary page (see
@@ -356,15 +350,7 @@ public class BatchExchange<B> {
                 bbv.internStrings = isStringColumn(column);
                 yield bbv;
             }
-            case FIXED_LEN_BYTE_ARRAY -> {
-                int width = column.typeLength();
-                byte[] bytes = new byte[Math.multiplyExact(width, capacity)];
-                int[] offsets = new int[capacity + 1];
-                for (int i = 0; i <= capacity; i++) {
-                    offsets[i] = Math.multiplyExact(i, width);
-                }
-                yield new BinaryBatchValues(bytes, offsets);
-            }
+            case FIXED_LEN_BYTE_ARRAY -> new BinaryBatchValues(capacity, column.typeLength());
         };
     }
 

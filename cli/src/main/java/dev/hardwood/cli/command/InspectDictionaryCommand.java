@@ -222,15 +222,15 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                 }
             }
             case Dictionary.ByteArrayDictionary d -> addByteArrayRows(
-                    rows, rgIdx, d.values(), columnSchema, displayed, includeLength, budget);
+                    rows, rgIdx, d, columnSchema, displayed, includeLength, budget);
         }
     }
 
-    private static void addByteArrayRows(List<String[]> rows, int rgIdx, byte[][] values,
+    private static void addByteArrayRows(List<String[]> rows, int rgIdx, Dictionary.ByteArrayDictionary dictionary,
                                          ColumnSchema columnSchema, int displayed, boolean includeLength,
                                          int budget) {
         for (int i = 0; i < displayed; i++) {
-            byte[] value = values[i];
+            byte[] value = dictionary.entry(i);
             // The budget bounds the hex build too, so a large payload costs a
             // cell rather than twice its own size to render into one.
             String formatted = cell(ValueFormatter.formatBytes(value, columnSchema, true, budget), budget);
@@ -238,7 +238,7 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                 rows.add(new String[]{
                         rgCell(i, rgIdx),
                         String.valueOf(i),
-                        value != null ? String.valueOf(value.length) : Strings.ABSENT_VALUE,
+                        String.valueOf(value.length),
                         formatted
                 });
             }

@@ -21,7 +21,7 @@ import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.BinaryBatchValuesFixtures;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -133,7 +133,7 @@ class ShortValueEqualityTest {
             System.arraycopy(values[i], 0, bytes, offsets[i], values[i].length);
         }
         BatchExchange.Batch batch = new BatchExchange.Batch();
-        batch.values = new BinaryBatchValues(bytes, offsets);
+        batch.values = BinaryBatchValuesFixtures.contiguous(bytes, offsets);
         if (nulls != null && !nulls.isEmpty()) {
             long[] validity = new long[(values.length + 63) >>> 6];
             for (int i = 0; i < values.length; i++) {

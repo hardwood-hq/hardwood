@@ -186,7 +186,7 @@ public sealed interface Page {
         @Override
         public byte[] get(int index) {
             int entry = dictIndices[index];
-            return entry < 0 ? null : dictionary.values()[entry];
+            return entry < 0 ? null : dictionary.entry(entry);
         }
     }
 }

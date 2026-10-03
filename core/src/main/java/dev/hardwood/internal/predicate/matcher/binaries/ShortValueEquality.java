@@ -25,9 +25,9 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 /// members. A row's length picks the side, and a row only ever equals members of its own length.
 ///
 /// Reading eight bytes at a value's start runs past a value shorter than eight bytes. Inside `bytes`
-/// that only reads the next value or unused capacity, which the mask discards; but the last values
-/// of a batch can end within eight bytes of the array's end, so a short row starting there is
-/// compared byte by byte instead.
+/// that only reads whatever follows the value in the buffer (another value, more of a dictionary
+/// copy, or unused capacity), which the mask discards; but a value can end within eight bytes of
+/// the array's end, so a short row starting there is compared byte by byte instead.
 ///
 /// Sound only where the column holds a value as exactly one byte string —
 /// [dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison#byteExact()].
@@ -95,7 +95,8 @@ final class ShortValueEquality {
     /// Writes one bit per row into `outWords`, set iff the row's bytes equal a member.
     void test(BinaryBatchValues vals, int recordCount, long[] outWords) {
         byte[] bytes = vals.bytes;
-        int[] offsets = vals.offsets;
+        int[] starts = vals.starts;
+        int[] ends = vals.ends;
         // The last position an eight-byte read fits at; negative for an array under eight bytes.
         int lastLongStart = bytes.length - Long.BYTES;
         int activeWords = (recordCount + 63) >>> 6;
@@ -106,8 +107,8 @@ final class ShortValueEquality {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                int start = offsets[i];
-                int length = offsets[i + 1] - start;
+                int start = starts[i];
+                int length = ends[i] - start;
                 long hit;
                 if (length > Long.BYTES) {
                     hit = containsAny(longMembers, bytes, start, start + length) ? 1L : 0L;

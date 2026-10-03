@@ -185,7 +185,7 @@ class ColumnReaderLayerModelTest {
     }
 
     /// `plain_uncompressed_with_nulls.parquet` has a flat `optional binary`
-    /// column. `getBinaryValues()` and `getBinaryOffsets()` round-trip every
+    /// column. `getBinaryValues()` with `getBinaryStarts()` and `getBinaryEnds()` round-trip every
     /// non-null value — no STRUCT or REPEATED layers; `getLayerCount() == 0`.
     @Test
     void flatBinaryRoundTrip() throws Exception {
@@ -198,24 +198,23 @@ class ColumnReaderLayerModelTest {
             assertThat(col.getLayerCount()).isEqualTo(0);
 
             byte[] bytes = col.getBinaryValues();
-            int[] offsets = col.getBinaryOffsets();
+            int[] starts = col.getBinaryStarts();
+            int[] ends = col.getBinaryEnds();
             Validity validity = col.getLeafValidity();
 
-            assertThat(offsets).hasSize(col.getValueCount() + 1);
-
-            // Negative-space test: bytes buffer is capacity-sized, may be
-            // larger than the prefix in use.
-            assertThat(bytes.length).isGreaterThanOrEqualTo(offsets[col.getValueCount()]);
+            assertThat(starts).hasSize(col.getValueCount());
+            assertThat(ends).hasSize(col.getValueCount());
 
             // Row 0 = "alice", row 1 = null, row 2 = "charlie"
             assertThat(validity.isNotNull(0)).isTrue();
-            String s0 = new String(bytes, offsets[0], offsets[1] - offsets[0], StandardCharsets.UTF_8);
+            String s0 = new String(bytes, starts[0], ends[0] - starts[0], StandardCharsets.UTF_8);
             assertThat(s0).isEqualTo("alice");
 
             assertThat(validity.isNull(1)).isTrue();   // null
+            assertThat(ends[1] - starts[1]).isEqualTo(0);
 
             assertThat(validity.isNotNull(2)).isTrue();
-            String s2 = new String(bytes, offsets[2], offsets[3] - offsets[2], StandardCharsets.UTF_8);
+            String s2 = new String(bytes, starts[2], ends[2] - starts[2], StandardCharsets.UTF_8);
             assertThat(s2).isEqualTo("charlie");
 
             // Convenience-accessor parity
@@ -244,15 +243,16 @@ class ColumnReaderLayerModelTest {
             int[] layerOffsets = col.getLayerOffsets(0);
             Validity listValidity = col.getLayerValidity(0);
             byte[] bytes = col.getBinaryValues();
-            int[] binaryOffsets = col.getBinaryOffsets();
+            int[] starts = col.getBinaryStarts();
+            int[] ends = col.getBinaryEnds();
 
             // 4 records, sentinel suffix
             assertThat(layerOffsets).hasSize(5);
             // Row 0: ["a","b","c"]
             assertThat(layerOffsets[1] - layerOffsets[0]).isEqualTo(3);
             String row0First = new String(bytes,
-                    binaryOffsets[layerOffsets[0]],
-                    binaryOffsets[layerOffsets[0] + 1] - binaryOffsets[layerOffsets[0]],
+                    starts[layerOffsets[0]],
+                    ends[layerOffsets[0]] - starts[layerOffsets[0]],
                     StandardCharsets.UTF_8);
             assertThat(row0First).isEqualTo("a");
 
@@ -268,14 +268,14 @@ class ColumnReaderLayerModelTest {
             // Row 3: ["single"]
             assertThat(layerOffsets[4] - layerOffsets[3]).isEqualTo(1);
             String row3 = new String(bytes,
-                    binaryOffsets[layerOffsets[3]],
-                    binaryOffsets[layerOffsets[3] + 1] - binaryOffsets[layerOffsets[3]],
+                    starts[layerOffsets[3]],
+                    ends[layerOffsets[3]] - starts[layerOffsets[3]],
                     StandardCharsets.UTF_8);
             assertThat(row3).isEqualTo("single");
 
-            // Sentinel matches leaf valueCount
-            assertThat(binaryOffsets[col.getValueCount()])
-                    .isLessThanOrEqualTo(bytes.length);
+            // One view per leaf value
+            assertThat(starts).hasSize(col.getValueCount());
+            assertThat(ends).hasSize(col.getValueCount());
 
             // Convenience-accessor parity
             String[] flat = col.getStrings();
@@ -424,13 +424,11 @@ class ColumnReaderLayerModelTest {
         }
     }
 
-    /// Negative-space check: the bytes buffer is documented as
-    /// **capacity-sized**, not exact-sized — only `[0, offsets[valueCount])`
-    /// is meaningful and any tail beyond is unspecified scratch. A test that
-    /// silently tightens the contract back to exact-sized would break
-    /// zero-copy downstream consumers; this asserts strict `>` is acceptable.
+    /// The bytes buffer is documented as not sized to the values: only the bytes
+    /// inside some value's view are meaningful. This pins what a consumer may rely
+    /// on, every view lying within the buffer, and nothing tighter.
     @Test
-    void capacitySizedBinaryBufferAllowsTrailingScratch() throws Exception {
+    void binaryViewsLieWithinTheBuffer() throws Exception {
         Path file = Paths.get("src/test/resources/list_basic_test.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
@@ -438,11 +436,14 @@ class ColumnReaderLayerModelTest {
 
             assertThat(col.nextBatch()).isTrue();
             byte[] bytes = col.getBinaryValues();
-            int[] offsets = col.getBinaryOffsets();
-            int valueCount = col.getValueCount();
+            int[] starts = col.getBinaryStarts();
+            int[] ends = col.getBinaryEnds();
 
-            // Allowed: bytes.length may strictly exceed offsets[valueCount].
-            assertThat(bytes.length).isGreaterThanOrEqualTo(offsets[valueCount]);
+            // The buffer need not be sized to the values; every view lies within it.
+            for (int i = 0; i < col.getValueCount(); i++) {
+                assertThat(starts[i]).isBetween(0, ends[i]);
+                assertThat(ends[i]).isLessThanOrEqualTo(bytes.length);
+            }
         }
     }
 
@@ -497,12 +498,13 @@ class ColumnReaderLayerModelTest {
 
             // Lockstep read of (key, value) pairs for row 4 ("Eve" → single_key=42).
             byte[] keyBytes = keys.getBinaryValues();
-            int[] keyBinOffsets = keys.getBinaryOffsets();
+            int[] keyStarts = keys.getBinaryStarts();
+            int[] keyEnds = keys.getBinaryEnds();
             int[] valueInts = values.getInts();
 
             int entry = keyOffsets[4];
-            int kStart = keyBinOffsets[entry];
-            int kLen = keyBinOffsets[entry + 1] - kStart;
+            int kStart = keyStarts[entry];
+            int kLen = keyEnds[entry] - kStart;
             String key = new String(keyBytes, kStart, kLen, StandardCharsets.UTF_8);
             assertThat(key).isEqualTo("single_key");
             assertThat(valueInts[entry]).isEqualTo(42);
