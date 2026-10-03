@@ -47,14 +47,13 @@ class PageTrimmerTest {
         assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 4)).containsExactly(0, 1, 1, 0);
     }
 
-    /// Byte-array values move with their dictionary indices, and a null keeps its slot.
+    /// Byte-array values move with their levels, and a null keeps its slot.
     @Test
-    void testMovesByteArrayValuesWithDictionaryIndices() {
+    void testMovesByteArrayValues() {
         byte[][] values = { { 'a' }, { 'b' }, null, { 'c' } };
-        int[] dictIndices = { 7, 8, 0, 9 };
         int[] rep = { 0, 0, 0, 1 };
         int[] def = { 3, 3, 1, 3 };
-        Page.ByteArrayPage page = new Page.ByteArrayPage(values, def, rep, 3, values.length, null, dictIndices);
+        Page.ByteArrayPage page = new Page.ByteArrayPage(values, def, rep, 3, values.length);
 
         Page.ByteArrayPage trimmed = (Page.ByteArrayPage) PageTrimmer.trim(page,
                 PageRowMask.of(new int[]{ 1, 3 }));
@@ -63,7 +62,29 @@ class PageTrimmerTest {
         assertThat(trimmed.values()[0]).containsExactly('b');
         assertThat(trimmed.values()[1]).isNull();
         assertThat(trimmed.values()[2]).containsExactly('c');
-        assertThat(Arrays.copyOf(trimmed.dictIndices(), 3)).containsExactly(8, 0, 9);
+        assertThat(Arrays.copyOf(trimmed.definitionLevels(), 3)).containsExactly(3, 1, 3);
+        assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 3)).containsExactly(0, 0, 1);
+    }
+
+    /// Dictionary indices move with their levels, and a null keeps its `-1` slot.
+    @Test
+    void testMovesDictionaryIndices() {
+        Dictionary.ByteArrayDictionary dictionary = new Dictionary.ByteArrayDictionary(
+                new byte[][]{ { 'a' }, { 'b' }, { 'c' } });
+        int[] dictIndices = { 0, 1, -1, 2 };
+        int[] rep = { 0, 0, 0, 1 };
+        int[] def = { 3, 3, 1, 3 };
+        Page.DictionaryByteArrayPage page = new Page.DictionaryByteArrayPage(dictionary, dictIndices, def, rep, 3,
+                dictIndices.length);
+
+        Page.DictionaryByteArrayPage trimmed = (Page.DictionaryByteArrayPage) PageTrimmer.trim(page,
+                PageRowMask.of(new int[]{ 1, 3 }));
+
+        assertThat(trimmed.size()).isEqualTo(3);
+        assertThat(Arrays.copyOf(trimmed.dictIndices(), 3)).containsExactly(1, -1, 2);
+        assertThat(trimmed.get(0)).containsExactly('b');
+        assertThat(trimmed.get(1)).isNull();
+        assertThat(trimmed.get(2)).containsExactly('c');
         assertThat(Arrays.copyOf(trimmed.definitionLevels(), 3)).containsExactly(3, 1, 3);
         assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 3)).containsExactly(0, 0, 1);
     }

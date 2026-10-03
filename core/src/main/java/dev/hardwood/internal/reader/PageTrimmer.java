@@ -141,12 +141,9 @@ final class PageTrimmer {
             case Page.LongPage p -> System.arraycopy(p.values(), from, p.values(), to, length);
             case Page.FloatPage p -> System.arraycopy(p.values(), from, p.values(), to, length);
             case Page.DoublePage p -> System.arraycopy(p.values(), from, p.values(), to, length);
-            case Page.ByteArrayPage p -> {
-                System.arraycopy(p.values(), from, p.values(), to, length);
-                if (p.dictIndices() != null) {
+            case Page.ByteArrayPage p -> System.arraycopy(p.values(), from, p.values(), to, length);
+            case Page.DictionaryByteArrayPage p ->
                     System.arraycopy(p.dictIndices(), from, p.dictIndices(), to, length);
-                }
-            }
         }
     }
 }
