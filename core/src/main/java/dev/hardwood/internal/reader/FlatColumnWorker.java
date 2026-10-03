@@ -221,9 +221,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
                 bbv.viewDictionaryRange(p, srcPos, destPos, length);
-                // Record per-value dictionary indices so stringAt can intern; a
-                // no-op for non-string columns, and null values fall back to the
-                // packed-byte path (see BinaryBatchValues#recordDictIndices).
+                // Record per-value dictionary indices, for string interning and the
+                // column reader's dictionary ids; a null records -1
+                // (see BinaryBatchValues#recordDictIndices).
                 bbv.recordDictIndices(p.dictIndices(), p.dictionary(), srcPos, destPos, length);
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }

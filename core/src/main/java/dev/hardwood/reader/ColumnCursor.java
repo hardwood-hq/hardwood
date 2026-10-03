@@ -60,7 +60,8 @@ final class ColumnCursor {
 
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
-    /// detached, so every batch the cursor hands out is fresh and never reused.
+    /// detached, so every batch the cursor hands out is fresh and never reused, and end
+    /// at every row-group boundary, so a batch draws on one column chunk's dictionary.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
@@ -83,6 +84,7 @@ final class ColumnCursor {
                     pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
                     layers, indexMode, fixedListFastPathEnabled);
+            worker.endBatchesAtRowGroupBoundaries();
             worker.start();
             return new ColumnCursor(column, null, exchange, worker);
         }
@@ -95,6 +97,7 @@ final class ColumnCursor {
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), 0, null);
+        worker.endBatchesAtRowGroupBoundaries();
         worker.start();
         return new ColumnCursor(column, exchange, null, worker);
     }
