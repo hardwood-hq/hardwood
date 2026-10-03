@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -440,6 +441,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private ChunkHandle currentHandle;
         private int handleStart; // relative position where current handle starts
         private int handleEnd;   // relative position where current handle ends (exclusive)
+        /// The handles the walk has moved past that hold bytes at or after the current page
+        /// header, oldest first. A header peek or a repetition-level read can run several
+        /// handles past the page's start before the page itself is read from there, so every
+        /// handle from the page's start onward stays readable from memory rather than being
+        /// fetched again. A handle ending at or before a page header is released when that
+        /// header is read, since no later read starts before it.
+        private final List<ChunkHandle> keptHandles = new ArrayList<>();
+        /// Where the page header being read starts: no read starts before it, so a handle
+        /// ending at or before it is not kept.
+        private int pageStart;
 
         @Override
         public int currentPage() {
@@ -482,6 +493,10 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private ParsedHeader readPageHeader(int relPos) throws IOException {
             int remaining = columnChunkLength - relPos;
             int peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
+            // No later read starts before this header, so a handle ending at or before it is
+            // never read again.
+            pageStart = relPos;
+            keptHandles.removeIf(handle -> relativeEnd(handle) <= relPos);
             while (true) {
                 ByteBuffer headerBuf = readBytes(relPos, peekSize);
                 ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
@@ -509,30 +524,72 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// Reads bytes at the given relative position, advancing through
         /// chunks as needed. If the range fits in the current chunk,
         /// returns a zero-copy slice. If it spans multiple chunks,
-        /// assembles from each.
+        /// assembles from each. Every handle the read leaves that holds bytes
+        /// of the current page is kept, since the page is read from its start
+        /// afterwards.
         private ByteBuffer readBytes(int relPos, int length) throws IOException {
+            return readBytes(relPos, length, true);
+        }
+
+        /// Reads a whole page: the last read of that page, so a handle it leaves
+        /// is copied out and not read again, and is released rather than kept.
+        private ByteBuffer readPageBytes(int relPos, int length) throws IOException {
+            return readBytes(relPos, length, false);
+        }
+
+        private ByteBuffer readBytes(int relPos, int length, boolean keepLeftHandles) throws IOException {
+            ChunkHandle kept = keptHandleAt(relPos);
+            if (kept != null) {
+                if (relPos + length <= relativeEnd(kept)) {
+                    return kept.slice(columnChunkOffset + relPos, length);
+                }
+                return assembleFromChunks(relPos, length, keepLeftHandles);
+            }
             if (currentHandle == null || relPos < handleStart || relPos >= handleEnd) {
-                advanceChunk(relPos);
+                advanceChunk(relPos, keepLeftHandles);
             }
 
             if (relPos + length <= handleEnd) {
                 return currentHandle.slice(columnChunkOffset + relPos, length);
             }
 
-            return assembleFromChunks(relPos, length);
+            return assembleFromChunks(relPos, length, keepLeftHandles);
+        }
+
+        /// Returns the kept handle holding `relPos`, or `null` when none does.
+        private ChunkHandle keptHandleAt(int relPos) {
+            for (ChunkHandle handle : keptHandles) {
+                if (relPos >= relativeStart(handle) && relPos < relativeEnd(handle)) {
+                    return handle;
+                }
+            }
+            return null;
+        }
+
+        private int relativeStart(ChunkHandle handle) {
+            return Math.toIntExact(handle.fileOffset() - columnChunkOffset);
+        }
+
+        private int relativeEnd(ChunkHandle handle) {
+            return relativeStart(handle) + handle.length();
         }
 
         /// Advances to the next chunk. If the current handle has a
         /// pre-fetched next handle that covers `relPos`, it is reused.
         /// Otherwise a new handle is created at `relPos`. The next
-        /// chunk is always chained for one-ahead pre-fetch.
-        private void advanceChunk(int relPos) throws IOException {
+        /// chunk is always chained for one-ahead pre-fetch. The handle left
+        /// goes into [#keptHandles] when `keepLeftHandle` is set and it holds
+        /// bytes after [#pageStart], and is released otherwise.
+        private void advanceChunk(int relPos, boolean keepLeftHandle) throws IOException {
             ChunkHandle previous = currentHandle;
             ChunkHandle prefetched = previous != null ? previous.nextChunk() : null;
             if (previous != null) {
                 // The plan holds on to the first handle; unlinked, it does not keep every
                 // later chunk of the column reachable through the chain.
                 previous.setNextChunk(null);
+                if (keepLeftHandle && relativeEnd(previous) > pageStart) {
+                    keptHandles.add(previous);
+                }
             }
 
             if (currentHandle == null && relPos == 0) {
@@ -591,7 +648,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int dictTotalSize = headerSize + compressedSize;
                 // The header is already parsed, so hand it over rather than a region the
                 // parser would have to open and read the same header out of again.
-                ByteBuffer compressedData = readBytes(position, dictTotalSize)
+                ByteBuffer compressedData = readPageBytes(position, dictTotalSize)
                         .slice(headerSize, compressedSize);
                 dictionary = DictionaryParser.parsePage(header, compressedData,
                         columnSchema, metaData, context);
@@ -701,7 +758,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData);
                 }
                 else {
-                    ByteBuffer pageData = readBytes(position, totalPageSize);
+                    ByteBuffer pageData = readPageBytes(position, totalPageSize);
                     pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
                 }
                 valuesRead += numValues;
@@ -764,17 +821,24 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// handles and concatenating. Uses a direct buffer so the result is
         /// usable from FFM-based decompressors (e.g. libdeflate), which
         /// require native MemorySegments.
-        private ByteBuffer assembleFromChunks(int relPos, int length) throws IOException {
+        private ByteBuffer assembleFromChunks(int relPos, int length, boolean keepLeftHandles) throws IOException {
             ByteBuffer combined = ByteBuffer.allocateDirect(length);
             int remaining = length;
             while (remaining > 0) {
-                if (relPos < handleStart || relPos >= handleEnd) {
-                    advanceChunk(relPos);
-                }
                 long absPos = columnChunkOffset + relPos;
-                int available = handleEnd - relPos;
-                int toRead = Math.min(available, remaining);
-                combined.put(currentHandle.slice(absPos, toRead));
+                int toRead;
+                ChunkHandle kept = keptHandleAt(relPos);
+                if (kept != null) {
+                    toRead = Math.min(relativeEnd(kept) - relPos, remaining);
+                    combined.put(kept.slice(absPos, toRead));
+                }
+                else {
+                    if (relPos < handleStart || relPos >= handleEnd) {
+                        advanceChunk(relPos, keepLeftHandles);
+                    }
+                    toRead = Math.min(handleEnd - relPos, remaining);
+                    combined.put(currentHandle.slice(absPos, toRead));
+                }
                 relPos += toRead;
                 remaining -= toRead;
             }
