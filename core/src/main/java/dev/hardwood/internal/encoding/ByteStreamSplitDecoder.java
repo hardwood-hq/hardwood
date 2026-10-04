@@ -188,6 +188,20 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
+    /// Move to non-null value `index` without decoding.
+    ///
+    /// A page that straddles a batch rebuilds this decoder at the start of the
+    /// streams; seeking here is what keeps that resume linear. `index` is a
+    /// non-null index, not a slot index, and may equal [#numValues] when every
+    /// value has already been consumed.
+    public void positionAt(int index) {
+        if (index < 0 || index > numValues) {
+            throw new ParquetReadException(
+                    "BYTE_STREAM_SPLIT position " + index + " is outside 0.." + numValues);
+        }
+        currentIndex = index;
+    }
+
     /// Gather bytes for the current value from byte streams and advance the index.
     private void gatherBytes(byte[] valueBytes) {
         if (currentIndex >= numValues) {

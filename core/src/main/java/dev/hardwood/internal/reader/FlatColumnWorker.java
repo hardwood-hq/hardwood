@@ -176,7 +176,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// advances the byte-stream cursor; null slots consume no bytes.
     private void decodeDirectly(PageValueCursor cursor, int count) {
         int destOffset = rowsInCurrentBatch;
-        int[] defLevels = cursor.definitionLevels;
+        int[] defLevels = cursor.definitionLevelsActive ? cursor.definitionLevels : null;
         int dlPos = cursor.defLevelPos;
         int nonNullCount = switch (cursor.encoding) {
             case PLAIN -> {
@@ -193,7 +193,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                         cursor.srcLimit, cursor.bssTotalValues,
                         physicalType, column.typeLength());
                 if (cursor.bssCurrentIndex > 0) {
-                    skipBssValues(dec, cursor.bssCurrentIndex);
+                    dec.positionAt(cursor.bssCurrentIndex);
                 }
                 int decoded = readDirect(dec, destOffset, count, defLevels, dlPos);
                 cursor.bssCurrentIndex += decoded;
@@ -237,20 +237,6 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                     "elementBytes not defined for " + physicalType);
         };
     }
-
-    /// Advance a ByteStreamSplitDecoder past `count` values by reading into
-    /// throwaway scratch arrays (BSS has no seek API).
-    private void skipBssValues(ByteStreamSplitDecoder dec, int count) {
-        switch (physicalType) {
-            case DOUBLE -> dec.readDoubles(new double[count], null, 0);
-            case INT64  -> dec.readLongs  (new long[count],   null, 0);
-            case INT32  -> dec.readInts   (new int[count],    null, 0);
-            case FLOAT  -> dec.readFloats (new float[count],  null, 0);
-            default -> {}
-        }
-    }
-
-
 
     /// Copies values at page-relative offsets `[rangeStart, rangeEnd)` into
     /// the current batch, publishing and rolling over as the batch fills and

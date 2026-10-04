@@ -222,12 +222,15 @@ public class PageDecoder {
     /// Fills `cursor` from a page [#directEncoding] accepted. Decompresses the
     /// value bytes and records definition levels; does not build a [Page].
     void fillCursor(OpenedPage opened, PageValueCursor cursor) {
+        PageDecodedEvent event = new PageDecodedEvent();
+        event.begin();
         switch (opened.header().type()) {
             case DATA_PAGE -> fillV1Cursor(opened.header(), opened.pageData(), cursor);
             case DATA_PAGE_V2 -> fillV2Cursor(opened.header(), opened.pageData(), cursor);
             default -> throw new IllegalStateException(
                     "fillCursor called for page type " + opened.header().type());
         }
+        commitDirectEvent(event, opened.header().compressedPageSize(), opened.header().uncompressedPageSize());
     }
 
     /// V1 DATA_PAGE direct-into-cursor path.
@@ -263,13 +266,15 @@ public class PageDecoder {
                     new RleBitPackingHybridDecoder(
                             uncompressed, offset, defLen, bitWidth);
             if (probe.isSingleRleRunOf(maxDef, numValues)) {
-                // All-present: no def-levels needed
-                cursor.definitionLevels = null;
+                // All-present: decoders see a null level array. The slot buffer stays.
+                cursor.definitionLevelsActive = false;
                 cursor.nonNullsLeft = numValues;
             } else {
                 // Mixed nulls: decode the full def-level stream into the cursor.
-                // A fresh decoder is needed — the probe consumed the first run.
+                // isSingleRleRunOf restores the probe, but a second decoder keeps
+                // that restoration from being load-bearing here.
                 cursor.ensureDefLevels(numValues);
+                cursor.definitionLevelsActive = true;
                 RleBitPackingHybridDecoder fullDecoder =
                         new RleBitPackingHybridDecoder(
                                 uncompressed, offset, defLen, bitWidth);
@@ -279,7 +284,7 @@ public class PageDecoder {
             }
             offset += defLen;
         } else {
-            cursor.definitionLevels = null;
+            cursor.definitionLevelsActive = false;
             cursor.nonNullsLeft = numValues;
         }
         // offset now points at the first value byte
@@ -297,7 +302,6 @@ public class PageDecoder {
             cursor.bssCurrentIndex = 0;
         }
 
-        commitDirectEvent(pageHeader.compressedPageSize(), pageHeader.uncompressedPageSize());
     }
 
     /// V2 DATA_PAGE_V2 direct-into-cursor path.
@@ -326,14 +330,15 @@ public class PageDecoder {
             int maxDef = column.maxDefinitionLevel();
             int bitWidth = getBitWidth(maxDef);
             cursor.ensureDefLevels(numValues);
+            cursor.definitionLevelsActive = true;
             RleBitPackingHybridDecoder decoder =
                     new RleBitPackingHybridDecoder(defBytes, 0, defLevelLen, bitWidth);
             decoder.readInts(cursor.definitionLevels, 0, numValues);
             cursor.defLevelPos = 0;
             cursor.nonNullsLeft = numValues - v2Header.numNulls();
         } else {
-            // All-present: no def-levels needed
-            cursor.definitionLevels = null;
+            // All-present: decoders see a null level array. The slot buffer stays.
+            cursor.definitionLevelsActive = false;
             cursor.nonNullsLeft = numValues;
         }
 
@@ -365,13 +370,13 @@ public class PageDecoder {
             cursor.bssCurrentIndex = 0;
         }
 
-        commitDirectEvent(pageHeader.compressedPageSize(), uncompressedSize);
     }
 
     /// Emit a JFR event for a successful direct-into-cursor decode.
-    private void commitDirectEvent(int compressedSize, int uncompressedSize) {
-        PageDecodedEvent event = new PageDecodedEvent();
-        event.begin();
+    /// `event` was begun before decompression, so its duration covers the
+    /// header work already done by [#open] plus decompression and level decode.
+    /// Value decode into the batch happens later, on the drain.
+    private void commitDirectEvent(PageDecodedEvent event, int compressedSize, int uncompressedSize) {
         event.column = column.name();
         event.compressedSize = compressedSize;
         event.uncompressedSize = uncompressedSize;

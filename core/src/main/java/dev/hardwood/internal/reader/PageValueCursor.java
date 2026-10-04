@@ -54,11 +54,16 @@ final class PageValueCursor {
     Encoding encoding;
 
     // === Nullable page state ===
-    /// Decoded definition levels for the page, or {@code null} when all values
-    /// are present (same convention as [Page]'s definitionLevels).  Length
-    /// {@code >= numValues}; only {@code [0, numValues)} is valid.  Owned by
-    /// the cursor; survives batch-boundary publishes (straddle).
+    /// Slot-owned definition-level buffer. Never dropped: [#definitionLevelsActive]
+    /// says whether the current page's levels live in it. Length is at least the
+    /// largest nullable page this slot has seen; only `[0, numValues)` is valid
+    /// while [#definitionLevelsActive] is set. Survives batch-boundary publishes.
     int[] definitionLevels;
+
+    /// Whether [#definitionLevels] holds this page's levels. False for a required
+    /// column and for an all-present page, which the decoders see as a null level
+    /// array — the same convention as [Page].
+    boolean definitionLevelsActive;
 
     /// Index into [#definitionLevels] of the next value to be assembled.
     /// Starts at 0; advanced by {@code count} in each decodeDirectly call.
@@ -110,7 +115,7 @@ final class PageValueCursor {
     void reset() {
         valuesLeft = 0;
         encoding = null;
-        definitionLevels = null;
+        definitionLevelsActive = false;
         defLevelPos = 0;
         nonNullsLeft = 0;
     }
