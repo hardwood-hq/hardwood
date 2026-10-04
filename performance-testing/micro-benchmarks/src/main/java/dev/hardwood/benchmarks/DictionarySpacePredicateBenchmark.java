@@ -32,6 +32,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
@@ -148,9 +149,8 @@ public class DictionarySpacePredicateBenchmark {
         byte[] literal = entries[middle];
         byte[][] members = {entries[0], entries[middle], entries[referencedEntries - 1]};
         packedMatcher = switch (predicateKind) {
-            case EQ -> BinaryShortInBatchMatcher.supports(Comparison.BYTE_STRING, literal)
-                    ? new BinaryShortInBatchMatcher(
-                            new byte[][]{literal}, Comparison.BYTE_STRING, false)
+            case EQ -> BinaryShortEqBatchMatcher.supports(Comparison.BYTE_STRING, literal)
+                    ? new BinaryShortEqBatchMatcher(literal, Comparison.BYTE_STRING, false)
                     : new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING);
             case LT -> new BinaryLtBatchMatcher(literal, Comparison.BYTE_STRING);
             case IN -> BinaryShortInBatchMatcher.supports(Comparison.BYTE_STRING, members)

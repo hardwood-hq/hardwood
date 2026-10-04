@@ -14,8 +14,8 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 
 /// `value IN (members)`, or `value NOT IN (members)` when negated, over a byte-array column whose
 /// equality is byte equality, where at least one member is at most eight bytes long. Rows are
-/// decided through [ShortValueEquality]. Equality and inequality against one literal are the
-/// one-member case.
+/// decided through [ShortValueEquality]. Equality and inequality against one literal have their own
+/// matcher, [BinaryShortEqBatchMatcher].
 ///
 /// Unlike the byte-wise matchers, this one compares every slot, nulls included, and clears the null
 /// rows' bits afterwards.
