@@ -22,6 +22,7 @@ import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.booleans.BooleanNotEqBatchMatcher;
@@ -366,11 +367,11 @@ public final class BatchFilterCompiler {
                 case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
                 case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
                 case GT_EQ -> new BinaryGtEqBatchMatcher(p.value(), p.comparison());
-                case EQ -> BinaryShortInBatchMatcher.supports(p.comparison(), p.value())
-                        ? new BinaryShortInBatchMatcher(new byte[][]{p.value()}, p.comparison(), false)
+                case EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
+                        ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), false)
                         : new BinaryEqBatchMatcher(p.value(), p.comparison());
-                case NOT_EQ -> BinaryShortInBatchMatcher.supports(p.comparison(), p.value())
-                        ? new BinaryShortInBatchMatcher(new byte[][]{p.value()}, p.comparison(), true)
+                case NOT_EQ -> BinaryShortEqBatchMatcher.supports(p.comparison(), p.value())
+                        ? new BinaryShortEqBatchMatcher(p.value(), p.comparison(), true)
                         : new BinaryNotEqBatchMatcher(p.value(), p.comparison());
             });
             case ResolvedPredicate.BinaryInPredicate p -> dictionaryAware(

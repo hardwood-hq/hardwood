@@ -107,23 +107,36 @@ final class ShortValueEquality {
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
                 int start = offsets[i];
-                word |= (testValue(bytes, start, offsets[i + 1], lastLongStart) ? 1L : 0L) << b;
+                int length = offsets[i + 1] - start;
+                long hit;
+                if (length > Long.BYTES) {
+                    hit = containsAny(longMembers, bytes, start, start + length) ? 1L : 0L;
+                }
+                else if (start <= lastLongStart) {
+                    long value = (long) LONG_BE.get(bytes, start) & PREFIX_MASKS[length];
+                    hit = 0L;
+                    for (int m = 0; m < shortLengths.length; m++) {
+                        hit |= (length == shortLengths[m]) & (value == shortValues[m]) ? 1L : 0L;
+                    }
+                }
+                else {
+                    hit = containsAny(shortMembers, bytes, start, start + length) ? 1L : 0L;
+                }
+                word |= hit << b;
             }
             outWords[w] = word;
         }
     }
 
-    /// Whether one byte slice equals any member.
+    /// Whether one byte slice equals any member: [#test]'s per-row decision for a single value.
+    /// [#test] keeps its own copy of the decision inline rather than calling this, so that the
+    /// whole-batch loop compiles as one unit whatever has called this method before.
     boolean testValue(byte[] bytes, int from, int to) {
-        return testValue(bytes, from, to, bytes.length - Long.BYTES);
-    }
-
-    private boolean testValue(byte[] bytes, int from, int to, int lastLongStart) {
         int length = to - from;
         if (length > Long.BYTES) {
             return containsAny(longMembers, bytes, from, to);
         }
-        if (from <= lastLongStart) {
+        if (from <= bytes.length - Long.BYTES) {
             long value = (long) LONG_BE.get(bytes, from) & PREFIX_MASKS[length];
             boolean hit = false;
             for (int m = 0; m < shortLengths.length; m++) {
@@ -163,7 +176,14 @@ final class ShortValueEquality {
         return false;
     }
 
-    private static long asLong(byte[] member) {
+    /// The `length` bytes at `from` as a big-endian `long`, the bytes past them cleared. Reads eight
+    /// bytes, so `from` must be at most `bytes.length - 8` and `length` at most eight.
+    static long prefixAt(byte[] bytes, int from, int length) {
+        return (long) LONG_BE.get(bytes, from) & PREFIX_MASKS[length];
+    }
+
+    /// `member`, at most eight bytes long, as the big-endian `long` [#prefixAt] reads it as.
+    static long asLong(byte[] member) {
         long value = 0L;
         for (int k = 0; k < member.length; k++) {
             value |= (member[k] & 0xFFL) << (56 - (k << 3));

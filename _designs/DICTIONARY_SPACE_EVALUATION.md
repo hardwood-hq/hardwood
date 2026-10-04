@@ -54,8 +54,21 @@ lookup.
 
 Concrete binary matchers keep their specialized whole-batch loops. The
 per-value operation is the semantic primitive used for a dictionary entry and
-for a row that has no usable entry ID. Equality, ordering, decimal comparison,
-short-value membership, and negation therefore have one definition each.
+for a row that has no usable entry ID. Equality, ordering, decimal comparison
+and negation therefore have one definition each.
+
+Short-value equality (`EQ` and `NOT_EQ` against a literal of at most eight
+bytes) has a matcher of its own rather than being the one-member case of
+short-value `IN`. Sharing `IN`'s loop over the members would let equality
+traffic decide how that loop is compiled for every later `IN`.
+
+Short-value membership is the exception to a single definition:
+`ShortValueEquality` keeps its per-row decision inline in the whole-batch loop
+and gives the per-value operation its own copy. C2 compiles a method from the
+calls it has profiled, so a decision shared with dictionary evaluation's
+per-entry calls would make the `IN` loop's compiled code depend on which
+columns were read before. `DictionaryBinaryBatchMatcherTest` checks that the
+two copies agree.
 
 A dictionary-aware wrapper owns one `BinaryBatchMatcher` delegate:
 

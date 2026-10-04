@@ -218,7 +218,11 @@ class DictionaryBinaryBatchMatcherTest {
                 Arguments.of("greater than or equal", new BinaryGtEqBatchMatcher(b, Comparison.BYTE_STRING), 0b110L),
                 Arguments.of("in", new BinaryInBatchMatcher(aAndC, Comparison.BYTE_STRING), 0b101L),
                 Arguments.of("short in",
-                        new BinaryShortInBatchMatcher(aAndC, Comparison.BYTE_STRING, false), 0b101L));
+                        new BinaryShortInBatchMatcher(aAndC, Comparison.BYTE_STRING, false), 0b101L),
+                Arguments.of("short eq",
+                        new BinaryShortEqBatchMatcher(b, Comparison.BYTE_STRING, false), 0b010L),
+                Arguments.of("short not eq",
+                        new BinaryShortEqBatchMatcher(b, Comparison.BYTE_STRING, true), 0b101L));
     }
 
     private static Stream<Arguments> comparisonSemantics() {
@@ -249,6 +253,17 @@ class DictionaryBinaryBatchMatcherTest {
         arguments.add(Arguments.of("negated short byte-exact membership",
                 new BinaryShortInBatchMatcher(shortMembers, Comparison.BYTE_STRING, true),
                 shortValues));
+        arguments.add(Arguments.of("short byte-exact equality",
+                new BinaryShortEqBatchMatcher(utf8("b"), Comparison.BYTE_STRING, false),
+                shortValues));
+        arguments.add(Arguments.of("negated short byte-exact equality",
+                new BinaryShortEqBatchMatcher(utf8("b"), Comparison.BYTE_STRING, true),
+                shortValues));
+        // Eight-byte entries take the per-value `long` compare rather than the byte-wise fallback.
+        byte[][] eightByteValues = {utf8("abcdefgh"), utf8("abcdefgi"), utf8("ab"), utf8("abcdefghi")};
+        arguments.add(Arguments.of("eight-byte short equality",
+                new BinaryShortEqBatchMatcher(utf8("abcdefgh"), Comparison.BYTE_STRING, false),
+                eightByteValues));
         return arguments.stream();
     }
 

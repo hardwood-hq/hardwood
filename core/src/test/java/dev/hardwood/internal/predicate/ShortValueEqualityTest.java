@@ -19,6 +19,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Compari
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryShortInBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
@@ -31,9 +32,9 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// [BinaryShortInBatchMatcher], which compares rows of at most eight bytes as one `long`, checked row
-/// by row against [Arrays#equals(byte[], byte[])] — and the compiler's choice of it over the byte-wise
-/// matchers.
+/// [BinaryShortEqBatchMatcher] and [BinaryShortInBatchMatcher], which compare rows of at most eight
+/// bytes as one `long`, checked row by row against [Arrays#equals(byte[], byte[])] — and the compiler's
+/// choice of them over the byte-wise matchers.
 class ShortValueEqualityTest {
 
     private static final int ROWS = 300;
@@ -55,12 +56,15 @@ class ShortValueEqualityTest {
                     continue;
                 }
                 byte[][] one = {literal};
-                assertThat(run(new BinaryShortInBatchMatcher(one, Comparison.BYTE_STRING, false), batch))
+                assertThat(run(new BinaryShortEqBatchMatcher(literal, Comparison.BYTE_STRING, false), batch))
                         .as("eq %s", Arrays.toString(literal))
                         .isEqualTo(expected(values, nulls, v -> Arrays.equals(v, literal)));
-                assertThat(run(new BinaryShortInBatchMatcher(one, Comparison.BYTE_STRING, true), batch))
+                assertThat(run(new BinaryShortEqBatchMatcher(literal, Comparison.BYTE_STRING, true), batch))
                         .as("notEq %s", Arrays.toString(literal))
                         .isEqualTo(expected(values, nulls, v -> !Arrays.equals(v, literal)));
+                assertThat(run(new BinaryShortInBatchMatcher(one, Comparison.BYTE_STRING, false), batch))
+                        .as("in %s", Arrays.toString(literal))
+                        .isEqualTo(expected(values, nulls, v -> Arrays.equals(v, literal)));
             }
             // Members on both sides of eight bytes, so rows split between the `long` compare and
             // the byte comparison within one batch.
@@ -94,6 +98,18 @@ class ShortValueEqualityTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Short-value equality needs a byte-exact comparison and a member of at most eight bytes,"
                         + " got VARIABLE_DECIMAL over 1 members");
+        assertThatThrownBy(() -> new BinaryShortEqBatchMatcher(new byte[]{0x7F}, Comparison.VARIABLE_DECIMAL, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Short-value equality needs a byte-exact comparison and a literal of at most eight bytes,"
+                        + " got VARIABLE_DECIMAL over a literal of 1 bytes");
+    }
+
+    @Test
+    void literalPastEightBytes_isRefusedByTheEqualityMatcher() {
+        assertThatThrownBy(() -> new BinaryShortEqBatchMatcher("abcdefghi".getBytes(), Comparison.BYTE_STRING, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Short-value equality needs a byte-exact comparison and a literal of at most eight bytes,"
+                        + " got BYTE_STRING over a literal of 9 bytes");
     }
 
     @Test
@@ -103,8 +119,11 @@ class ShortValueEqualityTest {
         byte[] nineBytes = "abcdefghi".getBytes();
 
         assertThat(compile(new ResolvedPredicate.BinaryPredicate(0, Operator.EQ, eightBytes, Comparison.BYTE_STRING), schema))
-                .isInstanceOf(BinaryShortInBatchMatcher.class);
+                .isInstanceOf(BinaryShortEqBatchMatcher.class);
         assertThat(compile(new ResolvedPredicate.BinaryPredicate(0, Operator.NOT_EQ, eightBytes, Comparison.BYTE_STRING), schema))
+                .isInstanceOf(BinaryShortEqBatchMatcher.class);
+        assertThat(compile(new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{eightBytes}, Comparison.BYTE_STRING),
+                schema))
                 .isInstanceOf(BinaryShortInBatchMatcher.class);
         assertThat(compile(new ResolvedPredicate.BinaryInPredicate(0, new byte[][]{nineBytes, eightBytes},
                 Comparison.BYTE_STRING), schema))
@@ -158,8 +177,8 @@ class ShortValueEqualityTest {
         return out;
     }
 
-    private static BinaryShortInBatchMatcher eq(String literal) {
-        return new BinaryShortInBatchMatcher(new byte[][]{literal.getBytes()}, Comparison.BYTE_STRING, false);
+    private static BinaryShortEqBatchMatcher eq(String literal) {
+        return new BinaryShortEqBatchMatcher(literal.getBytes(), Comparison.BYTE_STRING, false);
     }
 
     private static FileSchema stringSchema() {
