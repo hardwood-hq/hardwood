@@ -9,6 +9,7 @@ package dev.hardwood.internal.writer;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.encoding.PlainEncoder;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
@@ -125,6 +126,12 @@ final class BooleanValueEncoder extends ValueEncoder {
     @Override
     byte[] encodeDictionaryBody() {
         throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
+    }
+
+    @Override
+    void insertInto(SplitBlockBloomFilterBuilder filter, boolean fromDictionary) {
+        // ParquetFileWriter.create rejects a Bloom filter on a BOOLEAN column.
+        throw new IllegalStateException("A BOOLEAN column has no Bloom filter");
     }
 
     @Override

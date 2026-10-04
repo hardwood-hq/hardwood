@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.LevelEncoder;
@@ -190,6 +191,12 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// [RowGroupBuffer#MAX_STORE_CAPACITY].
     private final int storeCapacity;
 
+    /// The false-positive probability of this column's Bloom filter, or [#NO_BLOOM_FILTER].
+    private final double bloomFilterFpp;
+
+    /// Stands for a column that writes no Bloom filter.
+    static final double NO_BLOOM_FILTER = 0;
+
     /// The dictionary index whose assignment fills the dictionary's table, after which the chunk
     /// gives the dictionary up rather than let the table outgrow what an array can hold.
     private static final int LAST_DICTIONARY_INDEX = DictionaryEncoder.MAX_SIZE - 1;
@@ -201,9 +208,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param compressor compresses each page body before framing
     /// @param codec the codec `compressor` applies, recorded in the chunk metadata
     /// @param storeCapacity the most any of this chunk's `int`-indexed stores may hold
+    /// @param bloomFilterFpp the false-positive probability of the column's Bloom filter, or
+    ///        [#NO_BLOOM_FILTER]
     ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, int pageTargetRows, long budgetBytesPerColumn,
                       ColumnEncoding encoding, int statisticsTruncationLength,
-                      Compressor compressor, CompressionCodec codec, int storeCapacity) {
+                      Compressor compressor, CompressionCodec codec, int storeCapacity, double bloomFilterFpp) {
         this.type = column.type();
         this.maxDefLevel = column.maxDefinitionLevel();
         this.maxRepLevel = column.maxRepetitionLevel();
@@ -232,6 +241,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.compressor = compressor;
         this.codec = codec;
         this.storeCapacity = storeCapacity;
+        this.bloomFilterFpp = bloomFilterFpp;
     }
 
     /// Binds the value encoder to this batch's source, then shreds records
@@ -413,10 +423,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 + (storeCapacity - 1) + " entries and " + storeCapacity + " bytes of values");
     }
 
-    /// A column chunk as written: its metadata and its page index.
+    /// A column chunk as written: its metadata, its page index and its Bloom filter.
     ///
     /// @param columnIndex the chunk's `ColumnIndex`, `null` where the chunk cannot have one
-    record Flushed(ColumnMetaData metaData, ColumnIndex columnIndex, OffsetIndex offsetIndex) {
+    /// @param bloomFilter the chunk's Bloom filter bitset, `null` where its column has none
+    record Flushed(ColumnMetaData metaData, ColumnIndex columnIndex, OffsetIndex offsetIndex, byte[] bloomFilter) {
     }
 
     /// Encodes and writes the whole column chunk — dictionary page (when present) then data
@@ -519,7 +530,29 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                                 new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPageCount))
                         : List.of(new PageEncodingStats(PageType.DATA_PAGE, valueEncoding(), dataPageCount)),
                 null);
-        return new Flushed(metaData, columnIndex.build(), new OffsetIndex(List.copyOf(pageLocations), null));
+        return new Flushed(metaData, columnIndex.build(), new OffsetIndex(List.copyOf(pageLocations), null),
+                bloomFilter(hasDictionary, distinctCount));
+    }
+
+    /// The chunk's Bloom filter bitset, or `null` where its column has none.
+    ///
+    /// Sized for the chunk's distinct values where it knows them, and for its present values,
+    /// which bound them, where it does not; then folded to the fewest blocks that still meet the
+    /// target probability on the bits set, which gives back what a bound overstated. A dictionary
+    /// chunk hashes its entries rather than its values, each distinct value once.
+    ///
+    /// @param hasDictionary whether the chunk is written with its dictionary
+    /// @param distinctCount the chunk's exact cardinality, or [ValueEncoder#UNKNOWN_DISTINCT_COUNT]
+    private byte[] bloomFilter(boolean hasDictionary, long distinctCount) {
+        if (bloomFilterFpp == NO_BLOOM_FILTER) {
+            return null;
+        }
+        long expected = distinctCount != ValueEncoder.UNKNOWN_DISTINCT_COUNT ? distinctCount : presentCount;
+        SplitBlockBloomFilterBuilder filter = SplitBlockBloomFilterBuilder.forDistinctValues(expected,
+                bloomFilterFpp);
+        values.insertInto(filter, hasDictionary);
+        filter.foldToTargetFpp(bloomFilterFpp);
+        return filter.toBytes();
     }
 
     /// The records that start among the `entries` entries from `entryFrom`. A page starts at a

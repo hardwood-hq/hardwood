@@ -129,12 +129,14 @@ WriterConfig config = WriterConfig.builder()
 | `codec(CompressionCodec)` | `ZSTD`, or `UNCOMPRESSED` when the ZSTD library is absent | Codec each page body is compressed with. |
 | `encoding(ColumnEncoding)` | `AUTO` | Encoding policy for every column without an override of its own. |
 | `encoding(String, ColumnEncoding)` | — | Encoding policy for one leaf column, overriding the file-wide default. |
+| `bloomFilter(String)` | — | Writes a Bloom filter for one leaf column at a false-positive probability of `0.01`. A path naming no leaf column, or a `BOOLEAN` column, fails when the writer is created. See [Bloom filters](#bloom-filters). |
+| `bloomFilter(String, double)` | — | Writes a Bloom filter for one leaf column at the given false-positive probability. Must be strictly between 0 and 1. |
 | `statisticsTruncationLength(int)` | `64` | Longest `BYTE_ARRAY` `min` / `max` statistics bound. A longer bound is truncated and flagged inexact. Must be positive. |
 | `precisionLossPolicy(PrecisionLossPolicy)` | `REJECT` | What the row-oriented layer does with a value carrying more precision than its column can hold. |
 
 A page is cut at whichever of the two page targets is reached first, and a row group at whichever of the two row-group targets is reached first.
 
-Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, and, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
+Each option has a getter that reads the configured value back: `pageTargetBytes()`, `pageTargetRows()`, `rowGroupTargetRows()`, `rowGroupBufferTargetBytes()`, `codec()`, `statisticsTruncationLength()`, `precisionLossPolicy()`, for the two encoding setters, `defaultEncoding()` and `columnEncodings()`, and for the Bloom filter setters, `bloomFilters()`, a map from column path to probability. Every setter rejects `null`, and the numeric bounds above are checked when the option is set.
 
 ## Encodings
 
@@ -274,7 +276,15 @@ Every file carries a page index, written between the last row group and the foot
 - **`OffsetIndex`**, for every column chunk: the location of each data page and the first record it holds. Every page starts at a record boundary.
 - **`ColumnIndex`**, for every column chunk whose bounds can be stated: each page's `min` / `max` under the same rules as the chunk statistics, its null count, whether it holds only nulls, its `NaN` count for `FLOAT`, `DOUBLE` and `FLOAT16`, and whether the pages' bounds ascend or descend. A column without an order writes none, nor does a floating-point column chunk with a page whose values are all `NaN`. Where no truncated `max` exists, a page's `max` is written whole.
 
-Bloom filters, the level histograms of `SizeStatistics` and the `ColumnIndex`, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
+The level histograms of `SizeStatistics` and the `ColumnIndex`, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
+
+### Bloom filters
+
+A column named through `bloomFilter(...)` carries a split-block Bloom filter in every row group, which a reader probes for the literal of an `eq` or `in` predicate (see [Query Controls](../how-to/query-controls.md)). No other column carries one.
+
+- **Contents.** Every non-null value of the column chunk, hashed with XXH64 over its bytes as stored: `INT32` and `FLOAT` as 4 little-endian bytes, `INT64` and `DOUBLE` as 8, `BYTE_ARRAY` without its length prefix, `FIXED_LEN_BYTE_ARRAY` as is. `FLOAT` and `DOUBLE` values are hashed over their raw bits, so `-0.0` and `0.0` are distinct values, as are `NaN`s with different bits.
+- **Size.** About 1.2 bytes per distinct value of the chunk at the default probability of `0.01`, rounded up to a power of two between 32 bytes and 128 MiB. Every chunk gets a filter whatever its encoding, an all-null chunk included.
+- **Placement.** All filters of the file are written together after the last row group, before the page index, with `bloom_filter_offset` and `bloom_filter_length` set on each column chunk.
 
 ## File Metadata
 
@@ -343,7 +353,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |

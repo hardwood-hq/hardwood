@@ -354,7 +354,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 9.3 Bloom Filters
 - [x] Implement split block bloom filter
 - [x] XXHASH implementation (or integration)
-- [ ] Bloom filter serialization
+- [x] Bloom filter serialization (`WriterConfig.Builder.bloomFilter`, written before the page index; see `_designs/WRITER_ENCODING.md`)
 - [x] Bloom filter deserialization
 - [x] Bloom filter checking during reads
 

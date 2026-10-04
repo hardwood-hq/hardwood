@@ -62,11 +62,14 @@ public final class RowGroupBuffer {
     /// @param statisticsTruncationLength the maximum `BYTE_ARRAY` `min` / `max` bound length
     /// @param compressor compresses each page body before it is buffered
     /// @param codec the codec `compressor` applies, recorded in each chunk's metadata
+    /// @param bloomFilterFpps each leaf column's Bloom filter false-positive probability, in schema
+    ///        order, `0` for a column without one
     public RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                           long rowGroupTargetRows, ColumnEncoding[] encodings,
-                          int statisticsTruncationLength, Compressor compressor, CompressionCodec codec) {
+                          int statisticsTruncationLength, Compressor compressor, CompressionCodec codec,
+                          double[] bloomFilterFpps) {
         this(schema, pageTargetBytes, pageTargetRows, rowGroupBufferTargetBytes, rowGroupTargetRows, encodings,
-                statisticsTruncationLength, compressor, codec, MAX_STORE_CAPACITY);
+                statisticsTruncationLength, compressor, codec, bloomFilterFpps, MAX_STORE_CAPACITY);
     }
 
     /// A buffer whose column chunks are capped at `storeCapacity` rather than at
@@ -75,7 +78,7 @@ public final class RowGroupBuffer {
     /// out of a test's reach, so the tests of the cut it forces lower it instead.
     RowGroupBuffer(FileSchema schema, int pageTargetBytes, int pageTargetRows, long rowGroupBufferTargetBytes,
                    long rowGroupTargetRows, ColumnEncoding[] encodings, int statisticsTruncationLength,
-                   Compressor compressor, CompressionCodec codec, int storeCapacity) {
+                   Compressor compressor, CompressionCodec codec, double[] bloomFilterFpps, int storeCapacity) {
         this.schema = schema;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         this.targetBytes = rowGroupBufferTargetBytes;
@@ -85,7 +88,7 @@ public final class RowGroupBuffer {
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows, budgetBytesPerColumn,
-                    encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity);
+                    encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
         }
     }
 
@@ -278,12 +281,13 @@ public final class RowGroupBuffer {
     }
 
     /// Writes the buffered column chunks to `out` in schema order and returns the row
-    /// group's metadata, with the page index of each chunk, which the writer places after the
-    /// last row group.
+    /// group's metadata, with the page index and Bloom filter of each chunk, which the writer
+    /// places after the last row group.
     public FlushedRowGroup flushTo(OutputFile out) throws IOException {
         List<ColumnChunk> chunks = new ArrayList<>(columns.length);
         List<ColumnIndex> columnIndexes = new ArrayList<>(columns.length);
         List<OffsetIndex> offsetIndexes = new ArrayList<>(columns.length);
+        List<byte[]> bloomFilters = new ArrayList<>(columns.length);
         long totalByteSize = 0;
         for (int c = 0; c < columns.length; c++) {
             long chunkStartOffset = out.position();
@@ -291,17 +295,21 @@ public final class RowGroupBuffer {
             chunks.add(new ColumnChunk(chunk.metaData(), null, null, null, null, ""));
             columnIndexes.add(chunk.columnIndex());
             offsetIndexes.add(chunk.offsetIndex());
+            bloomFilters.add(chunk.bloomFilter());
             totalByteSize += chunk.metaData().totalUncompressedSize();
         }
-        return new FlushedRowGroup(new RowGroup(chunks, totalByteSize, rowCount), columnIndexes, offsetIndexes);
+        return new FlushedRowGroup(new RowGroup(chunks, totalByteSize, rowCount), columnIndexes, offsetIndexes,
+                bloomFilters);
     }
 
-    /// A row group as written, with its chunks' page index in schema order.
+    /// A row group as written, with its chunks' page index and Bloom filters in schema order.
     ///
     /// @param rowGroup the row group's metadata, its chunks not yet pointing at their page index
+    ///        or Bloom filters
     /// @param columnIndexes each chunk's `ColumnIndex`, `null` for a chunk that has none
     /// @param offsetIndexes each chunk's `OffsetIndex`
+    /// @param bloomFilters each chunk's Bloom filter bitset, `null` for a chunk that has none
     public record FlushedRowGroup(RowGroup rowGroup, List<ColumnIndex> columnIndexes,
-                                  List<OffsetIndex> offsetIndexes) {
+                                  List<OffsetIndex> offsetIndexes, List<byte[]> bloomFilters) {
     }
 }

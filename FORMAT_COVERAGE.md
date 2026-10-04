@@ -97,8 +97,8 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 11 | dictionary_page_offset | ✅ | |
 | 12 | statistics | ✅ | row-group filtering |
 | 13 | encoding_stats | ✅ | on public record; dictionary row-group pruning (#105) and the CLI's data-page encoding column; written for every column chunk |
-| 14 | bloom_filter_offset | ✅ | shown in dive; filter body read & decoded (#669); used for `eq`/`in` row-group pruning (#105) |
-| 15 | bloom_filter_length | ✅ | shown in dive; #669 read path; #105 pushdown |
+| 14 | bloom_filter_offset | ✅ | shown in dive; filter body read & decoded (#669); used for `eq`/`in` row-group pruning (#105); written for configured columns (#1449) |
+| 15 | bloom_filter_length | ✅ | shown in dive; #669 read path; #105 pushdown; written with the offset (#1449) |
 | 16 | size_statistics | 🟡 | on public record, no functional consumer |
 | 17 | geospatial_statistics | ✅ | row-group filter evaluator (no per-page geospatial stats exist) |
 
@@ -229,7 +229,8 @@ reported as `UNKNOWN`.
 All fields ✅ — the bloom filter at `bloom_filter_offset` is read and decoded (header plus the
 split-block bitset), with an XXH64 membership-check primitive (#669). The decoded filter drives
 row-group pruning: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the
-integer and binary types (#105). Dive surfacing is #507.
+integer and binary types (#105). Dive surfacing is #507. The writer produces `BLOCK` / `XXHASH` /
+`UNCOMPRESSED` filters for the columns `WriterConfig` names (#1449).
 
 ---
 
@@ -238,7 +239,6 @@ integer and binary types (#105). Dive surfacing is #507.
 The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP:
 
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
-- **Bloom-filter writing** — filter *serialization* is not implemented (ROADMAP 9.3). The read path (#669) and `eq`/`in` pushdown (#105) are done.
 - **Size statistics & level histograms** — parsed, exposed, and surfaced by the CLI (`dive` column chunk detail, `hardwood inspect columns`); no reader-side consumer yet.
 - **Statistics completeness** — distinct_count and the exactness flags are parsed but drive no filtering (#483).
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.

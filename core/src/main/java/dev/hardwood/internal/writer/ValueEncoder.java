@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.writer;
 
+import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
@@ -264,6 +265,13 @@ abstract class ValueEncoder {
     /// @return the page's bounds for the chunk's `ColumnIndex`
     abstract PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
                                                  long nullCount);
+
+    /// Adds the chunk's present values to `filter`: the dictionary's entries where
+    /// `fromDictionary`, which requires the chunk to still hold its dictionary, and every stored
+    /// value otherwise. Each value is hashed over its bytes as the data pages carry them:
+    /// fixed-width values little-endian, floating-point values over their raw bits, binary values
+    /// without the length prefix `PLAIN` gives a `BYTE_ARRAY`.
+    abstract void insertInto(SplitBlockBloomFilterBuilder filter, boolean fromDictionary);
 
     /// Compares two page bounds as [#pageStatistics] encodes them, in the column's order.
     abstract int compareBounds(byte[] left, byte[] right);

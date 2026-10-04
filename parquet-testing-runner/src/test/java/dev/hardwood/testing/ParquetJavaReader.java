@@ -23,6 +23,8 @@ import java.util.Set;
 
 import org.apache.parquet.CorruptDeltaByteArrays;
 import org.apache.parquet.CorruptStatistics;
+import org.apache.parquet.HadoopReadOptions;
+import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.VersionParser;
 import org.apache.parquet.VersionParser.ParsedVersion;
 import org.apache.parquet.VersionParser.VersionParseException;
@@ -34,7 +36,10 @@ import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.column.page.PageReader;
 import org.apache.parquet.column.values.ValuesReader;
+import org.apache.parquet.column.values.bloomfilter.BloomFilter;
 import org.apache.parquet.example.data.Group;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.format.ColumnChunk;
 import org.apache.parquet.format.FileMetaData;
 import org.apache.parquet.format.RowGroup;
@@ -248,6 +253,56 @@ final class ParquetJavaReader {
             }
         }
         return indexes;
+    }
+
+    /// Every column chunk's Bloom filter as parquet-java reads it, row group by row group in
+    /// column order, `null` for a chunk without one.
+    ///
+    /// @param file the file to read
+    /// @return one entry per column chunk
+    /// @throws IOException if parquet-java cannot read a filter
+    static List<BloomFilter> readBloomFilters(Path file) throws IOException {
+        List<BloomFilter> filters = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader
+                .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS))) {
+            for (BlockMetaData block : reader.getFooter().getBlocks()) {
+                for (ColumnChunkMetaData chunk : block.getColumns()) {
+                    filters.add(reader.readBloomFilter(chunk));
+                }
+            }
+        }
+        return filters;
+    }
+
+    /// The row groups parquet-java keeps for `filter` with its statistics and dictionary filters
+    /// switched off, so that a row group dropped is dropped by its Bloom filters, or by nothing
+    /// where `useBloomFilter` is `false`.
+    ///
+    /// The answer is parquet-java's row-group filtering alone: `getRowGroups()` returns the row
+    /// groups its constructor kept through `RowGroupFilter`, and no record is read, so a filter
+    /// evaluated row by row cannot drop a row group here.
+    ///
+    /// @param file the file to read
+    /// @param filter the predicate parquet-java filters row groups with
+    /// @param useBloomFilter whether parquet-java may read the Bloom filters
+    /// @return the indexes of the row groups kept, in file order
+    /// @throws IOException if parquet-java cannot read the file
+    static List<Integer> rowGroupsKept(Path file, FilterPredicate filter, boolean useBloomFilter) throws IOException {
+        ParquetReadOptions options = HadoopReadOptions.builder(HadoopConf.DEFAULTS)
+                .withRecordFilter(FilterCompat.get(filter))
+                .useStatsFilter(false)
+                .useDictionaryFilter(false)
+                .useBloomFilter(useBloomFilter)
+                .build();
+        try (ParquetFileReader reader = ParquetFileReader
+                .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS), options)) {
+            List<BlockMetaData> all = reader.getFooter().getBlocks();
+            List<Integer> kept = new ArrayList<>();
+            for (BlockMetaData block : reader.getRowGroups()) {
+                kept.add(all.indexOf(block));
+            }
+            return kept;
+        }
     }
 
     /// Asserts the page index of `file` is well formed as parquet-java reads it, as

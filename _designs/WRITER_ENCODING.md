@@ -1,13 +1,14 @@
 # Writer encoding
 
-Describes how the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, and the statistics written into the footer.
+Describes how the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, the statistics written into the footer, the page index and the Bloom filters.
 
 Related documents:
 
 - [WRITER.md](WRITER.md): the write model, the row-group lifecycle and sizing, memory and threading
 - [WRITER_INPUT.md](WRITER_INPUT.md): schema construction, `ColumnBatch`, shredding into levels and `RowWriter`
 - [WRITER_VALIDATION.md](WRITER_VALIDATION.md): the interop gate and coverage assertion
-- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): how a reader consumes the statistics written here
+- [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): how a reader consumes the statistics and Bloom filters written here
+- [FETCH_PLANNING.md](FETCH_PLANNING.md): how a reader fetches the page index and Bloom filters this layout places together
 - [VALUE_DECODE.md](VALUE_DECODE.md): the read-side decoders these encoders invert
 - [docs/content/reference/writer.md](../docs/content/reference/writer.md) and [docs/content/concepts/write-model.md](../docs/content/concepts/write-model.md): the user-facing options and tables
 
@@ -278,9 +279,39 @@ A chunk has no `ColumnIndex` where the format leaves its bounds unstateable: a c
 
 Tests: `WriterPageIndexTest`, `WriterLayoutTest`, `WriterInteropTest` and `WriterNestedInteropTest` (parquet-testing-runner).
 
+## Bloom filters
+
+A column chunk carries a split-block Bloom filter where its column is named in `WriterConfig.bloomFilters()`, with the false-positive probability named there (`WriterConfig.DEFAULT_BLOOM_FILTER_FPP`, 1%, by default). No column carries one otherwise. A filter answers whether a value may occur in the chunk, which prunes a row group for an equality or `IN` literal its `min` / `max` span, the case statistics cannot decide ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#bloom-filters)).
+
+### Eligibility
+
+`ParquetFileWriter.create` resolves the configured paths against the schema before the output is touched, as it does the encoding policies: a path naming no leaf column is rejected with the schema's leaf paths, and a `BOOLEAN` column is rejected, its chunk statistics already deciding equality on either value. Every other writable type takes a filter, whatever the column's order, encoding or nesting: a filter tests stored values and needs no order.
+
+### Contents
+
+The filter holds every present value of the chunk, hashed with XXH64 (seed 0) over its stored bytes: `INT32` / `INT64` little-endian, `FLOAT` / `DOUBLE` over their raw bits, `BYTE_ARRAY` without its length prefix, `FIXED_LEN_BYTE_ARRAY` as stored. These are the value bytes a data page carries, so a reader hashing a literal the same way probes the value the file holds. Floating-point values are not normalized: `-0.0` and `+0.0` are distinct members, as are `NaN`s of different bits, which is why a reader never prunes a `NaN` literal on a filter. An all-null chunk writes an empty filter, which rules out every literal.
+
+The filter is built at flush, after the chunk's pages are written, from what the chunk holds (`ValueEncoder.insertInto`): a chunk written with its dictionary hashes the dictionary's entries, each distinct value once; any other chunk hashes its stored values. A dictionary chunk keeps its filter although the dictionary answers the same question exactly, since a reader probes the filter first and the filter is the smaller read ([FETCH_PLANNING.md](FETCH_PLANNING.md)).
+
+### Sizing
+
+A filter needs `-8n / ln(1 − p^(1/8))` bits for `n` distinct values at probability `p`, about 1.2 bytes per value at 1%. `SplitBlockBloomFilterBuilder` sizes it for an `n` the chunk supplies, rounded up to a power of two and clamped to between one 32-byte block and 128 MiB, then folds it:
+
+- `n` is the chunk's exact cardinality where it states `distinct_count` ([`distinct_count`](#distinct_count)), and its present-value count otherwise, an upper bound on the cardinality.
+- **Folding** halves the filter while the halved filter still meets `p`. With a power-of-two block count, the block a hash selects among `m / 2` blocks is the one it selects among `m`, halved, so OR-ing adjacent block pairs produces exactly the filter the same values would have filled at half the size. The probability of the halved filter is estimated from its bits: for each block, the product over its eight words of the fraction of bits set, averaged over blocks. A filter sized from an upper bound is folded back to the size the true cardinality needs, and a filter sized exactly is left as it is, rounding aside.
+
+**Sizes are powers of two.** The format asks only for a whole number of 32-byte blocks, and parquet-java and DuckDB probe a filter of any block count, but Arrow C++ refuses to load a bitset whose size is not a power of two, so a filter of any other size fails every reader built on it. The rounding costs up to twice the bytes the formula asks for, and a filter that is rounded up and cannot be halved ends below `p`.
+
+The filter's size therefore follows the chunk's distinct values and `p`, never the row-group target or the row count. The probability is the one setting a caller has; neither the cardinality nor a byte cap is configurable.
+
+### Placement
+
+Filters are held by the writer from flush until `close()`, which writes them together after the last row group and before the page index, row group by row group and in schema order within one. Each is a `BloomFilterHeader` (`numBytes`, `BLOCK`, `XXHASH`, `UNCOMPRESSED`) followed by the bitset, and its chunk's `ColumnMetaData` carries `bloom_filter_offset` and `bloom_filter_length`, header included. Kept together, the filters of many row groups are one range for a reader to fetch, and the length lets it fetch a filter without probing its header first. What they cost the writer's memory is in [WRITER.md](WRITER.md#memory).
+
+Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloomFilterInteropTest` (parquet-testing-runner).
+
 ## Boundaries
 
-- **Bloom filters.** No Bloom filter is written (#1291).
 - **Level histograms.** The `ColumnIndex` level histograms and the `OffsetIndex` `unencoded_byte_array_data_bytes` are not written, nor is `SizeStatistics`, which carries the same counts per chunk (#894).
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.

@@ -75,6 +75,17 @@ public class ColumnMetaDataWriter {
                 PageEncodingStatsWriter.write(writer, metaData.encodingStats());
             }
 
+            // 14: bloom_filter_offset, 15: bloom_filter_length (present only for a chunk with a
+            // Bloom filter)
+            if (metaData.bloomFilterOffset() != null) {
+                writer.writeFieldBegin(14, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(metaData.bloomFilterOffset());
+            }
+            if (metaData.bloomFilterLength() != null) {
+                writer.writeFieldBegin(15, ThriftCompactConstants.FieldType.I32);
+                writer.writeI32(metaData.bloomFilterLength());
+            }
+
             writer.writeFieldStop();
         }
         finally {

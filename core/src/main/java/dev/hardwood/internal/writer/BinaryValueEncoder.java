@@ -10,6 +10,8 @@ package dev.hardwood.internal.writer;
 import java.util.Arrays;
 import java.util.function.Supplier;
 
+import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
+import dev.hardwood.internal.bloomfilter.XxHash64;
 import dev.hardwood.internal.encoding.BinaryDictionaryEncoder;
 import dev.hardwood.internal.encoding.ByteStreamSplitEncoder;
 import dev.hardwood.internal.encoding.DeltaByteArrayEncoder;
@@ -109,6 +111,22 @@ final class BinaryValueEncoder extends ValueEncoder {
         return fixedLength()
                 ? PlainEncoder.encodeFixedLenByteArrays(dictionary.values(), 0, dictionary.size(), typeLength)
                 : PlainEncoder.encodeByteArrays(dictionary.values(), 0, dictionary.size());
+    }
+
+    @Override
+    void insertInto(SplitBlockBloomFilterBuilder filter, boolean fromDictionary) {
+        if (fromDictionary) {
+            byte[][] values = dictionary.values();
+            for (int i = 0; i < dictionary.size(); i++) {
+                filter.insert(XxHash64.hash(values[i]));
+            }
+        }
+        else {
+            byte[] data = plainData.array();
+            for (int i = 0; i < plainCount; i++) {
+                filter.insert(XxHash64.hash(data, plainOffsets[i], plainOffsets[i + 1] - plainOffsets[i]));
+            }
+        }
     }
 
     @Override

@@ -44,6 +44,10 @@ import dev.hardwood.metadata.CompressionCodec;
 /// how the resulting page bodies are compressed is the [CompressionCodec]. Both are configured
 /// here rather than on the schema.
 ///
+/// A column can carry a Bloom filter in every row group, which lets a reader skip a row group
+/// that does not hold a value an equality or `IN` predicate asks for, where the row group's
+/// `min` / `max` span it. No column has one unless named through [Builder#bloomFilter(String)].
+///
 /// A file's `created_by` identifier and its key-value metadata are set on [ParquetFileWriter].
 ///
 /// Obtain the defaults with [#defaults] or override individual knobs through [#builder].
@@ -85,12 +89,16 @@ public final class WriterConfig {
     /// the size comparison the writer makes once the row group is buffered.
     public static final ColumnEncoding DEFAULT_ENCODING = ColumnEncoding.AUTO;
 
+    /// Default false-positive probability of a column's Bloom filter: 1%.
+    public static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
+
     private final int pageTargetBytes;
     private final int pageTargetRows;
     private final long rowGroupBufferTargetBytes;
     private final long rowGroupTargetRows;
     private final ColumnEncoding defaultEncoding;
     private final Map<String, ColumnEncoding> columnEncodings;
+    private final Map<String, Double> bloomFilters;
     private final int statisticsTruncationLength;
     private final CompressionCodec codec;
     private final PrecisionLossPolicy precisionLossPolicy;
@@ -102,6 +110,7 @@ public final class WriterConfig {
         this.rowGroupTargetRows = builder.rowGroupTargetRows;
         this.defaultEncoding = builder.defaultEncoding;
         this.columnEncodings = Map.copyOf(builder.columnEncodings);
+        this.bloomFilters = Map.copyOf(builder.bloomFilters);
         this.statisticsTruncationLength = builder.statisticsTruncationLength;
         this.codec = builder.codec;
         this.precisionLossPolicy = builder.precisionLossPolicy;
@@ -158,6 +167,12 @@ public final class WriterConfig {
         return columnEncodings.getOrDefault(columnPath, defaultEncoding);
     }
 
+    /// The columns that carry a Bloom filter, keyed by dotted leaf path, each with its filter's
+    /// false-positive probability. Unmodifiable, and empty where no column was named.
+    public Map<String, Double> bloomFilters() {
+        return bloomFilters;
+    }
+
     /// The maximum length of a `BYTE_ARRAY` `min` / `max` statistics bound before it is
     /// truncated (and flagged inexact).
     public int statisticsTruncationLength() {
@@ -191,6 +206,7 @@ public final class WriterConfig {
         private long rowGroupTargetRows = DEFAULT_ROW_GROUP_TARGET_ROWS;
         private ColumnEncoding defaultEncoding = DEFAULT_ENCODING;
         private final Map<String, ColumnEncoding> columnEncodings = new LinkedHashMap<>();
+        private final Map<String, Double> bloomFilters = new LinkedHashMap<>();
         private int statisticsTruncationLength = DEFAULT_STATISTICS_TRUNCATION_LENGTH;
         private CompressionCodec codec = DEFAULT_CODEC;
         private PrecisionLossPolicy precisionLossPolicy = DEFAULT_PRECISION_LOSS_POLICY;
@@ -297,6 +313,35 @@ public final class WriterConfig {
                 throw new IllegalArgumentException("encoding must not be null for column " + columnPath);
             }
             this.columnEncodings.put(columnPath, encoding);
+            return this;
+        }
+
+        /// Writes a Bloom filter for one leaf column, at [#DEFAULT_BLOOM_FILTER_FPP]; must be
+        /// non-null. See [#bloomFilter(String, double)].
+        public Builder bloomFilter(String columnPath) {
+            return bloomFilter(columnPath, DEFAULT_BLOOM_FILTER_FPP);
+        }
+
+        /// Writes a Bloom filter for one leaf column, with the given false-positive probability;
+        /// the path must be non-null and the probability strictly between 0 and 1.
+        ///
+        /// Every row group gets a filter for the column, holding each distinct value its chunk
+        /// holds. The filter is sized from the values the chunk turns out to hold, so a lower
+        /// probability costs bytes in proportion to the chunk's distinct values. Naming the
+        /// column again replaces the probability.
+        ///
+        /// The column is named by its dotted leaf path, as for [#encoding(String, ColumnEncoding)].
+        /// A path matching no leaf column of the schema, or naming a `BOOLEAN` column, is
+        /// rejected when the writer is created.
+        public Builder bloomFilter(String columnPath, double fpp) {
+            if (columnPath == null) {
+                throw new IllegalArgumentException("columnPath must not be null");
+            }
+            if (!(fpp > 0 && fpp < 1)) {
+                throw new IllegalArgumentException("Bloom filter false-positive probability must be between 0 and 1"
+                        + " (exclusive) but was " + fpp + " for column " + columnPath);
+            }
+            this.bloomFilters.put(columnPath, fpp);
             return this;
         }
 

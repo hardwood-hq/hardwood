@@ -225,7 +225,7 @@ class RowGroupBufferStoreCapacityTest {
             Arrays.fill(encodings, ColumnEncoding.AUTO);
             this.buffer = new RowGroupBuffer(schema, 1 << 20, WriterConfig.DEFAULT_PAGE_TARGET_ROWS, LARGE_TARGET_BYTES, targetRows, encodings, 64,
                     new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
-                    CompressionCodec.UNCOMPRESSED, storeCapacity);
+                    CompressionCodec.UNCOMPRESSED, new double[schema.getColumnCount()], storeCapacity);
             out.create();
             out.write(ByteBuffer.wrap(MAGIC));
         }

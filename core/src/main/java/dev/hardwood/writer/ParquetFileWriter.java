@@ -28,6 +28,7 @@ import dev.hardwood.internal.BuildInfo;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.thrift.BloomFilterHeaderWriter;
 import dev.hardwood.internal.thrift.ColumnIndexWriter;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.OffsetIndexWriter;
@@ -39,6 +40,7 @@ import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.internal.writer.WriterSchemaShape;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
@@ -59,7 +61,8 @@ import dev.hardwood.schema.FileSchema;
 /// flushes a row group once the bytes it holds for that group reach the configured target. Each
 /// row group is buffered, written and forgotten, so what the writer holds follows the target
 /// rather than the size of the file, apart from the page index it keeps for the end of the file
-/// (a location and two bounds per data page) — and the target counts what is held, so it is that number
+/// (a location and two bounds per data page) and the Bloom filters of the columns
+/// [WriterConfig] names — and the target counts what is held, so it is that number
 /// and not a multiple of it, give or take the slack the value stores carry from growing
 /// geometrically. Each column chunk is encoded one way throughout:
 /// by default the writer weighs a dictionary against `PLAIN` once the row group is buffered and
@@ -95,8 +98,8 @@ public final class ParquetFileWriter implements Closeable {
     private final Compressor compressor;
     /// The range each column's annotation declares, resolved once and handed to every batch.
     private final LogicalTypeValueRange[] ranges;
-    /// The row groups written so far, each with its chunks' page index, which is written after
-    /// the last of them.
+    /// The row groups written so far, each with its chunks' page index and Bloom filters, which
+    /// are written after the last of them.
     private final List<RowGroupBuffer.FlushedRowGroup> rowGroups = new ArrayList<>();
 
     /// The footer's two file-scope fields, held until [#close()] serializes them. Insertion
@@ -123,7 +126,7 @@ public final class ParquetFileWriter implements Closeable {
     private RowWriter rowWriter;
 
     private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config, Compressor compressor,
-            ColumnEncoding[] encodings) {
+            ColumnEncoding[] encodings, double[] bloomFilterFpps) {
         this.out = out;
         this.schema = schema;
         this.config = config;
@@ -134,7 +137,7 @@ public final class ParquetFileWriter implements Closeable {
         // largest allocation is made once per file rather than once per row group.
         this.current = new RowGroupBuffer(schema, config.pageTargetBytes(), config.pageTargetRows(),
                 config.rowGroupBufferTargetBytes(), config.rowGroupTargetRows(), encodings,
-                config.statisticsTruncationLength(), compressor, config.codec());
+                config.statisticsTruncationLength(), compressor, config.codec(), bloomFilterFpps);
     }
 
     /// The bytes the open row group retains. Exposed to the tests that hold this number against a
@@ -181,7 +184,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
     ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
     ///         its physical type cannot carry or no value can be written for; or an encoding
-    ///         policy names a column the schema does not have, or one its physical type cannot carry
+    ///         policy names a column the schema does not have, or one its physical type cannot carry;
+    ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         return create(out, schema, config, () -> new CompressorFactory().getCompressor(config.codec()));
@@ -207,8 +211,8 @@ public final class ParquetFileWriter implements Closeable {
             Supplier<Compressor> compressors) throws IOException {
         // Everything this schema and configuration decide is settled before the output is
         // touched, so a file the writer cannot honour is never begun: the columns' physical
-        // types, the schema's shape, the encoding policies against the schema's columns, then
-        // the codec and its library.
+        // types, the schema's shape, the encoding policies and Bloom filters against the schema's
+        // columns, then the codec and its library.
         for (int c = 0; c < schema.getColumnCount(); c++) {
             ColumnSchema column = schema.getColumn(c);
             if (!isSupportedType(column.type())) {
@@ -225,11 +229,12 @@ public final class ParquetFileWriter implements Closeable {
         // is one rejection, at one moment, with one wording.
         WriterSchemaShape.validate(schema);
         ColumnEncoding[] encodings = resolveEncodings(schema, config);
+        double[] bloomFilterFpps = resolveBloomFilters(schema, config);
         Compressor compressor = compressors.get();
         out.create();
         try {
             out.write(ByteBuffer.wrap(MAGIC));
-            return new ParquetFileWriter(out, schema, config, compressor, encodings);
+            return new ParquetFileWriter(out, schema, config, compressor, encodings, bloomFilterFpps);
         }
         catch (Throwable t) {
             // The destination is open and holds no valid file. Discard it rather than leaving
@@ -255,18 +260,7 @@ public final class ParquetFileWriter implements Closeable {
     /// column of the schema can carry fails rather than applying to none of them.
     private static ColumnEncoding[] resolveEncodings(FileSchema schema, WriterConfig config) {
         Map<String, ColumnEncoding> overrides = config.columnEncodings();
-        if (!overrides.isEmpty()) {
-            Set<String> leafPaths = new LinkedHashSet<>();
-            for (int c = 0; c < schema.getColumnCount(); c++) {
-                leafPaths.add(schema.getColumn(c).fieldPath().toString());
-            }
-            for (String path : overrides.keySet()) {
-                if (!leafPaths.contains(path)) {
-                    throw new IllegalArgumentException("Encoding configured for column '" + path
-                            + "', which the schema does not have. Its leaf columns are: " + leafPaths);
-                }
-            }
-        }
+        requireLeafColumns(schema, "Encoding", overrides.keySet());
 
         ColumnEncoding[] encodings = new ColumnEncoding[schema.getColumnCount()];
         for (int c = 0; c < schema.getColumnCount(); c++) {
@@ -285,6 +279,48 @@ public final class ParquetFileWriter implements Closeable {
             encodings[c] = encoding;
         }
         return encodings;
+    }
+
+    /// Resolves each leaf column's Bloom filter false-positive probability, `0` for a column
+    /// without one, rejecting a configuration this schema cannot carry: a path naming no leaf
+    /// column, and a `BOOLEAN` column, whose two values its statistics already tell apart.
+    private static double[] resolveBloomFilters(FileSchema schema, WriterConfig config) {
+        Map<String, Double> bloomFilters = config.bloomFilters();
+        requireLeafColumns(schema, "Bloom filter", bloomFilters.keySet());
+        double[] fpps = new double[schema.getColumnCount()];
+        for (int c = 0; c < schema.getColumnCount(); c++) {
+            ColumnSchema column = schema.getColumn(c);
+            Double fpp = bloomFilters.get(column.fieldPath().toString());
+            if (fpp == null) {
+                continue;
+            }
+            if (column.type() == PhysicalType.BOOLEAN) {
+                throw new IllegalArgumentException("Bloom filter configured for column '" + column.fieldPath()
+                        + "', which is BOOLEAN. A Bloom filter can be written for any other type.");
+            }
+            fpps[c] = fpp;
+        }
+        return fpps;
+    }
+
+    /// Rejects a configured path that names no leaf column of `schema`: a typo whose only other
+    /// effect would be to write the file without what the caller asked for.
+    ///
+    /// @param setting what was configured for the paths, which opens the message
+    private static void requireLeafColumns(FileSchema schema, String setting, Set<String> paths) {
+        if (paths.isEmpty()) {
+            return;
+        }
+        Set<String> leafPaths = new LinkedHashSet<>();
+        for (int c = 0; c < schema.getColumnCount(); c++) {
+            leafPaths.add(schema.getColumn(c).fieldPath().toString());
+        }
+        for (String path : paths) {
+            if (!leafPaths.contains(path)) {
+                throw new IllegalArgumentException(setting + " configured for column '" + path
+                        + "', which the schema does not have. Its leaf columns are: " + leafPaths);
+            }
+        }
     }
 
     /// Stamps one application-defined key-value pair onto the file footer, replacing any value
@@ -532,11 +568,42 @@ public final class ParquetFileWriter implements Closeable {
         return Collections.nCopies(schema.getColumnCount(), ColumnOrder.TYPE_DEFINED_ORDER);
     }
 
-    /// Writes every column chunk's page index between the last row group and the footer, every
-    /// `ColumnIndex` first and every `OffsetIndex` after them, and returns the row groups with
-    /// their chunks pointing at it. Kept together, a reader fetches the index of many row groups
-    /// in one range.
-    private List<RowGroup> writePageIndex() throws IOException {
+    /// Writes every column chunk's Bloom filter after the last row group, row group by row group
+    /// in schema order, and returns where each one starts and how long it is, header included,
+    /// with a length of `0` for a chunk without one. Kept together, a reader fetches the filters
+    /// of many row groups in one range.
+    private BloomFilterLocations writeBloomFilters() throws IOException {
+        long[][] offsets = new long[rowGroups.size()][schema.getColumnCount()];
+        int[][] lengths = new int[rowGroups.size()][schema.getColumnCount()];
+        for (int r = 0; r < rowGroups.size(); r++) {
+            List<byte[]> filters = rowGroups.get(r).bloomFilters();
+            for (int c = 0; c < filters.size(); c++) {
+                byte[] bitset = filters.get(c);
+                if (bitset != null) {
+                    ThriftCompactWriter header = new ThriftCompactWriter();
+                    BloomFilterHeaderWriter.write(header, bitset.length);
+                    offsets[r][c] = out.position();
+                    int headerLength = writeIndex(header);
+                    out.write(ByteBuffer.wrap(bitset));
+                    lengths[r][c] = Math.addExact(headerLength, bitset.length);
+                }
+            }
+        }
+        return new BloomFilterLocations(offsets, lengths);
+    }
+
+    /// Where each column chunk's Bloom filter was written, indexed by row group and column; a
+    /// length of `0` marks a chunk without one.
+    private record BloomFilterLocations(long[][] offsets, int[][] lengths) {
+    }
+
+    /// Writes every column chunk's page index after the Bloom filters, every `ColumnIndex` first
+    /// and every `OffsetIndex` after them, and returns the row groups with their chunks pointing
+    /// at it and at their Bloom filters. Kept together, a reader fetches the index of many row
+    /// groups in one range.
+    ///
+    /// @param bloomFilters where each chunk's Bloom filter was written
+    private List<RowGroup> writePageIndex(BloomFilterLocations bloomFilters) throws IOException {
         int columns = schema.getColumnCount();
         long[][] columnIndexOffsets = new long[rowGroups.size()][columns];
         int[][] columnIndexLengths = new int[rowGroups.size()][columns];
@@ -563,13 +630,28 @@ public final class ParquetFileWriter implements Closeable {
                 int offsetIndexLength = writeIndex(writer);
                 ColumnChunk chunk = rowGroup.rowGroup().columns().get(c);
                 boolean hasColumnIndex = rowGroup.columnIndexes().get(c) != null;
-                chunks.add(new ColumnChunk(chunk.metaData(), offsetIndexOffset, offsetIndexLength,
+                ColumnMetaData metaData = withBloomFilter(chunk.metaData(), bloomFilters.offsets()[r][c],
+                        bloomFilters.lengths()[r][c]);
+                chunks.add(new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength,
                         hasColumnIndex ? columnIndexOffsets[r][c] : null,
                         hasColumnIndex ? columnIndexLengths[r][c] : null, chunk.filePath()));
             }
             written.add(new RowGroup(chunks, rowGroup.rowGroup().totalByteSize(), rowGroup.rowGroup().numRows()));
         }
         return written;
+    }
+
+    /// `metaData` pointing at the chunk's Bloom filter, or unchanged where `length` is `0`, the
+    /// chunk having none.
+    private static ColumnMetaData withBloomFilter(ColumnMetaData metaData, long offset, int length) {
+        if (length == 0) {
+            return metaData;
+        }
+        return new ColumnMetaData(metaData.type(), metaData.encodings(), metaData.pathInSchema(), metaData.codec(),
+                metaData.numValues(), metaData.totalUncompressedSize(), metaData.totalCompressedSize(),
+                metaData.keyValueMetadata(), metaData.dataPageOffset(), metaData.dictionaryPageOffset(),
+                metaData.statistics(), metaData.geospatialStatistics(), offset, length,
+                metaData.encodingStats(), metaData.sizeStatistics());
     }
 
     private int writeIndex(ThriftCompactWriter writer) throws IOException {
@@ -579,7 +661,7 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     private void writeFooter() throws IOException {
-        List<RowGroup> written = writePageIndex();
+        List<RowGroup> written = writePageIndex(writeBloomFilters());
         FileMetaData metaData = new FileMetaData(
                 FORMAT_VERSION,
                 schema.toSchemaElements(),

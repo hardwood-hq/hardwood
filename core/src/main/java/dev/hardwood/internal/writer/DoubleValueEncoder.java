@@ -9,6 +9,8 @@ package dev.hardwood.internal.writer;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
+import dev.hardwood.internal.bloomfilter.XxHash64;
 import dev.hardwood.internal.encoding.ByteStreamSplitEncoder;
 import dev.hardwood.internal.encoding.LongDictionaryEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
@@ -81,6 +83,22 @@ final class DoubleValueEncoder extends ValueEncoder {
     @Override
     byte[] encodeDictionaryBody() {
         return PlainEncoder.encodeLongs(dictionary.values(), 0, dictionary.size());
+    }
+
+    @Override
+    void insertInto(SplitBlockBloomFilterBuilder filter, boolean fromDictionary) {
+        if (fromDictionary) {
+            // The dictionary holds each value's raw bits, which is what the filter hashes.
+            long[] bits = dictionary.values();
+            for (int i = 0; i < dictionary.size(); i++) {
+                filter.insert(XxHash64.hash(bits[i]));
+            }
+        }
+        else {
+            for (int i = 0; i < plainCount; i++) {
+                filter.insert(XxHash64.hash(plain[i]));
+            }
+        }
     }
 
     @Override
