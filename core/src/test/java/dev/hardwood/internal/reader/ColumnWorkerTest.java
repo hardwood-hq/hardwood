@@ -24,6 +24,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
@@ -690,6 +694,24 @@ class ColumnWorkerTest {
         assertThat(batches).allSatisfy(values -> assertThat(values.viewArraysAllocated()).isFalse());
     }
 
+    /// A drain-side filter that decides dictionary values by their entry ids leaves their views
+    /// deferred; one that reads every value's view has them built as the batch is assembled.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aDictionaryAwareFilterLeavesViewsDeferred() throws Exception {
+        byte[] literal = "x".getBytes(StandardCharsets.UTF_8);
+
+        List<BinaryBatchValues> dictionaryAware = drainDictionaryColumn(false, new DictionaryBinaryBatchMatcher(
+                new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING)));
+        List<BinaryBatchValues> viewReading = drainDictionaryColumn(false,
+                new BinaryEqBatchMatcher(literal, Comparison.BYTE_STRING));
+
+        assertThat(dictionaryAware).hasSize(20);
+        assertThat(dictionaryAware).allSatisfy(values -> assertThat(values.viewArraysAllocated()).isFalse());
+        assertThat(viewReading).hasSize(20);
+        assertThat(viewReading).allSatisfy(values -> assertThat(values.hasPendingViews()).isFalse());
+    }
+
     /// The first reader that builds deferred views switches the worker to building them as it
     /// assembles: the batches already in flight are deferred, the later ones are not.
     @Test
@@ -812,15 +834,25 @@ class ColumnWorkerTest {
     /// Drains `dict_cross_chunk.parquet`'s dictionary-encoded string column in batches of 10,
     /// building the first batch's views when `readViews` is set.
     private static List<BinaryBatchValues> drainDictionaryColumn(boolean readViews) throws Exception {
+        return drainDictionaryColumn(readViews, null);
+    }
+
+    private static List<BinaryBatchValues> drainDictionaryColumn(boolean readViews, ColumnBatchMatcher filter)
+            throws Exception {
         Path file = Path.of("src/test/resources/dict_cross_chunk.parquet");
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             FileSchema schema = reader.getFileSchema();
             ColumnSchema column = schema.getColumn(0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 10);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.matches = new long[1];
+                        return b;
+                    }, batch -> batch.capacity, 10);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(createIterator(file, schema, context), 0), exchange, column, 10,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), 0, filter);
             worker.endBatchesAtRowGroupBoundaries();
             worker.start();
 

@@ -26,10 +26,10 @@ public sealed interface ColumnBatchMatcher
 
     void test(BatchExchange.Batch batch, long[] outWords);
 
-    /// Whether this matcher needs the binary batch's per-value dictionary entry
-    /// IDs. Readers use this during allocation so ordinary reads do not retain
-    /// filter-only metadata.
-    default boolean requiresDictionaryIndices() {
-        return false;
+    /// Whether [#test] reads the byte view of every value of a binary batch. A matcher that
+    /// returns `false` lets the column worker leave dictionary values' views to be built when a
+    /// reader first needs them.
+    default boolean readsEveryValueView() {
+        return true;
     }
 }

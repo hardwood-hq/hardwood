@@ -30,8 +30,8 @@ public final class AndBatchMatcher implements ColumnBatchMatcher {
     }
 
     @Override
-    public boolean requiresDictionaryIndices() {
-        return first.requiresDictionaryIndices() || second.requiresDictionaryIndices();
+    public boolean readsEveryValueView() {
+        return first.readsEveryValueView() || second.readsEveryValueView();
     }
 
     @Override

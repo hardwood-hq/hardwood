@@ -30,49 +30,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Production-path coverage for dictionary-space binary predicates.
 class DictionarySpaceEvaluationTest {
 
-    /// 4096 rows, `code` a dictionary-encoded `FIXED_LEN_BYTE_ARRAY(4)` cycling
-    /// `aa00`, `aa03`, `aa06`, `aa09`.
-    private static final Path FLBA = Path.of("src/test/resources/dict_flba_pushdown.parquet");
-
     /// One FLBA column chunk whose repeated prefix is dictionary encoded and
     /// whose distinct suffix falls back to PLAIN.
     private static final Path MIXED_ENCODING =
             Path.of("src/test/resources/dict_mixed_encoding_flba.parquet");
 
-    /// Two row groups with disjoint dictionary pools. The file is smaller than
-    /// the row-reader batch floor, so one unfiltered batch crosses the chunk
-    /// boundary.
+    /// Two row groups with disjoint dictionary pools, so a read's matcher meets a
+    /// second dictionary and decides its entries afresh.
     private static final Path CROSS_CHUNK = Path.of("src/test/resources/dict_cross_chunk.parquet");
-
-    @Test
-    void fixedLengthPredicateBatchRetainsDictionaryIds() throws Exception {
-        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FLBA));
-             ColumnReader codes = file.buildColumnReader("code")
-                     .filter(FilterPredicate.eq("code", new byte[]{'a', 'a', '0', '6'}))
-                     .build()) {
-            assertThat(codes.nextBatch()).isTrue();
-            assertThat(codes.getRecordCount()).isEqualTo(1024);
-
-            BinaryBatchValues values = (BinaryBatchValues) currentFlatBatch(codes).values;
-            assertThat(values.dictionary).isNotNull();
-            assertThat(values.dictIndices).hasSize(1024);
-            assertThat(codes.nextBatch()).isFalse();
-        }
-    }
-
-    @Test
-    void fixedLengthRowPredicateBatchRetainsDictionaryIds() throws Exception {
-        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(FLBA));
-             RowReader rows = file.buildRowReader()
-                     .filter(FilterPredicate.eq("code", new byte[]{'a', 'a', '0', '6'}))
-                     .build()) {
-            assertThat(rows.hasNext()).isTrue();
-
-            BinaryBatchValues values = (BinaryBatchValues) currentFlatBatch(rows).values;
-            assertThat(values.dictionary).isNotNull();
-            assertThat(values.dictIndices).isNotNull();
-        }
-    }
 
     @Test
     void dictionaryToPlainTransitionRecordsPackedFallbackIds() throws Exception {
@@ -94,16 +59,6 @@ class DictionarySpaceEvaluationTest {
                 matches++;
             }
             assertThat(matches).isEqualTo(256);
-        }
-    }
-
-    @Test
-    void crossChunkFixtureDecodesAsOneStraddlingBatch() throws Exception {
-        try (ParquetFileReader file = ParquetFileReader.open(InputFile.of(CROSS_CHUNK));
-             ColumnReader labels = file.buildColumnReader("label").build()) {
-            assertThat(labels.nextBatch()).isTrue();
-            assertThat(labels.getRecordCount()).isEqualTo(200);
-            assertThat(labels.nextBatch()).isFalse();
         }
     }
 
@@ -172,13 +127,6 @@ class DictionarySpaceEvaluationTest {
             }
         }
         return labels;
-    }
-
-    private static BatchExchange.Batch currentFlatBatch(ColumnReader reader)
-            throws ReflectiveOperationException {
-        Field field = ColumnReader.class.getDeclaredField("currentFlatBatch");
-        field.setAccessible(true);
-        return (BatchExchange.Batch) field.get(reader);
     }
 
     private static BatchExchange.Batch currentFlatBatch(RowReader reader)

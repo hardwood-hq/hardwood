@@ -249,10 +249,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             case Page.DictionaryByteArrayPage p -> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
                 // Dictionary values get their views when a reader first needs them, unless a
-                // reader already has (the demand is raised) or a drain-side matcher reads them
-                // here, at publish.
+                // reader already has (the demand is raised) or a drain-side matcher reads every
+                // value's view here, at publish.
                 bbv.viewDemand = viewDemand;
-                if (columnFilter == null && !viewDemand.requested) {
+                if ((columnFilter == null || !columnFilter.readsEveryValueView()) && !viewDemand.requested) {
                     bbv.deferDictionaryRange(p, srcPos, destPos, length);
                 }
                 else {

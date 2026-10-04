@@ -31,6 +31,7 @@ flowchart LR
 
     subgraph filtering["Filtering"]
         PREDICATE_MODEL --> RECORD_FILTERING
+        RECORD_FILTERING --> DICTIONARY_SPACE_EVALUATION
     end
 
     subgraph write["Write path"]
@@ -76,7 +77,7 @@ flowchart LR
 | Area | Documents |
 |---|---|
 | Read path | [READ_PIPELINE.md](_designs/READ_PIPELINE.md) (row groups to published batches, threading, batch sizing, multi-file planning), [ROW_READER.md](_designs/ROW_READER.md), [COLUMN_READER.md](_designs/COLUMN_READER.md), [NESTED_DECODE.md](_designs/NESTED_DECODE.md) (levels to nested batches), [VALUE_DECODE.md](_designs/VALUE_DECODE.md) (page values to Java values) |
-| Filtering | [PREDICATE_MODEL.md](_designs/PREDICATE_MODEL.md) (the `FilterPredicate` API and its resolution), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) (pruning row groups and pages from metadata), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) (exact row filtering on both readers) |
+| Filtering | [PREDICATE_MODEL.md](_designs/PREDICATE_MODEL.md) (the `FilterPredicate` API and its resolution), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) (pruning row groups and pages from metadata), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) (exact row filtering on both readers), [DICTIONARY_SPACE_EVALUATION.md](_designs/DICTIONARY_SPACE_EVALUATION.md) (binary predicates decided once per dictionary entry) |
 | I/O and metadata | [INPUT_FILES.md](_designs/INPUT_FILES.md), [S3_STORAGE.md](_designs/S3_STORAGE.md), [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) (which bytes a read requests), [FILE_METADATA.md](_designs/FILE_METADATA.md) (footer, Thrift parsing, page index), [EXCEPTION_MODEL.md](_designs/EXCEPTION_MODEL.md) |
 | Writer | [WRITER.md](_designs/WRITER.md) (write model, row-group lifecycle, memory), [WRITER_INPUT.md](_designs/WRITER_INPUT.md) (schema builder, `ColumnBatch`, shredding, `RowWriter`), [WRITER_ENCODING.md](_designs/WRITER_ENCODING.md) (page layout, dictionary selection, codecs, statistics), [WRITER_VALIDATION.md](_designs/WRITER_VALIDATION.md) (interop gate) |
 | Types | [LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md) (annotations, timestamps, Variant, geospatial), [AVRO_BINDING.md](_designs/AVRO_BINDING.md) (`hardwood-avro`) |

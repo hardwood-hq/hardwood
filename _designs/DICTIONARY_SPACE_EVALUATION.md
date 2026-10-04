@@ -1,149 +1,47 @@
-# Dictionary-Space Predicate Evaluation
+# Dictionary-space predicate evaluation
 
-## Context
+Describes how a drain-side binary matcher decides a dictionary-encoded batch once per referenced dictionary entry rather than once per row: the per-value matcher contract, the lazy per-entry outcomes and their lifetime, and how rows without an entry id are decided.
 
-A dictionary-encoded Parquet data page stores one dictionary entry ID per
-non-null value. The decoded binary batch already carries both forms needed by
-the reader:
+Related documents:
 
-- packed value bytes and offsets, which preserve the ordinary value access
-  contract; and
-- the page dictionary plus each value's dictionary entry ID.
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): the drain-side matchers this wraps, their eligibility and the merge of their masks
+- [VALUE_DECODE.md](VALUE_DECODE.md): the dictionary page and the per-value entry indices a batch records
+- [COLUMN_READER.md](COLUMN_READER.md): the batch layout, including the deferred byte views of dictionary values
+- [READ_PIPELINE.md](READ_PIPELINE.md): why a batch of a binary column holds values of one column chunk
 
-Drain-side binary matchers normally compare every row's packed byte slice with
-the predicate literal. Repeated dictionary values therefore repeat the same
-comparison. Dictionary-space evaluation compares each dictionary entry at most
-once per predicate leaf and answers encoded rows from the cached outcome.
+## Scope
 
-The optimization covers every binary predicate for which
-`BatchFilterCompiler` has a slice matcher: equality, inequality, the four
-orderings, and membership. Negated membership continues to use the resolved
-conjunction of inequality leaves and gains dictionary evaluation through those
-leaves.
+Every binary predicate that `BatchFilterCompiler` compiles to a batch matcher is evaluated in dictionary space: equality, inequality, the four orderings and membership. Negated membership resolves to a conjunction of inequality leaves and is evaluated in dictionary space through them. The batch-filter eligibility rules in [RECORD_FILTERING.md](RECORD_FILTERING.md) stay authoritative, and dictionary encoding adds no rule of its own: a leaf on the batch path is evaluated in dictionary space whatever its `Comparison`, and a leaf off it (a nested leaf, a predicate on `NestedRowReader`) is evaluated per row.
 
-## Eligibility
-
-Dictionary-space evaluation is part of every compiled `BinaryBatchMatcher`.
-The existing batch-filter eligibility rules remain authoritative:
-
-- the predicate leaf names a projected top-level field;
-- the binary comparison has a supported slice order; and
-- the surrounding predicate tree can be represented by the per-column matcher
-  and merge-plan model.
-
-No separate byte-exact restriction applies. Each dictionary entry is decided
-by the same per-value operation as an ordinary packed row, so variable-width
-decimal equality uses sign-extending numeric comparison while strings and
-fixed-width decimals use byte equality. Binary timestamp comparisons whose
-logical order has no slice implementation remain on the record-filter
-fallback, exactly as they do without dictionary encoding.
-
-Nested leaves remain outside the compiled batch-filter path. Their leaf values
-do not map one-to-one to top-level records, so they require a record-level
-decision over repetition and definition levels rather than this flat entry-ID
-lookup.
+Fixed-width physical types (`INT32`, `INT64`, `FLOAT`, `DOUBLE`) are evaluated per row even when dictionary encoded.
 
 ## Matcher contract
 
-`BinaryBatchMatcher` exposes two operations with identical value semantics:
+`BinaryBatchMatcher` has two operations with the same value semantics:
 
-- whole-batch evaluation writes the result bitmap for an ordinary decoded
-  batch; and
-- per-value evaluation decides one half-open byte slice
-  `[from, to)`.
+- `test` writes the result bitmap for a whole batch; and
+- `testValue` decides one non-null value held in `bytes[from, to)`.
 
-Concrete binary matchers keep their specialized whole-batch loops. The
-per-value operation is the semantic primitive used for a dictionary entry and
-for a row that has no usable entry ID. Equality, ordering, decimal comparison
-and negation therefore have one definition each.
+Each concrete binary matcher keeps its own whole-batch loop. `testValue` is the semantic primitive dictionary evaluation decides an entry with, so equality, ordering, decimal comparison and negation have one definition each: an entry of a variable-width decimal column compares by value, and a padded spelling of the literal matches as it does per row.
 
-Short-value equality (`EQ` and `NOT_EQ` against a literal of at most eight
-bytes) has a matcher of its own rather than being the one-member case of
-short-value `IN`. Sharing `IN`'s loop over the members would let equality
-traffic decide how that loop is compiled for every later `IN`.
-
-Short-value membership is the exception to a single definition:
-`ShortValueEquality` keeps its per-row decision inline in the whole-batch loop
-and gives the per-value operation its own copy. C2 compiles a method from the
-calls it has profiled, so a decision shared with dictionary evaluation's
-per-entry calls would make the `IN` loop's compiled code depend on which
-columns were read before. `DictionaryBinaryBatchMatcherTest` checks that the
-two copies agree.
-
-A dictionary-aware wrapper owns one `BinaryBatchMatcher` delegate:
-
-- a batch without a dictionary goes directly to the delegate's whole-batch
-  operation;
-- a batch with a dictionary uses cached per-entry outcomes for encoded rows;
-  and
-- a row without an entry ID uses the delegate's per-value operation over its
-  packed bytes.
-
-The wrapper requires dictionary-index retention. `AndBatchMatcher` and
-`OrBatchMatcher` propagate that requirement from either child, so a compound
-on one column retains indices whenever any binary leaf needs them.
+Short-value equality (`EQ` and `NOT_EQ` against a literal of at most eight bytes) has a matcher of its own, `BinaryShortEqBatchMatcher`, rather than being the one-member case of short-value `IN`. C2 compiles `ShortValueEquality`'s loop over the `IN` members from the member counts it has profiled, so equality sharing that loop would decide how it is compiled for every later `IN`. For the same reason `ShortValueEquality` keeps its per-row decision inline in the whole-batch loop and gives `testValue` its own copy: a decision shared with dictionary evaluation's per-entry calls would make the `IN` loop's compiled code depend on which columns were read before.
 
 ## Lazy per-entry outcomes
 
-The wrapper caches state for the dictionary object currently being read. A
-dictionary object is scoped to a column chunk and object identity is the cache
-key. Each entry has one primitive byte state:
+`BatchFilterCompiler` wraps every compiled binary leaf in a `DictionaryBinaryBatchMatcher`. A batch without a dictionary goes to the delegate's `test`. For a batch with one, the wrapper keeps one byte of state per entry of the batch's dictionary:
 
-- `UNKNOWN` — the predicate has not been evaluated for this entry;
-- `MATCH` — the entry satisfies the delegate; or
-- `NO_MATCH` — the entry does not satisfy the delegate.
+- `UNKNOWN`: the entry has not been decided;
+- `MATCH`: the entry satisfies the delegate; or
+- `NO_MATCH`: it does not.
 
-When a batch arrives with a new dictionary, the wrapper resets the active
-state range to `UNKNOWN`. The output traversal evaluates a referenced
-`UNKNOWN` entry through the delegate's per-value operation, stores its outcome,
-and immediately uses that outcome for the current row. Later rows and batches
-from the same chunk reuse the stored outcome.
+A row whose entry is `UNKNOWN` decides it through the delegate's `testValue` over the entry's bytes in the dictionary, stores the outcome, and uses it at once; later rows and batches holding the same entry read the stored outcome. Comparison work is therefore proportional to the distinct entries the read touches: page pruning, row masks and early termination leave the entries no surviving row references undecided, and a full scan decides each entry once. A null row is skipped before either lookup and has an unset bit.
 
-This makes comparison work proportional to the distinct dictionary entries
-the read actually touches. Page-index pruning, row masks, and early termination
-can leave most entries undecided without paying to compare them. A full scan
-still compares every entry at most once. Every encoded row performs one state
-check, avoiding a separate discovery pass when only part of a dictionary is
-referenced.
+The state belongs to one dictionary object, which is one column chunk's dictionary, and is keyed by its identity. A batch with a different dictionary resets the state to `UNKNOWN` over that dictionary's size, reusing the array.
 
-The output row pass observes validity first. A null row never reaches either
-the cached-outcome lookup or the packed-value fallback and always has an unset
-result bit.
+## Rows without an entry id
 
-## Batch representation and retention
+A batch records an entry id per value ([VALUE_DECODE.md](VALUE_DECODE.md)) and draws on at most one dictionary, since a read with a binary column ends its batches at row-group boundaries ([READ_PIPELINE.md](READ_PIPELINE.md)). An id of `-1` therefore marks a null or a value written `PLAIN` after the chunk's dictionary filled up. The wrapper decides such a non-null row through the delegate's `testValue` over the row's byte view.
 
-`BinaryBatchValues` retains dictionary metadata when either string interning or
-a dictionary-aware matcher needs it:
+The wrapper reads no other view. `ColumnBatchMatcher.readsEveryValueView()` returns `false` for it, and for a same-column `AND` or `OR` whose sides both do, so the column worker leaves the batch's dictionary values with their views deferred ([COLUMN_READER.md](COLUMN_READER.md)). A filtered read that consumes the column through its dictionary ids or its strings then never builds the views. The first `-1` row of a batch with deferred views builds them, as any reader's first view access does.
 
-- `dictionary` is the first byte-array dictionary that contributes values to
-  the batch;
-- `dictIndices[i] >= 0` names the entry for value `i`; and
-- `dictIndices[i] == -1` means value `i` must be tested from packed bytes.
-
-The index array is allocated lazily when the first dictionary-encoded page
-contributes to the batch. Reads without a dictionary-aware matcher and
-non-string columns therefore keep the ordinary allocation behavior.
-
-Dictionary retention is a property of the compiled matcher. The row-reader and
-exact column-reader paths compile the filter before allocating their binary
-batches and pass `requiresDictionaryIndices()` into the allocation. A nested
-reader cannot honor this flat-batch requirement and rejects it; current
-eligibility ensures a dictionary-aware matcher is never assigned there.
-
-Recycled batches clear the dictionary reference before their next fill while
-retaining the allocated index array. Active entries are overwritten as pages
-are copied.
-
-## Mixed encodings and chunk boundaries
-
-Dictionary encoding is a data-page property. A column chunk may contain both
-dictionary-encoded and plain pages, and a batch may cross from one column chunk
-into another.
-
-`BinaryBatchValues` adopts only the first dictionary contributing to a batch.
-Rows from a plain page and rows belonging to a second dictionary carry `-1` and
-use the packed-value fallback. The next batch that adopts the second
-dictionary resets the wrapper's state by dictionary identity.
-
-This preserves exact results without assuming that one dictionary covers a
-whole batch or column chunk.
+Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `ColumnWorkerTest`.

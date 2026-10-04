@@ -9,12 +9,12 @@ package dev.hardwood.internal.predicate;
 
 /// Marker for `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` typed [ColumnBatchMatcher]s. Implementations
 /// cast `batch.values` to [dev.hardwood.internal.reader.BinaryBatchValues] and compare each value's
-/// `bytes[offsets[i], offsets[i + 1])` slice against the literal in place, without materialising a
+/// `bytes()[starts()[i], ends()[i])` view against the literal in place, without materialising a
 /// `byte[]` per row.
 ///
 /// A null row's slot holds no value — an empty slice for `BYTE_ARRAY`, undefined scratch bytes for
 /// `FIXED_LEN_BYTE_ARRAY` — so its answer must never reach the output. The byte-wise matchers skip
-/// null rows before comparing; the short-value matcher compares every slot and clears the null rows'
+/// null rows before comparing; the short-value matchers compare every slot and clears the null rows'
 /// bits afterward. Either way, a null row's bit ends clear.
 ///
 /// The literal's [ResolvedPredicate.BinaryPredicate.Comparison] decides both the order the bytes
@@ -23,7 +23,7 @@ public non-sealed interface BinaryBatchMatcher extends ColumnBatchMatcher {
 
     /// Tests one non-null value in `bytes[from, to)` with the same semantics as
     /// [#test]. Dictionary-aware evaluation uses this operation once per
-    /// referenced entry; rows without a dictionary entry use it on their packed
-    /// batch slice.
+    /// referenced entry; rows without a dictionary entry use it on their byte
+    /// view.
     boolean testValue(byte[] bytes, int from, int to);
 }

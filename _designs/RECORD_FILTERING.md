@@ -110,13 +110,7 @@ A matcher writes bit `i` of a per-batch `long[]` when row `i` **definitely** sat
 
 Equality tests bytes only when `Comparison.byteExact()` holds. Otherwise it compares by order, which is what matches a padded spelling of a `BYTE_ARRAY` decimal and the several spellings an `INT96` instant has.
 
-Each compiled binary leaf is wrapped by dictionary-space evaluation (#859).
-For a dictionary batch, the wrapper decides only referenced entries and caches
-their outcomes; plain rows and batches without a dictionary use the matcher's
-ordinary slice and whole-batch operations. Entries are decided through the
-matcher's comparison rather than by probing for the literal's bytes, so the
-same path is sound for padded variable-width decimals. See
-[DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md).
+Every compiled binary leaf is wrapped for dictionary-space evaluation: in a batch with a dictionary, each referenced entry is decided once through the matcher's comparison and rows read the cached outcome by their entry id ([DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md)).
 
 Tests: `DrainSideOracleTest`.
 
@@ -139,12 +133,9 @@ A filtered `ColumnReaders` is a grouped drain over `decoded()` plus a per-batch 
 
 **Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
 
-`ColumnScan` compiles the batch filter before allocating its cursors so a
-dictionary-aware matcher can request retained entry IDs. It passes that
-compiled result to `SelectionEngine`, which picks its backend once at
-construction:
+`SelectionEngine` picks its backend once at construction:
 
-- The compiled batch filter is present: a `BatchMatchMerger` in owning mode.
+- `BatchFilterCompiler.tryCompile` accepts the predicate: a `BatchMatchMerger` in owning mode.
 - Otherwise: the `RowMatcher` compiled against a `PredicateView` over the cursors' batches, evaluated per record. Nested predicate columns arrive without element validity on this path, and the view derives it from the definition levels.
 
 Both backends produce the same selection representation, so compaction does not depend on the backend.

@@ -108,7 +108,7 @@ Every value has a byte view in the batch whatever its encoding (a dictionary val
 
 **Lifetime and threading.** The cache lives on the `ByteArrayDictionary`, which lives as long as the pages and batches that reference it: one column chunk's worth of reading. The returned `String`s are immutable, so handing one instance to many rows, and letting callers keep it past `next()`, is safe; the flyweight reuse contract concerns the mutable batch buffers, not immutable values. The cache is filled on the consumer thread through `stringAt`. A concurrent fill of the same entry could at worst decode it twice and never yields a wrong value, since entries are immutable. Untested.
 
-Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`, `DictionarySpaceEvaluationTest`.
+Tests: `DictionaryParserTest`, `DictionaryCodecFailureTest`, `DictionaryTest`, `DictionaryEndToEndTest`, `NestedDictBatchBoundaryTest`, `ByteArrayDictionaryInternTest`, `DictionaryStringReuseTest`.
 
 ## Leaf kinds and nested primitive leaves
 

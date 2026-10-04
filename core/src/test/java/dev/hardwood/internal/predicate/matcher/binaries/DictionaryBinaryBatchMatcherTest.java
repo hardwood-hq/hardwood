@@ -31,7 +31,6 @@ import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DictionaryBinaryBatchMatcherTest {
 
@@ -121,18 +120,6 @@ class DictionaryBinaryBatchMatcherTest {
         assertThat(run(matcher, batch)).containsExactly(0b010L);
         assertThat(delegate.batchCalls).isEqualTo(1);
         assertThat(delegate.valueCalls).isZero();
-    }
-
-    @Test
-    void rejectsADictionaryBatchWithoutRetainedIndices() throws Exception {
-        DictionaryBinaryBatchMatcher matcher =
-                new DictionaryBinaryBatchMatcher(new CountingMatcher());
-        BatchExchange.Batch batch = binaryBatch(
-                dictionary(utf8("a")), null, null, utf8("a"));
-
-        assertThatThrownBy(() -> run(matcher, batch))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("A binary batch with a dictionary must retain its dictionary indices");
     }
 
     @ParameterizedTest(name = "{0}")

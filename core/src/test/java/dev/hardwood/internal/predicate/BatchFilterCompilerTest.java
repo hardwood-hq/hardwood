@@ -25,6 +25,7 @@ import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.schema.FileSchema;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -196,7 +197,7 @@ class BatchFilterCompilerTest {
         assertNotNull(result);
         assertEquals(1, result.length);
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
-        assertTrue(result[0].requiresDictionaryIndices());
+        assertFalse(result[0].readsEveryValueView());
     }
 
     @Test
@@ -211,7 +212,7 @@ class BatchFilterCompilerTest {
         assertNotNull(result);
         assertEquals(1, result.length);
         assertInstanceOf(BinaryBatchMatcher.class, result[0]);
-        assertTrue(result[0].requiresDictionaryIndices());
+        assertFalse(result[0].readsEveryValueView());
     }
 
     /// Every comparison is eligible in every operator: each has a slice order, and the matcher
@@ -229,28 +230,28 @@ class BatchFilterCompilerTest {
 
                 assertNotNull(result, "no batch matcher for binary " + comparison + " " + op);
                 assertInstanceOf(BinaryBatchMatcher.class, result[0]);
-                assertTrue(result[0].requiresDictionaryIndices());
+                assertFalse(result[0].readsEveryValueView());
             }
         }
     }
 
+    /// A same-column compound reads every value's view when either side does: two binary
+    /// leaves decide from dictionary entries, an `IS NULL` beside one does not.
     @Test
-    void sameColumnBinaryCompoundsPropagateDictionaryRetention() {
+    void sameColumnCompound_readsEveryValueViewWhenEitherSideDoes() {
         FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
         ResolvedPredicate lower = new ResolvedPredicate.BinaryPredicate(
                 0, Operator.GT_EQ, new byte[]{'a'}, Comparison.BYTE_STRING);
         ResolvedPredicate upper = new ResolvedPredicate.BinaryPredicate(
                 0, Operator.LT, new byte[]{'m'}, Comparison.BYTE_STRING);
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(0, 1);
 
-        for (ResolvedPredicate predicate : List.of(
-                new ResolvedPredicate.And(List.of(lower, upper)),
-                new ResolvedPredicate.Or(List.of(lower, upper)))) {
-            ColumnBatchMatcher[] result = compileMatchers(
-                    predicate, schema, IntUnaryOperator.identity());
-
-            assertNotNull(result);
-            assertTrue(result[0].requiresDictionaryIndices());
-        }
+        assertFalse(compileMatchers(new ResolvedPredicate.And(List.of(lower, upper)),
+                schema, IntUnaryOperator.identity())[0].readsEveryValueView());
+        assertFalse(compileMatchers(new ResolvedPredicate.Or(List.of(lower, upper)),
+                schema, IntUnaryOperator.identity())[0].readsEveryValueView());
+        assertTrue(compileMatchers(new ResolvedPredicate.Or(List.of(lower, isNull)),
+                schema, IntUnaryOperator.identity())[0].readsEveryValueView());
     }
 
     /// An instant order is a slice order like any other: a legacy `INT96` column and a
