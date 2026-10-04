@@ -120,11 +120,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     ///
     /// Decodes values from the cursor directly into the batch array, handling
     /// straddle (a page that spans two or more batches) by keeping the cursor
-    /// alive across publish boundaries.  Falls back to the existing
-    /// [#assemblePage] path for masks (filter pushdown) and for cursor encodings
-    /// that are not directly decodable — but decodePageInto only produces a
-    /// CURSOR_SENTINEL for PLAIN/BYTE_STREAM_SPLIT flat numeric columns, so
-    /// neither fallback fires in practice.
+    /// alive across publish boundaries. Only PLAIN and BYTE_STREAM_SPLIT pages
+    /// of a flat numeric column arrive here; a partial row mask or any other
+    /// encoding is assembled through [#assemblePage] instead.
     @Override
     void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
         // cursor.valuesLeft is the total page size; drain it into the batch(es)

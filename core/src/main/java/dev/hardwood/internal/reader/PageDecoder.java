@@ -149,22 +149,32 @@ public class PageDecoder {
     /// `scratch` must not be null; standalone callers pass a throwaway instance via
     /// the two-argument overload.
     Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        PageDecodedEvent event = new PageDecodedEvent();
-        event.begin();
+        return decodeOpened(open(pageBuffer), dictionary, scratch);
+    }
 
-        // Parse page header directly from buffer
+    /// A page whose header has been read and whose body CRC, when present, has
+    /// been checked. Both decode paths start from one of these so the header is
+    /// parsed once whichever path the page takes.
+    record OpenedPage(PageHeader header, ByteBuffer pageData) {}
+
+    /// Reads the page header and checks the body CRC.
+    OpenedPage open(ByteBuffer pageBuffer) {
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
-        int headerSize = headerReader.getBytesRead();
-
-        // Slice the page data (avoids copying)
-        int compressedSize = pageHeader.compressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
-
+        ByteBuffer pageData = pageBuffer.slice(headerReader.getBytesRead(), pageHeader.compressedPageSize());
         if (pageHeader.crc() != null) {
             CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
         }
+        return new OpenedPage(pageHeader, pageData);
+    }
 
+    /// Materializes a page whose header [#open] already read.
+    Page decodeOpened(OpenedPage opened, Dictionary dictionary, LevelScratch scratch) {
+        PageDecodedEvent event = new PageDecodedEvent();
+        event.begin();
+
+        PageHeader pageHeader = opened.header();
+        ByteBuffer pageData = opened.pageData();
         Page result = switch (pageHeader.type()) {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
@@ -177,87 +187,59 @@ public class PageDecoder {
                 yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData,
                         pageHeader.uncompressedPageSize(), dictionary, scratch);
             }
-            default -> throw new ParquetReadException("Unexpected page type for single-page decode: " + pageHeader.type());
+            default -> throw new ParquetReadException(
+                    "Unexpected page type for single-page decode: " + pageHeader.type());
         };
 
         event.column = column.name();
-        event.compressedSize = compressedSize;
+        event.compressedSize = pageHeader.compressedPageSize();
         event.uncompressedSize = pageHeader.uncompressedPageSize();
         event.commit();
-
         return result;
     }
 
-    /// Attempt to decode a page directly into a [PageValueCursor] without building
-    /// an intermediate [Page] or a per-page primitive array.
-    ///
-    /// The cursor is filled only when the page is a DATA_PAGE (V1) or DATA_PAGE_V2
-    /// with an encoding that supports the direct path (PLAIN or BYTE_STREAM_SPLIT)
-    /// and all leaves are present.  For V1 the all-present check probes the
-    /// definition-level RLE stream; for V2 it uses the header's `numNulls` field.
-    /// In every other case the cursor is left untouched and the method returns
-    /// {@code false}; the caller must fall back to the existing
-    /// [#decodePage] + arraycopy path.
-    ///
-    /// On success the cursor holds:
-    /// <ul>
-    ///   <li>[PageValueCursor#data] — the decompressed page bytes (copied in)</li>
-    ///   <li>[PageValueCursor#srcPos] — byte offset of the first value</li>
-    ///   <li>[PageValueCursor#srcLimit] — exclusive end of the value region</li>
-    ///   <li>[PageValueCursor#valuesLeft] — total values on the page</li>
-    ///   <li>[PageValueCursor#encoding] — the page encoding (PLAIN or BYTE_STREAM_SPLIT)</li>
-    /// </ul>
-    ///
-    /// @param pageBuffer buffer containing the page (header + data)
-    /// @param dictionary dictionary for RLE_DICTIONARY pages (ignored on the direct path)
-    /// @param scratch level scratch for the slot (used here only to probe the def-level stream)
-    /// @param cursor the cursor to fill on success
-    /// @return {@code true} if the cursor was filled and the caller may use the direct path;
-    ///         {@code false} if the caller must fall back
-    boolean decodePageInto(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
-                            PageValueCursor cursor) {
-        // Parse page header
-        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
-        PageHeader pageHeader = PageHeaderReader.read(headerReader);
-        int headerSize = headerReader.getBytesRead();
-
-        return switch (pageHeader.type()) {
-            case DATA_PAGE    -> decodeV1PageInto(pageHeader, pageBuffer, headerSize, cursor);
-            case DATA_PAGE_V2 -> decodeV2PageInto(pageHeader, pageBuffer, headerSize, cursor);
-            default           -> false;
+    /// Whether `type` can be written straight into a batch array. Boolean and
+    /// byte-array columns stay on the materialized-page path.
+    static boolean isDirectlyDecodableType(PhysicalType type) {
+        return switch (type) {
+            case INT32, INT64, FLOAT, DOUBLE -> true;
+            default -> false;
         };
+    }
+
+    /// Whether this page's encoding is one the cursor path reads. The column
+    /// type and the row mask are the caller's to have already decided; this is
+    /// only the fact that lives in the header.
+    boolean directEncoding(OpenedPage opened) {
+        Encoding encoding = switch (opened.header().type()) {
+            case DATA_PAGE -> opened.header().dataPageHeader().encoding();
+            case DATA_PAGE_V2 -> opened.header().dataPageHeaderV2().encoding();
+            default -> null;
+        };
+        return encoding == Encoding.PLAIN || encoding == Encoding.BYTE_STREAM_SPLIT;
+    }
+
+    /// Fills `cursor` from a page [#directEncoding] accepted. Decompresses the
+    /// value bytes and records definition levels; does not build a [Page].
+    void fillCursor(OpenedPage opened, PageValueCursor cursor) {
+        switch (opened.header().type()) {
+            case DATA_PAGE -> fillV1Cursor(opened.header(), opened.pageData(), cursor);
+            case DATA_PAGE_V2 -> fillV2Cursor(opened.header(), opened.pageData(), cursor);
+            default -> throw new IllegalStateException(
+                    "fillCursor called for page type " + opened.header().type());
+        }
     }
 
     /// V1 DATA_PAGE direct-into-cursor path.
     ///
     /// V1 layout: the entire body (rep-levels + def-levels + values) is compressed
-    /// as a single blob.  Level sections are length-prefixed with inline 4-byte
-    /// integers.
-    private boolean decodeV1PageInto(PageHeader pageHeader, ByteBuffer pageBuffer,
-                                      int headerSize, PageValueCursor cursor) {
+    /// as a single blob. Level sections are length-prefixed with inline 4-byte
+    /// integers. The caller has already accepted the encoding and checked the CRC.
+    private void fillV1Cursor(PageHeader pageHeader, ByteBuffer pageData, PageValueCursor cursor) {
         DataPageHeader dataHeader = pageHeader.dataPageHeader();
         Encoding enc = dataHeader.encoding();
-
-        // Only PLAIN and BYTE_STREAM_SPLIT are directly decodable
-        if (enc != Encoding.PLAIN && enc != Encoding.BYTE_STREAM_SPLIT) {
-            return false;
-        }
-
-        // Only numeric primitive types — not BOOLEAN, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96
-        PhysicalType type = column.type();
-        if (!isDirectlyDecodableType(type)) {
-            return false;
-        }
-
-        int compressedSize = pageHeader.compressedPageSize();
         int uncompressedSize = pageHeader.uncompressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
-        if (pageHeader.crc() != null) {
-            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
-        }
-
-        // Decompress
         Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
         byte[] uncompressed = decompressor.decompress(pageData, uncompressedSize);
 
@@ -316,37 +298,19 @@ public class PageDecoder {
         }
 
         commitDirectEvent(pageHeader.compressedPageSize(), pageHeader.uncompressedPageSize());
-        return true;
     }
 
     /// V2 DATA_PAGE_V2 direct-into-cursor path.
     ///
     /// V2 layout: rep-levels and def-levels are stored raw (uncompressed) at the
-    /// start of the body, with their byte lengths declared in the header.  Only
-    /// the value region is optionally compressed.  The header's `numNulls` field
+    /// start of the body, with their byte lengths declared in the header. Only
+    /// the value region is optionally compressed. The header's `numNulls` field
     /// provides a free all-present check — no need to probe the RLE stream.
-    private boolean decodeV2PageInto(PageHeader pageHeader, ByteBuffer pageBuffer,
-                                      int headerSize, PageValueCursor cursor) {
+    /// The caller has already accepted the encoding and checked the CRC.
+    private void fillV2Cursor(PageHeader pageHeader, ByteBuffer pageData, PageValueCursor cursor) {
         DataPageHeaderV2 v2Header = pageHeader.dataPageHeaderV2();
         Encoding enc = v2Header.encoding();
-
-        // Only PLAIN and BYTE_STREAM_SPLIT are directly decodable
-        if (enc != Encoding.PLAIN && enc != Encoding.BYTE_STREAM_SPLIT) {
-            return false;
-        }
-
-        // Only numeric primitive types
-        if (!isDirectlyDecodableType(column.type())) {
-            return false;
-        }
-
-        int compressedSize = pageHeader.compressedPageSize();
         int uncompressedSize = pageHeader.uncompressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
-
-        if (pageHeader.crc() != null) {
-            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
-        }
 
         int numValues = v2Header.numValues();
         int repLevelLen = v2Header.repetitionLevelsByteLength();
@@ -401,8 +365,7 @@ public class PageDecoder {
             cursor.bssCurrentIndex = 0;
         }
 
-        commitDirectEvent(compressedSize, uncompressedSize);
-        return true;
+        commitDirectEvent(pageHeader.compressedPageSize(), uncompressedSize);
     }
 
     /// Emit a JFR event for a successful direct-into-cursor decode.
@@ -429,14 +392,6 @@ public class PageDecoder {
             }
         }
         return count;
-    }
-
-    /// Whether `type` is directly decodable (numeric primitive only).
-    private static boolean isDirectlyDecodableType(PhysicalType type) {
-        return switch (type) {
-            case INT32, INT64, FLOAT, DOUBLE -> true;
-            default -> false;
-        };
     }
 
     /// Decode levels using RLE/Bit-Packing Hybrid encoding.

@@ -170,8 +170,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     /// The direct-into-batch cursor path is not applicable to nested columns:
     /// nested assembly is driven by repetition/definition level traversal and
-    /// cannot bulk-copy into a flat array.  decodePageInto never returns true
-    /// for a column whose maxRepetitionLevel > 0, so this method is a safety net.
+    /// cannot bulk-copy into a flat array. [#supportsCursorPath] stays false,
+    /// so the decode task never selects this path; the method is a safety net.
     @Override
     void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
         throw new UnsupportedOperationException(

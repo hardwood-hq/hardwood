@@ -60,7 +60,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// failed: the drain assembles every page before it, then reports [#retrieverFailure].
     private static final DecodedPage FAILURE_SENTINEL = new DecodedPage(null, PageRowMask.ALL);
 
-    /// Stored in the reorder buffer when the decode task succeeded via the direct-into-batch
+    /// Stored in the reorder buffer when the decode task chose the direct-into-batch
     /// path: the page was decompressed and its values are held in the slot's [PageValueCursor].
     /// The drain handles this sentinel by calling [#assembleCursor] instead of [#assemblePage].
     static final DecodedPage CURSOR_SENTINEL = new DecodedPage(null, PageRowMask.ALL);
@@ -532,6 +532,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     }
 
     /// Decode task: decodes one page, stores result in reorder buffer, unparks drain.
+    ///
+    /// The path is chosen before any value decode. A null placeholder, a worker
+    /// that cannot consume a cursor, a non-numeric column, or a partial row mask
+    /// goes straight to [PageDecoder#decodePage]. Otherwise the header is read
+    /// once: a PLAIN or BYTE_STREAM_SPLIT page fills the slot's cursor, and any
+    /// other encoding materializes a [Page] from that same header.
     private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder) {
         if (done || error.get() != null) {
             return;
@@ -539,29 +545,26 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         try {
             PageValueCursor cursor = cursorBuffer[slot];
             cursor.reset();
-            Page page;
             if (pageInfo.isNullPlaceholder()) {
-                page = pageDecoder.nullPage(pageInfo.placeholderNumValues());
-            } else {
-                // Try the direct-into-batch path first.
-                // Guard: only for worker types that implement assembleCursor and
-                // only for pages with an all-rows mask (filter pushdown uses intervals).
-                boolean tryDirect = supportsCursorPath() && pageInfo.mask().isAll();
-                boolean direct = tryDirect && pageDecoder.decodePageInto(
-                        pageInfo.pageData(), pageInfo.dictionary(),
-                        levelScratchBuffer[slot], cursor);
-                if (direct) {
-                    // Cursor filled; no Page object needed for the fast path.
-                    // Store a sentinel so the drain knows to use the cursor.
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.nullPage(pageInfo.placeholderNumValues()), pageInfo.mask()));
+            } else if (useCursorPath(pageInfo)) {
+                PageDecoder.OpenedPage opened = pageDecoder.open(pageInfo.pageData());
+                if (pageDecoder.directEncoding(opened)) {
+                    pageDecoder.fillCursor(opened, cursor);
                     reorderBuffer.set(slot, CURSOR_SENTINEL);
                     LockSupport.unpark(drainThread);
                     return;
                 }
-                // Fall back: full page decode
-                page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(),
-                        levelScratchBuffer[slot]);
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.decodeOpened(opened, pageInfo.dictionary(), levelScratchBuffer[slot]),
+                        pageInfo.mask()));
+            } else {
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(),
+                                levelScratchBuffer[slot]),
+                        pageInfo.mask()));
             }
-            reorderBuffer.set(slot, prepareDecodedPage(page, pageInfo.mask()));
         }
         catch (Exception e) {
             signalError(enrichWithPlace(e, fileNameBuffer[slot], rowGroupBuffer[slot],
@@ -576,6 +579,15 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             throw err;
         }
         LockSupport.unpark(drainThread);
+    }
+
+    /// Whether this page may take the cursor path. Encoding is not known yet —
+    /// that is read from the page header — but the worker, the column type and
+    /// a partial row mask are, and any of those rules the path out.
+    private boolean useCursorPath(PageInfo pageInfo) {
+        return supportsCursorPath()
+                && pageInfo.mask().isAll()
+                && PageDecoder.isDirectlyDecodableType(physicalType);
     }
 
     /// Stores `sentinel` in the slot after the last page submitted, for the drain to take
