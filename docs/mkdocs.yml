@@ -15,6 +15,12 @@ edit_uri: edit/main/docs/content/
 
 docs_dir: content
 
+# Any warning fails the build, which the site repo's publish job runs on every
+# push to main; a link to a missing anchor is raised to a warning.
+strict: true
+validation:
+  anchors: warn
+
 nav:
   - Home: index.md
   - Getting Started: getting-started.md

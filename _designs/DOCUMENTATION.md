@@ -168,7 +168,7 @@ Untested (no automated check exercises the generator or the version resolution).
 | Public-API docs rule | Review | A new or changed public API updates `docs/content/` in the same PR |
 | Diátaxis placement, one home per fact | Review | Not automated |
 
-No PR-build step builds the site. A broken nav entry, link or placeholder surfaces at publish time, in the `dev` build after the change reaches `main`. Untested.
+No PR-build step builds the site. `docs/mkdocs.yml` sets `strict: true` and raises a link to a missing anchor to a warning, so a nav entry, link or anchor that points nowhere fails the publish of the `dev` site after the change reaches `main`. An unknown `{{name}}` placeholder is left in the page and fails nothing. Untested.
 
 ## Boundaries
 
