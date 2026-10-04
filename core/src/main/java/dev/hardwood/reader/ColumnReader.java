@@ -373,8 +373,8 @@ public class ColumnReader implements Closeable {
     /// column chunk's dictionary: for every batch of a column without a dictionary, and,
     /// where a writer switched to plain encoding after its dictionary filled up, for the
     /// batch holding the switch and the rest of that row group. Read such a batch through
-    /// the value accessors. A batch never draws on two dictionaries: batches end at
-    /// row-group boundaries. Dictionary ids are exposed for `BYTE_ARRAY`,
+    /// the value accessors. A batch never draws on two dictionaries: a read that includes
+    /// a binary column ends its batches at row-group boundaries. Dictionary ids are exposed for `BYTE_ARRAY`,
     /// `FIXED_LEN_BYTE_ARRAY` and `INT96` columns; for any other column this returns `null`.
     public int[] getDictionaryIds() {
         checkBatchAvailable();

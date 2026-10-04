@@ -60,15 +60,17 @@ final class ColumnCursor {
 
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
-    /// detached, so every batch the cursor hands out is fresh and never reused, and end
-    /// at every row-group boundary, so a batch draws on one column chunk's dictionary.
+    /// detached, so every batch the cursor hands out is fresh and never reused. With
+    /// `endBatchesAtRowGroupBoundaries`, which every cursor of a read must share, batches
+    /// end at every row-group boundary, so a batch draws on one column chunk's dictionary.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
                                boolean fixedListFastPathEnabled,
                                int projectedColumnIndex,
                                int batchSize,
-                               NestedColumnWorker.IndexMode indexMode) {
+                               NestedColumnWorker.IndexMode indexMode,
+                               boolean endBatchesAtRowGroupBoundaries) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), column.columnIndex());
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
@@ -81,7 +83,9 @@ final class ColumnCursor {
                     pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
                     layers, indexMode, fixedListFastPathEnabled);
-            worker.endBatchesAtRowGroupBoundaries();
+            if (endBatchesAtRowGroupBoundaries) {
+                worker.endBatchesAtRowGroupBoundaries();
+            }
             worker.start();
             return new ColumnCursor(column, null, exchange, worker);
         }
@@ -92,7 +96,9 @@ final class ColumnCursor {
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), 0, null);
-        worker.endBatchesAtRowGroupBoundaries();
+        if (endBatchesAtRowGroupBoundaries) {
+            worker.endBatchesAtRowGroupBoundaries();
+        }
         worker.start();
         return new ColumnCursor(column, exchange, null, worker);
     }

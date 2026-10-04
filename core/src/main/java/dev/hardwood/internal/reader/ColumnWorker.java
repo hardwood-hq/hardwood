@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -104,7 +105,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // row-group flush, since a row-group index repeats across inputs.
     private final int[] workItemBuffer;
     // Row count of the slot's row group, written alongside workItemBuffer[slot]: sizes a
-    // column-reader batch to the rows its row group has left.
+    // batch ending at a row-group boundary to the rows its row group has left.
     private final long[] rowGroupRowsBuffer;
     private final int[] pageBuffer;
 
@@ -257,10 +258,32 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         return filterActive;
     }
 
+    /// Whether the workers of a read decoding `columns` end their batches at row-group
+    /// boundaries ([#endBatchesAtRowGroupBoundaries()]): exactly when one of the columns holds
+    /// binary values (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`), flat or nested. A batch of
+    /// binary values then draws on one column chunk's dictionary. The cut costs every column of
+    /// the read a batch hand-off per row group, which only a read with a binary column has a use
+    /// for.
+    ///
+    /// @param columns every column the read decodes, predicate columns included
+    public static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
+        for (ColumnSchema column : columns) {
+            switch (column.type()) {
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
+                    return true;
+                }
+                case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> {
+                }
+            }
+        }
+        return false;
+    }
+
     /// Ends every batch at a row-group boundary, so a batch never holds rows of two column
     /// chunks and so never values of two dictionaries. Every column of a read must be configured
     /// alike, which keeps their batches row-aligned: all columns cross a row-group boundary at
-    /// the same row. Must be called before [#start()].
+    /// the same row. A read decides by [#endsBatchesAtRowGroupBoundaries(List)]. Must be called
+    /// before [#start()].
     public void endBatchesAtRowGroupBoundaries() {
         if (drainThread != null) {
             throw new IllegalStateException("Column worker for '" + column.name() + "' already started");

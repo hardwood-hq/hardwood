@@ -38,8 +38,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// The dictionary ids [ColumnReader] exposes: each value resolves through its id to the same
-/// bytes as through its binary range, batches end at row-group boundaries so that each draws on
-/// one dictionary, and a batch holding any value stored outside the dictionary exposes none.
+/// bytes as through its binary range, the batches of a read with a binary column end at
+/// row-group boundaries so that each draws on one dictionary, and a batch holding any value
+/// stored outside the dictionary exposes none.
 class ColumnReaderDictionaryIdsTest {
 
     /// Two row groups of 100 rows with disjoint pools: row `i` holds entry `i % 3` of
@@ -339,6 +340,92 @@ class ColumnReaderDictionaryIdsTest {
             // One object per row group's dictionary, across filtered and repeated batches.
             assertThat(labelDictionaries).hasSize(4);
             assertThat(tagDictionaries).hasSize(4);
+        }
+    }
+
+    /// A read of primitive columns only exposes no ids, so its batches run across row groups.
+    @Test
+    void anAllPrimitiveReadBatchesAcrossRowGroups() throws Exception {
+        byte[] file = writeStations(1_000, 300);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReader id = reader.buildColumnReader("id").batchSize(128).build()) {
+
+            List<Integer> counts = new ArrayList<>();
+            long expectedId = 0;
+            while (id.nextBatch()) {
+                counts.add(id.getRecordCount());
+                long[] values = id.getLongs();
+                for (int i = 0; i < id.getRecordCount(); i++) {
+                    assertThat(values[i]).isEqualTo(expectedId++);
+                }
+            }
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(4);
+            assertThat(counts).containsExactly(128, 128, 128, 128, 128, 128, 128, 104);
+        }
+    }
+
+    /// A filtered read of primitive columns closes a batch only where statistics stop proving
+    /// the filter: row group 0 holds rows below the bound, row groups 1 to 3 match in full.
+    @Test
+    void aFilteredAllPrimitiveReadBatchesAcrossProvenRowGroups() throws Exception {
+        byte[] file = writeStations(1_000, 300);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.gt("id", 50L)).batchSize(128).build()) {
+
+            List<Integer> counts = new ArrayList<>();
+            while (columns.nextBatch()) {
+                counts.add(columns.getRecordCount());
+            }
+            assertThat(counts).containsExactly(77, 128, 44, 128, 128, 128, 128, 128, 60);
+        }
+    }
+
+    /// One binary column makes every column of the read end its batches at row-group
+    /// boundaries, so the primitive column stays aligned with the string column.
+    @Test
+    void aReadMixingAPrimitiveAndAStringColumnEndsBatchesAtRowGroupBoundaries() throws Exception {
+        String[] pool = { "Hamburg", "Oslo", "Abha" };
+        byte[] file = writeStations(1_000, 300);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id", "label"))
+                     .batchSize(128).build()) {
+
+            ColumnReader id = columns.getColumnReader("id");
+            ColumnReader label = columns.getColumnReader("label");
+            List<Integer> counts = new ArrayList<>();
+            while (columns.nextBatch()) {
+                counts.add(columns.getRecordCount());
+                assertThat(id.getRecordCount()).isEqualTo(columns.getRecordCount());
+                assertThat(label.getRecordCount()).isEqualTo(columns.getRecordCount());
+                assertThat(label.getDictionaryIds()).isNotNull();
+                long[] ids = id.getLongs();
+                String[] labels = label.getStrings();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    assertThat(labels[i]).isEqualTo(pool[Math.toIntExact(ids[i] % 3)]);
+                }
+            }
+            assertThat(counts).containsExactly(128, 128, 44, 128, 128, 44, 128, 128, 44, 100);
+        }
+    }
+
+    /// A read whose only binary column is a filter-only predicate column still ends its batches
+    /// at row-group boundaries, so the predicate column's batches each draw on one dictionary.
+    @Test
+    void aFilterOnlyStringColumnMakesTheReadCutAtRowGroups() throws Exception {
+        byte[] file = writeStations(2_000, 500);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.eq("label", "Oslo")).batchSize(1_000).build()) {
+            ColumnReader id = columns.getColumnReader("id");
+            List<Long> ids = new ArrayList<>();
+            while (columns.nextBatch()) {
+                long[] values = id.getLongs();
+                for (int i = 0; i < columns.getRecordCount(); i++) {
+                    ids.add(values[i]);
+                }
+            }
+            assertThat(ids).hasSize(667).allSatisfy(value -> assertThat(value % 3).isEqualTo(1));
         }
     }
 

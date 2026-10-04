@@ -106,7 +106,7 @@ try (ColumnReaders columns = parquet.buildColumnReaders(
 }
 ```
 
-A batch ends at every row-group boundary, so the last batch of a row group can hold fewer records than the batch size.
+When the read includes a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column, filter columns included, every batch ends at a row-group boundary, so the last batch of a row group can hold fewer records than the batch size.
 
 The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record, including all the leaf values a repeated column holds for it, is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
 
@@ -193,7 +193,7 @@ static void addTallies(BinaryDictionary dictionary, long[] rowsPerEntry, Map<Str
 ```
 
 - Both accessors return `null` for a batch holding any non-null value without an entry: every batch of a column with no dictionary, and, where a writer switched to plain encoding after its dictionary filled up, the batch holding the switch and the rest of that row group. Such a batch is read like a plain one, through `getStrings()` or the binary accessors; the next row group's batches have ids again.
-- A batch draws on one dictionary, because batches end at row-group boundaries. Each row group has its own dictionary, so the same value can have different ids in different row groups.
+- A batch draws on one dictionary, because a read that includes a binary column ends its batches at row-group boundaries. Each row group has its own dictionary, so the same value can have different ids in different row groups.
 - Every batch drawn from the same dictionary returns the same `BinaryDictionary`, which is how the example detects the next row group's dictionary (`!=`).
 - The id at a null value is `-1`.
 - `getString(e)` reads a column that holds text, as `getStrings()` does, and caches each entry's `String`; `getBinary(e)` returns a copy of the entry's bytes.

@@ -67,9 +67,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     }
 
     /// Gives a batch the column readers' exchange hands out without values its value array,
-    /// sized to the rows it can still receive: at most the batch capacity, and no more than
-    /// the row group has left, since a column-reader batch ends with its row group. A file of
-    /// small row groups then allocates per batch what the batch can hold.
+    /// sized to the rows it can still receive: at most the batch capacity, and, where batches
+    /// end with their row group, no more than the row group has left. A file of small row
+    /// groups then allocates per batch what the batch can hold.
     private void allocateValues() {
         currentCapacity = (int) Math.max(1, Math.min(batchCapacity, rowGroupRowsLeft));
         currentBatch.values = BatchExchange.allocateArray(column, currentCapacity);

@@ -734,8 +734,7 @@ class ColumnReadersTest {
 
     @Test
     void testGroupHasNoBatchOnceExhausted() throws Exception {
-        // Three row groups of 100 rows in batches of 7, a batch ending at each row-group
-        // boundary: each row group ends on a batch of 2. Past the end the group has no batch.
+        // 300 rows in batches of 7 end on a batch of 6; past the end the group has no batch.
         Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
@@ -748,7 +747,7 @@ class ColumnReadersTest {
                 assertThat(idReader.getRecordCount()).isEqualTo(columns.getRecordCount());
                 lastCount = columns.getRecordCount();
             }
-            assertThat(lastCount).isEqualTo(2);
+            assertThat(lastCount).isEqualTo(6);
 
             assertThatThrownBy(columns::getRecordCount)
                     .isInstanceOf(IllegalStateException.class)
