@@ -220,7 +220,7 @@ Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`.
 
 - **Nested and remaining leaf shapes on the drain side (#485).** Nested-path leaves, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to the drain side would let `RecordFilterCompiler` go.
 - **Late materialization (#500).** Payload columns are decoded in full for every undecided row group and then compacted; decoding them only for matching rows is a different pipeline shape.
-- **Fixed-width dictionary-space evaluation (#859).** Binary matchers decide referenced dictionary entries once; fixed-width primitive matchers still evaluate dictionary-encoded columns per row.
+- **Fixed-width dictionary-space evaluation (#1447).** Binary matchers decide referenced dictionary entries once; fixed-width primitive matchers still evaluate dictionary-encoded columns per row.
 - **Fused same-column range matchers (#454)** and **Vector API matchers (#456).** `id >= a AND id < b` runs two passes over the column and one word-wise AND.
 - **`tail` with a filter (#542).** Rejected at `build()`, as above.
 - **Page-level always-match.** A page whose index entry proves a full match is evaluated row by row like any page of an undecided row group; see [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md) for why the decision stops at the row group.
