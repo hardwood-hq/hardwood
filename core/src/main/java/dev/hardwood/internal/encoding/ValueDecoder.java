@@ -95,13 +95,13 @@ public interface ValueDecoder {
     // existing decodePage + arraycopy path.
     // -----------------------------------------------------------------------
 
-    /// Decode up to `count` DOUBLE values into dest[destOffset+i].
+    /// Decode up to `count` DOUBLE values into `dest[destOffset+i]`.
     ///
     /// @param dest           batch values array
-    /// @param destOffset     first index to write into {@code dest}
+    /// @param destOffset     first index to write into `dest`
     /// @param count          def-level slots to process (== values when all-present)
-    /// @param defLevels      definition levels for the page, or {@code null} when all-present
-    /// @param defLevelOffset index into {@code defLevels} of the first slot (ignored when null)
+    /// @param defLevels      definition levels for the page, or `null` when all-present
+    /// @param defLevelOffset index into `defLevels` of the first slot (ignored when null)
     /// @param maxDefLevel    the level that indicates a present value
     /// @return number of non-null values decoded
     default int readDoubles(double[] dest, int destOffset, int count,
@@ -109,22 +109,22 @@ public interface ValueDecoder {
         throw new UnsupportedOperationException("direct readDoubles not supported by this decoder");
     }
 
-    /// Decode up to `count` INT64 values into dest[destOffset+i].
-    /// {@code defLevels == null} means all-present; returns {@code count}.
+    /// Decode up to `count` INT64 values into `dest[destOffset+i]`.
+    /// `defLevels == null` means all-present; returns `count`.
     default int readLongs(long[] dest, int destOffset, int count,
                           int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readLongs not supported by this decoder");
     }
 
-    /// Decode up to `count` INT32 values into dest[destOffset+i].
-    /// {@code defLevels == null} means all-present; returns {@code count}.
+    /// Decode up to `count` INT32 values into `dest[destOffset+i]`.
+    /// `defLevels == null` means all-present; returns `count`.
     default int readInts(int[] dest, int destOffset, int count,
                          int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readInts not supported by this decoder");
     }
 
-    /// Decode up to `count` FLOAT values into dest[destOffset+i].
-    /// {@code defLevels == null} means all-present; returns {@code count}.
+    /// Decode up to `count` FLOAT values into `dest[destOffset+i]`.
+    /// `defLevels == null` means all-present; returns `count`.
     default int readFloats(float[] dest, int destOffset, int count,
                            int[] defLevels, int defLevelOffset, int maxDefLevel) {
         throw new UnsupportedOperationException("direct readFloats not supported by this decoder");

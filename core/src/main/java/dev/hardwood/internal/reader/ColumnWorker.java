@@ -265,15 +265,15 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     ///
     /// Called in place of [#assemblePage] when the decode task succeeded via the
     /// fast path and stored a [PageValueCursor] in the slot's cursor buffer.
-    /// The default implementation falls back by decoding the cursor through the
-    /// existing Page-based path — subclasses override to eliminate the copy.
+    /// [FlatColumnWorker] overrides to decode values directly into the batch;
+    /// [NestedColumnWorker] throws [UnsupportedOperationException].
     ///
     /// `mask` behaves identically to [#assemblePage(Page,PageRowMask)].
     abstract void assembleCursor(PageValueCursor cursor, PageRowMask mask);
 
     /// Whether this worker can consume pages via the direct-into-batch cursor path.
     ///
-    /// Returns {@code false} by default; [FlatColumnWorker] overrides to {@code true}.
+    /// Returns `false` by default; [FlatColumnWorker] overrides to `true`.
     /// The guard exists because [ColumnWorker] is agnostic to whether its concrete
     /// subclass implements [#assembleCursor] non-trivially.
     boolean supportsCursorPath() {

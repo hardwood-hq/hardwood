@@ -383,8 +383,8 @@ public class PageDecoder {
         event.commit();
     }
 
-    /// Count values where {@code defLevels[i] == maxDef}.  Returns
-    /// {@code numValues} when {@code defLevels} is {@code null}
+    /// Count values where `defLevels[i] == maxDef`.  Returns
+    /// `numValues` when `defLevels` is `null`
     /// (all-present convention).
     private static int countNonNull(int[] defLevels, int numValues, int maxDef) {
         if (defLevels == null) {

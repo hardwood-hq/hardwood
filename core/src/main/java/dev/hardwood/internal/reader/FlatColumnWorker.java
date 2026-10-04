@@ -169,10 +169,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// Decode `count` slots from the cursor into the current batch at
     /// `rowsInCurrentBatch`, then advance cursor position state.
     ///
-    /// Required and nullable pages share one call. {@code definitionLevels == null}
+    /// Required and nullable pages share one call. `definitionLevels == null`
     /// is the all-present path: the decoder writes `count` dense values and returns
     /// `count`. Otherwise it reads a value only where the def level equals
-    /// {@code maxDefinitionLevel} and returns the non-null count. That count is what
+    /// `maxDefinitionLevel` and returns the non-null count. That count is what
     /// advances the byte-stream cursor; null slots consume no bytes.
     private void decodeDirectly(PageValueCursor cursor, int count) {
         int destOffset = rowsInCurrentBatch;
@@ -210,7 +210,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     }
 
     /// Dispatch the unified direct-into-batch read for this column's physical type.
-    /// {@code defLevels == null} selects the all-present path inside the decoder.
+    /// `defLevels == null` selects the all-present path inside the decoder.
     private int readDirect(ValueDecoder decoder, int destOffset, int count,
                            int[] defLevels, int defLevelOffset) {
         Object values = currentBatch.values;

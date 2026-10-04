@@ -16,11 +16,11 @@ import dev.hardwood.metadata.Encoding;
 /// capacity of the current batch is less than N.  The cursor survives the
 /// publish of the full batch and is resumed in the next one:
 ///
-/// <pre>
+/// ```text
 ///   Pass 1: decodeInto(batchA, offset, count1)   → cursor.valuesLeft -= count1
 ///           publish batchA, take batchB
 ///   Pass 2: decodeInto(batchB, 0,      count2)   → cursor.valuesLeft -= count2
-/// </pre>
+/// ```
 ///
 /// Lifecycle: one instance per reorder-buffer slot, parallel to
 /// [PageDecoder.LevelScratch].  The retriever throttle ensures that a slot is
@@ -50,7 +50,7 @@ final class PageValueCursor {
     int valuesLeft;
 
     /// The encoding this cursor was filled for, so [FlatColumnWorker] can decide
-    /// whether the direct path applies.  {@code null} when idle.
+    /// whether the direct path applies.  `null` when idle.
     Encoding encoding;
 
     // === Nullable page state ===
@@ -66,7 +66,7 @@ final class PageValueCursor {
     boolean definitionLevelsActive;
 
     /// Index into [#definitionLevels] of the next value to be assembled.
-    /// Starts at 0; advanced by {@code count} in each decodeDirectly call.
+    /// Starts at 0; advanced by `count` in each decodeDirectly call.
     /// Survives batch-boundary publishes (straddle).
     int defLevelPos;
 
@@ -110,8 +110,7 @@ final class PageValueCursor {
         }
     }
 
-    /// Resets the cursor to idle (called when the page is finished or the worker
-    /// falls back to the existing path).
+    /// Resets the cursor to idle.
     void reset() {
         valuesLeft = 0;
         encoding = null;

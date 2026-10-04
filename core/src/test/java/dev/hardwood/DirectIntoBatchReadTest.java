@@ -8,6 +8,8 @@
 package dev.hardwood;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -28,13 +30,32 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The cursor path writes a flat numeric page into the batch array, including a
-/// page that straddles a batch and a page that contains a null. The writer emits
-/// V1 pages, so this does not cover `DATA_PAGE_V2`.
+/// page that straddles a batch and a page that contains a null, for both V1 and
+/// V2 data pages.
 class DirectIntoBatchReadTest {
 
     private static final int ROWS = 200;
 
     private static final int BATCH = 3;
+
+    @Test
+    void plainDataPageV2NumericPagesStraddleABatch() throws Exception {
+        Path path = Paths.get("src/test/resources/differential/diff_types.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
+            assertV2Doubles(reader, "f64");
+            assertV2Longs(reader, "i64");
+            assertV2Ints(reader, "i32");
+            assertV2Floats(reader, "f32");
+        }
+    }
+
+    @Test
+    void plainDataPageV2NullableNumericPagesStraddleABatch() throws Exception {
+        Path path = Paths.get("src/test/resources/differential/diff_nulls.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
+            assertV2NullableLongs(reader, "val");
+        }
+    }
 
     @Test
     void plainSnappyNumericPagesStraddleABatch() throws Exception {
@@ -182,6 +203,85 @@ class DirectIntoBatchReadTest {
                 }
             }
             assertThat(row).isEqualTo(ROWS);
+        }
+    }
+
+    private static void assertV2Doubles(ParquetFileReader reader, String column) throws Exception {
+        try (ColumnReader col = reader.buildColumnReader(column).batchSize(BATCH).build()) {
+            int row = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getRecordCount()).isLessThanOrEqualTo(BATCH);
+                double[] values = col.getDoubles();
+                for (int i = 0; i < col.getRecordCount(); i++) {
+                    assertThat(values[i]).isEqualTo(row / 8.0);
+                    row++;
+                }
+            }
+            assertThat(row).isEqualTo(200);
+        }
+    }
+
+    private static void assertV2Longs(ParquetFileReader reader, String column) throws Exception {
+        try (ColumnReader col = reader.buildColumnReader(column).batchSize(BATCH).build()) {
+            int row = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getRecordCount()).isLessThanOrEqualTo(BATCH);
+                long[] values = col.getLongs();
+                for (int i = 0; i < col.getRecordCount(); i++) {
+                    assertThat(values[i]).isEqualTo(row * 1000L - 50);
+                    row++;
+                }
+            }
+            assertThat(row).isEqualTo(200);
+        }
+    }
+
+    private static void assertV2Ints(ParquetFileReader reader, String column) throws Exception {
+        try (ColumnReader col = reader.buildColumnReader(column).batchSize(BATCH).build()) {
+            int row = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getRecordCount()).isLessThanOrEqualTo(BATCH);
+                int[] values = col.getInts();
+                for (int i = 0; i < col.getRecordCount(); i++) {
+                    assertThat(values[i]).isEqualTo(row - 100);
+                    row++;
+                }
+            }
+            assertThat(row).isEqualTo(200);
+        }
+    }
+
+    private static void assertV2Floats(ParquetFileReader reader, String column) throws Exception {
+        try (ColumnReader col = reader.buildColumnReader(column).batchSize(BATCH).build()) {
+            int row = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getRecordCount()).isLessThanOrEqualTo(BATCH);
+                float[] values = col.getFloats();
+                for (int i = 0; i < col.getRecordCount(); i++) {
+                    assertThat(values[i]).isEqualTo(row * 0.5f);
+                    row++;
+                }
+            }
+            assertThat(row).isEqualTo(200);
+        }
+    }
+
+    private static void assertV2NullableLongs(ParquetFileReader reader, String column) throws Exception {
+        try (ColumnReader col = reader.buildColumnReader(column).batchSize(BATCH).build()) {
+            int row = 0;
+            while (col.nextBatch()) {
+                assertThat(col.getRecordCount()).isLessThanOrEqualTo(BATCH);
+                long[] values = col.getLongs();
+                for (int i = 0; i < col.getRecordCount(); i++) {
+                    boolean absent = row % 3 == 0;
+                    assertThat(col.getLeafValidity().isNull(i)).isEqualTo(absent);
+                    if (!absent) {
+                        assertThat(values[i]).isEqualTo(row * 2L);
+                    }
+                    row++;
+                }
+            }
+            assertThat(row).isEqualTo(150);
         }
     }
 
