@@ -174,6 +174,5 @@ No PR-build step builds the site. A broken nav entry, link or placeholder surfac
 
 - The site runs on MkDocs 1.x; its future under MkDocs 2.0 and the alternatives are tracked in #181.
 - Normative claims in `docs/content/` are not all pinned by tests that enforce them (#573).
-- Several facts have more than one home across how-to, reference and concepts pages (#1268).
 - The published reports cover the four library modules. The `parquet-java-compat` module's own japicmp report, a shim-completeness check outside this pipeline, fails to run (#932).
 - The `dive` screenshot gallery can drift from the TUI without failing any build (#892).
