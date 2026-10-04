@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +44,9 @@ import dev.hardwood.schema.ColumnProjection;
 public final class ScatterOneBrc {
 
     public static void main(String[] args) throws Exception {
+        long entryMs = System.currentTimeMillis()
+                - ProcessHandle.current().info().startInstant().orElseThrow().toEpochMilli();
+        StringBuilder runTimes = new StringBuilder();
         Path file = Path.of(args[0]);
         String mode = args[1];
         int threads = Integer.parseInt(args[2]);
@@ -59,10 +64,20 @@ public final class ScatterOneBrc {
                     default -> throw new IllegalArgumentException(mode);
                 };
                 result = table.format();
-                System.err.printf("%s run %d: %d ms%n", mode, run + 1, (System.nanoTime() - t0) / 1_000_000);
+                long ms = (System.nanoTime() - t0) / 1_000_000;
+                runTimes.append(run == 0 ? "" : ",").append(ms);
+                System.err.printf("%s run %d: %d ms%n", mode, run + 1, ms);
             }
         }
         System.out.println(result);
+        long gcCount = 0;
+        long gcMs = 0;
+        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+            gcCount += gc.getCollectionCount();
+            gcMs += gc.getCollectionTime();
+        }
+        System.err.printf("TIMING entry=%d runs=%s gc=%d/%dms jit=%dms%n", entryMs, runTimes, gcCount, gcMs,
+                ManagementFactory.getCompilationMXBean().getTotalCompilationTime());
     }
 
     static StationTable base(Path file, HardwoodContextImpl context) throws Exception {
