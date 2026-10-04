@@ -46,14 +46,16 @@ public final class BinaryBatchValues {
     /// batch of plain values does not grow it many times over.
     private final int bytesPerValueHint;
 
-    /// The dictionaries this batch has drawn values from: where each one's bytes start in
-    /// [#bytes] once copied in (`-1` until then), and how many bytes of its values were
-    /// appended before that. A batch rarely spans more than two chunks, so a linear scan
-    /// suffices.
-    private Dictionary.ByteArrayDictionary[] drawnDictionaries = new Dictionary.ByteArrayDictionary[2];
-    private int[] dictionaryBases = new int[2];
-    private long[] appendedDictionaryBytes = new long[2];
-    private int drawnDictionaryCount;
+    /// The dictionary this batch's views draw on, or `null` before its first dictionary value.
+    /// A read with a binary column ends its batches at row-group boundaries
+    /// ([ColumnWorker#endsBatchesAtRowGroupBoundaries]), so a batch draws on at most one.
+    private Dictionary.ByteArrayDictionary viewedDictionary;
+
+    /// Where [#viewedDictionary]'s bytes start in [#bytes] once copied in, `-1` until then.
+    private int viewedDictionaryBase;
+
+    /// Bytes of [#viewedDictionary]'s values appended before it is copied in.
+    private long appendedDictionaryBytes;
 
     /// The chunk dictionary backing [#dictIndices], or `null` when no dictionary
     /// page has contributed to this batch (every value then materialises from
@@ -64,8 +66,7 @@ public final class BinaryBatchValues {
 
     /// Per-value dictionary entry index, meaningful only when [#dictionary] is
     /// non-null. `-1` marks a value that must materialise from [#bytes]: a
-    /// plain-encoded value, a null position, or a value from a second chunk's
-    /// dictionary in a batch that straddles a chunk boundary. Allocated lazily
+    /// plain-encoded value or a null position. Allocated lazily
     /// by [#ensureDictionary] when the first dictionary page lands.
     public int[] dictIndices;
 
@@ -91,8 +92,7 @@ public final class BinaryBatchValues {
     public void reset() {
         byteCount = 0;
         dictionary = null;
-        Arrays.fill(drawnDictionaries, 0, drawnDictionaryCount, null);
-        drawnDictionaryCount = 0;
+        viewedDictionary = null;
     }
 
     /// Grows the view arrays (and [#dictIndices], once allocated) to `capacity` values.
@@ -241,8 +241,7 @@ public final class BinaryBatchValues {
         Dictionary.ByteArrayDictionary dict = page.dictionary();
         int[] indices = page.dictIndices();
         int[] entryOffsets = dict.entryOffsets();
-        int slot = drawnSlot(dict);
-        int base = dictionaryBases[slot];
+        int base = viewBase(dict);
         if (base < 0) {
             long rangeBytes = 0;
             for (int i = 0; i < length; i++) {
@@ -251,14 +250,14 @@ public final class BinaryBatchValues {
                     rangeBytes += entryOffsets[entry + 1] - entryOffsets[entry];
                 }
             }
-            if (appendedDictionaryBytes[slot] + rangeBytes < dict.entryBytes().length) {
-                appendedDictionaryBytes[slot] += rangeBytes;
+            if (appendedDictionaryBytes + rangeBytes < dict.entryBytes().length) {
+                appendedDictionaryBytes += rangeBytes;
                 for (int i = 0; i < length; i++) {
                     appendEntry(dict, indices[srcPos + i], destPos + i);
                 }
                 return;
             }
-            base = copyIn(slot, destPos);
+            base = copyIn(destPos);
         }
         for (int i = 0; i < length; i++) {
             int entry = indices[srcPos + i];
@@ -284,16 +283,15 @@ public final class BinaryBatchValues {
             return;
         }
         int[] entryOffsets = dict.entryOffsets();
-        int slot = drawnSlot(dict);
-        int base = dictionaryBases[slot];
+        int base = viewBase(dict);
         if (base < 0) {
             int len = entryOffsets[entry + 1] - entryOffsets[entry];
-            if (appendedDictionaryBytes[slot] + len < dict.entryBytes().length) {
-                appendedDictionaryBytes[slot] += len;
+            if (appendedDictionaryBytes + len < dict.entryBytes().length) {
+                appendedDictionaryBytes += len;
                 appendEntry(dict, entry, destIdx);
                 return;
             }
-            base = copyIn(slot, destIdx);
+            base = copyIn(destIdx);
         }
         starts[destIdx] = base + entryOffsets[entry];
         ends[destIdx] = base + entryOffsets[entry + 1];
@@ -310,36 +308,36 @@ public final class BinaryBatchValues {
         }
     }
 
-    /// The slot tracking `dict` in this batch, added on its first value.
-    private int drawnSlot(Dictionary.ByteArrayDictionary dict) {
-        for (int i = 0; i < drawnDictionaryCount; i++) {
-            if (drawnDictionaries[i] == dict) {
-                return i;
-            }
+    /// Returns where `dict`'s bytes start in [#bytes], or `-1` before they are copied in,
+    /// adopting `dict` as the batch's [#viewedDictionary] on its first value.
+    ///
+    /// @throws IllegalStateException if the batch already draws on another dictionary
+    private int viewBase(Dictionary.ByteArrayDictionary dict) {
+        if (viewedDictionary == null) {
+            viewedDictionary = dict;
+            viewedDictionaryBase = -1;
+            appendedDictionaryBytes = 0;
         }
-        if (drawnDictionaryCount == drawnDictionaries.length) {
-            int grown = drawnDictionaryCount * 2;
-            drawnDictionaries = Arrays.copyOf(drawnDictionaries, grown);
-            dictionaryBases = Arrays.copyOf(dictionaryBases, grown);
-            appendedDictionaryBytes = Arrays.copyOf(appendedDictionaryBytes, grown);
+        else if (viewedDictionary != dict) {
+            throw twoDictionaries();
         }
-        int slot = drawnDictionaryCount++;
-        drawnDictionaries[slot] = dict;
-        dictionaryBases[slot] = -1;
-        appendedDictionaryBytes[slot] = 0;
-        return slot;
+        return viewedDictionaryBase;
     }
 
-    /// Copies the dictionary at `slot` into [#bytes] and returns where it starts; `valueIdx`
-    /// is the value that brought it in, named if the copy overflows the buffer.
-    private int copyIn(int slot, int valueIdx) {
-        byte[] entryBytes = drawnDictionaries[slot].entryBytes();
+    /// Copies [#viewedDictionary] into [#bytes] and returns where it starts; `valueIdx` is the
+    /// value that brought it in, named if the copy overflows the buffer.
+    private int copyIn(int valueIdx) {
+        byte[] entryBytes = viewedDictionary.entryBytes();
         int base = byteCount;
         ensureBytes((long) base + entryBytes.length, valueIdx, false);
         System.arraycopy(entryBytes, 0, bytes, base, entryBytes.length);
         byteCount = base + entryBytes.length;
-        dictionaryBases[slot] = base;
+        viewedDictionaryBase = base;
         return base;
+    }
+
+    private static IllegalStateException twoDictionaries() {
+        return new IllegalStateException("A batch holds values of two column chunks' dictionaries");
     }
 
     /// Grows [#bytes] to hold `needed` bytes. A value append sizes a first allocation by
@@ -374,12 +372,8 @@ public final class BinaryBatchValues {
             }
             return;
         }
-        if (ensureDictionary(pageDict, destPos)) {
-            System.arraycopy(pageDictIndices, srcPos, dictIndices, destPos, length);
-        }
-        else {
-            Arrays.fill(dictIndices, destPos, destPos + length, -1);
-        }
+        ensureDictionary(pageDict, destPos);
+        System.arraycopy(pageDictIndices, srcPos, dictIndices, destPos, length);
     }
 
     /// Records the dictionary entry index for a single gathered value at
@@ -398,19 +392,18 @@ public final class BinaryBatchValues {
         // ensureDictionary lazily allocates dictIndices, so it must run before
         // the `dictIndices[destPos]` store target is evaluated — otherwise the
         // store binds the pre-allocation (null) array reference.
-        int dictIndex = ensureDictionary(pageDict, destPos) ? pageDictIndices[srcPos] : -1;
-        dictIndices[destPos] = dictIndex;
+        ensureDictionary(pageDict, destPos);
+        dictIndices[destPos] = pageDictIndices[srcPos];
     }
 
     /// Switches the batch onto the dictionary representation on the first
     /// dictionary page that contributes: adopts `pageDict`, allocates
     /// [#dictIndices] (sized to the value capacity), and backfills the plain
-    /// prefix `[0, destPos)` with `-1`. Returns `true` when `pageDict` is this
-    /// batch's dictionary — so the caller records the page's indices — and
-    /// `false` when the value belongs to a second dictionary in a batch that
-    /// straddles a chunk boundary, in which case it falls back to byte
-    /// materialisation.
-    private boolean ensureDictionary(Dictionary.ByteArrayDictionary pageDict, int destPos) {
+    /// prefix `[0, destPos)` with `-1`. A batch of binary values ends at its row
+    /// group's end, so every dictionary page of a batch carries the same dictionary.
+    ///
+    /// @throws IllegalStateException if `pageDict` is not the batch's dictionary
+    private void ensureDictionary(Dictionary.ByteArrayDictionary pageDict, int destPos) {
         if (dictionary == null) {
             dictionary = pageDict;
             int capacity = starts.length;
@@ -419,6 +412,8 @@ public final class BinaryBatchValues {
             }
             Arrays.fill(dictIndices, 0, destPos, -1);
         }
-        return dictionary == pageDict;
+        else if (dictionary != pageDict) {
+            throw twoDictionaries();
+        }
     }
 }

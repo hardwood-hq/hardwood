@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BinaryBatchValuesTest {
 
@@ -90,16 +91,26 @@ class BinaryBatchValuesTest {
     }
 
     @Test
-    void aBatchViewsEachDictionaryItSpansAlongsidePlainValues() {
-        Dictionary.ByteArrayDictionary second = dictionary("Accra", "Lima");
+    void aBatchViewsItsDictionaryAlongsidePlainValues() {
         BinaryBatchValues values = new BinaryBatchValues(8, 32);
 
         values.viewDictionaryRange(page(STATIONS, 0, 1, 0, 1, 0, 1), 0, 0, 3);
         values.appendAt(3, utf8("Tunis"), 0, "Tunis".length());
-        values.viewDictionaryRange(page(second, 1, 0, 1, 1, 0, 1), 0, 4, 4);
+        values.viewDictionaryRange(page(STATIONS, 1, 2, 2, 2), 0, 4, 4);
 
-        assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Lima", "Accra", "Lima", "Lima");
-        assertThat(values.byteCount).isEqualTo("HamburgOsloAbhaTunisAccraLima".length());
+        assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Oslo", "Abha", "Abha", "Abha");
+        // The first range's bytes exceed the dictionary's, so the dictionary is copied in once.
+        assertThat(values.byteCount).isEqualTo("HamburgOsloAbhaTunis".length());
+    }
+
+    @Test
+    void aSecondDictionaryInOneBatchIsRejected() {
+        BinaryBatchValues values = new BinaryBatchValues(4, 32);
+        values.viewDictionaryRange(page(STATIONS, 0, 1), 0, 0, 1);
+
+        assertThatThrownBy(() -> values.viewDictionaryRange(page(dictionary("Accra", "Lima"), 1, 0), 0, 1, 1))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("A batch holds values of two column chunks' dictionaries");
     }
 
     @Test
@@ -112,6 +123,18 @@ class BinaryBatchValuesTest {
 
         assertThat(strings(values, 4)).containsExactly("Abha", "Abha", "Oslo", "Hamburg");
         assertThat(values.byteCount).isEqualTo("HamburgOsloAbha".length());
+    }
+
+    @Test
+    void aResetSlotTakesTheNextRowGroupsDictionary() {
+        BinaryBatchValues values = new BinaryBatchValues(4, 32);
+        values.viewDictionaryRange(page(STATIONS, 0, 1, 2, 0), 0, 0, 4);
+
+        values.reset();
+        values.viewDictionaryRange(page(dictionary("Accra", "Lima"), 1, 1, 0, 1), 0, 0, 4);
+
+        assertThat(strings(values, 4)).containsExactly("Lima", "Lima", "Accra", "Lima");
+        assertThat(values.byteCount).isEqualTo("AccraLima".length());
     }
 
     @Test

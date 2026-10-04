@@ -257,6 +257,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         final boolean drainSide = compiledFilter != null;
         final int wordsLen = (batchSize + 63) >>> 6;
 
+        boolean endBatchesAtRowGroupBoundaries =
+                ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
         FlatColumnWorker[] workers = new FlatColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -285,6 +287,9 @@ public final class FlatRowReader implements FileAwareRowReader {
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), maxRows,
                     columnFilter);
+            if (endBatchesAtRowGroupBoundaries) {
+                worker.endBatchesAtRowGroupBoundaries();
+            }
 
             buffers[i] = buffer;
             workers[i] = worker;

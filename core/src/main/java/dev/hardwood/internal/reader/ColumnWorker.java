@@ -624,9 +624,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 currentBatchFileName = pageFileName;
             }
 
-            // Row-group boundary: a reader exposing dictionary ids needs every batch to draw on
-            // one column chunk's dictionary. Composes with the file flush above, which already
-            // closed a batch whose next page comes from another file.
+            // Row-group boundary: in a read with a binary column, every batch draws on one column
+            // chunk's dictionary, for the column readers' dictionary ids and the row readers'
+            // shared strings. Composes with the file flush above, which already closed a batch
+            // whose next page comes from another file.
             if (rowGroupFlush) {
                 int pageWorkItem = workItemBuffer[slot];
                 if (pageWorkItem != currentBatchWorkItem) {

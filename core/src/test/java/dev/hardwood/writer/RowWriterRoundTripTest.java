@@ -525,10 +525,12 @@ class RowWriterRoundTripTest {
             assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
             try (RowReader rows = reader.rowReader()) {
                 for (int i = 0; i < 32; i++) {
+                    assertThat(rows.hasNext()).isTrue();
                     rows.next();
                     assertThat(rows.getInt("id")).isEqualTo(i);
                     assertThat(rows.getBinary("blob")).isEqualTo(largeBlob(i));
                 }
+                assertThat(rows.hasNext()).isFalse();
             }
         }
     }

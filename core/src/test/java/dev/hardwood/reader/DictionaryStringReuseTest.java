@@ -19,10 +19,19 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -191,22 +200,24 @@ class DictionaryStringReuseTest {
         }
     }
 
-    /// Cross-CHUNK straddle: `dict_cross_chunk.parquet` has two row groups (two
+    /// Two chunks in one read: `dict_cross_chunk.parquet` has two row groups (two
     /// dictionaries) with disjoint pools — rows 0-99 from `{alpha,bravo,charlie}`,
-    /// rows 100-199 from `{delta,echo,foxtrot}` — and is small enough (200 rows,
-    /// below the 16384 batch floor) that the whole file is one row-reader batch
-    /// spanning both chunks. The batch keeps chunk 0's dictionary and byte-decodes
-    /// chunk 1's values; a regression that indexed chunk 1's ordinals into chunk
-    /// 0's dictionary would return chunk 0's strings (silently wrong) or go out of
-    /// bounds. The disjoint pools make any mis-resolution observable.
+    /// rows 100-199 from `{delta,echo,foxtrot}` — and is small enough (200 rows)
+    /// that its batch size would cover both. The batch ends at the row-group
+    /// boundary instead, so each chunk's values resolve against its own dictionary:
+    /// a regression that indexed chunk 1's ordinals into chunk 0's dictionary would
+    /// return chunk 0's strings (silently wrong) or go out of bounds, and one that
+    /// let a batch hold both chunks would byte-decode one chunk's values afresh. The
+    /// disjoint pools make any mis-resolution observable.
     @Test
-    void dictionaryStraddlingTwoChunksResolvesEachAgainstItsOwnDictionary() throws Exception {
+    void twoChunksResolveEachAgainstItsOwnDictionary() throws Exception {
         Path file = Paths.get("src/test/resources/dict_cross_chunk.parquet");
         String[] poolA = {"alpha", "bravo", "charlie"};
         String[] poolB = {"delta", "echo", "foxtrot"};
 
         List<String> values = new ArrayList<>();
         Set<String> chunk0Instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> chunk1Instances = Collections.newSetFromMap(new IdentityHashMap<>());
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
                 RowReader rr = reader.rowReader()) {
             int row = 0;
@@ -214,9 +225,7 @@ class DictionaryStringReuseTest {
                 rr.next();
                 String v = rr.getString("label");
                 values.add(v);
-                if (row < 100) {
-                    chunk0Instances.add(v);
-                }
+                (row < 100 ? chunk0Instances : chunk1Instances).add(v);
                 row++;
             }
         }
@@ -230,10 +239,84 @@ class DictionaryStringReuseTest {
         // if its ordinal were resolved against chunk 0's dictionary it would read
         // a chunk-0 entry instead — the exact straddle regression.
         assertThat(values.get(102)).isEqualTo("delta");
-        // Chunk 0 is the batch's adopted dictionary, so its three values still
-        // intern to one instance each — straddle does not disable interning for
-        // the kept chunk.
+        // Each chunk's three values intern to one instance each.
         assertThat(chunk0Instances).hasSize(3);
+        assertThat(chunk1Instances).hasSize(3);
+    }
+
+    /// The nested row reader over two row groups: `tags` draws on `{alpha,bravo,charlie}` in the
+    /// first row group and `{delta,echo,foxtrot}` in the second. A batch ends with its row group,
+    /// so each chunk's values come back as one shared instance per dictionary entry; a batch
+    /// holding both chunks would decode one chunk's values afresh.
+    @Test
+    void nestedDictionaryStringsAreReusedInEveryRowGroup() throws Exception {
+        String[][] pools = { { "alpha", "bravo", "charlie" }, { "delta", "echo", "foxtrot" } };
+        FileSchema schema = FileSchema.builder("schema")
+                .list("tags", RepetitionType.REQUIRED,
+                        el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType()))
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
+                WriterConfig.builder().rowGroupTargetRows(100).build())) {
+            for (int r = 0; r < 200; r++) {
+                String[] pool = pools[r / 100];
+                String first = pool[r % 3];
+                String second = pool[(r + 1) % 3];
+                writer.rowWriter().writeRow(row -> row.setList("tags", list -> list.addString(first).addString(second)));
+            }
+        }
+
+        List<Set<String>> instances = List.of(
+                Collections.newSetFromMap(new IdentityHashMap<>()),
+                Collections.newSetFromMap(new IdentityHashMap<>()));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
+                RowReader rr = reader.rowReader()) {
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(2);
+            int row = 0;
+            while (rr.hasNext()) {
+                rr.next();
+                List<String> tags = rr.getList("tags").strings();
+                assertThat(tags).containsExactly(pools[row / 100][row % 3], pools[row / 100][(row + 1) % 3]);
+                instances.get(row / 100).addAll(tags);
+                row++;
+            }
+            assertThat(row).isEqualTo(200);
+        }
+        assertThat(instances.get(0)).hasSize(3);
+        assertThat(instances.get(1)).hasSize(3);
+    }
+
+    /// A row read whose only string column is a filter-only predicate column still ends its
+    /// batches at row-group boundaries, so each predicate batch draws on one dictionary.
+    @Test
+    void aFilterOnlyStringColumnMakesTheRowReadCutAtRowGroups() throws Exception {
+        String[] pool = { "alpha", "bravo", "charlie" };
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
+                WriterConfig.builder().rowGroupTargetRows(500).build())) {
+            for (int r = 0; r < 2_000; r++) {
+                long id = r;
+                String label = pool[r % 3];
+                writer.rowWriter().writeRow(row -> row.setLong("id", id).setString("label", label));
+            }
+        }
+
+        List<Long> ids = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()));
+                RowReader rows = reader.buildRowReader()
+                        .projection(ColumnProjection.columns("id"))
+                        .filter(FilterPredicate.eq("label", "bravo"))
+                        .build()) {
+            while (rows.hasNext()) {
+                rows.next();
+                ids.add(rows.getLong(0));
+            }
+        }
+        assertThat(ids).hasSize(667).allSatisfy(id -> assertThat(id % 3).isEqualTo(1));
     }
 
     /// The generic and typed `PqMap` key/value accessors return the interned

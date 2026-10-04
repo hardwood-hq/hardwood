@@ -185,6 +185,8 @@ public final class NestedRowReader implements FileAwareRowReader {
         // Nothing here asks a question about the read as a whole, so nothing here plans
         // beyond the first file: statistics reach the reader per row group, on
         // NestedBatch.filterAlwaysMatches (see #1107).
+        boolean endBatchesAtRowGroupBoundaries =
+                ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
         NestedColumnWorker[] workers = new NestedColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -207,6 +209,9 @@ public final class NestedRowReader implements FileAwareRowReader {
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), maxRows,
                     layers, NestedColumnWorker.IndexMode.ALL_ITEMS, fixedListFastPathEnabled);
+            if (endBatchesAtRowGroupBoundaries) {
+                worker.endBatchesAtRowGroupBoundaries();
+            }
 
             buffers[i] = buffer;
             workers[i] = worker;

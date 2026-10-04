@@ -99,7 +99,7 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 - `getBinaryValues()` is not sized to the values: bytes outside every view are unspecified. Consumers bound reads by each value's view, never by `bytes.length`.
 - All three accessors throw `IllegalStateException` on a fixed-width column.
 
-Views are what keep a dictionary-encoded column from costing a byte copy per value. The batch copies each dictionary it draws values from once and records two `int`s per value after that. It appends a dictionary's values until their bytes reach the dictionary's size, and only then copies the dictionary in, so a batch holds at most twice the bytes that appending every value would take, however many dictionaries it spans and however large they are. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
+Views are what keep a dictionary-encoded column from costing a byte copy per value. A batch of binary values ends at its row group's end, so it draws on at most one dictionary. It appends the dictionary's values until their bytes reach the dictionary's size, and only then copies the dictionary in, at most once per batch, recording two `int`s per value after that. A batch therefore holds at most twice the bytes that appending every value would take, however large the dictionary is. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
 
 Layer offsets and binary views are orthogonal: layer offsets say which leaf values belong to a container, binary views say which bytes belong to a leaf value.
 

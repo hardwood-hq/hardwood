@@ -25,6 +25,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - **Behaviour change:** `ColumnReader.getBinaryOffsets()` is replaced by `getBinaryStarts()` and `getBinaryEnds()`, whose ranges into `getBinaryValues()` need not be contiguous or in value order, and a null `FIXED_LEN_BYTE_ARRAY` value's range is empty ([#1416](https://github.com/hardwood-hq/hardwood/issues/1416)).
 
 - `ColumnReader.getDictionaryIds()` and `getBinaryDictionary()` expose the dictionary entry of each value of a dictionary-encoded `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column ([#513](https://github.com/hardwood-hq/hardwood/issues/513)).
+- A `RowReader` returns one shared `String` per dictionary entry in every row group, also where the row-group size is not a multiple of the batch size ([#1199](https://github.com/hardwood-hq/hardwood/issues/1199)).
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
