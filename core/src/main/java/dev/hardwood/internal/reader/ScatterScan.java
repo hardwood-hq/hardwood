@@ -210,7 +210,18 @@ public final class ScatterScan implements AutoCloseable {
         }
     }
 
+    /// SPIKE instrumentation: `System.nanoTime()` of the first occurrence of each event.
+    public static final String[] EVENTS = {"scheduler start", "first dictionary parsed",
+            "first data page submitted", "first task start", "first decompress done", "first decode done",
+            "first batch complete", "first page codec"};
+    public static final AtomicReferenceArray<Object> FIRST = new AtomicReferenceArray<>(EVENTS.length);
+
+    private static void mark(int event) {
+        FIRST.compareAndSet(event, null, System.nanoTime());
+    }
+
     private void schedule() {
+        mark(0);
         try {
             int batchBase = 0;
             for (RowGroup rg : metaData.rowGroups()) {
@@ -254,6 +265,7 @@ public final class ScatterScan implements AutoCloseable {
         switch (header.type()) {
             case DICTIONARY_PAGE -> {
                 cur.dictionary = DictionaryParser.parsePage(header, body, columns[cur.column], cur.meta, context);
+                mark(1);
                 return;
             }
             case DATA_PAGE -> {
@@ -288,7 +300,10 @@ public final class ScatterScan implements AutoCloseable {
         int column = cur.column;
         Dictionary dictionary = cur.dictionary;
         tasksInFlight.incrementAndGet();
+        mark(2);
+        FIRST.compareAndSet(7, null, cur.meta.codec().toString());
         executor.execute(() -> {
+            mark(3);
             try {
                 if (error.get() == null && !closed) {
                     decodePage(column, cur.meta, header, body, dictionary, firstRow, numRows, batchBase);
@@ -310,6 +325,7 @@ public final class ScatterScan implements AutoCloseable {
         DataPageHeader dph = header.dataPageHeader();
         int uncompressed = header.uncompressedPageSize();
         byte[] data = context.decompressorFactory().getDecompressor(meta.codec()).decompress(body, uncompressed);
+        mark(4);
         ColumnSchema schema = columns[column];
         Scratch scratch = SCRATCH.get();
 
@@ -350,6 +366,7 @@ public final class ScatterScan implements AutoCloseable {
             default -> throw new UnsupportedOperationException("spike: encoding " + enc);
         }
 
+        mark(5);
         // Scatter over the batches the page covers. `src` counts non-null values consumed.
         int pageRow = 0;
         int src = 0;
@@ -513,6 +530,7 @@ public final class ScatterScan implements AutoCloseable {
     }
 
     private void complete(Batch batch, int b) {
+        mark(6);
         if (sink == null) {
             batch.ready = true;
             LockSupport.unpark(consumerThread);

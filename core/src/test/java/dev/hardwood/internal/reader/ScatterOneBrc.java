@@ -46,6 +46,7 @@ public final class ScatterOneBrc {
 
     static final long MAIN_NANOS = System.nanoTime();
     static final AtomicLong ROWS = new AtomicLong();
+    static long FOOTER_NANOS;
 
     public static void main(String[] args) throws Exception {
         long entryMs = System.currentTimeMillis()
@@ -97,6 +98,11 @@ public final class ScatterOneBrc {
         for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
             gcCount += gc.getCollectionCount();
             gcMs += gc.getCollectionTime();
+        }
+        for (int e = 0; e < ScatterScan.EVENTS.length; e++) {
+            Object v = ScatterScan.FIRST.get(e);
+            System.err.printf("EVENT %-26s %s%n", ScatterScan.EVENTS[e],
+                    v instanceof Long t ? ((t - MAIN_NANOS) / 1_000_000) + " ms after main" : v);
         }
         System.err.printf("MAIN %d ms%n", (System.nanoTime() - MAIN_NANOS) / 1_000_000);
         System.err.printf("TIMING entry=%d runs=%s gc=%d/%dms jit=%dms%n", entryMs, runTimes, gcCount, gcMs,
@@ -206,6 +212,10 @@ public final class ScatterOneBrc {
             try (InputFile in = InputFile.of(file)) {
                 in.open();
                 md = ParquetMetadataReader.readMetadata(in);
+            }
+            if (FOOTER_NANOS == 0) {
+                FOOTER_NANOS = System.nanoTime();
+                System.err.printf("EVENT %-26s %d ms after main%n", "footer read", (FOOTER_NANOS - MAIN_NANOS) / 1_000_000);
             }
             try (ScatterScan scan = new ScatterScan(file, md, List.of("station", "measurement"), 131066,
                     window, context, b -> {
