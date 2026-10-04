@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
@@ -43,6 +44,9 @@ import dev.hardwood.schema.ColumnProjection;
 /// Args: `file mode threads runs [window]`. Prints the result on stdout, per-run times on stderr.
 public final class ScatterOneBrc {
 
+    static final long MAIN_NANOS = System.nanoTime();
+    static final AtomicLong ROWS = new AtomicLong();
+
     public static void main(String[] args) throws Exception {
         long entryMs = System.currentTimeMillis()
                 - ProcessHandle.current().info().startInstant().orElseThrow().toEpochMilli();
@@ -56,6 +60,20 @@ public final class ScatterOneBrc {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
             for (int run = 0; run < runs; run++) {
                 long t0 = System.nanoTime();
+                ROWS.set(0);
+                StringBuilder progress = new StringBuilder();
+                Thread sampler = Thread.ofPlatform().daemon().start(() -> {
+                    while (!Thread.currentThread().isInterrupted()) {
+                        progress.append(' ').append((System.nanoTime() - t0) / 1_000_000).append(':')
+                                .append(ROWS.get() / 1_000_000);
+                        try {
+                            Thread.sleep(25);
+                        }
+                        catch (InterruptedException e) {
+                            return;
+                        }
+                    }
+                });
                 StationTable table = switch (mode) {
                     case "base" -> base(file, context);
                     case "scatter" -> scatter(file, window, context);
@@ -65,6 +83,10 @@ public final class ScatterOneBrc {
                 };
                 result = table.format();
                 long ms = (System.nanoTime() - t0) / 1_000_000;
+                sampler.interrupt();
+                sampler.join();
+                System.err.printf("PROGRESS run %d (start %d ms after main):%s%n", run + 1,
+                        (t0 - MAIN_NANOS) / 1_000_000, progress);
                 runTimes.append(run == 0 ? "" : ",").append(ms);
                 System.err.printf("%s run %d: %d ms%n", mode, run + 1, ms);
             }
@@ -76,6 +98,7 @@ public final class ScatterOneBrc {
             gcCount += gc.getCollectionCount();
             gcMs += gc.getCollectionTime();
         }
+        System.err.printf("MAIN %d ms%n", (System.nanoTime() - MAIN_NANOS) / 1_000_000);
         System.err.printf("TIMING entry=%d runs=%s gc=%d/%dms jit=%dms%n", entryMs, runTimes, gcCount, gcMs,
                 ManagementFactory.getCompilationMXBean().getTotalCompilationTime());
     }
@@ -189,6 +212,7 @@ public final class ScatterOneBrc {
                         StationTable table = local.get();
                         int[] slotOfEntry = table.slotsFor((Dictionary.ByteArrayDictionary) b.dictionaries[0]);
                         table.addAll(slotOfEntry, (int[]) b.values[0], (double[]) b.values[1], b.rowCount);
+                        ROWS.addAndGet(b.rowCount);
                     })) {
                 scan.awaitCompletion();
             }
