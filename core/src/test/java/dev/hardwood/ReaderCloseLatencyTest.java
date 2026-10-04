@@ -44,7 +44,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// Both consumer shapes have to be covered, because the two `BatchExchange` modes block their
 /// drain thread at *different* points and so are separately breakable. [ColumnReaders] uses
-/// the detaching mode, whose drain blocks in `publish()` on a full ready queue; [RowReader]
+/// the detaching mode, whose drain blocks in `publish()` once its ready queue holds two full
+/// batches' worth of rows; [RowReader]
 /// uses the recycling mode, whose drain blocks in `takeBatch()` on an empty free pool. A
 /// teardown that releases only one of the two looks fixed from one shape and is still broken
 /// from the other.
@@ -70,8 +71,8 @@ class ReaderCloseLatencyTest {
     private static final int COLUMNS = 16;
 
     /// Many more rows than the one batch the test consumes. This is the state the property
-    /// needs: with data still to come, each column's drain thread has filled the two-deep ready
-    /// queue and is blocked — trying to publish a third batch on the column path, or waiting
+    /// needs: with data still to come, each column's drain thread has filled its ready queue and
+    /// is blocked — trying to publish a third batch on the column path, or waiting
     /// for a recycled holder on the row path. A file consumed entirely by the first batch does
     /// not exercise it — the drain reaches EOF and exits on its own before close() is called.
     private static final int ROWS = 200_000;

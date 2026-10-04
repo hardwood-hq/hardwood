@@ -47,7 +47,7 @@ Decode runs only on the context's fixed platform-thread pool (`HardwoodContext.c
 
 **Every wait is bounded.** The retriever's throttle, the drain's wait for a decode task, and the exchange's queue operations on both sides are timed waits; the unparks and the exchange's end-of-stream sentinel make the common case immediate, and the bound guarantees a waiter is released at all. Untimed parks after timed parks on a virtual thread can be stranded by the runtime (JDK-8369227, fixed in 25.0.3 and 26.0.1), leaving a drain parked forever with its page already decoded.
 
-Tests: `ColumnWorkerTest`, `ReaderCloseLatencyTest`, `ReaderEofLatencyTest`, `BatchExchangeTest`.
+Tests: `ColumnWorkerTest`, `ReaderCloseLatencyTest`, `ReaderEofLatencyTest`, `BatchExchangeTest`, `BatchExchangeRowLimitTest`.
 
 ## Per-column pipeline and back-pressure
 
@@ -97,20 +97,22 @@ Tests: `ColumnWorkerTest`, `RecordFilterEventTest`, `FileNameInExceptionTest`, `
 
 ### BatchExchange
 
-The exchange holds a bounded ready queue (drain → consumer) and, in recycling mode, a free queue (consumer → drain):
+The exchange holds a ready queue (drain → consumer) and, in recycling mode, a free queue (consumer → drain):
 
-| Mode | Used by | Batches | Consumer contract |
-|---|---|---|---|
-| Recycling (`BatchExchange.recycling`) | `FlatRowReader`, `NestedRowReader` | A fixed pool of one more holder than the ready queue holds, allocated up front | Returns each batch (`recycle`) when it moves to the next; a batch's arrays are valid until then |
-| Detaching (`BatchExchange.detaching`) | `ColumnCursor` (column readers) | A fresh batch per publish | Owns every batch it takes; the arrays are never reused ([column-reader.md](../docs/content/how-to/column-reader.md#retaining-and-handing-off-batch-arrays)) |
+| Mode | Used by | Batches | Ready-queue limit | Consumer contract |
+|---|---|---|---|---|
+| Recycling (`BatchExchange.recycling`) | `FlatRowReader`, `NestedRowReader` | A fixed pool of one more holder than the ready queue holds, allocated up front | Two batches | Returns each batch (`recycle`) when it moves to the next; a batch's arrays are valid until then |
+| Detaching (`BatchExchange.detaching`) | `ColumnCursor` (column readers) | A fresh batch per publish | Two full batches' worth of rows | Owns every batch it takes; the arrays are never reused ([column-reader.md](../docs/content/how-to/column-reader.md#retaining-and-handing-off-batch-arrays)) |
 
-**Consumer protocol.** `poll()` tries a non-blocking poll first and reads the `finished` flag only after a poll comes back empty, so every batch published before `finish()` is delivered before the end is reported. `finish()` also offers an end-of-stream sentinel, which queues behind every batch and releases a consumer already waiting; it is best effort (a full queue has no room, and then the consumer has batches to take and is not waiting). A `BatchWait` JFR event spans only the timed wait, so its duration is the consumer's stall.
+**Detaching limit.** A batch ends early at a row group or a file ([When a batch closes](#when-a-batch-closes)), so a read over small row groups publishes many short batches. The detaching limit counts rows, so the queue holds what two full batches hold however the batches are cut, and a drain whose batch would take it past that waits until the consumer has taken it down to one full batch's worth. A flat batch counts the rows its arrays were allocated for rather than the rows it holds, since a batch ended at a file or by a row cap keeps full-size arrays; a nested batch's arrays are trimmed to its rows when it is published. Each wake-up of a waiting drain is paid on the consumer's thread; with the limit in rows, a drain is woken once per batch capacity of rows consumed rather than once per batch. A batch of no rows counts as one, so the limit also bounds the number of queued batches.
+
+**Consumer protocol.** `poll()` tries a non-blocking poll first and reads the `finished` flag only after a poll comes back empty, so every batch published before `finish()` is delivered before the end is reported. `finish()` also offers an end-of-stream sentinel, which queues behind every batch and releases a consumer already waiting; it is best effort (the recycling queue, when full, has no room, and then the consumer has batches to take and is not waiting). In detaching mode `finish()` also wakes a drain waiting for room. A `BatchWait` JFR event spans only the timed wait, so its duration is the consumer's stall.
 
 ### Back-pressure chain
 
 ```
 consumer stops polling
-  → ready queue full; drain blocks in publish (recycling: also on an empty free queue)
+  → ready queue at its limit; drain blocks in publish (recycling: also on an empty free queue)
   → decoded pages accumulate in the reorder buffer
   → retriever parks on the throttle
   → PageSource.next() is not called: no further planning, fetching or decode submission for the column

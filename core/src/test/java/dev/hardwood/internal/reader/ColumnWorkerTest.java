@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -724,8 +725,7 @@ class ColumnWorkerTest {
             RowGroupIterator iterator = createIterator(file, schema, context);
             ColumnSchema column = schema.getColumn(0);
 
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                    column.name(), BatchExchange.Batch::new);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 1024);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, 1024,
                     context.decompressorFactory(), context.executor(), 0, null);
@@ -734,16 +734,53 @@ class ColumnWorkerTest {
 
             List<Integer> counts = new ArrayList<>();
             List<Integer> capacities = new ArrayList<>();
+            List<Integer> declaredCapacities = new ArrayList<>();
             BatchExchange.Batch batch;
             while ((batch = exchange.poll()) != null) {
                 counts.add(batch.recordCount);
                 capacities.add(((BinaryBatchValues) batch.values).capacity());
+                declaredCapacities.add(batch.capacity);
             }
             exchange.checkError();
             worker.close();
 
             assertThat(counts).containsExactly(100, 100);
             assertThat(capacities).containsExactly(100, 100);
+            assertThat(declaredCapacities)
+                    .as("the capacity the exchange limits its queue by is the array's")
+                    .containsExactly(100, 100);
+        }
+    }
+
+    /// A batch that ends before it is full keeps the array it was given, and its capacity says so:
+    /// a batch size beyond the file's rows, without the row-group cut, gives one batch holding
+    /// every row in an array of the full batch size. The detaching exchange counts that capacity.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aBatchEndedEarlyDeclaresTheCapacityOfItsArray() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            ColumnSchema column = schema.getColumn(0);
+            int rows = Math.toIntExact(reader.getFileMetaData().rowGroups().stream()
+                    .mapToLong(rg -> rg.numRows()).sum());
+            int batchSize = rows + 1_000;
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(createIterator(TEST_FILE, schema, context), 0), exchange, column, batchSize,
+                    context.decompressorFactory(), context.executor(), 0, null);
+            worker.start();
+
+            BatchExchange.Batch batch = exchange.poll();
+            assertThat(exchange.poll()).as("one batch").isNull();
+            exchange.checkError();
+            worker.close();
+
+            assertThat(batch.recordCount).isEqualTo(rows);
+            assertThat(Array.getLength(batch.values)).isEqualTo(batchSize);
+            assertThat(batch.capacity).isEqualTo(batchSize);
         }
     }
 
@@ -754,8 +791,7 @@ class ColumnWorkerTest {
 
             FileSchema schema = reader.getFileSchema();
             ColumnSchema column = schema.getColumn(0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                    column.name(), BatchExchange.Batch::new);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(createIterator(TEST_FILE, schema, context), 0), exchange, column, 64,
                     context.decompressorFactory(), context.executor(), 0, null);
@@ -781,8 +817,7 @@ class ColumnWorkerTest {
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             FileSchema schema = reader.getFileSchema();
             ColumnSchema column = schema.getColumn(0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                    column.name(), BatchExchange.Batch::new);
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 10);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(createIterator(file, schema, context), 0), exchange, column, 10,
                     context.decompressorFactory(), context.executor(), 0, null);

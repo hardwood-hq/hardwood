@@ -277,6 +277,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(columnSchema, batchSize);
+                        b.capacity = batchSize;
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];
                         }

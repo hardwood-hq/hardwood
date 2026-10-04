@@ -319,7 +319,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         // `finish()` only sets a flag, and a drain blocked inside the exchange is waiting on a
         // queue rather than on that flag: it re-reads it when its 10 ms timed queue operation
         // expires, which close() then inherits through the join below — once per column, since
-        // ColumnReaders closes them one at a time. The interrupt releases it at once. Unparking
+        // ColumnReaders closes them one at a time. The interrupt releases it at once. (A drain of a
+        // detaching exchange waiting for room parks on its own, and `finish()` unparks it; the
+        // interrupt is what releases a recycling drain.) Unparking
         // is not enough on its own: ArrayBlockingQueue's timed operations go through
         // AQS.ConditionObject.awaitNanos, which treats a bare unpark as spurious and re-parks
         // for the remainder of the window. The unpark above is still needed for the drain's
@@ -770,9 +772,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// continuation, so against an untimed `PARKED` it resubmits nothing - and every later `unpark` then
     /// short-circuits on the permit it already set. The thread is parked for good.
     ///
-    /// The drain matches that shape once per iteration: a 10 ms timed queue operation inside
-    /// [BatchExchange] - `readyQueue.offer` when publishing, `freeQueue.poll` when taking a batch, both
-    /// under back-pressure - and then an untimed wait for a decode task's `unpark`, which arrives from the
+    /// The drain matches that shape once per iteration: a 10 ms timed wait inside [BatchExchange] -
+    /// for room when publishing, and on `freeQueue.poll` when taking a batch, both under back-pressure -
+    /// and then an untimed wait for a decode task's `unpark`, which arrives from the
     /// decode executor at an arbitrary instant. Under 64 concurrent readers a drain was found parked
     /// indefinitely with `reorderBuffer[consumePosition]` already holding a decoded page, `done == false`,
     /// no error, zero in-flight decodes and its retriever throttled at exactly `MAX_INFLIGHT_PAGES`

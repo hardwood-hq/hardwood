@@ -27,11 +27,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// [dev.hardwood.ReaderEofLatencyTest].
 class BatchExchangeTest {
 
+    /// Recycling mode bounds its ready queue in batches, so two published batches fill it and
+    /// `finish()` cannot offer its sentinel at all: the consumer reaches the end through the
+    /// `finished` flag.
     @Test
     void deliversEveryQueuedBatchBeforeTheEnd() throws Exception {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
-        Object first = new Object();
-        Object second = new Object();
+        BatchExchange<Object> exchange = BatchExchange.recycling("c", Object::new);
+        Object first = exchange.takeBatch();
+        Object second = exchange.takeBatch();
 
         exchange.publish(first);
         exchange.publish(second);
@@ -47,7 +50,7 @@ class BatchExchangeTest {
     /// room to spare, the sentinel queued behind the batch, and the batch still delivered first.
     @Test
     void queuesTheSentinelBehindABatchRatherThanAheadOfIt() throws Exception {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         Object only = new Object();
 
         exchange.publish(only);
@@ -62,7 +65,7 @@ class BatchExchangeTest {
     /// conclusion from the `finished` flag instead.
     @Test
     void staysEndedOnceItHasEnded() throws Exception {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         exchange.finish();
 
         assertThat(exchange.poll()).as("first poll past the end").isNull();
@@ -106,7 +109,7 @@ class BatchExchangeTest {
     /// that reason, which puts the sentinel in the queue ahead of the throw.
     @Test
     void raisesAnErrorThroughTheEndOfStreamPath() {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         exchange.signalError(new IllegalStateException("decode failed"));
 
         assertThat(exchange.isFinished()).as("an error ends the stream").isTrue();
@@ -120,7 +123,7 @@ class BatchExchangeTest {
     /// column both fail. The first one ended the stream, so it is the one the consumer sees.
     @Test
     void reportsTheFirstOfSeveralErrors() {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         IllegalStateException first = new IllegalStateException("page 3 is corrupt");
         OutOfMemoryError second = new OutOfMemoryError("Java heap space");
         exchange.signalError(first);
@@ -138,7 +141,7 @@ class BatchExchangeTest {
     /// The same throwable signalled twice is raised once, and is not suppressed onto itself.
     @Test
     void reportsARepeatedErrorOnce() {
-        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new);
+        BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         IllegalStateException error = new IllegalStateException("page 3 is corrupt");
         exchange.signalError(error);
         exchange.signalError(error);

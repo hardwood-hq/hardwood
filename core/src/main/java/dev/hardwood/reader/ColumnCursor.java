@@ -78,7 +78,7 @@ final class ColumnCursor {
         if (isNested(layers, column)) {
             // The nested worker publishes its own copy of the values, so a batch is
             // handed out without any.
-            BatchExchange<NestedBatch> exchange = BatchExchange.detaching(column.name(), NestedBatch::new);
+            BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
@@ -91,8 +91,7 @@ final class ColumnCursor {
         }
         // The flat worker gives a batch its values on the batch's first rows, sized to what
         // the row group has left.
-        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detaching(
-                column.name(), BatchExchange.Batch::new);
+        BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), 0, null);

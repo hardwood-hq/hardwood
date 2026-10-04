@@ -176,7 +176,7 @@ Tests: `ColumnReadersTest`, `IteratorTrackingTest`, `PrunedToEmptyReadTest`. The
 
 ## Lifetime and ownership of batch buffers
 
-Column-reader cursors publish through a **detaching** `BatchExchange`: every published batch is freshly allocated and never recycled, and back-pressure comes from the bounded ready queue ([READ_PIPELINE.md](READ_PIPELINE.md)). Every array and `Validity` a `ColumnReader` accessor returns belongs to the current batch and is never reused or overwritten by a later `nextBatch()`, except `Validity.NO_NULLS`; the `BinaryDictionary` from `getBinaryDictionary()` is shared by the batches of one dictionary and its entries never change ([Dictionary ids](#dictionary-ids)). A consumer may keep a returned array after advancing and hand it to another thread. The public contract is stated in the `ColumnReader` JavaDoc and the how-to.
+Column-reader cursors publish through a **detaching** `BatchExchange`: every published batch is freshly allocated and never recycled, and back-pressure comes from a limit on the rows the ready queue holds ([READ_PIPELINE.md](READ_PIPELINE.md#batchexchange)). Every array and `Validity` a `ColumnReader` accessor returns belongs to the current batch and is never reused or overwritten by a later `nextBatch()`, except `Validity.NO_NULLS`; the `BinaryDictionary` from `getBinaryDictionary()` is shared by the batches of one dictionary and its entries never change ([Dictionary ids](#dictionary-ids)). A consumer may keep a returned array after advancing and hand it to another thread. The public contract is stated in the `ColumnReader` JavaDoc and the how-to.
 
 Two mechanisms rely on this ownership and must keep it:
 

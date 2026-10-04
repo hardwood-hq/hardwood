@@ -9,9 +9,14 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
 
 import dev.hardwood.jfr.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
@@ -28,8 +33,17 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// - **Detaching** (`BatchExchange.detaching()`): allocates a fresh batch each time
 ///   the drain needs one via the `batchFactory`. The consumer keeps ownership of each
-///   batch (the arrays are not recycled). Back-pressure comes from the bounded `readyQueue`.
-///   Used by [ColumnReader] where the caller retains the arrays between batches.
+///   batch (the arrays are not recycled). Back-pressure comes from a limit on the rows
+///   the ready queue holds. Used by [ColumnReader] where the caller retains the arrays
+///   between batches.
+///
+/// The detaching limit counts rows rather than batches because a batch can be cut short, at a
+/// row group or a file, and a read over small row groups publishes many short batches. Counted
+/// in batches, the drain would park after every one of them and the consumer would pay a wake-up
+/// for each. Counted in rows, the queue holds what two full batches hold however the batches are
+/// cut, and a drain that found it full is woken only once the consumer has taken it down to one
+/// full batch's worth, so it publishes many short batches per wake-up. A batch counts the rows
+/// its arrays were allocated for, not the rows it holds, so that the limit bounds memory.
 ///
 /// @param <B> the batch type (e.g. [Batch] for flat, [NestedBatch] for nested)
 public class BatchExchange<B> {
@@ -59,6 +73,10 @@ public class BatchExchange<B> {
         public Object values;
         public long[] validity;
         public int recordCount;
+        /// The rows [#values] was allocated for, at least [#recordCount]. A batch ended early,
+        /// at a file or by a row cap, can hold far fewer rows than its arrays have room for, and
+        /// a detaching exchange limits its ready queue by this so that the limit bounds memory.
+        public int capacity;
         public String fileName;
         /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.ColumnBatchMatcher]
         /// on the drain thread when drain-side filtering is enabled. `null` means "no
@@ -78,20 +96,34 @@ public class BatchExchange<B> {
     /// timed poll. See [#finish()] for why offering it can be left to succeed or not.
     private static final Object END_OF_STREAM = new Object();
 
-    private final ArrayBlockingQueue<Object> readyQueue;
+    private final BlockingQueue<Object> readyQueue;
     private final ArrayBlockingQueue<B> freeQueue;
     private final Supplier<B> batchFactory;
     private final String columnName;
 
+    /// Detaching mode only: the rows a batch's arrays were allocated for, the rows the ready
+    /// queue may hold, and the rows it must be down to before a drain waiting for room is woken.
+    /// `null` and zero in recycling mode, where the bounded ready queue and the fixed pool are the
+    /// limit.
+    private final ToIntFunction<B> batchRows;
+    private final long readyRowLimit;
+    private final long drainWakeRows;
+    private final AtomicLong readyRows = new AtomicLong();
+    private final AtomicReference<Thread> waitingDrain = new AtomicReference<>();
+
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     private volatile boolean finished;
 
-    private BatchExchange(String columnName, ArrayBlockingQueue<Object> readyQueue,
-                          ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory) {
+    private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
+                          ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory,
+                          ToIntFunction<B> batchRows, int batchCapacity) {
         this.columnName = columnName;
         this.readyQueue = readyQueue;
         this.freeQueue = freeQueue;
         this.batchFactory = batchFactory;
+        this.batchRows = batchRows;
+        this.readyRowLimit = (long) READY_QUEUE_CAPACITY * batchCapacity;
+        this.drainWakeRows = batchCapacity;
     }
 
     /// Creates a recycling exchange that pre-allocates batch holders.
@@ -111,22 +143,52 @@ public class BatchExchange<B> {
             freeQueue.add(batchFactory.get());
         }
 
-        return new BatchExchange<>(columnName, readyQueue, freeQueue, null);
+        return new BatchExchange<>(columnName, readyQueue, freeQueue, null, null, 0);
     }
 
     /// Creates a detaching exchange that allocates a fresh batch each time.
     ///
     /// The drain calls `batchFactory.get()` for every batch. The consumer owns
     /// each batch after reading — arrays are not recycled. Back-pressure comes
-    /// from the bounded `readyQueue` (capacity 2).
+    /// from the rows the ready queue holds: a publish waits when its batch would
+    /// take the queue past `READY_QUEUE_CAPACITY` full batches' worth, until the
+    /// consumer has taken it down to one full batch's worth.
     ///
     /// @param columnName column name for error messages
     /// @param batchFactory creates a fresh batch on each call
+    /// @param batchRows the rows a batch's arrays were allocated for, at most
+    ///        `batchCapacity`; a batch counts as at least one row
+    /// @param batchCapacity the most rows a batch holds
     /// @param <B> the batch type
     /// @return a detaching [BatchExchange]
-    public static <B> BatchExchange<B> detaching(String columnName, Supplier<B> batchFactory) {
-        ArrayBlockingQueue<Object> readyQueue = new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY);
-        return new BatchExchange<>(columnName, readyQueue, null, batchFactory);
+    public static <B> BatchExchange<B> detaching(String columnName, Supplier<B> batchFactory,
+                                                 ToIntFunction<B> batchRows, int batchCapacity) {
+        if (batchCapacity <= 0) {
+            throw new IllegalArgumentException("Batch capacity must be positive: " + batchCapacity);
+        }
+        return new BatchExchange<>(columnName, new LinkedBlockingQueue<>(), null, batchFactory,
+                batchRows, batchCapacity);
+    }
+
+    /// Creates a detaching exchange for flat batches. A flat batch counts the rows its value
+    /// array was allocated for ([Batch#capacity]), since a batch ended early keeps full-size
+    /// arrays.
+    ///
+    /// @param columnName column name for error messages
+    /// @param batchCapacity the most rows a batch holds
+    /// @return a detaching [BatchExchange] of [Batch]es
+    public static BatchExchange<Batch> detachingFlat(String columnName, int batchCapacity) {
+        return detaching(columnName, Batch::new, batch -> batch.capacity, batchCapacity);
+    }
+
+    /// Creates a detaching exchange for nested batches. A nested batch counts its records, since
+    /// its arrays are trimmed to them when it is published.
+    ///
+    /// @param columnName column name for error messages
+    /// @param batchCapacity the most records a batch holds
+    /// @return a detaching [BatchExchange] of [NestedBatch]es
+    public static BatchExchange<NestedBatch> detachingNested(String columnName, int batchCapacity) {
+        return detaching(columnName, NestedBatch::new, batch -> batch.recordCount, batchCapacity);
     }
 
     /// Returns the column name for error messages.
@@ -161,12 +223,77 @@ public class BatchExchange<B> {
     /// Publishes a filled batch to the consumer. Uses offer with timeout
     /// so the drain can check the `finished` flag periodically.
     public boolean publish(B batch) throws InterruptedException {
+        if (batchRows != null) {
+            return publishWithinRowLimit(batch);
+        }
         while (!readyQueue.offer(batch, 10, TimeUnit.MILLISECONDS)) {
             if (finished) {
                 return false;
             }
         }
         return true;
+    }
+
+    /// Queues the batch, first waiting, if it would take the ready queue past `readyRowLimit`
+    /// rows, until the consumer has taken it down to `drainWakeRows`. A batch holds at most
+    /// `drainWakeRows`, so the queue never holds more than `readyRowLimit`.
+    ///
+    /// The drain announces itself in `waitingDrain` before it reads the row count a last time,
+    /// and the consumer lowers the row count before it reads `waitingDrain`. Both are volatile,
+    /// so at least one of them sees the other: either the drain finds the queue drained and does
+    /// not park, or the consumer finds the drain and unparks it. The park is timed all the same,
+    /// so that a drain checks `finished` and survives a dropped unpark (see the note on
+    /// `ColumnWorker.WAKE_CHECK_NANOS`).
+    private boolean publishWithinRowLimit(B batch) throws InterruptedException {
+        long rows = rowsOf(batch);
+        if (readyRows.get() + rows <= readyRowLimit) {
+            return queue(batch, rows);
+        }
+        while (readyRows.get() > drainWakeRows) {
+            if (finished) {
+                return false;
+            }
+            waitingDrain.set(Thread.currentThread());
+            if (readyRows.get() > drainWakeRows) {
+                LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(10));
+            }
+            waitingDrain.set(null);
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
+        }
+        return queue(batch, rows);
+    }
+
+    private boolean queue(B batch, long rows) {
+        readyRows.addAndGet(rows);
+        readyQueue.offer(batch);
+        return true;
+    }
+
+    /// Accounts for a batch the consumer has taken, and wakes a drain waiting for room once the
+    /// queue is down to `drainWakeRows`. The sentinel and an empty poll are passed through.
+    private Object taken(Object batch) {
+        if (batchRows != null && batch != null && batch != END_OF_STREAM) {
+            @SuppressWarnings("unchecked")
+            long left = readyRows.addAndGet(-rowsOf((B) batch));
+            if (left <= drainWakeRows && waitingDrain.get() != null) {
+                wakeDrain();
+            }
+        }
+        return batch;
+    }
+
+    private void wakeDrain() {
+        Thread drain = waitingDrain.getAndSet(null);
+        if (drain != null) {
+            LockSupport.unpark(drain);
+        }
+    }
+
+    /// A batch of no rows counts as one, so that the row limit also bounds the batches queued.
+    private long rowsOf(B batch) {
+        return Math.max(1, batchRows.applyAsInt(batch));
     }
 
     /// Marks the stream ended, and hands a waiting consumer the sentinel that says so.
@@ -178,15 +305,19 @@ public class BatchExchange<B> {
     ///
     /// The offer is deliberately non-blocking and its result deliberately ignored. A consumer is
     /// only ever left waiting when it found the queue empty, and in that state the offer has room
-    /// and succeeds. It fails only when the queue is full, and a consumer with batches still to
-    /// take is not waiting for anything: by the time it has taken them, `finished` is set and
-    /// [#poll()] returns without waiting at all. So the sentinel removes a delay where there is
+    /// and succeeds. It fails only when the queue is full, which only the recycling mode's bounded
+    /// queue can be, and a consumer with batches still to take is not waiting for anything: by the
+    /// time it has taken them, `finished` is set and [#poll()] returns without waiting at all. So the sentinel removes a delay where there is
     /// one, and where it cannot be delivered there was none to remove.
     ///
     /// Nothing rests on it arriving. The timed poll remains the liveness guarantee.
+    ///
+    /// A drain waiting for room in detaching mode is woken too, so that it reads `finished` now
+    /// rather than when its park expires.
     public void finish() {
         finished = true;
         readyQueue.offer(END_OF_STREAM);
+        wakeDrain();
     }
 
     public boolean isFinished() {
@@ -229,7 +360,7 @@ public class BatchExchange<B> {
     /// because it is only read once a poll has come back empty.
     @SuppressWarnings("unchecked")
     public B poll() throws InterruptedException, IOException {
-        Object batch = readyQueue.poll();
+        Object batch = taken(readyQueue.poll());
         if (batch == END_OF_STREAM) {
             checkError();
             return null;
@@ -238,7 +369,7 @@ public class BatchExchange<B> {
             return (B) batch;
         }
         if (finished) {
-            return (B) drop(readyQueue.poll());
+            return (B) drop(taken(readyQueue.poll()));
         }
         // Past this point the consumer is stalled on the pipeline: the ready
         // queue is empty and the drain has not finished. The event's duration
@@ -246,9 +377,9 @@ public class BatchExchange<B> {
         BatchWaitEvent event = new BatchWaitEvent();
         event.begin();
         try {
-            while ((batch = readyQueue.poll(10, TimeUnit.MILLISECONDS)) == null) {
+            while ((batch = taken(readyQueue.poll(10, TimeUnit.MILLISECONDS))) == null) {
                 if (finished) {
-                    return (B) drop(readyQueue.poll());
+                    return (B) drop(taken(readyQueue.poll()));
                 }
                 checkError();
             }

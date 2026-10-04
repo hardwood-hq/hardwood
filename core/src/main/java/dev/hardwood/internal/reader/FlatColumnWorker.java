@@ -77,6 +77,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     private void allocateValues() {
         currentCapacity = (int) Math.max(1, Math.min(batchCapacity, rowGroupRowsLeft));
         currentBatch.values = BatchExchange.allocateArray(column, currentCapacity);
+        currentBatch.capacity = currentCapacity;
     }
 
     /// Writes the mask a matcher would produce when every record matches: all-ones

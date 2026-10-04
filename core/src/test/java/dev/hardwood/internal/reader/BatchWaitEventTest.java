@@ -32,7 +32,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
 
     @Test
     void stalledConsumerEmitsBatchWaitEventForItsColumn() throws Exception {
-        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch");
+        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch", batch -> 1, 1);
 
         Thread producer = Thread.ofPlatform().start(() -> {
             try {
@@ -60,7 +60,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
 
     @Test
     void consumerServedWithoutWaitingEmitsNoEvent() throws Exception {
-        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch");
+        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch", batch -> 1, 1);
         exchange.publish("batch-1");
 
         assertThat(exchange.poll()).isEqualTo("batch-1");
@@ -73,7 +73,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
 
     @Test
     void drainedFinishedExchangeEmitsNoEvent() throws Exception {
-        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch");
+        BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch", batch -> 1, 1);
         exchange.finish();
 
         assertThat(exchange.poll()).isNull();
