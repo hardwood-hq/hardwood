@@ -76,15 +76,14 @@ import dev.hardwood.writer.WriterConfig;
 ///   what a caller holding records actually pays. The [Instant] objects themselves come from
 ///   the fixture, so their allocation is outside the measured region and only the conversion
 ///   and the pointer chase are inside it.
-/// - parquet-java writes a column index and an offset index per column chunk, which Hardwood
-///   does not produce yet, so its files carry a little metadata Hardwood's do not.
 /// - The Hardwood contenders write into `InMemoryOutputFile` and parquet-java into
 ///   [MemoryOutputFile], which are not the same sink. Both accumulate into a
 ///   `ByteArrayOutputStream`; `InMemoryOutputFile` takes a [ByteBuffer] and appends the
 ///   array behind it, so neither side copies the payload twice on the way to the buffer.
 ///
-/// Everything a caller can match is matched: page target, row-group target, codec, dictionary
-/// encoding, writer version, and page checksums. The dictionary page limit is parquet-java's
+/// Everything a caller can match is matched: page byte and row targets, row-group target, codec,
+/// dictionary encoding, writer version, and page checksums. Both sides write a column index and
+/// an offset index per column chunk. The dictionary page limit is parquet-java's
 /// alone — Hardwood chooses a chunk's encoding by comparing sizes rather than by consulting a
 /// limit, so there is nothing to match it to. The row-group target is an
 /// explicit 16 MiB on both sides so a million rows produces a handful of row groups and the
@@ -123,6 +122,7 @@ public class FlatWriteBenchmark {
     private static final int BATCH_ROWS = 1024;
 
     private static final int PAGE_TARGET_BYTES = 1 << 20;
+    private static final int PAGE_TARGET_ROWS = 20_000;
     private static final long ROW_GROUP_TARGET_BYTES = 16L << 20;
     /// parquet-java's dictionary page limit. Hardwood has no counterpart: it decides a chunk's
     /// encoding by comparing sizes rather than by consulting a limit, so this is one setting the
@@ -187,6 +187,7 @@ public class FlatWriteBenchmark {
         hardwoodSchema = FlatWriteFixture.schema();
         writerConfig = WriterConfig.builder()
                 .pageTargetBytes(PAGE_TARGET_BYTES)
+                .pageTargetRows(PAGE_TARGET_ROWS)
                 .rowGroupBufferTargetBytes(ROW_GROUP_TARGET_BYTES)
                 .codec(CompressionCodec.valueOf(codec))
                 .build();
@@ -388,9 +389,7 @@ public class FlatWriteBenchmark {
                 .withType(parquetJavaSchema)
                 .withCompressionCodec(parquetJavaCodec)
                 .withPageSize(PAGE_TARGET_BYTES)
-                // Hardwood bounds a page by size alone, so parquet-java's 20k-row page cap is
-                // lifted: with it in place the two would not be cutting pages on the same rule.
-                .withPageRowCountLimit(Integer.MAX_VALUE)
+                .withPageRowCountLimit(PAGE_TARGET_ROWS)
                 .withRowGroupSize(ROW_GROUP_TARGET_BYTES)
                 .withDictionaryEncoding(true)
                 .withDictionaryPageSize(PARQUET_JAVA_DICTIONARY_PAGE_LIMIT_BYTES)
