@@ -4764,6 +4764,40 @@ print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, 2 elements per row)"
 print("  - Drives SequentialFetchPlan rep-level walk on a v2 nested column")
 
 # =====================================================================
+# Dictionary-encoded column without a Page Index whose dictionary page
+# (~6 KiB) is longer than the header peek and spans several sequential
+# chunk pieces at small piece sizes. Drives SequentialFetchPlan's
+# dictionary-page read after a header peek that ran past the page start.
+# =====================================================================
+
+DICT_NO_INDEX_ROWS = 2000
+dict_no_index_schema = pa.schema([
+    ('label', pa.string(), False),
+])
+dict_no_index_table = pa.table({
+    'label': [f"label-{i % 250:04d}-{'y' * 12}" for i in range(DICT_NO_INDEX_ROWS)],
+}, schema=dict_no_index_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/misaligned_pages_dict_no_index.parquet',
+    schema=dict_no_index_schema,
+    use_dictionary=True,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=512,
+    write_batch_size=7,
+    write_statistics=True,
+    write_page_index=False,
+)
+writer.write_table(dict_no_index_table)
+writer.close()
+
+print("\nGenerated misaligned_pages_dict_no_index.parquet:")
+print(f"  - 1 row group, {DICT_NO_INDEX_ROWS} rows, Parquet v2, NO ColumnIndex/OffsetIndex")
+print("  - label STRING, dictionary-encoded (250 entries, ~6 KiB dictionary page)")
+print("  - Drives SequentialFetchPlan's dictionary-page read across chunk pieces")
+
+# =====================================================================
 # Dictionary-encoded nested LIST<STRING> column without a Page Index whose
 # footer understates data_page_offset (DuckDB before duckdb/duckdb#10829),
 # once per data page version, plus a v2 variant that omits

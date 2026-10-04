@@ -33,6 +33,7 @@ class SequentialChunkCrossingIoTest {
 
     private static final Path FLAT_FILE = Path.of("src/test/resources/misaligned_pages_no_index.parquet");
     private static final Path NESTED_V2_FILE = Path.of("src/test/resources/misaligned_pages_nested_v2.parquet");
+    private static final Path DICT_FILE = Path.of("src/test/resources/misaligned_pages_dict_no_index.parquet");
     private static final long ROWS = 2_000;
 
     @AfterEach
@@ -51,6 +52,21 @@ class SequentialChunkCrossingIoTest {
 
         assertThat(rows).isEqualTo(ROWS);
         IoBudget.of(FLAT_FILE, List.of("wide"), 0, ROWS).assertWithin(file);
+    }
+
+    /// The dictionary page (about 6.7 KiB) is longer than a piece at either size, and at 300 bytes
+    /// the header peek at its start already spans several pieces before the page is read.
+    @ParameterizedTest
+    @ValueSource(ints = { 300, 4 * 1024 })
+    void dictionaryEncodedReadFetchesEachByteOnce(int pieceSize) throws Exception {
+        System.setProperty(SequentialFetchPlan.CHUNK_SIZE_PROPERTY, String.valueOf(pieceSize));
+        CountingInputFile file = new CountingInputFile(InputFile.of(DICT_FILE));
+        file.open();
+
+        long rows = readAll(file, "label", 0);
+
+        assertThat(rows).isEqualTo(ROWS);
+        IoBudget.of(DICT_FILE, List.of("label"), 0, ROWS).assertWithin(file);
     }
 
     @ParameterizedTest
