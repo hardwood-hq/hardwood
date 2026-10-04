@@ -13,10 +13,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
@@ -24,10 +29,14 @@ import dev.hardwood.reader.BinaryDictionary;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowGroupPredicate;
 import dev.hardwood.schema.ColumnProjection;
 
 /// SPIKE harness: 1BRC over `measurements.parquet`, aggregating by dictionary id on one consumer
 /// thread, through `ColumnReaders` (`base`) or [ScatterScan] (`scatter`).
+///
+/// Modes: `base`, `scatter` (one consumer), `basesplit` (one consumer per byte-range split,
+/// `threads` of them), `scatterpar` (aggregation on the pool thread completing each batch).
 ///
 /// Args: `file mode threads runs [window]`. Prints the result on stdout, per-run times on stderr.
 public final class ScatterOneBrc {
@@ -42,7 +51,13 @@ public final class ScatterOneBrc {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(threads)) {
             for (int run = 0; run < runs; run++) {
                 long t0 = System.nanoTime();
-                StationTable table = mode.equals("base") ? base(file, context) : scatter(file, window, context);
+                StationTable table = switch (mode) {
+                    case "base" -> base(file, context);
+                    case "scatter" -> scatter(file, window, context);
+                    case "basesplit" -> baseSplit(file, threads, context);
+                    case "scatterpar" -> scatterParallel(file, window, context);
+                    default -> throw new IllegalArgumentException(mode);
+                };
                 result = table.format();
                 System.err.printf("%s run %d: %d ms%n", mode, run + 1, (System.nanoTime() - t0) / 1_000_000);
             }
@@ -51,9 +66,40 @@ public final class ScatterOneBrc {
     }
 
     static StationTable base(Path file, HardwoodContextImpl context) throws Exception {
+        return base(file, context, null);
+    }
+
+    private static ParquetFileReader.ColumnReadersBuilder builder(ParquetFileReader reader, RowGroupPredicate split) {
+        ParquetFileReader.ColumnReadersBuilder builder =
+                reader.buildColumnReaders(ColumnProjection.columns("station", "measurement"));
+        return split == null ? builder : builder.filter(split);
+    }
+
+    static StationTable baseSplit(Path file, int splits, HardwoodContextImpl context) throws Exception {
+        long size = file.toFile().length();
+        ExecutorService consumers = Executors.newFixedThreadPool(splits);
+        try {
+            List<Future<StationTable>> parts = new ArrayList<>();
+            for (int s = 0; s < splits; s++) {
+                long from = size * s / splits;
+                long to = size * (s + 1) / splits;
+                parts.add(consumers.submit(() -> base(file, context, RowGroupPredicate.byteRange(from, to))));
+            }
+            StationTable merged = new StationTable();
+            for (Future<StationTable> part : parts) {
+                part.get().mergeInto(merged);
+            }
+            return merged;
+        }
+        finally {
+            consumers.shutdown();
+        }
+    }
+
+    static StationTable base(Path file, HardwoodContextImpl context, RowGroupPredicate split) throws Exception {
         StationTable table = new StationTable();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
-                ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("station", "measurement"))) {
+                ColumnReaders columns = builder(reader, split).build()) {
             ColumnReader station = columns.getColumnReader("station");
             ColumnReader measurement = columns.getColumnReader("measurement");
             BinaryDictionary current = null;
@@ -109,6 +155,36 @@ public final class ScatterOneBrc {
         return table;
     }
 
+    static StationTable scatterParallel(Path path, int window, HardwoodContextImpl context) throws Exception {
+        ConcurrentLinkedQueue<StationTable> tables = new ConcurrentLinkedQueue<>();
+        ThreadLocal<StationTable> local = ThreadLocal.withInitial(() -> {
+            StationTable t = new StationTable();
+            tables.add(t);
+            return t;
+        });
+        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
+            ByteBuffer file = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size());
+            FileMetaData md;
+            try (InputFile in = InputFile.of(file)) {
+                in.open();
+                md = ParquetMetadataReader.readMetadata(in);
+            }
+            try (ScatterScan scan = new ScatterScan(file, md, List.of("station", "measurement"), 131066,
+                    window, context, b -> {
+                        StationTable table = local.get();
+                        int[] slotOfEntry = table.slotsFor((Dictionary.ByteArrayDictionary) b.dictionaries[0]);
+                        table.addAll(slotOfEntry, (int[]) b.values[0], (double[]) b.values[1], b.rowCount);
+                    })) {
+                scan.awaitCompletion();
+            }
+        }
+        StationTable merged = new StationTable();
+        for (StationTable t : tables) {
+            t.mergeInto(merged);
+        }
+        return merged;
+    }
+
     /// Open-addressed table, as in the 1BRC harness's `CalculateAverageColumnReaderDictionary`.
     static final class StationTable {
         private static final int CAPACITY = 1 << 15;
@@ -133,6 +209,36 @@ public final class ScatterOneBrc {
                     return index;
                 }
                 index = (index + 1) & MASK;
+            }
+        }
+
+        private Object lastDictionary;
+        private int[] lastSlots;
+
+        /// Slot per dictionary entry, cached for the dictionary seen last.
+        int[] slotsFor(Dictionary.ByteArrayDictionary dictionary) {
+            if (dictionary != lastDictionary) {
+                byte[] bytes = dictionary.entryBytes();
+                int[] offsets = dictionary.entryOffsets();
+                lastSlots = new int[dictionary.size()];
+                for (int e = 0; e < lastSlots.length; e++) {
+                    lastSlots[e] = slot(bytes, offsets[e], offsets[e + 1]);
+                }
+                lastDictionary = dictionary;
+            }
+            return lastSlots;
+        }
+
+        void mergeInto(StationTable target) {
+            for (int i = 0; i < CAPACITY; i++) {
+                if (keys[i] == null) {
+                    continue;
+                }
+                int t = target.slot(keys[i], 0, keys[i].length);
+                target.min[t] = Math.min(target.min[t], min[i]);
+                target.max[t] = Math.max(target.max[t], max[i]);
+                target.sum[t] += sum[i];
+                target.count[t] += count[i];
             }
         }
 

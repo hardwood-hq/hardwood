@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Consumer;
 
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
@@ -111,7 +112,12 @@ public final class ScatterScan implements AutoCloseable {
     private final AtomicReferenceArray<Batch> ring = new AtomicReferenceArray<>(RING);
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     private final AtomicInteger tasksInFlight = new AtomicInteger();
-    private volatile int consumed;
+    /// Batches handed back: by [#next()] in row order, or by [#sink] as each completes.
+    private final AtomicInteger released = new AtomicInteger();
+    /// Ordered mode only: the consumer's position.
+    private int consumed;
+    /// Unordered mode: runs on the pool thread that completes a batch.
+    private final Consumer<Batch> sink;
     private volatile int totalBatches = -1;
     private volatile boolean closed;
     private volatile Thread consumerThread;
@@ -120,6 +126,14 @@ public final class ScatterScan implements AutoCloseable {
 
     public ScatterScan(ByteBuffer file, FileMetaData metaData, List<String> projection, int batchSize,
                        int window, HardwoodContextImpl context) {
+        this(file, metaData, projection, batchSize, window, context, null);
+    }
+
+    /// With a `sink`, every batch is handed to it on the pool thread that completes it, in no
+    /// particular order, and released when it returns; [#awaitCompletion()] waits for the end.
+    public ScatterScan(ByteBuffer file, FileMetaData metaData, List<String> projection, int batchSize,
+                       int window, HardwoodContextImpl context, Consumer<Batch> sink) {
+        this.sink = sink;
         this.file = file;
         this.metaData = metaData;
         FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
@@ -144,6 +158,7 @@ public final class ScatterScan implements AutoCloseable {
         if (current != null) {
             current = null;
             consumed++;
+            released.incrementAndGet();
             LockSupport.unpark(schedulerThread);
         }
         int seq = consumed;
@@ -255,10 +270,10 @@ public final class ScatterScan implements AutoCloseable {
 
         // Deadlock-free: every batch before firstBatch has all its pages submitted already,
         // so the consumer can reach firstBatch without this page.
-        while (!closed && firstBatch - consumed >= window) {
+        while (!closed && firstBatch - released.get() >= window) {
             LockSupport.parkNanos(PARK_NANOS);
         }
-        if (lastBatch - consumed >= RING) {
+        if (lastBatch - released.get() >= RING) {
             throw new IllegalStateException("spike: page spans more batches than the ring holds");
         }
         for (int b = firstBatch; b <= lastBatch; b++) {
@@ -347,8 +362,7 @@ public final class ScatterScan implements AutoCloseable {
             src = scatter(batch, column, schema.type(), data, offset, indices, dictionary, defs, maxDef,
                     pageRow, dest, len, src);
             if (batch.pendingRows.addAndGet(-len) == 0) {
-                batch.ready = true;
-                LockSupport.unpark(consumerThread);
+                complete(batch, b);
             }
             pageRow += len;
         }
@@ -495,6 +509,35 @@ public final class ScatterScan implements AutoCloseable {
             }
             LONGS.getAndBitwiseOr(words, word, mask);
             i = wordEnd;
+        }
+    }
+
+    private void complete(Batch batch, int b) {
+        if (sink == null) {
+            batch.ready = true;
+            LockSupport.unpark(consumerThread);
+            return;
+        }
+        sink.accept(batch);
+        ring.set(b & (RING - 1), null);
+        released.incrementAndGet();
+        LockSupport.unpark(schedulerThread);
+        LockSupport.unpark(consumerThread);
+    }
+
+    /// Unordered mode: waits until the sink has seen every batch.
+    public void awaitCompletion() {
+        consumerThread = Thread.currentThread();
+        while (true) {
+            Throwable t = error.get();
+            if (t != null) {
+                throw new RuntimeException(t);
+            }
+            int total = totalBatches;
+            if (total >= 0 && released.get() >= total) {
+                return;
+            }
+            LockSupport.parkNanos(PARK_NANOS);
         }
     }
 
