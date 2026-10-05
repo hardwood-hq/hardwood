@@ -73,11 +73,12 @@ Tests: `SdkCredentialsProvidersTest` (aws-auth), and the `*S3CommandIT` classes 
 - Signing key: the HMAC-SHA256 chain over date, region, service and `aws4_request`, seeded with `"AWS4" + secret`.
 - Payload hash: `SHA-256("")` for body-less `GET`; the body's hash for `PUT`. It is sent as `x-amz-content-sha256` and is part of the canonical request.
 - Session token: when present, `x-amz-security-token` is added before signing, so it is covered by the signature; when absent the header is omitted entirely.
+- Host: the signed `host` must equal the host the server receives. `HttpClient` leaves the scheme's default port (80 for `http`, 443 for `https`) out of the HTTP/1.1 `Host` header but keeps it in the HTTP/2 `:authority`, so `S3Api` drops a default port from the endpoint, and no request URI carries one. The signed `host` is the request URI's host and any explicit port.
 - URI encoding: every byte except `A-Za-z0-9-._~` is percent-encoded with upper-case hex; a space is `%20`.
 
 The signing region comes from the source; for S3-compatible services that ignore it, `"auto"` is an arbitrary but valid value. SigV4a (multi-region access points), presigned URLs and streaming (chunked) signatures are not implemented; none of them is needed for body-less range `GET`s.
 
-Tests: `Aws4SignerTest` (s3), which runs the SigV4 conformance vectors of `awslabs/aws-c-auth` (cloned at test time by `SigningTestSuite`) and asserts canonical request, string to sign and signature for each, in both normalization modes and with session tokens.
+Tests: `Aws4SignerTest` (s3), which runs the SigV4 conformance vectors of `awslabs/aws-c-auth` (cloned at test time by `SigningTestSuite`) and asserts canonical request, string to sign and signature for each, in both normalization modes and with session tokens; `S3ApiHostSigningTest` (s3), which verifies the signature of requests to endpoints with no port, a default port and a non-default port against the headers received, and that request URIs carry no default port.
 
 ## S3InputFile
 

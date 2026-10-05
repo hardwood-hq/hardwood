@@ -62,7 +62,7 @@ public final class S3Api {
         this.httpClient = httpClient;
         this.credentialsProvider = credentialsProvider;
         this.region = region;
-        this.endpoint = endpoint;
+        this.endpoint = endpoint != null ? withoutDefaultPort(endpoint) : null;
         this.pathStyle = pathStyle;
         this.requestTimeout = requestTimeout;
         this.maxRetries = maxRetries;
@@ -269,5 +269,27 @@ public final class S3Api {
 
     private static String hostHeader(URI uri) {
         return uri.getHost() + (uri.getPort() > 0 ? ":" + uri.getPort() : "");
+    }
+
+    /// Drops a port equal to the scheme's default from `endpoint`. The JDK
+    /// `HttpClient` leaves a default port out of the HTTP/1.1 `Host` header
+    /// but keeps it in the HTTP/2 `:authority`, so only a request URI
+    /// without one is sent with the same host the request is signed for.
+    private static URI withoutDefaultPort(URI endpoint) {
+        int port = endpoint.getPort();
+        int defaultPort = "https".equalsIgnoreCase(endpoint.getScheme()) ? 443 : 80;
+        if (port != defaultPort) {
+            return endpoint;
+        }
+        String authority = endpoint.getRawAuthority();
+        String hostOnly = authority.substring(0, authority.length() - (":" + port).length());
+        return URI.create(endpoint.getScheme() + "://" + hostOnly
+                + nullToEmpty(endpoint.getRawPath())
+                + (endpoint.getRawQuery() != null ? "?" + endpoint.getRawQuery() : "")
+                + (endpoint.getRawFragment() != null ? "#" + endpoint.getRawFragment() : ""));
+    }
+
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
     }
 }
