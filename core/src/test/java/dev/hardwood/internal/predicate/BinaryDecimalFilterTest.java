@@ -125,8 +125,8 @@ class BinaryDecimalFilterTest {
     @Test
     void aFixedWidthDecimalStaysByteExact() {
         FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        LogicalType.decimal(18, 2))
+                .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(8).logicalType(LogicalType.decimal(18, 2)))
                 .build();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(
                 FilterPredicate.eq("amount", new BigDecimal("1.27")), fixed);
@@ -246,7 +246,7 @@ class BinaryDecimalFilterTest {
     @Test
     void aByteStringPredicateStaysAvailableOnAPlainBinaryColumn() {
         FileSchema plain = FileSchema.builder("schema")
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null)
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.logicalType(null))
                 .build();
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.eq("name", "a"), plain))
@@ -259,14 +259,14 @@ class BinaryDecimalFilterTest {
     private static FileSchema schema() {
         return FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.decimal(18, 2))
+                        c -> c.logicalType(LogicalType.decimal(18, 2)))
                 .build();
     }
 
     private static FileSchema nullableSchema() {
         return FileSchema.builder("schema")
                 .addColumn("amount", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        LogicalType.decimal(18, 2))
+                        c -> c.logicalType(LogicalType.decimal(18, 2)))
                 .build();
     }
 

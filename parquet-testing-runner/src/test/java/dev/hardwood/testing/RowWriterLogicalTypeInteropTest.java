@@ -200,10 +200,10 @@ class RowWriterLogicalTypeInteropTest {
         FileSchema.Builder builder = FileSchema.builder("row-logical");
         if (testCase.typeLength() == null) {
             return builder.addColumn(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
-                    testCase.annotation()).build();
+                    c -> c.logicalType(testCase.annotation())).build();
         }
         return builder.addColumn(COLUMN, testCase.physicalType(), RepetitionType.REQUIRED,
-                testCase.typeLength(), testCase.annotation()).build();
+                c -> c.typeLength(testCase.typeLength()).logicalType(testCase.annotation())).build();
     }
 
     /// The stored value as parquet-java hands it back, without any logical-type decoding.

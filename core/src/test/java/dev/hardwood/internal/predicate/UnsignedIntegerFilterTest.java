@@ -99,7 +99,7 @@ class UnsignedIntegerFilterTest {
     void aSignedColumnIsUnaffected() throws Exception {
         FileSchema signed = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        new LogicalType.IntType(32, true))
+                        c -> c.logicalType(new LogicalType.IntType(32, true)))
                 .build();
 
         assertThat(FilterPredicateResolver.resolve(FilterPredicate.gt("v", SEVEN), signed))
@@ -139,7 +139,7 @@ class UnsignedIntegerFilterTest {
         for (int bitWidth : new int[] { 8, 16, 32 }) {
             FileSchema narrow = FileSchema.builder("schema")
                     .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                            new LogicalType.IntType(bitWidth, false))
+                            c -> c.logicalType(new LogicalType.IntType(bitWidth, false)))
                     .build();
 
             assertThat(FilterPredicateResolver.resolve(FilterPredicate.gt("v", SEVEN), narrow))
@@ -219,7 +219,7 @@ class UnsignedIntegerFilterTest {
         FileSchema nested = FileSchema.builder("schema")
                 .struct("s", RepetitionType.REQUIRED, s -> s
                         .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                                new LogicalType.IntType(32, false)))
+                                c -> c.logicalType(new LogicalType.IntType(32, false))))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -249,9 +249,9 @@ class UnsignedIntegerFilterTest {
     void anUnsignedColumnOrdersUnsignedOnTheRecordPath() throws Exception {
         FileSchema mixed = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        new LogicalType.IntType(32, false))
+                        c -> c.logicalType(new LogicalType.IntType(32, false)))
                 .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.string())
+                        c -> c.logicalType(LogicalType.string()))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -289,14 +289,14 @@ class UnsignedIntegerFilterTest {
     private static FileSchema schema() {
         return FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        new LogicalType.IntType(32, false))
+                        c -> c.logicalType(new LogicalType.IntType(32, false)))
                 .build();
     }
 
     private static FileSchema longSchema() {
         return FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        new LogicalType.IntType(64, false))
+                        c -> c.logicalType(new LogicalType.IntType(64, false)))
                 .build();
     }
 

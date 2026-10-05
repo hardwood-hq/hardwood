@@ -54,8 +54,10 @@ class WriterReaderSymmetryTest {
     @Test
     void fullWidthUnsignedValuesKeepTheirBitPattern() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(32, false))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false))
+                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.intType(32, false)))
+                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.intType(64, false)))
                 .build();
 
         InMemoryOutputFile out = write(schema, batch -> batch
@@ -257,13 +259,14 @@ class WriterReaderSymmetryTest {
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", type, RepetitionType.REQUIRED, logicalType)
+                .addColumn("v", type, RepetitionType.REQUIRED, c -> c.logicalType(logicalType))
                 .build();
     }
 
     private static FileSchema fixed(int typeLength, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, typeLength, logicalType)
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(typeLength).logicalType(logicalType))
                 .build();
     }
 

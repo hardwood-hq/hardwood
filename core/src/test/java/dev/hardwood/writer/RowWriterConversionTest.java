@@ -114,7 +114,7 @@ class RowWriterConversionTest {
     @Test
     void binaryOfTheWrongLengthForAFixedColumnIsRejected() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4))
                 .build();
 
         assertThatThrownBy(() -> write(schema, row -> row.setBinary("v", new byte[] { 1, 2, 3 })))
@@ -125,8 +125,8 @@ class RowWriterConversionTest {
     @Test
     void intervalComponentOutsideTheUnsignedRangeIsRejected() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        LogicalType.interval())
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(LogicalType.interval()))
                 .build();
 
         assertThatThrownBy(() -> write(schema, row -> row.setInterval("v", new PqInterval(-1, 0, 0))))
@@ -199,7 +199,7 @@ class RowWriterConversionTest {
         FileSchema decimal = single(PhysicalType.INT64, LogicalType.decimal(5, 2));
         FileSchema narrowInt = single(PhysicalType.INT32, LogicalType.intType(8, true));
         FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4))
                 .build();
 
         assertThatThrownBy(() -> write(decimal, truncating(), row -> row.setDecimal("v", new BigDecimal("12345.67"))))
@@ -296,8 +296,8 @@ class RowWriterConversionTest {
     @Test
     void negativeDecimalOnAFixedColumnSurvives() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        LogicalType.decimal(18, 3))
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(8).logicalType(LogicalType.decimal(18, 3)))
                 .build();
 
         InMemoryOutputFile out = write(schema, row -> row.setDecimal("v", new BigDecimal("-42.125")));
@@ -373,8 +373,8 @@ class RowWriterConversionTest {
     @Test
     void uuidRoundTripsThroughItsSixteenBytes() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        LogicalType.uuid())
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(16).logicalType(LogicalType.uuid()))
                 .build();
         UUID id = UUID.fromString("00112233-4455-6677-8899-aabbccddeeff");
 
@@ -389,7 +389,7 @@ class RowWriterConversionTest {
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", type, RepetitionType.REQUIRED, logicalType)
+                .addColumn("v", type, RepetitionType.REQUIRED, c -> c.logicalType(logicalType))
                 .build();
     }
 

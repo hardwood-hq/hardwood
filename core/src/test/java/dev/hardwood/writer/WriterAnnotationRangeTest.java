@@ -188,7 +188,8 @@ class WriterAnnotationRangeTest {
     @Test
     void theValueAtANullRowIsNotChecked() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.intType(8, false))
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(LogicalType.intType(8, false)))
                 .build();
 
         InMemoryOutputFile out = writeBatch(schema, batch -> batch.ints(0, new int[] { 300, 5 },
@@ -208,8 +209,8 @@ class WriterAnnotationRangeTest {
     void aBinaryDecimalRejectsAnUnscaledValueBeyondItsPrecision() {
         FileSchema variable = single(PhysicalType.BYTE_ARRAY, LogicalType.decimal(4, 0));
         FileSchema fixed = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2,
-                        LogicalType.decimal(4, 0))
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(2).logicalType(LogicalType.decimal(4, 0)))
                 .build();
         byte[] tooLarge = { 0x30, 0x39 };      // 12345, five digits against a declared four
 
@@ -279,7 +280,7 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                LogicalType.decimal(1, 0)))
+                                c -> c.logicalType(LogicalType.decimal(1, 0))))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -320,7 +321,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnHoldsOnlyNulls() {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, c -> c.logicalType(LogicalType.nullType()))
                 .build();
 
         assertThatThrownBy(() -> writeBatch(schema, batch -> batch.ints(0, new int[] { 7 })))
@@ -342,7 +343,7 @@ class WriterAnnotationRangeTest {
     @Test
     void anUnknownColumnTakesItsNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType())
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, c -> c.logicalType(LogicalType.nullType()))
                 .build();
 
         InMemoryOutputFile out = writeBatch(schema,
@@ -365,7 +366,8 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
+                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                c -> c.logicalType(LogicalType.nullType())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -390,7 +392,8 @@ class WriterAnnotationRangeTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
-                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
+                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                                c -> c.logicalType(LogicalType.nullType())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -414,7 +417,7 @@ class WriterAnnotationRangeTest {
     void anUnknownListElementHoldsOnlyNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.nullType()))
+                        PhysicalType.INT32, RepetitionType.OPTIONAL, c -> c.logicalType(LogicalType.nullType())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -503,9 +506,9 @@ class WriterAnnotationRangeTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, s -> s
                         .addColumn("req", PhysicalType.INT32, RepetitionType.REQUIRED,
-                                LogicalType.intType(8, false))
+                                c -> c.logicalType(LogicalType.intType(8, false)))
                         .addColumn("opt", PhysicalType.INT32, RepetitionType.OPTIONAL,
-                                LogicalType.intType(8, false)))
+                                c -> c.logicalType(LogicalType.intType(8, false))))
                 .build();
     }
 
@@ -554,12 +557,12 @@ class WriterAnnotationRangeTest {
     // ==================== Helpers ====================
 
     private static ColumnSchema column(PhysicalType type, Integer typeLength, LogicalType logicalType) {
-        return new ColumnSchema(FieldPath.of("v"), type, RepetitionType.REQUIRED, typeLength, 0, 0, 0, logicalType);
+        return new ColumnSchema(FieldPath.of("v"), type, RepetitionType.REQUIRED, typeLength, 0, 0, 0, logicalType, null);
     }
 
     private static FileSchema single(PhysicalType type, LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", type, RepetitionType.REQUIRED, logicalType)
+                .addColumn("v", type, RepetitionType.REQUIRED, c -> c.logicalType(logicalType))
                 .build();
     }
 

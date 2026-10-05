@@ -85,7 +85,8 @@ class WriterParallelEncodingTest {
     void writesTheSameRowsWhateverThePoolDoes() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        column -> column.logicalType(new LogicalType.StringType()))
                 .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .build();
         WriterConfig config = WriterConfig.builder().rowGroupTargetRows(5_000).build();
@@ -370,7 +371,8 @@ class WriterParallelEncodingTest {
     private static FileSchema schema() {
         return FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        column -> column.logicalType(new LogicalType.StringType()))
                 .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
                 .addColumn("flag", PhysicalType.BOOLEAN, RepetitionType.OPTIONAL)
                 .list("tags", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))

@@ -46,7 +46,7 @@ class RequiredStructPredicateTest {
                 .struct("r", RepetitionType.REQUIRED, r -> r
                         .addColumn("key", PhysicalType.INT64, RepetitionType.REQUIRED)
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.StringType()))
+                                c -> c.logicalType(new LogicalType.StringType())))
                 .struct("o", RepetitionType.OPTIONAL, o -> o
                         .addColumn("v", PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();

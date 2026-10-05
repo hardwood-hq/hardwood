@@ -20,6 +20,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - The native CLI is no longer published for macOS on Intel; on those machines the CLI runs from the Docker image ([#1606](https://github.com/hardwood-hq/hardwood/issues/1606))
 - `InMemoryOutputFile.create()`, `close()` and `discard()` declare `IOException`, and `position()` throws `IllegalStateException` after `close()`; `buffer().remaining()` gives the file's length ([#1747](https://github.com/hardwood-hq/hardwood/issues/1747))
 - `WriterConfig.Builder.codec(CompressionCodec)` is replaced by `compression(Compression)`, the getter `codec()` by `compression()`, and `WriterConfig.DEFAULT_CODEC` by `DEFAULT_COMPRESSION` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
+- `FileSchema.Builder` takes a column's logical type and type length, and a map key's, on a `ColumnBuilder` lambda (`addColumn(name, type, repetition, column -> column.logicalType(...))`) instead of positional overloads ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
 
 **Deprecations:**
 
@@ -45,6 +46,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - `Compression` sets the writer's compression level for `ZSTD`, `GZIP`, `BROTLI` and `LZ4_RAW`, as in `Compression.zstd().level(9)` ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `WriterConfig.Builder.sortingColumns` declares the order rows are sorted in; each row group records it as `sorting_columns`, and a row out of that order fails the write ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - `WriterConfig.Builder.dataPageVersion(DataPageVersion.V2)` writes every data page as `DATA_PAGE_V2` ([#1820](https://github.com/hardwood-hq/hardwood/issues/1820))
+- A schema element's `field_id` is exposed on `SchemaNode` and `ColumnSchema`, survives a read-then-rewrite, and can be declared through `FileSchema.Builder` ([#957](https://github.com/hardwood-hq/hardwood/issues/957))
 - `StructBuilder.setValue` writes a field from a value in the form `getValue` returns, so rows can be copied without switching on field types ([#1530](https://github.com/hardwood-hq/hardwood/issues/1530))
 - A filtered `ColumnReader` or `ColumnReaders` returns no batch without rows: `nextBatch()` passes over the batches the filter keeps no row of ([#1815](https://github.com/hardwood-hq/hardwood/issues/1815))
 

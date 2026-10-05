@@ -251,7 +251,7 @@ class WriterDictionaryDecisionAuditTest {
         }
         RepetitionType repetition = shape == Shape.OPTIONAL ? RepetitionType.OPTIONAL : RepetitionType.REQUIRED;
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return schema.addColumn("v", type, repetition, Long.BYTES).build();
+            return schema.addColumn("v", type, repetition, column -> column.typeLength(Long.BYTES)).build();
         }
         return schema.addColumn("v", type, repetition).build();
     }

@@ -146,7 +146,7 @@ class StoredValuesInPlaceTest {
         static final int LISTS = 16;
 
         final ColumnSchema column = new ColumnSchema(FieldPath.of("c", "list", "element"), PhysicalType.FLOAT,
-                RepetitionType.REQUIRED, null, 0, 2, 1, null);
+                RepetitionType.REQUIRED, null, 0, 2, 1, null, null);
         final float[] values = new float[LISTS * 2];
         final int[] repetition = new int[values.length];
         final int[] definition = new int[values.length];

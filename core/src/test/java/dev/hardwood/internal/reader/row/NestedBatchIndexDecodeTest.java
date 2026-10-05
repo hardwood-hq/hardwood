@@ -47,7 +47,7 @@ class NestedBatchIndexDecodeTest {
     }
 
     private static SchemaNode.PrimitiveNode leaf() {
-        return new SchemaNode.PrimitiveNode("i8", PhysicalType.INT32, RepetitionType.REQUIRED, INT_8, 0, 0, 0);
+        return new SchemaNode.PrimitiveNode("i8", PhysicalType.INT32, RepetitionType.REQUIRED, INT_8, 0, 0, 0, null);
     }
 
     private static NestedBatchIndex int8Batch(int... values) {
@@ -58,7 +58,7 @@ class NestedBatchIndexDecodeTest {
         col.definitionLevels = new int[values.length];
         col.fileName = "nested.parquet";
         ColumnSchema schema = new ColumnSchema(FieldPath.of("s", "i8"), PhysicalType.INT32,
-                RepetitionType.REQUIRED, null, 0, 0, 0, INT_8);
+                RepetitionType.REQUIRED, null, 0, 0, 0, INT_8, null);
         return NestedBatchIndex.buildFromBatches(new NestedBatch[] { col }, new ColumnSchema[] { schema },
                 null, null, null);
     }

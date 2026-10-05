@@ -253,7 +253,8 @@ class DictionaryStringReuseTest {
         String[][] pools = { { "alpha", "bravo", "charlie" }, { "delta", "echo", "foxtrot" } };
         FileSchema schema = FileSchema.builder("schema")
                 .list("tags", RepetitionType.REQUIRED,
-                        el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType()))
+                        el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.logicalType(new LogicalType.StringType())))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,
@@ -293,7 +294,8 @@ class DictionaryStringReuseTest {
         String[] pool = { "alpha", "bravo", "charlie" };
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,

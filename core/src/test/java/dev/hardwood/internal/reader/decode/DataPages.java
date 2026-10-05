@@ -48,19 +48,19 @@ public final class DataPages {
     ///
     /// @param typeLength the column's value width for `FIXED_LEN_BYTE_ARRAY`, `null` otherwise
     public static ColumnSchema required(PhysicalType type, Integer typeLength) {
-        return new ColumnSchema(FieldPath.of("c"), type, RepetitionType.REQUIRED, typeLength, 0, 0, 0, null);
+        return new ColumnSchema(FieldPath.of("c"), type, RepetitionType.REQUIRED, typeLength, 0, 0, 0, null, null);
     }
 
     /// An optional column `c` of `type`: definition levels of one bit, no repetition.
     public static ColumnSchema optional(PhysicalType type, Integer typeLength) {
-        return new ColumnSchema(FieldPath.of("c"), type, RepetitionType.OPTIONAL, typeLength, 0, 1, 0, null);
+        return new ColumnSchema(FieldPath.of("c"), type, RepetitionType.OPTIONAL, typeLength, 0, 1, 0, null, null);
     }
 
     /// A list's element `c.list.element` of `type`: an optional list of optional elements,
     /// repetition levels of one bit and definition levels of two.
     static ColumnSchema repeated(PhysicalType type, Integer typeLength) {
         return new ColumnSchema(FieldPath.of("c", "list", "element"), type, RepetitionType.OPTIONAL, typeLength, 0,
-                3, 1, null);
+                3, 1, null, null);
     }
 
     /// The RLE/bit-packed hybrid encoding of `levels` at the bit width of `maxLevel`, without a

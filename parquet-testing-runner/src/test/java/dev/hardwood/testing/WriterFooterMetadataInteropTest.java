@@ -17,6 +17,8 @@ import java.util.Map;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.format.ColumnOrder;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.MessageType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,7 +32,7 @@ import dev.hardwood.writer.ParquetFileWriter;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The interop gate over the footer fields a value comparison cannot see: `key_value_metadata`,
-/// `created_by` and `column_orders`. What Hardwood stamps on a file is what an independent
+/// `created_by`, `column_orders` and the schema elements' `field_id`. What Hardwood stamps on a file is what an independent
 /// implementation reads back out of it.
 ///
 /// These are the fields Hardwood's own round trip cannot vouch for. `key_value_metadata` carries
@@ -73,6 +75,44 @@ class WriterFooterMetadataInteropTest {
                 .isNotNull()
                 .hasSameSizeAs(columns)
                 .allSatisfy(order -> assertThat(order.isSetTYPE_ORDER()).isTrue());
+    }
+
+    /// `field_id` is how Iceberg and Delta Lake resolve a column, so the consumer that has to find
+    /// it is a table format reading through parquet-java, never Hardwood.
+    @Test
+    void parquetJavaReadsTheFieldIdsHardwoodWrote(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("field-ids.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, column -> column.fieldId(1))
+                .struct("person", RepetitionType.OPTIONAL, person -> person.fieldId(2)
+                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                column -> column.logicalType(LogicalType.string()).fieldId(3)))
+                .list("tags", RepetitionType.OPTIONAL, element -> element.fieldId(4)
+                        .primitive(PhysicalType.INT32, RepetitionType.OPTIONAL, column -> column.fieldId(5)))
+                .map("attributes", RepetitionType.OPTIONAL, PhysicalType.INT32, key -> key.fieldId(7),
+                        value -> value.fieldId(6)
+                                .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, column -> column.fieldId(8)))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setLong("id", 1L));
+        }
+
+        MessageType read = ParquetJavaReader.readFooter(file).getFileMetaData().getSchema();
+        GroupType tags = read.getType("tags").asGroupType();
+        GroupType keyValue = read.getType("attributes").asGroupType().getType("key_value").asGroupType();
+        assertThat(List.of(
+                read.getType("id"),
+                read.getType("person"),
+                read.getType("person").asGroupType().getType("name"),
+                tags,
+                tags.getType("list").asGroupType().getType("element"),
+                read.getType("attributes"),
+                keyValue.getType("key"),
+                keyValue.getType("value")))
+                .extracting(type -> type.getId().intValue())
+                .containsExactly(1, 2, 3, 4, 5, 6, 7, 8);
+        assertThat(tags.getType("list").getId()).isNull();
+        assertThat(keyValue.getId()).isNull();
     }
 
     @Test
@@ -150,7 +190,7 @@ class WriterFooterMetadataInteropTest {
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .struct("person", RepetitionType.REQUIRED, person -> person
                         .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                LogicalType.string())
+                                c -> c.logicalType(LogicalType.string()))
                         .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
                 .addColumn("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
                 .build();

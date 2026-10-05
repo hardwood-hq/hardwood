@@ -33,8 +33,10 @@ import java.time.LocalDate;
 
 FileSchema schema = FileSchema.builder("person")
         .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
-        .addColumn("hired", PhysicalType.INT32, RepetitionType.OPTIONAL, LogicalType.date())
+        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                column -> column.logicalType(LogicalType.string()))
+        .addColumn("hired", PhysicalType.INT32, RepetitionType.OPTIONAL,
+                column -> column.logicalType(LogicalType.date()))
         .build();
 
 try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("people.parquet")), schema)) {
@@ -124,12 +126,15 @@ Nesting is entered with a filler per level. Fields are addressed by their user-v
 FileSchema schema = FileSchema.builder("person")
         .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
         .struct("address", RepetitionType.OPTIONAL, address -> address
-                .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
-                .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
+                .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        column -> column.logicalType(LogicalType.string()))
+                .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        column -> column.logicalType(LogicalType.string())))
         .list("phones", RepetitionType.OPTIONAL,
                 element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.string()))
-        .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                        column -> column.logicalType(LogicalType.string())))
+        .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                key -> key.logicalType(LogicalType.string()),
                 value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
         .build();
 

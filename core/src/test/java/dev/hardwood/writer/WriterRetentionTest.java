@@ -207,7 +207,7 @@ class WriterRetentionTest {
         FileSchema.Builder schema = FileSchema.builder("schema");
         for (int c = 0; c < WIDE_SCHEMA_COLUMNS; c++) {
             if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, 8);
+                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, column -> column.typeLength(8));
             }
             else {
                 schema.addColumn("c" + c, type, RepetitionType.REQUIRED);

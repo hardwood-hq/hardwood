@@ -46,7 +46,7 @@ class ShortNestedColumnChunkTest {
                         struct -> struct
                                 .addColumn("a", PhysicalType.INT32, RepetitionType.OPTIONAL)
                                 .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                                        LogicalType.string())))
+                                        column -> column.logicalType(LogicalType.string()))))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {

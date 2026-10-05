@@ -96,8 +96,9 @@ class Flba12TimestampTest {
         Path written = dir.resolve("flba12_timestamp.parquet");
         FileSchema.Builder schema = FileSchema.builder("flba12_timestamp");
         for (String column : COLUMNS) {
-            schema.addColumn(column, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 12,
-                    fixtureLogicalType(column));
+            LogicalType logicalType = fixtureLogicalType(column);
+            schema.addColumn(column, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                    c -> c.typeLength(12).logicalType(logicalType));
         }
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(written), schema.build(),
                 WriterConfig.defaults())) {
