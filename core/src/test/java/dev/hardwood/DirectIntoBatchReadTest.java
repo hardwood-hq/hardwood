@@ -15,7 +15,6 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -124,7 +123,7 @@ class DirectIntoBatchReadTest {
             floats[r] = r + 0.25f;
             nulls[r] = r % 5 == 0;
         }
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
             writer.columnWriter().writeBatch(batch -> {
                 batch.doubles(0, doubles);
@@ -133,7 +132,7 @@ class DirectIntoBatchReadTest {
                 }
             });
         }
-        return out.toByteArray();
+        return InMemoryFiles.toByteArray(out);
     }
 
     private static double[] expectedDoubles() {

@@ -127,7 +127,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
         // cursor.valuesLeft is the total page size; drain it into the batch(es)
         while (cursor.valuesLeft > 0 && !done) {
-            int spaceInBatch = batchCapacity - rowsInCurrentBatch;
+            if (currentBatch.values == null) {
+                allocateValues();
+            }
+            int spaceInBatch = currentCapacity - rowsInCurrentBatch;
             int count = Math.min(spaceInBatch, cursor.valuesLeft);
 
             // Respect the active row cap
@@ -148,7 +151,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             rowsInCurrentBatch += count;
             totalRowsAssembled += count;
 
-            if (rowsInCurrentBatch >= batchCapacity) {
+            if (rowsInCurrentBatch >= currentCapacity) {
                 publishCurrentBatch();
                 if (done) {
                     return;
