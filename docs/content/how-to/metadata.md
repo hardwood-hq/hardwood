@@ -58,6 +58,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
         System.out.println("Column " + i + ": " + column.name()
             + " (" + column.type() + ", " + column.repetitionType()
             + (column.logicalType() != null ? ", " + column.logicalType() : "")
+            + (column.fieldId() != null ? ", field id " + column.fieldId() : "")
             + ")");
     }
 

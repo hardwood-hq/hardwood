@@ -91,7 +91,8 @@ class FilterOnlyColumnSkipTest {
         FileSchema flat = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("amount", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .addColumn("bucket", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(flatFixture), flat, config)) {

@@ -161,7 +161,8 @@ class PrintCommandTest implements PrintCommandContract {
     private static Path writeControlCharactersFile(Path tempDir) throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.string()))
                 .build();
         Path file = tempDir.resolve("control_characters.parquet");
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {

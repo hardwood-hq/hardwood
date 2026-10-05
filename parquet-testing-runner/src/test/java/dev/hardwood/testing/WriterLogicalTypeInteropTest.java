@@ -193,8 +193,10 @@ class WriterLogicalTypeInteropTest {
     @Test
     void unsignedIntegerBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.intType(32, false))
-                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED, LogicalType.intType(64, false))
+                .addColumn("i", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.intType(32, false)))
+                .addColumn("l", PhysicalType.INT64, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.intType(64, false)))
                 .build();
 
         // -1 is 4294967295 / 18446744073709551615 read unsigned, so it is the maximum of each.
@@ -216,8 +218,8 @@ class WriterLogicalTypeInteropTest {
     @Test
     void binaryDecimalBoundsUseSignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
-                .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2,
-                        LogicalType.decimal(4, 0))
+                .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(2).logicalType(LogicalType.decimal(4, 0)))
                 .build();
 
         byte[] one = { 0x00, 0x01 };
@@ -244,7 +246,7 @@ class WriterLogicalTypeInteropTest {
     void stringBoundsUseUnsignedOrder(@TempDir Path dir) throws IOException {
         FileSchema schema = FileSchema.builder("annotated")
                 .addColumn(COLUMN, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                        LogicalType.string())
+                        c -> c.logicalType(LogicalType.string()))
                 .build();
 
         byte[] ascii = bytes("a");
@@ -262,11 +264,12 @@ class WriterLogicalTypeInteropTest {
     private Path write(Path dir, Annotated annotated) throws IOException {
         FileSchema schema = annotated.typeLength() == null
                 ? FileSchema.builder("annotated")
-                        .addColumn(COLUMN, annotated.physicalType(), annotated.repetition(), annotated.hardwood())
+                        .addColumn(COLUMN, annotated.physicalType(), annotated.repetition(),
+                                c -> c.logicalType(annotated.hardwood()))
                         .build()
                 : FileSchema.builder("annotated")
                         .addColumn(COLUMN, annotated.physicalType(), annotated.repetition(),
-                                annotated.typeLength(), annotated.hardwood())
+                                c -> c.typeLength(annotated.typeLength()).logicalType(annotated.hardwood()))
                         .build();
 
         return write(dir, schema, annotated::fill);

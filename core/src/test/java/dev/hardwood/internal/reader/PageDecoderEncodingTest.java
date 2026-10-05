@@ -147,7 +147,7 @@ class PageDecoderEncodingTest {
 
     private static Page decode(Encoding encoding, PhysicalType type, byte[] body) throws Exception {
         ColumnSchema column = new ColumnSchema(FieldPath.of("c"), type, RepetitionType.REQUIRED,
-                type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? FIXED_LENGTH : null, 0, 0, 0, null);
+                type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? FIXED_LENGTH : null, 0, 0, 0, null, null);
         ColumnMetaData metaData = new ColumnMetaData(type, List.of(encoding), FieldPath.of("c"),
                 CompressionCodec.UNCOMPRESSED, NUM_VALUES, 0, 0, Map.of(), 0, null, null, null,
                 null, null, List.of(), null);

@@ -23,6 +23,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 - **Behaviour change:** building an `AvroRowReader` over a schema the Avro binding rejects throws `SchemaIncompatibleException` for a malformed schema and `UnsupportedOperationException` for a valid one it cannot map, instead of `IllegalArgumentException` ([#1370](https://github.com/hardwood-hq/hardwood/issues/1370)).
 - **Behaviour change:** a `ColumnReader` batch ends at every row-group boundary when the read includes a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column ([#513](https://github.com/hardwood-hq/hardwood/issues/513)).
 - **Behaviour change:** `ColumnReader.getBinaryOffsets()` is replaced by `getBinaryStarts()` and `getBinaryEnds()`, whose ranges into `getBinaryValues()` need not be contiguous or in value order, and a null `FIXED_LEN_BYTE_ARRAY` value's range is empty ([#1416](https://github.com/hardwood-hq/hardwood/issues/1416)).
+- **Behaviour change:** `FileSchema.Builder` takes a column's logical type and type length, and a map key's, on a `ColumnBuilder` lambda (`addColumn(name, type, repetition, column -> column.logicalType(...))`) instead of positional overloads ([#957](https://github.com/hardwood-hq/hardwood/issues/957)).
 
 - `ColumnReader.getDictionaryIds()` and `getBinaryDictionary()` expose the dictionary entry of each value of a dictionary-encoded `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` column ([#513](https://github.com/hardwood-hq/hardwood/issues/513)).
 - A `RowReader` returns one shared `String` per dictionary entry in every row group, also where the row-group size is not a multiple of the batch size ([#1199](https://github.com/hardwood-hq/hardwood/issues/1199)).
@@ -31,6 +32,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
+- A schema element's `field_id` is exposed on `SchemaNode` and `ColumnSchema`, survives a read-then-rewrite, and can be declared through `FileSchema.Builder` ([#957](https://github.com/hardwood-hq/hardwood/issues/957)).
 - `ParquetFileWriter.endRowGroup()` closes the open row group at a boundary the caller chooses ([#985](https://github.com/hardwood-hq/hardwood/issues/985)).
 - `WriterConfig.Builder.bloomFilter(String)` and `bloomFilter(String, double)` write a split-block Bloom filter for a column in every row group ([#1449](https://github.com/hardwood-hq/hardwood/issues/1449)).
 - Written files carry a page index (`ColumnIndex` and `OffsetIndex`), so readers can skip individual pages; pages hold whole records and at most `WriterConfig.pageTargetRows` of them, 20,000 by default ([#1426](https://github.com/hardwood-hq/hardwood/issues/1426)).

@@ -196,7 +196,8 @@ class WriterPageIndexTest {
             values[i] = i < 10_000 ? pool[2 + i % 3] : pool[1 + i % 3];
         }
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, utf8(values)));
 
@@ -301,8 +302,8 @@ class WriterPageIndexTest {
     @Test
     void writesNoColumnIndexForAColumnWithoutAnOrder() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("i", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        new LogicalType.IntervalType())
+                .addColumn("i", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(new LogicalType.IntervalType()))
                 .build();
         byte[][] values = { new byte[12], new byte[12] };
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.fixed(0, values));
@@ -317,7 +318,8 @@ class WriterPageIndexTest {
         String low = "a".repeat(63) + "é" + "z".repeat(40);
         String high = "b".repeat(63) + "é" + "z".repeat(40);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, utf8(high, low)));
 
@@ -341,7 +343,8 @@ class WriterPageIndexTest {
         // to "ê" and the rest dropped.
         String value = "a".repeat(58) + "é" + "􏿿" + "z".repeat(10);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, new byte[][] { utf8(value) }));
 
@@ -360,7 +363,8 @@ class WriterPageIndexTest {
         Arrays.fill(value, (byte) 'a');
         System.arraycopy(sequence, 0, value, 64 - sequence.length, sequence.length);
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         byte[] file = write(schema, UNCOMPRESSED, batch -> batch.bytes(0, new byte[][] { value }));
 

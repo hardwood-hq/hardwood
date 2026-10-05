@@ -33,6 +33,10 @@ public sealed interface SchemaNode {
     /// Returns the maximum repetition level, computed from the schema hierarchy.
     int maxRepetitionLevel();
 
+    /// Returns the schema element's `field_id`, or `null` if absent. Table formats such as
+    /// Iceberg identify a column by this id rather than by its name.
+    Integer fieldId();
+
     /// Primitive leaf node representing an actual data column.
     ///
     /// @param name field name
@@ -42,6 +46,7 @@ public sealed interface SchemaNode {
     /// @param columnIndex zero-based index among all leaf columns
     /// @param maxDefinitionLevel maximum definition level
     /// @param maxRepetitionLevel maximum repetition level
+    /// @param fieldId the schema element's `field_id`, or `null` if absent
     record PrimitiveNode(
             String name,
             PhysicalType type,
@@ -49,7 +54,8 @@ public sealed interface SchemaNode {
             LogicalType logicalType,
             int columnIndex,
             int maxDefinitionLevel,
-            int maxRepetitionLevel) implements SchemaNode {
+            int maxRepetitionLevel,
+            Integer fieldId) implements SchemaNode {
     }
 
     /// Group node representing a struct, list, map, or variant.
@@ -61,6 +67,7 @@ public sealed interface SchemaNode {
     /// @param children child nodes of this group
     /// @param maxDefinitionLevel maximum definition level
     /// @param maxRepetitionLevel maximum repetition level
+    /// @param fieldId the schema element's `field_id`, or `null` if absent
     record GroupNode(
             String name,
             RepetitionType repetitionType,
@@ -68,7 +75,8 @@ public sealed interface SchemaNode {
             LogicalType logicalType,
             List<SchemaNode> children,
             int maxDefinitionLevel,
-            int maxRepetitionLevel) implements SchemaNode {
+            int maxRepetitionLevel,
+            Integer fieldId) implements SchemaNode {
 
     /// Returns true if this is a LIST group.
         public boolean isList() {

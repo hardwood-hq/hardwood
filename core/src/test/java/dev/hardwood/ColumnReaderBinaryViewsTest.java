@@ -39,7 +39,8 @@ class ColumnReaderBinaryViewsTest {
     @BeforeAll
     static void writeFiles() throws IOException {
         FileSchema schema = FileSchema.builder("measurements")
-                .addColumn("station", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("station", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -51,7 +52,7 @@ class ColumnReaderBinaryViewsTest {
         file = InMemoryFiles.toByteArray(out);
 
         FileSchema fixedLengthSchema = FileSchema.builder("codes")
-                .addColumn("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 4)
+                .addColumn("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, c -> c.typeLength(4))
                 .build();
         InMemoryOutputFile fixedLengthOut = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(fixedLengthOut, fixedLengthSchema)) {

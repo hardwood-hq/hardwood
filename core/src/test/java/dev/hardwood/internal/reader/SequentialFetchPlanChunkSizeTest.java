@@ -145,7 +145,7 @@ class SequentialFetchPlanChunkSizeTest {
     void columnChunkLargerThanTheReaderAddressesIsUnsupported() {
         long columnLength = Integer.MAX_VALUE + 1L;
         ColumnSchema columnSchema = new ColumnSchema(FieldPath.of("col"), PhysicalType.INT64,
-                RepetitionType.REQUIRED, null, 0, 0, 0, null);
+                RepetitionType.REQUIRED, null, 0, 0, 0, null, null);
         ColumnChunk columnChunk = new ColumnChunk(fakeMetaData(columnLength, 100), null, null, null, null, null);
 
         assertThatThrownBy(() -> SequentialFetchPlan.build(null, columnSchema, columnChunk, null,

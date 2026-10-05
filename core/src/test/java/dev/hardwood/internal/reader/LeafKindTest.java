@@ -74,7 +74,7 @@ class LeafKindTest {
     @Test
     void aGroupCarriesNoLeafDecode() {
         SchemaNode group = new SchemaNode.GroupNode(
-                "s", RepetitionType.REQUIRED, null, null, List.of(), 0, 0);
+                "s", RepetitionType.REQUIRED, null, null, List.of(), 0, 0, null);
 
         assertThat(LeafKind.of(group)).isEqualTo(LeafKind.GROUP);
     }
@@ -93,7 +93,7 @@ class LeafKindTest {
     @Test
     void aLeafNodeClassifiesAsItsTypeAndAnnotationDo() {
         SchemaNode leaf = new SchemaNode.PrimitiveNode(
-                "d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date(), 0, 0, 0);
+                "d", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date(), 0, 0, 0, null);
 
         assertThat(LeafKind.of(leaf)).isEqualTo(LeafKind.CONVERT);
     }

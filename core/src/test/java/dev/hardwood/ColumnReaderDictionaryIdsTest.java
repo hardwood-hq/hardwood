@@ -139,7 +139,8 @@ class ColumnReaderDictionaryIdsTest {
     @Test
     void aFlatNullHasIdMinusOne() throws Exception {
         FileSchema schema = FileSchema.builder("stations")
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, new LogicalType.StringType())
+                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
@@ -514,9 +515,11 @@ class ColumnReaderDictionaryIdsTest {
         String[] pool = { "Hamburg", "Oslo", "Abha" };
         FileSchema schema = FileSchema.builder("stations")
                 .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("label", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(new LogicalType.StringType()))
                 .list("tags", RepetitionType.REQUIRED,
-                        el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType()))
+                        el -> el.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.logicalType(new LogicalType.StringType())))
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema,

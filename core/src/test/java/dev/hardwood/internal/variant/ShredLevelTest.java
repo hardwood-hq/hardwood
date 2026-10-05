@@ -48,7 +48,7 @@ class ShredLevelTest {
     @Test
     void valueColumnOfTheWrongPhysicalTypeIsAReadFailure() {
         SchemaNode.GroupNode field = group("field", List.of(
-                new SchemaNode.PrimitiveNode("value", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 1, 0)));
+                new SchemaNode.PrimitiveNode("value", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 1, 0, null)));
 
         assertThatThrownBy(() -> ShredLevel.buildNested(field, null))
                 .isInstanceOf(ParquetReadException.class)
@@ -67,11 +67,11 @@ class ShredLevelTest {
     @Test
     void arrayTypedValueWithAPrimitiveElementIsAReadFailure() {
         SchemaNode.PrimitiveNode element =
-                new SchemaNode.PrimitiveNode("element", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 3, 1);
+                new SchemaNode.PrimitiveNode("element", PhysicalType.INT32, RepetitionType.OPTIONAL, null, 0, 3, 1, null);
         SchemaNode.GroupNode repeated = new SchemaNode.GroupNode(
-                "list", RepetitionType.REPEATED, null, null, List.of(element), 2, 1);
+                "list", RepetitionType.REPEATED, null, null, List.of(element), 2, 1, null);
         SchemaNode.GroupNode typedValue = new SchemaNode.GroupNode(
-                "typed_value", RepetitionType.OPTIONAL, null, LogicalType.list(), List.of(repeated), 1, 0);
+                "typed_value", RepetitionType.OPTIONAL, null, LogicalType.list(), List.of(repeated), 1, 0, null);
         SchemaNode.GroupNode field = group("field", List.of(typedValue));
 
         assertThatThrownBy(() -> ShredLevel.buildNested(field, null))
@@ -90,11 +90,11 @@ class ShredLevelTest {
     }
 
     private static SchemaNode.GroupNode group(String name, List<SchemaNode> children) {
-        return new SchemaNode.GroupNode(name, RepetitionType.OPTIONAL, null, null, children, 1, 0);
+        return new SchemaNode.GroupNode(name, RepetitionType.OPTIONAL, null, null, children, 1, 0, null);
     }
 
     private static SchemaNode.PrimitiveNode binary(String name) {
-        return new SchemaNode.PrimitiveNode(name, PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, null, 0, 1, 0);
+        return new SchemaNode.PrimitiveNode(name, PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, null, 0, 1, 0, null);
     }
 
     /// Carriers the Variant shredding spec does not allow as a `typed_value`: a file using

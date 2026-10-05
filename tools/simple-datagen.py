@@ -7287,3 +7287,34 @@ pq.write_table(
 )
 print("\nGenerated dict_int96.parquet:")
 print(f"  - {INT96_DICT_ROWS} rows, ts: INT96 timestamps from three distinct instants, dictionary-encoded")
+
+# Field ids: every element but the root and the synthetic list / key_value groups carries a
+# field_id, the way Iceberg stamps one on each field. PyArrow reads the id from the
+# 'PARQUET:field_id' field metadata.
+def _field_id(n):
+    return {b'PARQUET:field_id': str(n).encode()}
+
+field_id_schema = pa.schema([
+    pa.field('id', pa.int64(), nullable=False, metadata=_field_id(1)),
+    pa.field('location', pa.struct([
+        pa.field('lat', pa.float64(), metadata=_field_id(3)),
+        pa.field('lon', pa.float64(), metadata=_field_id(4)),
+    ]), metadata=_field_id(2)),
+    pa.field('tags', pa.list_(pa.field('element', pa.string(), metadata=_field_id(6))),
+             metadata=_field_id(5)),
+    pa.field('attributes', pa.map_(
+        pa.field('key', pa.string(), nullable=False, metadata=_field_id(8)),
+        pa.field('value', pa.int64(), metadata=_field_id(9))), metadata=_field_id(7)),
+])
+pq.write_table(
+    pa.table({
+        'id': [1, 2],
+        'location': [{'lat': 48.1, 'lon': 11.6}, None],
+        'tags': [['a', 'b'], None],
+        'attributes': [[('k', 1)], None],
+    }, schema=field_id_schema),
+    'core/src/test/resources/field_ids.parquet',
+    compression='none',
+)
+print("\nGenerated field_ids.parquet:")
+print("  - 2 rows; id, location{lat, lon}, tags (LIST), attributes (MAP) with field ids 1-9")

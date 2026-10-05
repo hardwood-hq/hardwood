@@ -391,11 +391,13 @@ final class CoverageDomain {
         if (typeLength == null) {
             return logicalType == null
                     ? schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL).build()
-                    : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL, logicalType).build();
+                    : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL, c -> c.logicalType(logicalType)).build();
         }
         return logicalType == null
-                ? schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL, typeLength.intValue()).build()
-                : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL, typeLength.intValue(), logicalType)
+                ? schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL,
+                        c -> c.typeLength(typeLength.intValue())).build()
+                : schema.addColumn(COLUMN, type, RepetitionType.OPTIONAL,
+                        c -> c.typeLength(typeLength.intValue()).logicalType(logicalType))
                         .build();
     }
 

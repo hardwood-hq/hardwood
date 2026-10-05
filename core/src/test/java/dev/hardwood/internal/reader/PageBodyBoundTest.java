@@ -49,15 +49,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PageBodyBoundTest {
 
     private static final ColumnSchema INT64_COLUMN = new ColumnSchema(FieldPath.of("c"), PhysicalType.INT64,
-            RepetitionType.REQUIRED, null, 0, 0, 0, null);
+            RepetitionType.REQUIRED, null, 0, 0, 0, null, null);
     private static final ColumnSchema OPTIONAL_INT64_COLUMN = new ColumnSchema(FieldPath.of("c"),
-            PhysicalType.INT64, RepetitionType.OPTIONAL, null, 0, 1, 0, null);
+            PhysicalType.INT64, RepetitionType.OPTIONAL, null, 0, 1, 0, null, null);
     private static final ColumnSchema REPEATED_INT64_COLUMN = new ColumnSchema(FieldPath.of("c"),
-            PhysicalType.INT64, RepetitionType.REPEATED, null, 0, 1, 1, null);
+            PhysicalType.INT64, RepetitionType.REPEATED, null, 0, 1, 1, null, null);
     private static final ColumnSchema BOOLEAN_COLUMN = new ColumnSchema(FieldPath.of("c"), PhysicalType.BOOLEAN,
-            RepetitionType.REQUIRED, null, 0, 0, 0, null);
+            RepetitionType.REQUIRED, null, 0, 0, 0, null, null);
     private static final ColumnSchema BYTE_ARRAY_COLUMN = new ColumnSchema(FieldPath.of("c"),
-            PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0, null);
+            PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0, null, null);
 
 
     /// Thrift value of `PageType.DATA_PAGE_V2`.

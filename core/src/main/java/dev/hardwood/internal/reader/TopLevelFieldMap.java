@@ -284,7 +284,8 @@ final class TopLevelFieldMap {
     /// Synthesizes the required `LIST`-annotated container wrapping an
     /// unannotated `REPEATED` field. Its definition/repetition levels are one
     /// below the field's own (the levels outside the list), leaving the field as
-    /// the list element.
+    /// the list element. The field keeps its `field_id`; the wrapper, which no schema element
+    /// backs, carries none.
     private static SchemaNode.GroupNode syntheticListWrapper(SchemaNode node) {
         return new SchemaNode.GroupNode(
                 node.name(),
@@ -293,7 +294,8 @@ final class TopLevelFieldMap {
                 null,
                 List.of(node),
                 node.maxDefinitionLevel() - 1,
-                node.maxRepetitionLevel() - 1);
+                node.maxRepetitionLevel() - 1,
+                null);
     }
 
     static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,

@@ -216,7 +216,7 @@ class WriterSizingMatrixTest {
         FileSchema.Builder schema = FileSchema.builder("schema");
         for (int c = 0; c < columns; c++) {
             if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, 256);
+                schema.addColumn("c" + c, type, RepetitionType.REQUIRED, column -> column.typeLength(256));
             }
             else {
                 schema.addColumn("c" + c, type, RepetitionType.REQUIRED);

@@ -214,9 +214,9 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void csvFlattenRejectsStructFieldThatIsNotAStruct() {
         SchemaNode.PrimitiveNode child = new SchemaNode.PrimitiveNode("id", PhysicalType.INT32,
-                RepetitionType.OPTIONAL, null, 0, 2, 0);
+                RepetitionType.OPTIONAL, null, 0, 2, 0, null);
         SchemaNode.GroupNode account = new SchemaNode.GroupNode("account", RepetitionType.OPTIONAL, null, null,
-                List.of(child), 1, 0);
+                List.of(child), 1, 0, null);
         List<String> values = new ArrayList<>();
 
         assertThatThrownBy(() -> ConvertCommand.flattenValues("not a struct", account, "account",
@@ -392,7 +392,8 @@ class ConvertCommandTest implements ConvertCommandContract {
         Path file = tempDir.resolve("controls.parquet");
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.string()))
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
             writer.columnWriter().writeBatch(batch -> batch
