@@ -322,6 +322,14 @@ hardwood version <version> (build <commit>)
 
 `ParquetFileWriter.DEFAULT_CREATED_BY` holds it. `createdBy(String)` replaces it; readers that key compatibility workarounds off this field expect the `<app> version <version> (build <hash>)` shape, and a bare application name is rejected by some of them.
 
+## Ending a Row Group
+
+`ParquetFileWriter.endRowGroup()` writes the open row group, so the next record starts a new one. Records staged by `rowWriter()` are written into the row group being closed. When no record was written since the last row group closed, it writes nothing.
+
+The row-group targets close row groups as well; a row group ends at a target or at a call, whichever comes first. A row group closed by a call is written exactly as one a target closes after the same records.
+
+`endRowGroup()` and `close()` throw `IllegalStateException` when called from inside a `writeBatch` or `writeRow` filler. Any exception from `endRowGroup()` fails the writer.
+
 ## Finishing and Abandoning a File
 
 | Call | Effect |
@@ -331,7 +339,7 @@ hardwood version <version> (build <commit>)
 | `abort()` | Discards the output and closes the writer |
 | `close()` or `abort()` on a closed or aborted writer | Nothing |
 
-The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
+The writer fails when `ColumnWriter.writeBatch`, `RowWriter.writeRow` or `endRowGroup` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
 A failure while `close()` finishes or publishes the file discards the output as well, and `close()` throws it. When the output cannot be discarded, `abort()` and `close()` on a failed writer throw the `IOException`; a failure while finishing or publishing carries it as a suppressed exception.
 
@@ -355,7 +363,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
+| `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
 | `ParquetWriteException` | The file could not be produced for a reason that is neither the caller's input nor the destination: a compression codec that rejects a page body. Unchecked |
 

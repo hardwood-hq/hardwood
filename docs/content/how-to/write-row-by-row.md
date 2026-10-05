@@ -211,4 +211,4 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
 }
 ```
 
-Every option, its default and what it rejects is under [Writer Options](../reference/writer.md#writer-options). The footer's key-value metadata and `created_by` identifier are set on the `ParquetFileWriter` until `close()`; see [File Metadata](../reference/writer.md#file-metadata).
+Every option, its default and what it rejects is under [Writer Options](../reference/writer.md#writer-options). `ParquetFileWriter.endRowGroup()` closes the open row group after the records written so far; see [Ending a Row Group](write-column-by-column.md#ending-a-row-group). The footer's key-value metadata and `created_by` identifier are set on the `ParquetFileWriter` until `close()`; see [File Metadata](../reference/writer.md#file-metadata).

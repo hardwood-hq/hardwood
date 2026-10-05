@@ -34,7 +34,7 @@ Buffering the whole row group before encoding is what lets each column chunk's e
 
 Data arrives as `ColumnBatch` slices through `ColumnWriter.writeBatch`, or as records through `RowWriter.writeRow`, which stages records into batches and submits them through the same path ([WRITER_INPUT.md](WRITER_INPUT.md)). A batch is only an *arrival* unit and is independent of the three layout tiers: the writer shreds a batch's records into per-column buffers, cuts the row group when a target is reached, and cuts pages when the row group is written out. A batch larger than what the open row group can take is split between row groups at a record boundary, and a row group may be filled from many batches.
 
-Row-group boundaries are chosen by the writer from the targets; there is no explicit boundary method. A caller holding whole columns submits them as one large batch and the writer slices it into row groups; a streaming producer submits many small batches and discards each after handing it over. Both produce the same file for the same data, and the row layer produces the file the columnar layer does, byte for byte.
+Row-group boundaries are chosen by the writer from the targets, and by the caller where it places one ([Caller-placed boundaries](#caller-placed-boundaries)). Batch boundaries are not row-group boundaries: a caller holding whole columns submits them as one large batch and the writer slices it into row groups; a streaming producer submits many small batches and discards each after handing it over. Both produce the same file for the same data, and the row layer produces the file the columnar layer does, byte for byte.
 
 A file writer serves one API or the other: `columnWriter()` and `rowWriter()` latch the file to the first one used, so two independent staging states never interleave into one row group.
 
@@ -74,7 +74,7 @@ There is no object-store backend; `S3_STORAGE.md` covers read access only.
 `ParquetFileWriter` is `OPEN`, `FAILED` or `CLOSED`.
 
 - **Creation.** Everything the schema and configuration decide is validated before the output is touched: the columns' physical types, the schema's shape (`WriterSchemaShape`), each column's encoding policy against its type, then the codec and its library. A file the writer cannot honour is therefore never begun. Only then does the writer call `create()` and write the leading magic; a failure between those two points discards the output before the exception propagates.
-- **Failure.** Any exception out of `writeBatch` or `writeRow` (a rejected batch or record, an exception from the filler, a destination `IOException`, a codec `ParquetWriteException`) fails the writer: later writes are rejected with `IllegalStateException`, and `close()` calls `OutputFile.discard()` instead of writing the footer. `close()` cannot tell whether an exception is propagating out of the try-with-resources block around it, so a writer that stayed usable after a rejection would publish the rows written before it whenever the rejection is not caught. A rejection is skippable only where it never travels as an exception: `RowWriter.tryWriteRow` returns a rejected record as `RowWriteResult.Rejected` and leaves the writer `OPEN` ([WRITER_INPUT.md](WRITER_INPUT.md#nulls-completeness-and-rollback)).
+- **Failure.** Any exception out of `writeBatch`, `writeRow` or `endRowGroup` (a rejected batch or record, an exception from the filler, a destination `IOException`, a codec `ParquetWriteException`) fails the writer: later writes are rejected with `IllegalStateException`, and `close()` calls `OutputFile.discard()` instead of writing the footer. `close()` cannot tell whether an exception is propagating out of the try-with-resources block around it, so a writer that stayed usable after a rejection would publish the rows written before it whenever the rejection is not caught. A rejection is skippable only where it never travels as an exception: `RowWriter.tryWriteRow` returns a rejected record as `RowWriteResult.Rejected` and leaves the writer `OPEN` ([WRITER_INPUT.md](WRITER_INPUT.md#nulls-completeness-and-rollback)).
 - **Abort.** A failure raised outside the writer, such as by the caller's data source, is invisible to it; `abort()` discards the output for that case, and a later `close()` does nothing. `abort()` on a closed writer does nothing, so a published file stays published.
 - **Close.** `close()` publishes a writer that has not failed: it flushes the row layer's staged records, flushes the open row group, writes the footer, and calls `OutputFile.close()`. A failure while flushing or writing the footer discards the output and is rethrown. A second `close()` does nothing.
 - **Publish failure.** A failure inside `OutputFile.close()` is the backend's to clean up, by the `close()` contract above; the writer is already closed and does not also call `discard()`.
@@ -173,6 +173,17 @@ while (pos < rows) {
 
 Tests: `WriterLayoutTest`, `WriterSizingMatrixTest`, `WriterLargeFileTest`, `WriterConfigTest`, `RowGroupBufferStoreCapacityTest`.
 
+### Caller-placed boundaries
+
+`ParquetFileWriter.endRowGroup()` is a cut beside the targets and the structural caps, for boundaries only the caller sees (a sort-key or partition change, an upstream batch). The group closes at whichever comes first.
+
+- **Same cut, same bytes.** It runs the `flushRowGroup()` a target runs, after the row layer submits its staged records, so the same records in the same groups produce the same file whichever triggered the cut and whichever API wrote them.
+- **No-op when empty.** With nothing buffered it writes no row group, so a caller can call it at every boundary of its own without bookkeeping.
+- **Not from inside a filler.** It and `close()` are rejected while a `writeBatch` or `writeRow` filler runs: a cut inside a `writeRow` filler would submit the half-filled record along with the staged ones. A cut inside a `writeBatch` filler loses nothing, but is rejected too so that one rule covers both views.
+- **No guard against tiny groups.** Small row groups cost footer size and reader overhead, but the caller has a reason the writer cannot evaluate.
+
+Tests: `WriterRowGroupBoundaryTest`, `WriterRowGroupBoundaryInteropTest` (parquet-testing-runner).
+
 ## Memory
 
 A writer's heap is dominated by the open row group, and `retainedBytes()` is the writer's account of it; `rowGroupBufferTargetBytes` bounds that account, so peak heap follows the target rather than a multiple of it. What sits above the account, none of which grows with how much is written:
@@ -232,5 +243,4 @@ The architecture leaves parallelism open without a public-API change. Within a r
 ## Boundaries
 
 - No object-store `OutputFile` backend, and no parallel column encoding or row-group pipelining (#1291).
-- Row groups are cut only by the two targets and the structural caps; a caller cannot end a row group at a boundary of its own (#985).
 - The row layer costs measurably more than the columnar one for the same file, in time and in staging allocation (#1045).

@@ -316,7 +316,7 @@ Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloom
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
 - **Data page V2** is not produced; every data page is V1.
-- **Per-row-group settings.** The codec and the named policies hold for the whole file; changing them at a caller-placed row-group boundary is #985. The writer does not choose a codec per chunk, which `ColumnMetaData.codec` would permit.
+- **Per-row-group settings.** The codec and the named policies hold for the whole file. The writer does not choose a codec per chunk, which `ColumnMetaData.codec` would permit.
 - **Automatic delta or byte-stream-split selection**, `RLE` for `BOOLEAN` data pages, and compression levels are not provided.
 - **Sorted dictionaries** and `DictionaryPageHeader.is_sorted` are not written (#1258).
 - **`GZIP` compression** uses the JDK `Deflater`; the read path decompresses through libdeflate (#1002).

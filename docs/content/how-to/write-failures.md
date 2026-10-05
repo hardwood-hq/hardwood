@@ -15,7 +15,7 @@ A `ParquetFileWriter` publishes its file on `close()`. When writing fails part w
 
 ## A Write Throws
 
-No extra code is needed. When `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, the writer rejects further writes, and `close()` discards the output. This holds for every exception a write call throws, including one thrown by the filler.
+No extra code is needed. When `ColumnWriter.writeBatch`, `RowWriter.writeRow` or `ParquetFileWriter.endRowGroup` throws, the writer rejects further writes, and `close()` discards the output. This holds for every exception a write call throws, including one thrown by the filler.
 
 ```java
 try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {

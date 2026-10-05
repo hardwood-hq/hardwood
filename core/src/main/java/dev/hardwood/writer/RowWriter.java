@@ -45,6 +45,8 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// A `RowWriter` is not closeable: the [ParquetFileWriter] it came from owns the file, and
 /// closing it writes the records still staged here along with the footer.
+/// [ParquetFileWriter#endRowGroup()] ends a row group after the records written so far, staged
+/// ones included.
 ///
 /// **This API is [Experimental]:** the shape may change in future releases.
 @Experimental
@@ -94,7 +96,7 @@ public final class RowWriter {
     public void writeRow(Consumer<StructBuilder> filler) throws IOException {
         writer.ensureWritable();
         try {
-            plan.writeRecord(filler);
+            writer.runFiller(() -> plan.writeRecord(filler));
         }
         catch (RejectedRecordException e) {
             writer.markFailed();
@@ -135,7 +137,7 @@ public final class RowWriter {
     public RowWriteResult tryWriteRow(Consumer<StructBuilder> filler) throws IOException {
         writer.ensureWritable();
         try {
-            plan.writeRecord(filler);
+            writer.runFiller(() -> plan.writeRecord(filler));
         }
         catch (RejectedRecordException e) {
             return new RowWriteResult.Rejected(e.fieldPath(), e.getMessage());
@@ -155,8 +157,8 @@ public final class RowWriter {
         }
     }
 
-    /// Submits the records staged so far, called by [ParquetFileWriter#close()] before the
-    /// final row group is flushed.
+    /// Submits the records staged so far, called by [ParquetFileWriter#close()] and
+    /// [ParquetFileWriter#endRowGroup()] before the row group is flushed.
     void flushPending() throws IOException {
         flush();
     }

@@ -31,6 +31,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 - Filter predicates take every literal type a column's accessors return, adding `byte[]`, `LocalDateTime`, `PqInterval` and `Instant` on legacy `INT96` columns, and `in` for every literal type but `boolean`; `inStrings` is deprecated in favour of `in(String, String...)` ([#868](https://github.com/hardwood-hq/hardwood/issues/868), [#1198](https://github.com/hardwood-hq/hardwood/issues/1198)).
 
+- `ParquetFileWriter.endRowGroup()` closes the open row group at a boundary the caller chooses ([#985](https://github.com/hardwood-hq/hardwood/issues/985)).
 - `WriterConfig.Builder.bloomFilter(String)` and `bloomFilter(String, double)` write a split-block Bloom filter for a column in every row group ([#1449](https://github.com/hardwood-hq/hardwood/issues/1449)).
 - Written files carry a page index (`ColumnIndex` and `OffsetIndex`), so readers can skip individual pages; pages hold whole records and at most `WriterConfig.pageTargetRows` of them, 20,000 by default ([#1426](https://github.com/hardwood-hq/hardwood/issues/1426)).
 

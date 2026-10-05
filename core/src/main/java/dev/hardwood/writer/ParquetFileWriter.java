@@ -58,7 +58,8 @@ import dev.hardwood.schema.FileSchema;
 /// of lists, lists of structs, and maps of any in-scope value). Data is supplied as
 /// [ColumnBatch] slices; the writer packs each column into size-bounded data pages — a
 /// levelled column's pages carrying an RLE definition-level stream ahead of the values — and
-/// flushes a row group once the bytes it holds for that group reach the configured target. Each
+/// flushes a row group once it reaches one of the configured targets, or where the caller ends
+/// it through [#endRowGroup()]. Each
 /// row group is buffered, written and forgotten, so what the writer holds follows the target
 /// rather than the size of the file, apart from the page index it keeps for the end of the file
 /// (a location and two bounds per data page) and the Bloom filters of the columns
@@ -122,6 +123,9 @@ public final class ParquetFileWriter implements Closeable {
     private enum Mode { UNSET, BATCH, ROW }
 
     private Mode mode = Mode.UNSET;
+    /// Callers' fillers running on this writer, counted rather than flagged since a filler may
+    /// start another write that the writer then rejects.
+    private int activeFillers;
     private ColumnWriter columnWriter;
     private RowWriter rowWriter;
 
@@ -441,6 +445,48 @@ public final class ParquetFileWriter implements Closeable {
         }
     }
 
+    /// Closes the open row group and starts a new one, so the records written next go into a row
+    /// group of their own.
+    ///
+    /// The row-group targets in [WriterConfig] still cut row groups on their own; this is an
+    /// additional cut, for a boundary only the caller can see — a change of sort key or partition
+    /// value, or the end of an upstream batch. A row group closed this way is written exactly as
+    /// one a target closes after the same records.
+    ///
+    /// With nothing written since the last row group was closed, the call does nothing, so it can
+    /// be made at every boundary without tracking whether a record fell between two of them. Every
+    /// row group adds a column chunk per column to the footer, so a file of row groups much smaller
+    /// than the targets carries a larger footer, and a reader opens more column chunks for the same
+    /// records.
+    ///
+    /// Records staged by [#rowWriter()] are submitted first, so they belong to the row group this
+    /// call closes. The call is rejected from inside a batch or record filler, where the batch or
+    /// record being filled is not yet written. Any exception fails the writer, as it does from a
+    /// write.
+    ///
+    /// @throws IOException if writing the row group fails
+    /// @throws IllegalStateException if the writer is closed, a previous write has failed, or a
+    ///         batch or record filler is running
+    public void endRowGroup() throws IOException {
+        ensureWritable();
+        requireNoActiveFiller("endRowGroup()");
+        try {
+            closeRowGroup();
+        }
+        catch (Throwable t) {
+            markFailed();
+            throw t;
+        }
+    }
+
+    /// Submits the row layer's staged records and writes the buffered row group out.
+    private void closeRowGroup() throws IOException {
+        if (rowWriter != null) {
+            rowWriter.flushPending();
+        }
+        flushRowGroup();
+    }
+
     /// Writes one batch without latching the write mode, so both views can submit through it:
     /// [ColumnWriter] the batch its caller filled, [RowWriter] the batches it stages. Any
     /// exception fails the writer, so a caller that lets it propagate out of a
@@ -448,7 +494,7 @@ public final class ParquetFileWriter implements Closeable {
     void writeStagedBatch(Consumer<ColumnBatch> filler) throws IOException {
         try {
             ColumnBatch batch = new ColumnBatch(schema, ranges);
-            filler.accept(batch);
+            runFiller(() -> filler.accept(batch));
             ColumnSource[] sources = batch.completedSources();
             shredder.bind(sources, batch.validities(), batch.structValidities(),
                     batch.listValidities(), batch.listOffsets());
@@ -458,6 +504,25 @@ public final class ParquetFileWriter implements Closeable {
         catch (Throwable t) {
             markFailed();
             throw t;
+        }
+    }
+
+    /// Runs a caller's filler, during which [#endRowGroup()] and [#close()] are rejected: a
+    /// record or batch half filled when either ran would be cut off from the rows it belongs to.
+    void runFiller(Runnable filler) {
+        activeFillers++;
+        try {
+            filler.run();
+        }
+        finally {
+            activeFillers--;
+        }
+    }
+
+    private void requireNoActiveFiller(String call) {
+        if (activeFillers != 0) {
+            throw new IllegalStateException(call + " was called while a batch or record is being filled; "
+                    + "call it between writes");
         }
     }
 
@@ -478,8 +543,10 @@ public final class ParquetFileWriter implements Closeable {
     ///
     /// @throws IOException if the file cannot be finished or published, or a discarded output
     ///         cannot be released
+    /// @throws IllegalStateException if called from inside a batch or record filler
     @Override
     public void close() throws IOException {
+        requireNoActiveFiller("close()");
         if (state == State.FAILED) {
             abort();
             return;
@@ -489,10 +556,7 @@ public final class ParquetFileWriter implements Closeable {
         }
         state = State.CLOSED;
         try {
-            if (rowWriter != null) {
-                rowWriter.flushPending();
-            }
-            flushRowGroup();
+            closeRowGroup();
             writeFooter();
         }
         catch (Throwable t) {

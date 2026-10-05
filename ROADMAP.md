@@ -197,6 +197,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Record buffering
 - [x] Row group size tracking
 - [x] Automatic row group flushing
+- [x] Caller-placed row-group boundaries (#985)
 - [x] Dictionary page writing
 - [x] Data page encoding and writing (`AUTO` dictionary-or-`PLAIN` per chunk, or a named
   per-column policy: `PLAIN`, the three delta encodings, `BYTE_STREAM_SPLIT`)

@@ -54,17 +54,27 @@ A `list<int32>` column whose lists are empty therefore retains two bytes a recor
 
 Multiply by your row target, and by the number of writers running in the same JVM.
 
-## Why the writer chooses the boundaries
+## Where the boundaries fall
 
 Batches and records are *arrival* units. Pages, column chunks and row groups are *layout* units. The writer maps one to the other, and the caller does not see the seam: a batch's values are distributed into per-column buffers, the row group is flushed once what those hold reaches the row-group target, and its pages are cut as it is written out. A batch larger than the row group is split at the boundary.
 
-This is why there is no explicit "end row group" call, and why submitting one large batch and streaming a thousand small ones produce the same file. Layout is set by the targets alone, and each governs something different:
+Submitting one large batch and streaming a thousand small ones therefore produce the same file. Layout is set by the targets, and each governs something different:
 
 - **Page size** governs read granularity: a page is the unit a reader decompresses to reach any value in it, so smaller pages prune finer and cost more metadata. A page also holds at most `pageTargetRows` records, so a column whose values encode small still has pages for the page index to prune by. Under a delta encoding, whose width depends on the values, the cut charges the width the type would have taken `PLAIN`, so those pages land below the target.
 - **Row-group rows** governs split sizing and row-group-level pruning, and defaults to 1,048,576. A row group is self-contained, so it is the boundary a file partitions on across separate readers, and it is the granularity at which a reader skips on column-chunk statistics. It does not govern how much of the read runs in parallel: Hardwood decodes *pages* concurrently within a row group, so parallelism is bounded by pages and columns rather than by banding. Unlike a byte target it needs no estimate and does not vary with the data.
 - **Row-group buffer bytes** is the memory bound above: the bytes the writer holds for the open row group.
 
 A row group holds at most `Integer.MAX_VALUE - 9` records whatever the targets say. It is cut earlier where a repeated column's chunk would reach its structural ceiling of `Integer.MAX_VALUE - 8` values and nulls, or where any column chunk would pass `Integer.MAX_VALUE - 8` bytes of `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` values. These ceilings only cut under a `rowGroupBufferTargetBytes` above 2 GiB, where they yield more row groups rather than a failed write; a single record that passes one on its own is rejected. Neither is the size the row group takes on disk: that is smaller by whatever the encoding and the codec win, which is a property of the data. A dictionary-encoded column reaches the file as indices, and the codec then compresses those. Measure one file and scale the setting if a particular on-disk size is what you need.
+
+### Boundaries the caller places
+
+The targets cut on counts, so a row group's edges fall wherever the counts run out, regardless of what the records hold. `endRowGroup()` lets the caller cut where the data itself changes, which is what row-group pruning and splitting key on:
+
+- **At a key change in sorted data.** A target cut mid-key leaves that key in two row groups. Cutting where the key changes gives each row group its own key values, so an equality on the key reads exactly the row groups holding that key.
+- **At a partition value change.** Each row group then holds one value of the partition column: a filter on it skips every other row group by its statistics, and a reader that splits the file by row group processes one partition per split.
+- **At an upstream unit.** Ending a row group at the end of a source file, a message batch or a checkpoint keeps each unit in its own row groups, so a consumer splitting by row group never sees two units mixed in one split.
+
+The targets keep cutting as well, and a row group ends at whichever comes first.
 
 ## How the writer picks an encoding
 

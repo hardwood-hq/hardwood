@@ -30,6 +30,7 @@ import dev.hardwood.Validity;
 ///
 /// A `ColumnWriter` is not closeable: the [ParquetFileWriter] it came from owns the file, and
 /// closing it flushes the row group still buffered here along with the footer.
+/// [ParquetFileWriter#endRowGroup()] ends a row group where the caller places the boundary.
 public final class ColumnWriter {
 
     private final ParquetFileWriter writer;

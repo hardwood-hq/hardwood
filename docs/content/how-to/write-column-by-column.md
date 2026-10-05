@@ -44,7 +44,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 }
 ```
 
-The writer creates the batch — bound to the schema — hands it to the filler, then submits it, so there is no separate build or submit step. `columnWriter()` returns the same view on every call, so it can be obtained once and kept; call `writeBatch` as often as there is data and the writer bands the values into pages and row groups itself. Batch boundaries leave no trace in the file, and what the writer holds follows `rowGroupBufferTargetBytes` rather than the batch size; see [The Write Model](../concepts/write-model.md#why-the-writer-chooses-the-boundaries). A file is written through one API: calling both `columnWriter()` and [`rowWriter()`](write-row-by-row.md) on the same `ParquetFileWriter` is rejected, on the call that obtains the second view.
+The writer creates the batch — bound to the schema — hands it to the filler, then submits it, so there is no separate build or submit step. `columnWriter()` returns the same view on every call, so it can be obtained once and kept; call `writeBatch` as often as there is data and the writer bands the values into pages and row groups itself. Batch boundaries leave no trace in the file, and what the writer holds follows `rowGroupBufferTargetBytes` rather than the batch size; see [The Write Model](../concepts/write-model.md#where-the-boundaries-fall). A file is written through one API: calling both `columnWriter()` and [`rowWriter()`](write-row-by-row.md) on the same `ParquetFileWriter` is rejected, on the call that obtains the second view.
 
 The footer is written last, so **the file is valid only once `close()` returns**. After a failure, see [Handle Write Failures](write-failures.md).
 
@@ -156,3 +156,23 @@ Offsets are validated: they must start at `0`, be non-decreasing, and end at exa
 ## Configuring the Writer
 
 Pass a `WriterConfig` to `ParquetFileWriter.create(out, schema, config)` to set the codec, the page and row-group targets and the per-column encoding policy; every option, its default and what it rejects is under [Writer Options](../reference/writer.md#writer-options). The footer's key-value metadata and `created_by` identifier are set on the `ParquetFileWriter` until `close()`; see [File Metadata](../reference/writer.md#file-metadata).
+
+## Ending a Row Group
+
+To start a new row group where your data changes (a new partition value, a new sort key, the end of a source batch), call `endRowGroup()` on the `ParquetFileWriter` at that point; [Boundaries the Caller Places](../concepts/write-model.md#boundaries-the-caller-places) covers what each kind of boundary gains a reader. The records written next start a new row group:
+
+```java
+try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+    ColumnWriter columns = writer.columnWriter();
+    for (Partition partition : partitions) {
+        columns.writeBatch(batch -> batch
+                .longs("id", partition.ids())
+                .doubles("price", partition.prices()));
+        writer.endRowGroup();
+    }
+}
+```
+
+The row-group targets still close row groups on their own, so a partition larger than a row-group target spans several row groups. A call with nothing written since the last row group closed does nothing, so it can be made at every boundary unconditionally. Call it between writes: from inside a batch or record filler it fails with an error.
+
+Each row group adds a column chunk per column to the footer, and a reader opens each chunk separately. Ending row groups far below the targets produces a larger footer and a slower read for the same records.
