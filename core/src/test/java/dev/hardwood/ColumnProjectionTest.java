@@ -119,30 +119,23 @@ public class ColumnProjectionTest {
         }
     }
 
-    /// Parquet permits any UTF-8 character in a name, `.` included, but a projection
-    /// path uses `.` as its nesting separator. A column below a group whose name
-    /// contains a dot is therefore unreachable: `resolveNestedColumn` splits
-    /// `acme.address.city` into three segments and looks for a `city` below an
-    /// `address` below an `acme`, none of which exist.
-    ///
-    /// This is added as documentation of surprising behaviour.
+    /// Parquet permits any UTF-8 character in a name, `.` included, so a dot in a projection
+    /// path need not separate two levels: `acme.address.city` reaches `city` below the group
+    /// `acme.address` (#794).
     @Test
-    void testDottedGroupNameIsUnreachableByAnyProjectionPath() {
+    void testDottedGroupNameIsReachableByItsPath() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(
                 SchemaElement.root("schema", 1),
                 SchemaElement.group("acme.address", RepetitionType.OPTIONAL, 1),
                 SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
 
-        assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address.city")))
+        assertThat(ProjectedSchema.create(schema, ColumnProjection.columns("acme.address.city"))
+                .getProjectedColumnCount()).isEqualTo(1);
+        assertThat(ProjectedSchema.create(schema, ColumnProjection.columns("acme.address"))
+                .getProjectedColumnCount()).isEqualTo(1);
+        assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column not found: acme.address.city");
-        assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Column not found: acme.address");
-
-        // The column is present and readable; only addressing it by path fails.
-        assertThat(ProjectedSchema.create(schema, ColumnProjection.all()).getProjectedColumnCount())
-                .isEqualTo(1);
+                .hasMessage("Column not found: acme");
     }
 
     // ==================== Flat Schema Projection Tests ====================

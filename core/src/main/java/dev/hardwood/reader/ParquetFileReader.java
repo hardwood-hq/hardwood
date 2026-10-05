@@ -32,6 +32,7 @@ import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.BareRepeatedGroups;
+import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
@@ -577,8 +578,8 @@ public class ParquetFileReader implements Closeable {
         // `_designs/RECORD_FILTERING.md`.
         ReadProjection readProjection = resolved == null
                 ? ReadProjection.of(ProjectedSchema.create(schema, projection, true))
-                : ReadProjection.withPredicateColumns(schema, projection,
-                        SelectionEngine.predicateColumnPaths(resolved, schema), true);
+                : ReadProjection.withPredicateColumns(schema, ColumnRequests.of(projection),
+                        SelectionEngine.predicateColumns(resolved), true);
 
         RowGroupIterator iterator = trackedIterator(maxRows, tailSkip, physicalSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
@@ -638,7 +639,8 @@ public class ParquetFileReader implements Closeable {
         // Rejects a name that is not a leaf column's path, such as a group's, which the
         // projection below would otherwise expand to every leaf under it.
         schema.getColumn(columnName);
-        return buildSingleColumnReader(columnName, filter, rowGroupFilter, batchSize);
+        return buildSingleColumnReader(ColumnRequests.of(ColumnProjection.columns(columnName)), filter,
+                rowGroupFilter, batchSize);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) throws IOException {
@@ -648,15 +650,14 @@ public class ParquetFileReader implements Closeable {
     ColumnReader buildColumnReader(
             int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) throws IOException {
         ensureSingleFile("columnReader(int)");
-        String columnPath = schema.getColumn(columnIndex).fieldPath().toString();
-        return buildSingleColumnReader(columnPath, filter, rowGroupFilter, batchSize);
+        return buildSingleColumnReader(ColumnRequests.ofColumns(columnIndex), filter, rowGroupFilter, batchSize);
     }
 
     /// A single-column read is the one view of a one-column scan, and advances that scan itself.
     private ColumnReader buildSingleColumnReader(
-            String columnPath, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize)
+            ColumnRequests requests, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize)
             throws IOException {
-        ColumnRead read = openColumnRead(ColumnProjection.columns(columnPath), filter, rowGroupFilter, batchSize);
+        ColumnRead read = openColumnRead(requests, filter, rowGroupFilter, batchSize);
         int payloadIndex = read.payload().requestedColumn(0);
         ColumnSchema column = schema.getColumn(read.payload().toOriginalIndex(payloadIndex));
         return new ColumnReader(read.scan(), payloadIndex, schema, column, false);
@@ -671,7 +672,7 @@ public class ParquetFileReader implements Closeable {
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
             int batchSize) throws IOException {
-        ColumnRead read = openColumnRead(projection, filter, rowGroupFilter, batchSize);
+        ColumnRead read = openColumnRead(ColumnRequests.of(projection), filter, rowGroupFilter, batchSize);
         return new ColumnReaders(read.scan(), schema, read.payload());
     }
 
@@ -680,15 +681,15 @@ public class ParquetFileReader implements Closeable {
     }
 
     private ColumnRead openColumnRead(
-            ColumnProjection projection,
+            ColumnRequests requests,
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
             int batchSize) throws IOException {
-        return buildChild(() -> openColumnReadUnderLock(projection, filter, rowGroupFilter, batchSize));
+        return buildChild(() -> openColumnReadUnderLock(requests, filter, rowGroupFilter, batchSize));
     }
 
     private ColumnRead openColumnReadUnderLock(
-            ColumnProjection projection,
+            ColumnRequests requests,
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
             int batchSize) throws IOException {
@@ -698,7 +699,7 @@ public class ParquetFileReader implements Closeable {
         if (resolved == null) {
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
             iterator.setFirstFile(schema, rowGroups);
-            ProjectedSchema projected = iterator.initialize(projection, null);
+            ProjectedSchema projected = iterator.initialize(ProjectedSchema.create(schema, requests, false), null);
             // Every row group pruned (e.g. a byte-range row-group filter dropped
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
@@ -715,8 +716,8 @@ public class ParquetFileReader implements Closeable {
         // stay row-aligned regardless of per-column page-skip capability), then
         // compact each exposed column to the matching records per batch.
         // `false`: the columnar paths read individual leaves, so the projection stays literal.
-        ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, projection,
-                SelectionEngine.predicateColumnPaths(resolved, schema), false);
+        ReadProjection readProjection = ReadProjection.withPredicateColumns(schema, requests,
+                SelectionEngine.predicateColumns(resolved), false);
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);

@@ -35,6 +35,9 @@ public class FileSchema {
     private static final System.Logger LOG =
             System.getLogger(FileSchema.class.getName());
 
+    /// Marks a dot-separated path in `columnPathToIndex` that more than one column joins to.
+    private static final int AMBIGUOUS_PATH = -2;
+
     private final String name;
     private final List<ColumnSchema> columns;
     private final StringToIntMap columnPathToIndex;
@@ -46,11 +49,32 @@ public class FileSchema {
         this.rootNode = rootNode;
 
         // Pre-compute field path -> index mapping for O(1) lookup.
-        // Uses the dot-separated field path (e.g. "address.zip") as key,
-        // which is unambiguous even when multiple nested columns share a leaf name.
+        // Uses the dot-separated field path (e.g. "address.zip") as key, which tells apart
+        // nested columns sharing a leaf name. Field names containing dots can still make two
+        // fields' paths join to the same key (a flat "a.b" and "b" nested in "a"); a column's
+        // key shared with another column or with a group is marked ambiguous.
+        List<String> groupPaths = new ArrayList<>();
+        collectGroupPaths(rootNode, "", groupPaths);
         this.columnPathToIndex = new StringToIntMap(columns.size());
         for (int i = 0; i < columns.size(); i++) {
-            columnPathToIndex.put(columns.get(i).fieldPath().toString(), i);
+            String path = columns.get(i).fieldPath().toString();
+            columnPathToIndex.put(path, columnPathToIndex.containsKey(path) ? AMBIGUOUS_PATH : i);
+        }
+        for (String path : groupPaths) {
+            if (columnPathToIndex.containsKey(path)) {
+                columnPathToIndex.put(path, AMBIGUOUS_PATH);
+            }
+        }
+    }
+
+    /// Adds the dot-separated path of every group below `group` to `paths`.
+    private static void collectGroupPaths(SchemaNode.GroupNode group, String prefix, List<String> paths) {
+        for (SchemaNode child : group.children()) {
+            if (child instanceof SchemaNode.GroupNode childGroup) {
+                String path = prefix.isEmpty() ? childGroup.name() : prefix + "." + childGroup.name();
+                paths.add(path);
+                collectGroupPaths(childGroup, path, paths);
+            }
         }
     }
 
@@ -77,10 +101,19 @@ public class FileSchema {
     /// For nested schemas, use the dot-separated field path (e.g. `"address.zip"`)
     /// to avoid ambiguity when multiple nested columns share a leaf name.
     ///
+    /// A field name may contain dots itself (e.g. `"sepal.length"`). When the paths of
+    /// two fields join to the same dot-separated name, the name is ambiguous; use
+    /// [#getColumn(FieldPath)] or [#getColumn(int)] for such a column.
+    ///
     /// @param name column name or dot-separated field path
-    /// @throws IllegalArgumentException if no column with the given name exists
+    /// @throws IllegalArgumentException if no column with the given name exists, or the name
+    ///         is the path of more than one column
     public ColumnSchema getColumn(String name) {
         int index = columnPathToIndex.get(name);
+        if (index == AMBIGUOUS_PATH) {
+            throw new IllegalArgumentException("Column name '" + name
+                    + "' is ambiguous: it is the dot-separated path of more than one field in the schema");
+        }
         if (index < 0) {
             throw new IllegalArgumentException("Column not found: " + name);
         }
@@ -92,7 +125,18 @@ public class FileSchema {
     /// @param fieldPath path from schema root to leaf column
     /// @throws IllegalArgumentException if no column with the given path exists
     public ColumnSchema getColumn(FieldPath fieldPath) {
-        return getColumn(fieldPath.toString());
+        int index = columnPathToIndex.get(fieldPath.toString());
+        if (index >= 0 && columns.get(index).fieldPath().equals(fieldPath)) {
+            return columns.get(index);
+        }
+        if (index == AMBIGUOUS_PATH) {
+            for (ColumnSchema column : columns) {
+                if (column.fieldPath().equals(fieldPath)) {
+                    return column;
+                }
+            }
+        }
+        throw new IllegalArgumentException("Column not found: " + fieldPath);
     }
 
     /// Returns the total number of leaf columns in this schema.

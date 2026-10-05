@@ -448,6 +448,21 @@ class AvroRowReaderTest {
         }
     }
 
+    /// A projection names a field by its Parquet name, dots included.
+    @Test
+    void projectsAFieldWhoseParquetNameContainsADot() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("avro_name_resolution.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("acme.address.city")).build()) {
+
+            assertThat(reader.getSchema().getFields()).extracting(Schema.Field::name).containsExactly("acme_address");
+            List<GenericRecord> records = readAll(reader);
+            assertThat(nested(records.getFirst(), "acme_address").get("city").toString()).isEqualTo("Valparaiso");
+            assertThat(records.get(1).get("acme_address")).isNull();
+        }
+    }
+
     /// A record read through a nullable field, which the converter wraps in a union.
     private static GenericRecord nested(GenericRecord record, String field) {
         return (GenericRecord) record.get(field);

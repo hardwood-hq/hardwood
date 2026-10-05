@@ -18,6 +18,11 @@ import dev.hardwood.schema.SchemaNode;
 /// resolves to nothing there. This walker descends the node tree instead and can therefore stop
 /// on a group, which is what callers need in order to report *why* a name is not a usable leaf.
 ///
+/// A field name may itself contain dots, as in a flat column named `sepal.length`, so a dot in
+/// the path does not necessarily separate two levels. The walk follows every field whose name
+/// matches the path up to a dot or its end. Should two fields' paths join to the same name, the
+/// name is ambiguous and resolving it fails.
+///
 /// Path segments are compared in place, so no array is materialized for the path.
 public final class SchemaPathResolver {
 
@@ -39,54 +44,79 @@ public final class SchemaPathResolver {
     }
 
     /// Resolves `path` against the root node of `schema`.
+    ///
+    /// @throws IllegalArgumentException if `path` names more than one node
     public static Resolution resolve(FileSchema schema, String path) {
         return resolve(schema.getRootNode(), path);
     }
 
-    /// Resolves `path` against `root`, one dot-separated segment per tree level.
+    /// Resolves `path` against `root`, descending one tree level per field name the path holds.
+    ///
+    /// @throws IllegalArgumentException if `path` names more than one node
     public static Resolution resolve(SchemaNode.GroupNode root, String path) {
-        SchemaNode current = root;
-        int topLevelChildIndex = -1;
-        int start = 0;
-        String variantAncestor = null;
-
-        while (true) {
-            if (!(current instanceof SchemaNode.GroupNode group)) {
-                return new Resolution(null, topLevelChildIndex, true, variantAncestor);
-            }
-
-            int dot = path.indexOf('.', start);
-            int end = dot < 0 ? path.length() : dot;
-
-            int childIndex = indexOfChild(group, path, start, end);
-            if (childIndex < 0) {
-                return new Resolution(null, topLevelChildIndex, false, variantAncestor);
-            }
-            if (topLevelChildIndex < 0) {
-                topLevelChildIndex = childIndex;
-            }
-            current = group.children().get(childIndex);
-
-            if (dot < 0) {
-                return new Resolution(current, topLevelChildIndex, false, variantAncestor);
-            }
-            if (current instanceof SchemaNode.GroupNode child && child.isVariant()) {
-                variantAncestor = path.substring(0, end);
-            }
-            start = dot + 1;
+        Walk walk = new Walk(path);
+        walk.descend(root, 0, -1, null);
+        if (walk.match != null) {
+            return walk.match;
         }
+        return new Resolution(null, walk.topLevelChildIndex, walk.blockedByPrimitive, null);
     }
 
-    /// Index of the child of `group` named by `path[start, end)`, or `-1` if there is none.
-    private static int indexOfChild(SchemaNode.GroupNode group, String path, int start, int end) {
-        int length = end - start;
-        List<SchemaNode> children = group.children();
-        for (int i = 0; i < children.size(); i++) {
-            String name = children.get(i).name();
-            if (name.length() == length && path.regionMatches(start, name, 0, length)) {
-                return i;
+    /// The state of one walk: the node reached so far, and why the walk failed if it reaches none.
+    private static final class Walk {
+
+        private final String path;
+        private Resolution match;
+        private int topLevelChildIndex = -1;
+        private boolean blockedByPrimitive;
+
+        private Walk(String path) {
+            this.path = path;
+        }
+
+        /// Follows every child of `group` whose name matches `path` from `start` up to a dot or
+        /// the end of the path.
+        private void descend(SchemaNode.GroupNode group, int start, int topLevel, String variantAncestor) {
+            List<SchemaNode> children = group.children();
+            for (int i = 0; i < children.size(); i++) {
+                SchemaNode child = children.get(i);
+                int end = endOfName(child.name(), start);
+                if (end < 0) {
+                    continue;
+                }
+                int childTopLevel = topLevel < 0 ? i : topLevel;
+                if (topLevelChildIndex < 0) {
+                    topLevelChildIndex = childTopLevel;
+                }
+                if (end == path.length()) {
+                    found(new Resolution(child, childTopLevel, false, variantAncestor));
+                }
+                else if (child instanceof SchemaNode.GroupNode childGroup) {
+                    descend(childGroup, end + 1, childTopLevel,
+                            childGroup.isVariant() ? path.substring(0, end) : variantAncestor);
+                }
+                else {
+                    blockedByPrimitive = true;
+                }
             }
         }
-        return -1;
+
+        /// The position after `name` in `path` when `path` holds it at `start` followed by a dot
+        /// or the end of the path, or `-1` otherwise.
+        private int endOfName(String name, int start) {
+            if (!path.startsWith(name, start)) {
+                return -1;
+            }
+            int end = start + name.length();
+            return end == path.length() || path.charAt(end) == '.' ? end : -1;
+        }
+
+        private void found(Resolution resolution) {
+            if (match != null) {
+                throw new IllegalArgumentException("Column name '" + path
+                        + "' is ambiguous: it is the dot-separated path of more than one field in the schema");
+            }
+            match = resolution;
+        }
     }
 }

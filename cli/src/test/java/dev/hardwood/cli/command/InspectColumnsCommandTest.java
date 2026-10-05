@@ -18,8 +18,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -352,6 +357,32 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("no.such.column");
+    }
+
+    /// A field name may contain a dot, so `a.b` is the path of a top-level `a.b` and of `b`
+    /// nested in `a` alike.
+    @Test
+    void columnPathOfTwoFieldsIsRejected(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("dotted.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("a.b", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .struct("a", RepetitionType.REQUIRED, a -> a
+                        .addColumn("b", PhysicalType.INT64, RepetitionType.REQUIRED))
+                .addColumn("c.d", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setLong("a.b", 1L)
+                    .setStruct("a", a -> a.setLong("b", 2L))
+                    .setLong("c.d", 3L));
+        }
+
+        Cli.Result ambiguous = Cli.launch("inspect", "columns", "-f", file.toString(), "--column", "a.b");
+        assertThat(ambiguous.exitCode()).isNotZero();
+        assertThat(ambiguous.errorOutput()).contains("Ambiguous column: a.b matches 2 columns");
+
+        Cli.Result dotted = Cli.launch("inspect", "columns", "-f", file.toString(), "--column", "c.d");
+        assertThat(dotted.exitCode()).isZero();
+        assertThat(dotted.output()).startsWith("c.d  INT64");
     }
 
     @Test

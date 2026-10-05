@@ -220,9 +220,11 @@ At reader creation a predicate the rule does not admit throws `IllegalArgumentEx
 
 ## Column addressing
 
-A predicate names its column by a dot-separated path from the schema root (`address.city`). `SchemaPathResolver` walks the schema tree one segment per level and can stop on a group, which is what lets the resolver distinguish "a group" and "a leaf of a `VARIANT` group" from "not found". A leaf is then looked up through `FileSchema.getColumn(String)`. A field whose own name contains a dot cannot be addressed. Untested.
+A predicate names its column by a dot-separated path from the schema root (`address.city`). `SchemaPathResolver` walks the schema tree and can stop on a group, which is what lets the resolver distinguish "a group" and "a leaf of a `VARIANT` group" from "not found". A leaf is then looked up through `FileSchema.getColumn(String)`. `ColumnProjection` names resolve through the same walk.
 
-Tests: `PredicatePushDownTest`, `FilterPredicateResolverTest`.
+Parquet permits a dot inside a field name (PyArrow writes `sepal.length`), so a dot in a path does not mark a level boundary by itself. At each level the walk follows every child whose name matches the path up to a dot or its end, so `acme.info.x.y` reaches the leaf `x.y` below the group `acme.info`. A name that the paths of two fields join to (a flat `a.b` beside `b` nested in `a`) is ambiguous and fails rather than resolving to either; `FileSchema.getColumn(String)` refuses it the same way, as it does a leaf whose path is also a group's, and so do `ColumnReaders.getColumnReader(String)` and the writer's per-column overrides. Lookups by index or by `FieldPath` and `ColumnReaders` positions reach every column. Internal code that already holds a leaf column index (the predicate's columns, `buildColumnReader(int)`) requests it by that index through `ColumnRequests` rather than by its path.
+
+Tests: `PredicatePushDownTest`, `FilterPredicateResolverTest`, `DottedColumnNameTest`.
 
 ## parquet-java compat translation
 

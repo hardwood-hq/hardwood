@@ -276,6 +276,8 @@ rows one by one.
 
 A name is a top-level field or the full path to a nested field. A nested field is not selected by its own name alone: over `id, address STRUCT<city>`, `columns("city")` fails with `Column not found: city`. Names may repeat or overlap.
 
+A field name may contain dots: `columns("sepal.length")` selects a top-level column named `sepal.length`, and `columns("acme.info.x.y")` selects the field `x.y` of a struct named `acme.info`. Predicates and `FileSchema.getColumn(String)` resolve names the same way. A name that is the path of two fields, such as a top-level `a.b` beside a struct `a` with a field `b`, fails with an error; `buildColumnReader(int)` and the positions of `ColumnReaders` reach each of those columns by index.
+
 ### Index order
 
 By-index accessors follow the order `columns(...)` names the columns in. The columns one name selects, such as a group's children or every column under `all()`, follow schema order among themselves. The two reader types count positions differently:

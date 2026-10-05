@@ -8,8 +8,6 @@
 package dev.hardwood.internal.schema;
 
 import java.util.Arrays;
-import java.util.Collection;
-import java.util.LinkedHashSet;
 
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -50,24 +48,20 @@ public record ReadProjection(ProjectedSchema payload, ProjectedSchema decoded) {
         return new ReadProjection(projected, projected);
     }
 
-    /// Resolves `projection` as the payload and appends the leaves of `predicateColumns` it does
-    /// not already cover to form the decoded columns.
+    /// Resolves `requests` as the payload and appends the leaves of `predicateColumns` it does not
+    /// already cover to form the decoded columns.
     ///
     /// @param schema the file schema
-    /// @param projection the columns to expose
-    /// @param predicateColumns names of the predicate's leaf columns
+    /// @param requests the columns to expose
+    /// @param predicateColumns the predicate's leaf columns
     /// @param completeContainers as for [ProjectedSchema#create(FileSchema, ColumnProjection, boolean)]
-    public static ReadProjection withPredicateColumns(FileSchema schema, ColumnProjection projection,
-            Collection<String> predicateColumns, boolean completeContainers) {
-        ProjectedSchema payload = ProjectedSchema.create(schema, projection, completeContainers);
-        if (projection.projectsAll() || predicateColumns.isEmpty()) {
+    public static ReadProjection withPredicateColumns(FileSchema schema, ColumnRequests requests,
+            int[] predicateColumns, boolean completeContainers) {
+        ProjectedSchema payload = ProjectedSchema.create(schema, requests, completeContainers);
+        if (requests.requestsAll() || predicateColumns.length == 0) {
             return of(payload);
         }
-        LinkedHashSet<String> names = new LinkedHashSet<>(projection.getProjectedColumnNames());
-        if (!names.addAll(predicateColumns)) {
-            return of(payload);
-        }
-        ProjectedSchema all = ProjectedSchema.create(schema, ColumnProjection.columns(names.toArray(new String[0])),
+        ProjectedSchema all = ProjectedSchema.create(schema, requests.plusColumns(predicateColumns),
                 completeContainers);
         if (all.getProjectedColumnCount() == payload.getProjectedColumnCount()) {
             return of(payload);

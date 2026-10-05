@@ -21,6 +21,7 @@ import java.util.UUID;
 import java.util.function.IntPredicate;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqInterval;
@@ -29,7 +30,6 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
-import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -105,11 +105,9 @@ public final class PredicateView implements StructAccessor {
 
         List<Integer> flatColumns = new ArrayList<>();
         List<Integer> nestedColumns = new ArrayList<>();
-        List<String> nestedPaths = new ArrayList<>();
         for (int columnIndex : columns) {
             if (nestedAt.test(decoded.toProjectedIndex(columnIndex))) {
                 nestedColumns.add(columnIndex);
-                nestedPaths.add(schema.getColumn(columnIndex).fieldPath().toString());
             }
             else {
                 flatColumns.add(columnIndex);
@@ -133,12 +131,12 @@ public final class PredicateView implements StructAccessor {
             indexByColumn[columnIndex] = slot;
         }
 
-        if (nestedPaths.isEmpty()) {
+        if (nestedColumns.isEmpty()) {
             return new PredicateView(flatProjected, flatSlotByName,
                     null, new int[0], new ColumnSchema[0], deriveElementValidity, indexByColumn);
         }
-        ProjectedSchema nestedProjection = ProjectedSchema.create(
-                schema, ColumnProjection.columns(nestedPaths.toArray(new String[0])));
+        ProjectedSchema nestedProjection = ProjectedSchema.create(schema,
+                ColumnRequests.ofColumns(nestedColumns.stream().mapToInt(Integer::intValue).toArray()), false);
         int q = nestedProjection.getProjectedColumnCount();
         int[] nestedProjected = new int[q];
         ColumnSchema[] nestedSchemas = new ColumnSchema[q];

@@ -99,11 +99,16 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
     /// covers the whole file exactly; `--row-group` narrows both.
     private CommandResult printColumnDetail(FileMetaData metadata, FileSchema schema, InputFile inputFile)
             throws IOException {
-        ColumnSchema columnSchema = findColumn(schema);
-        if (columnSchema == null) {
+        List<ColumnSchema> matches = findColumns(schema);
+        if (matches.isEmpty()) {
             System.err.println("No such column: " + column);
             return CommandResult.FAILURE;
         }
+        if (matches.size() > 1) {
+            System.err.println("Ambiguous column: " + column + " matches " + matches.size() + " columns");
+            return CommandResult.FAILURE;
+        }
+        ColumnSchema columnSchema = matches.getFirst();
         if (rowGroup != null && (rowGroup < 0 || rowGroup >= metadata.rowGroups().size())) {
             System.err.println("No such row group: " + rowGroup
                     + Fmt.fmt(" (file has %,d)", metadata.rowGroups().size()));
@@ -257,13 +262,14 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         return header.toString();
     }
 
-    private ColumnSchema findColumn(FileSchema schema) {
+    private List<ColumnSchema> findColumns(FileSchema schema) {
+        List<ColumnSchema> matches = new ArrayList<>();
         for (ColumnSchema candidate : schema.getColumns()) {
             if (candidate.fieldPath().matchesDottedName(column)) {
-                return candidate;
+                matches.add(candidate);
             }
         }
-        return null;
+        return matches;
     }
 
     private static ColumnChunk chunkOf(RowGroup rowGroup, ColumnSchema columnSchema) {

@@ -35,7 +35,7 @@ A filtered read decodes more than it exposes. `ReadProjection` (`internal.schema
 - `payload()`: the leaves of `p`, which the reader exposes.
 - `decoded()`: the payload plus every leaf `pred` references that the payload does not cover. Every worker, exchange, fetch plan and batch array spans `decoded()`.
 
-`ReadProjection.withPredicateColumns(schema, p, predicateColumns, completeContainers)` builds the pair. The row path passes `completeContainers = true`, the column path `false`, since the column readers read individual leaves. A read without a filter, a filter that adds no column, or a `ColumnProjection.all()` projection yields `ReadProjection.of(payload)`: the payload is decoded alone.
+`ReadProjection.withPredicateColumns(schema, requests, predicateColumns, completeContainers)` builds the pair. The predicate's leaf columns are appended to the requests by index (`ColumnRequests`), never by path, since a path can be shared by two fields. The row path passes `completeContainers = true`, the column path `false`, since the column readers read individual leaves. A read without a filter, a filter that adds no column, or a `ColumnProjection.all()` projection yields `ReadProjection.of(payload)`: the payload is decoded alone.
 
 **Ordering invariant.** The payload's columns and top-level fields lead `decoded()` at the indices they hold in `payload()`; the remaining predicate columns follow in file order. A decoded index below `payloadColumnCount()` therefore names the same column in both schemas, and a decoded index at or past it is **filter-only** (`isFilterOnly`). The record constructor rejects a pair whose payload is not the prefix; the file order of the columns after it is not checked.
 

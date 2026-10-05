@@ -47,7 +47,7 @@ Each schema node has one position. The row is a tree addressed by simple names o
 
 The order lives in `ProjectedSchema` and applies to exposure only. Projected column indices, which address workers, exchanges and batches, stay in file schema order, and so does the decoded projection a filter extends (see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)); a reader maps between the two once, when it is built or when a batch is installed, never per value. Views the predicate builds over its own columns resolve indices through the same `ProjectedSchema`, so they agree with the view they index.
 
-A name resolves to exactly one schema node: a simple name to the top-level field of that name, a dotted name to the node at that path. A nested node has no other name, since a leaf's own name can recur in several structs.
+A projected name resolves to exactly one schema node, the node at that path from the root; a field name may itself contain dots (see [PREDICATE_MODEL.md](PREDICATE_MODEL.md#column-addressing)). A nested node has no other name, since a leaf's own name can recur in several structs.
 
 | Accessor | Index counts | Name resolves |
 |---|---|---|

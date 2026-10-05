@@ -308,7 +308,8 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     /// Rejects a configured path that names no leaf column of `schema`: a typo whose only other
-    /// effect would be to write the file without what the caller asked for.
+    /// effect would be to write the file without what the caller asked for. Also rejects a path
+    /// that is the path of more than one field, which a field name containing a dot allows.
     ///
     /// @param setting what was configured for the paths, which opens the message
     private static void requireLeafColumns(FileSchema schema, String setting, Set<String> paths) {
@@ -324,6 +325,8 @@ public final class ParquetFileWriter implements Closeable {
                 throw new IllegalArgumentException(setting + " configured for column '" + path
                         + "', which the schema does not have. Its leaf columns are: " + leafPaths);
             }
+            // Throws for a path the fields of several columns, or a column and a group, join to.
+            schema.getColumn(path);
         }
     }
 

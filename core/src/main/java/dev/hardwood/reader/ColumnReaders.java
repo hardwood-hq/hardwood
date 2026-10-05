@@ -9,7 +9,9 @@ package dev.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -47,7 +49,10 @@ public class ColumnReaders implements Closeable {
 
     /// The pipeline every reader of this group is a view of.
     private final ColumnScan scan;
-    /// One reader per column, by field path.
+    /// One reader per column, in the order the projection first requests them.
+    private final List<ColumnReader> readers;
+    /// One reader per column, by dot-separated field path. A path that the fields of several
+    /// columns join to maps to `null`.
     private final Map<String, ColumnReader> readersByName;
     /// One entry per position, in the order the projection requests the columns. A column
     /// requested more than once has the same reader at each of its positions.
@@ -57,13 +62,22 @@ public class ColumnReaders implements Closeable {
     ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema payload) {
         int positionCount = payload.requestedColumnCount();
         this.scan = scan;
-        this.readersByName = new LinkedHashMap<>(positionCount);
+        this.readers = new ArrayList<>(positionCount);
+        this.readersByName = new HashMap<>(positionCount);
         this.readersByIndex = new ColumnReader[positionCount];
+        ColumnReader[] readersByProjected = new ColumnReader[payload.getProjectedColumnCount()];
         for (int position = 0; position < positionCount; position++) {
             int projectedIndex = payload.requestedColumn(position);
-            ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(projectedIndex));
-            readersByIndex[position] = readersByName.computeIfAbsent(columnSchema.fieldPath().toString(),
-                    path -> new ColumnReader(scan, projectedIndex, schema, columnSchema, true));
+            ColumnReader reader = readersByProjected[projectedIndex];
+            if (reader == null) {
+                ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(projectedIndex));
+                reader = new ColumnReader(scan, projectedIndex, schema, columnSchema, true);
+                readersByProjected[projectedIndex] = reader;
+                readers.add(reader);
+                String path = columnSchema.fieldPath().toString();
+                readersByName.put(path, readersByName.containsKey(path) ? null : reader);
+            }
+            readersByIndex[position] = reader;
         }
     }
 
@@ -78,10 +92,15 @@ public class ColumnReaders implements Closeable {
     ///
     /// @param columnName the column name or dot-separated field path (must have been requested in the projection)
     /// @return the ColumnReader for the column
-    /// @throws IllegalArgumentException if the column was not requested
+    /// @throws IllegalArgumentException if the column was not requested, or the name is the
+    ///         dot-separated path of more than one requested column
     public ColumnReader getColumnReader(String columnName) {
         ColumnReader reader = readersByName.get(columnName);
         if (reader == null) {
+            if (readersByName.containsKey(columnName)) {
+                throw new IllegalArgumentException("Column name '" + columnName
+                        + "' is ambiguous: it is the dot-separated path of more than one requested column");
+            }
             throw new IllegalArgumentException("Column '" + columnName + "' was not requested");
         }
         return reader;
@@ -133,7 +152,7 @@ public class ColumnReaders implements Closeable {
     ///         group was closed
     public boolean nextBatch() throws IOException {
         boolean advanced = scan.advance();
-        for (ColumnReader reader : readersByName.values()) {
+        for (ColumnReader reader : readers) {
             reader.adoptCurrentStep();
         }
         return advanced;

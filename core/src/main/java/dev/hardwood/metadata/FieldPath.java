@@ -37,23 +37,27 @@ public record FieldPath(List<String> elements) {
     ///
     /// A dotted name like `"address.zip"` matches the path `["address", "zip"]`.
     /// A prefix match is allowed: `"address"` matches `["address", "zip"]`, so a group name
-    /// selects every leaf below it.
+    /// selects every leaf below it. An element containing a dot is matched whole, so
+    /// `"sepal.length"` matches the path `["sepal.length"]`.
     ///
     /// @param dottedName a dot-separated field reference (e.g. `"address.zip"`)
     /// @return true if this path matches the dotted name
     public boolean matchesDottedName(String dottedName) {
-        int pathIndex = 0;
-        int nameStart = 0;
-        while (nameStart < dottedName.length() && pathIndex < elements.size()) {
-            int dot = dottedName.indexOf('.', nameStart);
-            String segment = dot < 0 ? dottedName.substring(nameStart) : dottedName.substring(nameStart, dot);
-            if (!segment.equals(elements.get(pathIndex))) {
+        int position = 0;
+        for (String element : elements) {
+            if (!dottedName.startsWith(element, position)) {
                 return false;
             }
-            pathIndex++;
-            nameStart = dot < 0 ? dottedName.length() : dot + 1;
+            position += element.length();
+            if (position == dottedName.length()) {
+                return true;
+            }
+            if (dottedName.charAt(position) != '.') {
+                return false;
+            }
+            position++;
         }
-        return nameStart >= dottedName.length() && pathIndex <= elements.size();
+        return false;
     }
 
     /// Returns the dot-separated string representation of this path.

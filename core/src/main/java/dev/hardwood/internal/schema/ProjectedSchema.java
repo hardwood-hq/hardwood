@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.IntPredicate;
 
 import dev.hardwood.schema.ColumnProjection;
@@ -110,15 +111,26 @@ public final class ProjectedSchema {
     /// @throws IllegalArgumentException if a requested name is not found in the schema
     public static ProjectedSchema create(FileSchema schema, ColumnProjection projection,
             boolean completeContainers) {
-        if (projection.projectsAll()) {
-            return createAllColumnsProjection(schema);
-        }
-        return resolve(schema, projection.getProjectedColumnNames(), completeContainers);
+        return create(schema, ColumnRequests.of(projection), completeContainers);
     }
 
-    /// Names may repeat or overlap: a column selected by several of them is projected once, and
-    /// takes its [#exposedColumn] position from the first.
-    private static ProjectedSchema resolve(FileSchema schema, List<String> names, boolean completeContainers) {
+    /// Resolves `requests` against `schema`.
+    ///
+    /// @param schema the file schema
+    /// @param requests the requested names and leaf columns
+    /// @param completeContainers as for [#create(FileSchema, ColumnProjection, boolean)]
+    /// @return the resolved projection
+    /// @throws IllegalArgumentException if a requested name is not found in the schema
+    public static ProjectedSchema create(FileSchema schema, ColumnRequests requests, boolean completeContainers) {
+        if (requests.requestsAll()) {
+            return createAllColumnsProjection(schema);
+        }
+        return resolve(schema, requests, completeContainers);
+    }
+
+    /// Requests may repeat or overlap: a column selected by several of them is projected once,
+    /// and takes its [#exposedColumn] position from the first.
+    private static ProjectedSchema resolve(FileSchema schema, ColumnRequests requests, boolean completeContainers) {
         int originalCount = schema.getColumnCount();
         int fieldCount = schema.getRootNode().children().size();
         int[] requestByOriginal = new int[originalCount];
@@ -126,14 +138,15 @@ public final class ProjectedSchema {
         int[] requestByField = new int[fieldCount];
         Arrays.fill(requestByField, -1);
 
+        List<String> names = requests.names();
+        int[] columns = requests.columns();
         List<Integer> leaves = new ArrayList<>();
         List<Integer> requested = new ArrayList<>();
-        for (int request = 0; request < names.size(); request++) {
-            String name = names.get(request);
+        for (int request = 0; request < names.size() + columns.length; request++) {
             leaves.clear();
-            int field = name.contains(".")
-                    ? resolveNestedColumn(schema, name, leaves)
-                    : resolveSimpleColumn(schema, name, leaves);
+            int field = request < names.size()
+                    ? resolveColumn(schema, names.get(request), leaves)
+                    : resolveLeaf(schema, columns[request - names.size()], leaves);
             if (requestByField[field] < 0) {
                 requestByField[field] = request;
             }
@@ -266,27 +279,12 @@ public final class ProjectedSchema {
                 projectedToOriginal);
     }
 
-    /// Resolves a simple column name (no dot notation), which names a top-level field, into
-    /// `leaves`. A nested field is reached by its full path only, so a name matching a nested
-    /// leaf's own name does not select it.
-    ///
-    /// @return the index of the top-level field the name selects
-    private static int resolveSimpleColumn(FileSchema schema, String name, List<Integer> leaves) {
-        List<SchemaNode> children = schema.getRootNode().children();
-        for (int i = 0; i < children.size(); i++) {
-            SchemaNode child = children.get(i);
-            if (child.name().equals(name)) {
-                collectColumnsFromNode(child, leaves);
-                return i;
-            }
-        }
-        throw new IllegalArgumentException("Column not found: " + name);
-    }
-
-    /// Resolves a nested column name (dot notation) into `leaves`.
+    /// Resolves a top-level field name or the dot-separated path to a nested field into `leaves`.
+    /// A nested field is reached by its full path only, so a name matching a nested field's own
+    /// name does not select it.
     ///
     /// @return the index of the top-level field the name selects from
-    private static int resolveNestedColumn(FileSchema schema, String name, List<Integer> leaves) {
+    private static int resolveColumn(FileSchema schema, String name, List<Integer> leaves) {
         SchemaPathResolver.Resolution resolution = SchemaPathResolver.resolve(schema, name);
         if (resolution.blockedByPrimitive()) {
             throw new IllegalArgumentException("Cannot navigate into primitive column: " + name);
@@ -298,6 +296,37 @@ public final class ProjectedSchema {
         // Collect all columns under this node
         collectColumnsFromNode(resolution.node(), leaves);
         return resolution.topLevelChildIndex();
+    }
+
+    /// Adds the leaf column at `column` to `leaves`.
+    ///
+    /// @return the index of the top-level field holding the column
+    private static int resolveLeaf(FileSchema schema, int column, List<Integer> leaves) {
+        Objects.checkIndex(column, schema.getColumnCount());
+        leaves.add(column);
+        List<SchemaNode> children = schema.getRootNode().children();
+        int firstColumn = 0;
+        for (int i = 0; i < children.size(); i++) {
+            firstColumn += leafCount(children.get(i));
+            if (column < firstColumn) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("No top-level field holds column " + column);
+    }
+
+    /// The number of leaf columns under `node`.
+    private static int leafCount(SchemaNode node) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> 1;
+            case SchemaNode.GroupNode group -> {
+                int count = 0;
+                for (SchemaNode child : group.children()) {
+                    count += leafCount(child);
+                }
+                yield count;
+            }
+        };
     }
 
     /// Recursively collects all column indices under a schema node.

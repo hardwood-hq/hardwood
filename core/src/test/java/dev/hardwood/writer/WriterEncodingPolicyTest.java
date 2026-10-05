@@ -432,6 +432,24 @@ class WriterEncodingPolicyTest {
     // ==================== Refusals ====================
 
     @Test
+    void rejectsAnEncodingForAPathOfSeveralColumns() {
+        // A field name may contain a dot, so `a.b` is the path of the top-level `a.b` and of `b`
+        // in `a` alike; the override would otherwise apply to both.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("a.b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("a", RepetitionType.REQUIRED, a -> a
+                        .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .encoding("a.b", ColumnEncoding.PLAIN)
+                .build();
+
+        assertThatThrownBy(() -> ParquetFileWriter.create(OutputFile.inMemory(), schema, config))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column name 'a.b' is ambiguous: it is the dot-separated path of more than one field in the schema");
+    }
+
+    @Test
     void rejectsAnEncodingForAColumnTheSchemaDoesNotHave() {
         // A path matching nothing is a typo, and its only other effect would be to write the
         // file in an encoding the caller did not ask for. The message lists what it could match.

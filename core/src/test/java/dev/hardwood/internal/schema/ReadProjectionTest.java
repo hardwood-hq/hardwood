@@ -34,7 +34,7 @@ class ReadProjectionTest {
     void appendsPredicateColumnsBehindThePayload() throws Exception {
         FileSchema schema = schema();
         ReadProjection read = ReadProjection.withPredicateColumns(
-                schema, ColumnProjection.columns("status"), List.of("id"), true);
+                schema, ColumnRequests.of(ColumnProjection.columns("status")), new int[] {0}, true);
 
         assertThat(columnNames(read.payload())).containsExactly("status");
         // 'status' leads the decoded columns, although 'id' precedes it in the file.
@@ -49,7 +49,7 @@ class ReadProjectionTest {
         FileSchema schema = schema();
         // 'id' is leaf 0, so it sorts ahead of both projected leaves in file order.
         ReadProjection read = ReadProjection.withPredicateColumns(
-                schema, ColumnProjection.columns("status", "meta.kind"), List.of("id"), true);
+                schema, ColumnRequests.of(ColumnProjection.columns("status", "meta.kind")), new int[] {0}, true);
 
         assertThat(columnNames(read.payload())).containsExactly("status", "kind");
         assertThat(columnNames(read.decoded())).containsExactly("status", "kind", "id");
@@ -65,7 +65,7 @@ class ReadProjectionTest {
     @Test
     void decodesThePayloadAloneWhenThePredicateAddsNoColumn() throws Exception {
         ReadProjection read = ReadProjection.withPredicateColumns(
-                schema(), ColumnProjection.columns("id", "status"), List.of("status"), true);
+                schema(), ColumnRequests.of(ColumnProjection.columns("id", "status")), new int[] {1}, true);
 
         assertThat(read.decoded()).isSameAs(read.payload());
         assertThat(read.payloadColumnCount()).isEqualTo(2);
@@ -75,7 +75,7 @@ class ReadProjectionTest {
     void decodesThePayloadAloneWhenEveryColumnIsProjected() throws Exception {
         FileSchema schema = schema();
         ReadProjection read = ReadProjection.withPredicateColumns(
-                schema, ColumnProjection.all(), List.of("id"), true);
+                schema, ColumnRequests.of(ColumnProjection.all()), new int[] {0}, true);
 
         assertThat(read.decoded()).isSameAs(read.payload());
         assertThat(read.payloadColumnCount()).isEqualTo(schema.getColumnCount());
@@ -86,7 +86,7 @@ class ReadProjectionTest {
         // Both leaves live under the one top-level 'labels' map, so the predicate adds a
         // column without adding a field.
         ReadProjection read = ReadProjection.withPredicateColumns(
-                schema(), ColumnProjection.columns("labels.key_value.key"), List.of("labels.key_value.value"), true);
+                schema(), ColumnRequests.of(ColumnProjection.columns("labels.key_value.key")), new int[] {5}, true);
 
         assertThat(read.payload().getProjectedFieldIndices()).hasSize(1);
         assertThat(read.decoded().getProjectedFieldIndices()).hasSize(1);

@@ -84,7 +84,7 @@ A rewrite gives a field two names, and each side of the API takes one of them:
 | `GenericRecord.get(name)` | the Avro field name |
 | `ColumnProjection.columns(...)` | the Parquet name |
 
-Projection paths use `.` as the nesting separator. A Parquet group or field name containing `.` cannot be addressed by `ColumnProjection.columns(...)`; read the file without projection or use a schema with addressable names.
+A Parquet name containing `.` is passed unchanged; [Column projection forms](../reference/query-controls.md#column-projection-forms) lists how such names resolve.
 
 Two schema shapes have no valid Avro naming, and building a reader over either fails whatever projection is applied:
 

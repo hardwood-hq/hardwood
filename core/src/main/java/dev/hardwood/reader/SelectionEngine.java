@@ -7,10 +7,6 @@
  */
 package dev.hardwood.reader;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
@@ -184,14 +180,9 @@ final class SelectionEngine {
 
     // ==================== Predicate column discovery ====================
 
-    /// File leaf-column paths referenced by `resolved`, in first-seen order.
+    /// File leaf columns referenced by `resolved`, in first-seen order.
     /// Used to extend the decoded projection so the predicate columns are decoded.
-    static List<String> predicateColumnPaths(ResolvedPredicate resolved, FileSchema schema) {
-        Set<Integer> indices = PredicateView.predicateColumns(resolved);
-        List<String> paths = new ArrayList<>(indices.size());
-        for (int columnIndex : indices) {
-            paths.add(schema.getColumn(columnIndex).fieldPath().toString());
-        }
-        return paths;
+    static int[] predicateColumns(ResolvedPredicate resolved) {
+        return PredicateView.predicateColumns(resolved).stream().mapToInt(Integer::intValue).toArray();
     }
 }
