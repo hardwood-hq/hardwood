@@ -84,7 +84,7 @@ Assert exception messages in full, with AssertJ's `hasMessage(...)`. Never `hasM
 
 # Contributions
 
-Before starting new work, check whether a corresponding GitHub issue exists. If not, create one first so that all commits and pull requests can reference it.
+Before starting new work, check whether a corresponding GitHub issue exists, including a closed one whose recently merged work the change follows up on (find it with `git log` on the files being changed). Commits and pull requests reference that issue. If none fits, propose a new issue and agree with the maintainer before creating it.
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
 Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 A sentence belongs in the message only if it helps a future reader understand the diff. Drop ephemeral minutiae — slips caught and fixed within the same branch, transient process issues, references to interim states that won't survive in the final history, or commentary about how the change was developed rather than what it does.
