@@ -232,6 +232,24 @@ class RowRangesTest {
     }
 
     @Test
+    void testEndRowOnEmptyRangesReturnsZero() {
+        // Every page ruled out → no interval; a scanner must stop before the first row.
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 50));
+        RowRanges ranges = RowRanges.fromPages(pages, new boolean[]{ false, false }, 100);
+        assertEquals(0, ranges.intervalCount());
+        assertTrue(ranges.isEmpty());
+        assertEquals(0L, ranges.endRow());
+    }
+
+    @Test
+    void testAllRowsIsNotEmpty() {
+        assertFalse(RowRanges.ALL.isEmpty());
+        assertFalse(RowRanges.all(100).isEmpty());
+    }
+
+    @Test
     void testIntersectSingleRangeAgainstMultipleRanges() {
         // a: [0, 60)
         List<PageLocation> pagesA = List.of(

@@ -48,6 +48,7 @@ from parquet_annotators import (
     set_row_group_min_max,
     remove_map_value_field,
     drop_dictionary_page_offset,
+    drop_page_index,
     misplace_dictionary_page_offset,
     understate_data_page_offset,
 )
@@ -7287,3 +7288,35 @@ pq.write_table(
 )
 print("\nGenerated dict_int96.parquet:")
 print(f"  - {INT96_DICT_ROWS} rows, ts: INT96 timestamps from three distinct instants, dictionary-encoded")
+
+# One row group whose filter column 'id' has a Page Index while 'value' and 'tags' have none.
+# 'id' holds 0-49 in its first 50-row page and 100-149 in its second, so the row-group
+# statistics (0-149) admit `id = 75` while the Column Index rules out both pages, leaving no row
+# ranges at all. 'value' is flat and leaves the mask gate open; 'tags' is nested with v1 pages
+# and closes it.
+_empty_ranges_schema = pa.schema([
+    ('value', pa.int32(), False),
+    ('id', pa.int32(), False),
+    ('tags', pa.list_(pa.field('element', pa.int32(), False)), False),
+])
+_empty_ranges_path = 'core/src/test/resources/page_index_empty_ranges_unindexed_column.parquet'
+pq.write_table(
+    pa.table({
+        'value': list(range(100)),
+        'id': list(range(50)) + list(range(100, 150)),
+        'tags': [[i, i] for i in range(100)],
+    }, schema=_empty_ranges_schema),
+    _empty_ranges_path,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    max_rows_per_page=50,
+    row_group_size=100,
+    write_statistics=True,
+    write_page_index=True,
+)
+drop_page_index(_empty_ranges_path, 'value')
+drop_page_index(_empty_ranges_path, 'tags.list.element')
+print("\nGenerated page_index_empty_ranges_unindexed_column.parquet:")
+print("  - 100 rows, 1 row group; id: Page Index, pages 0-49 and 100-149")
+print("  - value (flat) and tags (nested, v1 pages): no Page Index")

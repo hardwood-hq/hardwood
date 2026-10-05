@@ -55,6 +55,12 @@ public class RowRanges {
         return all;
     }
 
+    /// Returns `true` if no row can match: no row of the row group survived page
+    /// filtering.
+    public boolean isEmpty() {
+        return !all && ranges.length == 0;
+    }
+
     /// Returns the exclusive end of the last matching row range. Used as a
     /// short-circuit cursor by sequential page scanners: once the iterator's
     /// row cursor has crossed `endRow()`, no later page can produce a non-null
@@ -65,9 +71,12 @@ public class RowRanges {
     /// match every row, but the bounded form has a known end and exposing it
     /// lets callers short-circuit correctly without having to special-case the
     /// sentinel separately.
+    ///
+    /// Returns `0` for an empty set, where no row survived page filtering: a
+    /// scanner then stops before its first page.
     public long endRow() {
-        if (all && ranges.length == 0) {
-            return Long.MAX_VALUE;
+        if (ranges.length == 0) {
+            return all ? Long.MAX_VALUE : 0;
         }
         return ranges[ranges.length - 1];
     }

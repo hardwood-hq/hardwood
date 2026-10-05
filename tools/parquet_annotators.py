@@ -439,6 +439,37 @@ def drop_dictionary_page_offset(path: str, column_name: str) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def drop_page_index(path: str, column_name: str) -> None:
+    """Rewrite `path` so the column chunk at dotted path `column_name` carries no Page Index:
+    its `offset_index_offset`, `offset_index_length`, `column_index_offset` and
+    `column_index_length` are cleared.
+
+    PyArrow writes the Page Index for every column or for none, so a file mixing indexed and
+    unindexed columns cannot be produced by writing alone. The index bytes stay in the file,
+    unreferenced; every page stays where PyArrow put it.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    patched = 0
+    for row_group in file_metadata.row_groups:
+        for column in row_group.columns:
+            meta_data = column.meta_data
+            if meta_data is None or '.'.join(meta_data.path_in_schema) != column_name:
+                continue
+            if column.offset_index_offset is None:
+                raise ValueError(f"{path} column '{column_name}' has no Page Index to drop")
+            column.offset_index_offset = None
+            column.offset_index_length = None
+            column.column_index_offset = None
+            column.column_index_length = None
+            patched += 1
+
+    if patched == 0:
+        raise ValueError(f"{path} has no column chunk named '{column_name}'")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def misplace_dictionary_page_offset(path: str, column_name: str) -> None:
     """Rewrite `path` so the named column chunk declares its dictionary page one byte past its
     first data page, with `data_page_offset` naming the chunk start.

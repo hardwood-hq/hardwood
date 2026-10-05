@@ -872,8 +872,10 @@ public class RowGroupIterator implements Closeable {
         // is closed we promote `matchingRows` to ALL so neither plan applies
         // a mask; row-group-level statistics still drop the group when
         // possible, and the row reader applies the residual filter to
-        // surviving rows.
-        if (!matchingRows.isAll() && shared.maskCapability().get() == MaskCapability.NO) {
+        // surviving rows. Row ranges that are empty need no mask: every column gets
+        // `FetchPlan.EMPTY` below, so the gate is not probed for them.
+        if (!matchingRows.isAll() && !matchingRows.isEmpty()
+                && shared.maskCapability().get() == MaskCapability.NO) {
             matchingRows = RowRanges.ALL;
         }
 
@@ -911,6 +913,13 @@ public class RowGroupIterator implements Closeable {
                     ? null : shared.dictionaries().loaded(fileOrdinal);
 
             if (colBuffers.offsetIndex() == null) {
+                // No row of the row group survived page filtering, so no page of this
+                // column is read; an indexed column reaches the same plan below, after
+                // reporting its skipped pages.
+                if (matchingRows.isEmpty()) {
+                    plans[projCol] = FetchPlan.EMPTY;
+                    continue;
+                }
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
                 // inline DataPageHeader.statistics and per-page row masks both
                 // happen inside SequentialFetchPlan. Inline page statistics are bounds
