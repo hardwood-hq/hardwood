@@ -182,7 +182,8 @@ class WriterFlba12TimestampTest {
     void aListOfTimestampsRoundTrips() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, element -> element.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                        RepetitionType.OPTIONAL, 12, LogicalType.timestamp(true, TimeUnit.NANOS)))
+                        RepetitionType.OPTIONAL,
+                                c -> c.typeLength(12).logicalType(LogicalType.timestamp(true, TimeUnit.NANOS))))
                 .build();
 
         InMemoryOutputFile out = writeRows(schema, List.of(
@@ -220,12 +221,13 @@ class WriterFlba12TimestampTest {
     @Test
     void aTimestampIsDeclaredOnTwelveBytesOnly() {
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        LogicalType.timestamp(true, TimeUnit.NANOS)))
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(16).logicalType(LogicalType.timestamp(true, TimeUnit.NANOS))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("TIMESTAMP(NANOS, UTC) annotates a FIXED_LEN_BYTE_ARRAY of length 12, not 16 (column v)");
         assertThatThrownBy(() -> FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.timestamp(true, TimeUnit.NANOS)))
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.timestamp(true, TimeUnit.NANOS))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("TIMESTAMP(NANOS, UTC) annotates an INT64 or a FIXED_LEN_BYTE_ARRAY(12) column, "
                         + "not INT32 (column v)");
@@ -233,7 +235,8 @@ class WriterFlba12TimestampTest {
 
     private static FileSchema fixed(LogicalType logicalType) {
         return FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 12, logicalType)
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.typeLength(12).logicalType(logicalType))
                 .build();
     }
 

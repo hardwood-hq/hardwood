@@ -47,13 +47,19 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | Method | Declares |
 |---|---|
 | `addColumn(name, type, repetition)` | a primitive column |
-| `addColumn(name, type, repetition, logicalType)` | a primitive column carrying an annotation; a `FIXED_LEN_BYTE_ARRAY` column takes the length the annotation implies |
-| `addColumn(name, type, repetition, typeLength)` | a `FIXED_LEN_BYTE_ARRAY` column of the given byte length |
-| `addColumn(name, type, repetition, typeLength, logicalType)` | both of the above |
+| `addColumn(name, type, repetition, column)` | a primitive column whose annotation, type length or field id `column` declares |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
 | `list(name, repetition, element)` | a `LIST` group whose element `element` declares |
-| `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` group with a `REQUIRED` key of `keyType` and a value `value` declares |
+| `map(name, repetition, keyType[, key], value)` | a `MAP` group with a `REQUIRED` key of `keyType`, whose annotation, type length or field id `key` declares, and a value `value` declares |
 | `build()` | the `FileSchema` |
+
+A column's optional attributes are set on the `FileSchema.ColumnBuilder` its lambda receives. Each is set at most once; setting one twice throws `IllegalArgumentException`.
+
+| `ColumnBuilder` method | Sets |
+|---|---|
+| `logicalType(LogicalType)` | the annotation, which must be legal for the physical type and type length |
+| `typeLength(int)` | the byte length of a `FIXED_LEN_BYTE_ARRAY` column |
+| `fieldId(int)` | the column's `field_id` |
 
 The writer requires at least one column: `build()` rejects a schema with no fields, and `ParquetFileWriter.create` rejects one built another way, such as the childless root a file that declares no columns is read as.
 
@@ -66,20 +72,43 @@ The writer requires at least one column: `build()` rejects a schema with no fiel
 | `FLOAT16` | 2 |
 | `DECIMAL(precision, scale)` | the fewest bytes whose two's complement holds `precision` digits: 1 for precision 1–2, 4 for 9, 8 for 18, 16 for 38 |
 
-Any other annotation, or none, implies no length, and the column is declared through a `typeLength` overload. A `typeLength` given explicitly is kept as given; a `DECIMAL` may take more bytes than its precision needs, while a `UUID`, `INTERVAL` or `FLOAT16` of any other length is rejected.
+Any other annotation, or none, implies no length, and the column declares one with `typeLength`. A `typeLength` given explicitly is kept as given; a `DECIMAL` may take more bytes than its precision needs, while a `UUID`, `INTERVAL` or `FLOAT16` of any other length is rejected.
 
 ```java
 FileSchema schema = FileSchema.builder("event")
         .addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
-                LogicalType.uuid())                                                 // 16 bytes
+                column -> column.logicalType(LogicalType.uuid()))                   // 16 bytes
         .addColumn("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
-                LogicalType.decimal(18, 2))                                         // 8 bytes
-        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 16,
-                LogicalType.decimal(18, 2))
+                column -> column.logicalType(LogicalType.decimal(18, 2)))           // 8 bytes
+        .addColumn("legacy_amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                column -> column.typeLength(16).logicalType(LogicalType.decimal(18, 2)))
         .build();
 ```
 
-Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, typeLength][, logicalType])`, `struct`, `list` and `map` carry no name, the surrounding layout supplying it.
+Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, column])`, `struct`, `list` and `map` carry no name, the surrounding layout supplying it.
+
+### Field Ids
+
+Every field can carry a `field_id`, the id by which Iceberg and Delta Lake (in `id` column mapping mode) identify a column. A column, a list element, a map key or a primitive map value takes it from `ColumnBuilder.fieldId(int)`. A group takes it from the builder its lambda receives: a `struct` from `StructBuilder.fieldId(int)`, a `LIST` or `MAP` from `ElementBuilder.fieldId(int)`. The synthetic `list` and `key_value` groups of the canonical layout carry none.
+
+```java
+FileSchema schema = FileSchema.builder("event")
+        .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED,
+                column -> column.fieldId(1))
+        .struct("location", RepetitionType.OPTIONAL, location -> location.fieldId(2)
+                .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.REQUIRED, column -> column.fieldId(3))
+                .addColumn("lon", PhysicalType.DOUBLE, RepetitionType.REQUIRED, column -> column.fieldId(4)))
+        .list("tags", RepetitionType.OPTIONAL, element -> element.fieldId(5)
+                .primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        column -> column.logicalType(LogicalType.string()).fieldId(6)))
+        .map("attributes", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                key -> key.logicalType(LogicalType.string()).fieldId(8),
+                value -> value.fieldId(7)
+                        .primitive(PhysicalType.INT64, RepetitionType.OPTIONAL, column -> column.fieldId(9)))
+        .build();
+```
+
+A schema read from a file keeps the field ids its footer carries, on `ColumnSchema.fieldId()` and `SchemaNode.fieldId()`, so a file read and written back with the same `FileSchema` carries them too.
 
 ### Logical Type Factories
 

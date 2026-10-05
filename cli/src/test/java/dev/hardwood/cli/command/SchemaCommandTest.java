@@ -67,6 +67,26 @@ class SchemaCommandTest implements SchemaCommandContract {
     }
 
     @Test
+    void displaysFieldIdsInNativeSchema(@TempDir Path tempDir) throws Exception {
+        Path parquetFile = write(tempDir, FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED, column -> column.fieldId(1))
+                .struct("location", RepetitionType.OPTIONAL, location -> location.fieldId(2)
+                        .addColumn("lat", PhysicalType.DOUBLE, RepetitionType.OPTIONAL, column -> column.fieldId(3)))
+                .build());
+
+        Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output().strip()).isEqualTo("""
+                message schema {
+                  required int64 id = 1;
+                  optional group location = 2 {
+                    optional double lat = 3;
+                  }
+                }""");
+    }
+
+    @Test
     void sanitizesNamesInAvroSchema(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("root \"schema\"\\path")
                 .addColumn("say \"hi\"\\field", PhysicalType.INT32, RepetitionType.REQUIRED)
@@ -131,7 +151,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void rendersOptionalMapValuesAsUnionsWithoutFieldDefault(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .map("scores", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                .map("scores", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.StringType()),
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build());
 
@@ -217,7 +238,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void rendersFixedWidthPrimitivesAsNamedFixedTypes(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .addColumn("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .addColumn("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -260,11 +281,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void rejectsInt96ProtoMapKeys() {
         SchemaNode.PrimitiveNode key = new SchemaNode.PrimitiveNode("key", PhysicalType.INT96,
-                RepetitionType.REQUIRED, null, 0, 1, 1);
+                RepetitionType.REQUIRED, null, 0, 1, 1, null);
         SchemaNode.GroupNode keyValue = new SchemaNode.GroupNode("key_value", RepetitionType.REPEATED, null, null,
-                List.of(key), 1, 1);
+                List.of(key), 1, 1, null);
         SchemaNode.GroupNode map = new SchemaNode.GroupNode("stamps", RepetitionType.OPTIONAL, ConvertedType.MAP,
-                new LogicalType.MapType(), List.of(keyValue), 0, 0);
+                new LogicalType.MapType(), List.of(keyValue), 0, 0, null);
 
         assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -276,7 +297,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void rejectsMissingProtoMapKeyClearly() {
         SchemaNode.GroupNode map = new SchemaNode.GroupNode("broken", RepetitionType.OPTIONAL, ConvertedType.MAP,
-                new LogicalType.MapType(), List.of(), 0, 0);
+                new LogicalType.MapType(), List.of(), 0, 0, null);
 
         assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -287,9 +308,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     void distinguishesSameNamedFixedLeavesUnderDifferentParents(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
                 .struct("home", RepetitionType.REQUIRED, home -> home
-                        .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16))
+                        .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.typeLength(16)))
                 .struct("work", RepetitionType.REQUIRED, work -> work
-                        .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16))
+                        .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.typeLength(16)))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -304,12 +327,12 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void definesCanonicalIntervalAndFloat16Once(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .addColumn("first", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        new LogicalType.IntervalType())
-                .addColumn("second", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        new LogicalType.IntervalType())
-                .addColumn("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 2,
-                        new LogicalType.Float16Type())
+                .addColumn("first", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(new LogicalType.IntervalType()))
+                .addColumn("second", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(new LogicalType.IntervalType()))
+                .addColumn("half", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(2).logicalType(new LogicalType.Float16Type()))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -325,8 +348,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void permitsCapitalizedRootAlongsideCanonicalFixedType(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("interval")
-                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        new LogicalType.IntervalType())
+                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(new LogicalType.IntervalType()))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -351,12 +374,12 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void resolvesCollidingLegalFixedCandidatesIndependentlyOfDeclarationOrder(@TempDir Path tempDir) throws Exception {
         FileSchema.Builder schema = FileSchema.builder("schema");
-        schema.addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
-                .addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16);
+        schema.addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16))
+                .addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16));
         Path declaredMd5First = write(Files.createDirectories(tempDir.resolve("md5-first")), schema.build());
         schema = FileSchema.builder("schema");
-        schema.addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
-                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16);
+        schema.addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16))
+                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16));
         Path declaredMd5Last = write(Files.createDirectories(tempDir.resolve("md5-last")), schema.build());
 
         Cli.Result first = Cli.launch("schema", "-f", declaredMd5First.toString(), "--format", "AVRO");
@@ -376,16 +399,16 @@ class SchemaCommandTest implements SchemaCommandContract {
     void keepsFixedContainerNamesStableWhenFieldsAreReordered(@TempDir Path tempDir) throws Exception {
         FileSchema.Builder firstBuilder = FileSchema.builder("schema")
                 .list("a-b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4)))
                 .list("a b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8));
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(8)));
         Path firstFile = write(Files.createDirectories(tempDir.resolve("first")), firstBuilder.build());
 
         FileSchema.Builder secondBuilder = FileSchema.builder("schema")
                 .list("a b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(8)))
                 .list("a-b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4));
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4)));
         Path secondFile = write(Files.createDirectories(tempDir.resolve("second")), secondBuilder.build());
 
         Cli.Result first = Cli.launch("schema", "-f", firstFile.toString(), "--format", "AVRO");
@@ -536,7 +559,7 @@ class SchemaCommandTest implements SchemaCommandContract {
                 .list("items", RepetitionType.OPTIONAL, element -> element
                         .struct(RepetitionType.REQUIRED, struct -> struct
                                 .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                        new LogicalType.StringType())))
+                                        c -> c.logicalType(new LogicalType.StringType()))))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "PROTO");
@@ -569,7 +592,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     void wrapsListMapElements(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
                 .list("entries", RepetitionType.REQUIRED, element -> element
-                        .map(RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(), value -> value
+                        .map(RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                                k -> k.logicalType(new LogicalType.StringType()), value -> value
                                 .primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build());
 
@@ -617,7 +641,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void wrapsMapListValues(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .map("attrs", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(), value -> value
+                .map("attrs", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.StringType()), value -> value
                         .list(RepetitionType.REQUIRED, inner -> inner
                                 .primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build());
@@ -637,7 +662,7 @@ class SchemaCommandTest implements SchemaCommandContract {
                 .list("items", RepetitionType.REQUIRED, element -> element
                         .struct(RepetitionType.OPTIONAL, struct -> struct
                                 .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                        new LogicalType.StringType())))
+                                        c -> c.logicalType(new LogicalType.StringType()))))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "PROTO");
@@ -666,9 +691,10 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void wrapsMapMapValues(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .map("index", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
+                .map("index", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.StringType()),
                         value -> value.map(RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
-                                new LogicalType.StringType(), inner -> inner
+                                k -> k.logicalType(new LogicalType.StringType()), inner -> inner
                                         .primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
                 .build());
 
@@ -732,11 +758,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void rejectsGroupMapKeys() {
         SchemaNode.GroupNode groupKey = new SchemaNode.GroupNode("key", RepetitionType.REQUIRED, null, null,
-                List.of(), 1, 0);
+                List.of(), 1, 0, null);
         SchemaNode.GroupNode keyValue = new SchemaNode.GroupNode("key_value", RepetitionType.REPEATED, null, null,
-                List.of(groupKey), 1, 1);
+                List.of(groupKey), 1, 1, null);
         SchemaNode.GroupNode map = new SchemaNode.GroupNode("m", RepetitionType.OPTIONAL, ConvertedType.MAP,
-                new LogicalType.MapType(), List.of(keyValue), 0, 0);
+                new LogicalType.MapType(), List.of(keyValue), 0, 0, null);
 
         assertThatThrownBy(() -> ProtoSchemaEmitter.protoMapKeyType(map))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -750,11 +776,11 @@ class SchemaCommandTest implements SchemaCommandContract {
                 .struct("home", RepetitionType.REQUIRED, home -> home
                         .struct("address", RepetitionType.REQUIRED, address -> address
                                 .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                        new LogicalType.StringType())))
+                                        c -> c.logicalType(new LogicalType.StringType()))))
                 .struct("work", RepetitionType.REQUIRED, work -> work
                         .struct("address", RepetitionType.REQUIRED, address -> address
                                 .addColumn("zip", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                        new LogicalType.StringType())))
+                                        c -> c.logicalType(new LogicalType.StringType()))))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -796,7 +822,7 @@ class SchemaCommandTest implements SchemaCommandContract {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
                 .struct("address", RepetitionType.REQUIRED, first -> first
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                new LogicalType.StringType()))
+                                c -> c.logicalType(new LogicalType.StringType())))
                 .struct("Address", RepetitionType.REQUIRED, second -> second
                         .addColumn("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build());
@@ -888,11 +914,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     void anchorsCanonicalFixedTypesUnderNamespacedRecords(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
                 .struct("home", RepetitionType.REQUIRED, home -> home
-                        .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                                new LogicalType.IntervalType()))
+                        .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.typeLength(12).logicalType(new LogicalType.IntervalType())))
                 .struct("work", RepetitionType.REQUIRED, work -> work
-                        .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                                new LogicalType.IntervalType()))
+                        .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                                c -> c.typeLength(12).logicalType(new LogicalType.IntervalType())))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -908,9 +934,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     void resolvesFixedNamesInContainerPositions(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
                 .list("hashes", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16))
-                .map("digests", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.StringType(),
-                        value -> value.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 8))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16)))
+                .map("digests", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.StringType()),
+                        value -> value.primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                c -> c.typeLength(8)))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -925,8 +953,8 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void disambiguatesCollidingFixedCandidatesInOneScope(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
-                .addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .addColumn("md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16))
+                .addColumn("Md5", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16))
                 .build());
 
         Cli.Result result = Cli.launch("schema", "-f", parquetFile.toString(), "--format", "AVRO");
@@ -960,9 +988,11 @@ class SchemaCommandTest implements SchemaCommandContract {
     @Test
     void acceptsEnumAndJsonMapKeys(@TempDir Path tempDir) throws Exception {
         Path parquetFile = write(tempDir, FileSchema.builder("schema")
-                .map("by_role", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.EnumType(),
+                .map("by_role", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.EnumType()),
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
-                .map("by_doc", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY, new LogicalType.JsonType(),
+                .map("by_doc", RepetitionType.REQUIRED, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(new LogicalType.JsonType()),
                         value -> value.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
                 .build());
 
@@ -1018,20 +1048,20 @@ class SchemaCommandTest implements SchemaCommandContract {
     void ordersCollidingContainerLoserSegmentsByRawName(@TempDir Path tempDir) throws Exception {
         FileSchema.Builder firstBuilder = FileSchema.builder("schema")
                 .list("a_b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16)))
                 .list("a-b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4)))
                 .list("a b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8));
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(8)));
         Path firstFile = write(Files.createDirectories(tempDir.resolve("first")), firstBuilder.build());
 
         FileSchema.Builder secondBuilder = FileSchema.builder("schema")
                 .list("a b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(8)))
                 .list("a-b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4))
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4)))
                 .list("a_b", RepetitionType.REQUIRED, element -> element
-                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16));
+                        .primitive(PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16)));
         Path secondFile = write(Files.createDirectories(tempDir.resolve("second")), secondBuilder.build());
 
         Cli.Result first = Cli.launch("schema", "-f", firstFile.toString(), "--format", "AVRO");

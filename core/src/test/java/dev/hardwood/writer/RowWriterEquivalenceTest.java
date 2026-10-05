@@ -37,7 +37,8 @@ class RowWriterEquivalenceTest {
     void flatColumnsWithNullsMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(LogicalType.string()))
                 .addColumn("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
 
@@ -122,7 +123,8 @@ class RowWriterEquivalenceTest {
     void manyRecordsAcrossSeveralStagedBatchesMatchTheColumnarPath() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(LogicalType.string()))
                 .build();
 
         int records = 2_500;
@@ -161,10 +163,11 @@ class RowWriterEquivalenceTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                LogicalType.string()))
+                                c -> c.logicalType(LogicalType.string())))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                        PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, c -> c.logicalType(LogicalType.string())))
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(LogicalType.string()),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
     }

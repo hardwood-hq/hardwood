@@ -149,7 +149,8 @@ public class FileSchema {
     /// followed by each node in pre-order, groups carrying their child count.
     public List<SchemaElement> toSchemaElements() {
         List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
-        elements.add(SchemaElement.group(name, rootNode.repetitionType(), rootNode.children().size()));
+        elements.add(new SchemaElement(name, null, null, rootNode.repetitionType(), rootNode.children().size(),
+                null, null, null, rootNode.fieldId(), null));
         appendElements(rootNode.children(), elements);
         return elements;
     }
@@ -162,14 +163,14 @@ public class FileSchema {
                     out.add(new SchemaElement(leaf.name(), leaf.type(),
                             columns.get(leaf.columnIndex()).typeLength(), leaf.repetitionType(), null,
                             annotations.convertedType(), annotations.scale(), annotations.precision(),
-                            null, annotations.union()));
+                            leaf.fieldId(), annotations.union()));
                 }
                 case SchemaNode.GroupNode group -> {
                     LogicalTypeAnnotations annotations =
                             LogicalTypeAnnotations.ofGroup(group.convertedType(), group.logicalType());
                     out.add(new SchemaElement(group.name(), null, null, group.repetitionType(),
                             group.children().size(), annotations.convertedType(), annotations.scale(),
-                            annotations.precision(), null, annotations.union()));
+                            annotations.precision(), group.fieldId(), annotations.union()));
                     appendElements(group.children(), out);
                 }
             }
@@ -211,8 +212,8 @@ public class FileSchema {
                 root.logicalType(),
                 rootChildren,
                 0, // Root has def level 0
-                0 // Root has rep level 0
-        );
+                0, // Root has rep level 0
+                root.fieldId());
 
         return new FileSchema(root.name(), columns, rootNode);
     }
@@ -256,7 +257,8 @@ public class FileSchema {
                         colIdx,
                         defLevel,
                         repLevel,
-                        effectiveLogicalType));
+                        effectiveLogicalType,
+                        element.fieldId()));
 
                 children.add(new SchemaNode.PrimitiveNode(
                         element.name(),
@@ -265,7 +267,8 @@ public class FileSchema {
                         effectiveLogicalType,
                         colIdx,
                         defLevel,
-                        repLevel));
+                        repLevel,
+                        element.fieldId()));
 
                 cursor[0]++;
             }
@@ -293,7 +296,8 @@ public class FileSchema {
                         effectiveGroupLogicalType(groupAnnotation, groupChildren),
                         groupChildren,
                         defLevel,
-                        repLevel);
+                        repLevel,
+                        element.fieldId());
                 if (groupNode.isVariant()) {
                     validateVariantGroup(groupNode);
                 }
@@ -468,6 +472,7 @@ public class FileSchema {
                 else if (group.convertedType() != null) {
                     sb.append(" (").append(group.convertedType()).append(")");
                 }
+                appendFieldId(sb, group);
                 sb.append(" {\n");
                 for (SchemaNode child : group.children()) {
                     appendNode(sb, child, indent + 1);
@@ -482,8 +487,15 @@ public class FileSchema {
                 if (prim.logicalType() != null) {
                     sb.append(" (").append(prim.logicalType()).append(")");
                 }
+                appendFieldId(sb, prim);
                 sb.append(";\n");
             }
+        }
+    }
+
+    private static void appendFieldId(StringBuilder sb, SchemaNode node) {
+        if (node.fieldId() != null) {
+            sb.append(" = ").append(node.fieldId());
         }
     }
 
@@ -492,13 +504,18 @@ public class FileSchema {
     /// Fields are added as top-level primitive leaves ([#addColumn]), nested `struct`
     /// groups ([#struct]), `LIST` groups ([#list]), or `MAP` groups ([#map]). The `LIST`
     /// and `MAP` groups emit the canonical 3-level and 2-level physical layouts.
+    ///
+    /// A field's name, physical type and repetition are positional. A leaf's optional
+    /// attributes (logical type, type length, field id) are declared on a [ColumnBuilder],
+    /// and a group's field id on the builder that declares the group's content.
     public static final class Builder {
 
         private final String name;
-        private final StructBuilder content = new StructBuilder();
+        private final StructBuilder content;
 
         private Builder(String name) {
             this.name = name;
+            this.content = new StructBuilder(name);
         }
 
         /// Append a primitive column.
@@ -506,60 +523,31 @@ public class FileSchema {
         /// @param columnName the column name
         /// @param type the physical type
         /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or `type` is
+        ///         `FIXED_LEN_BYTE_ARRAY`, which needs a type length or an annotation implying one
         public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
             content.addColumn(columnName, type, repetition);
             return this;
         }
 
-        /// Append a primitive column, giving the fixed byte length of a `FIXED_LEN_BYTE_ARRAY`
-        /// column.
+        /// Append a primitive column whose logical type, type length or field id is declared by
+        /// `column`.
+        ///
+        /// ```java
+        /// builder.addColumn("id", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+        ///         column -> column.logicalType(LogicalType.uuid()).fieldId(1));
+        /// ```
         ///
         /// @param columnName the column name
         /// @param type the physical type
         /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @param typeLength the fixed byte length (required and positive for
-        ///        `FIXED_LEN_BYTE_ARRAY`, rejected for any other type)
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or `typeLength` does
-        ///         not match the type
-        public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition, int typeLength) {
-            content.addColumn(columnName, type, repetition, typeLength);
-            return this;
-        }
-
-        /// Append a primitive column carrying a logical type annotation.
-        ///
-        /// A `FIXED_LEN_BYTE_ARRAY` column takes the length its annotation implies: 16 bytes for
-        /// `UUID`, 12 for `INTERVAL`, 2 for `FLOAT16`, and for `DECIMAL` the fewest bytes that
-        /// hold its precision. Any other annotation needs the type-length overload.
-        ///
-        /// @param columnName the column name
-        /// @param type the physical type
-        /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @param logicalType the annotation, which must be legal for `type`
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the annotation does
-        ///         not apply to the physical type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the
-        ///         annotation implies no length
+        /// @param column declares the column's optional attributes
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the type length does
+        ///         not match the type, or the annotation does not apply to the physical type and
+        ///         type length
         public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
-                                 LogicalType logicalType) {
-            content.addColumn(columnName, type, repetition, logicalType);
-            return this;
-        }
-
-        /// Append a primitive column carrying a logical type annotation, giving the fixed byte
-        /// length of a `FIXED_LEN_BYTE_ARRAY` column.
-        ///
-        /// @param columnName the column name
-        /// @param type the physical type
-        /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @param typeLength the fixed byte length (required and positive for
-        ///        `FIXED_LEN_BYTE_ARRAY`, rejected for any other type)
-        /// @param logicalType the annotation, which must be legal for `type` and `typeLength`
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, `typeLength` does not
-        ///         match the type, or the annotation does not apply to the physical type
-        public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition, int typeLength,
-                                 LogicalType logicalType) {
-            content.addColumn(columnName, type, repetition, typeLength, logicalType);
+                                 Consumer<ColumnBuilder> column) {
+            content.addColumn(columnName, type, repetition, column);
             return this;
         }
 
@@ -567,7 +555,8 @@ public class FileSchema {
         ///
         /// @param structName the group name
         /// @param repetition `REQUIRED` or `OPTIONAL`
-        /// @param filler declares the group's fields
+        /// @param filler declares the group's fields and, through [StructBuilder#fieldId], its
+        ///        field id
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or the group has no fields
         public Builder struct(String structName, RepetitionType repetition, Consumer<StructBuilder> filler) {
             content.struct(structName, repetition, filler);
@@ -578,7 +567,8 @@ public class FileSchema {
         ///
         /// @param listName the list group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the list itself may be null)
-        /// @param element declares the list's element
+        /// @param element declares the list's element and, through [ElementBuilder#fieldId], the
+        ///        list's field id
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
         public Builder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
             content.list(listName, repetition, element);
@@ -591,49 +581,31 @@ public class FileSchema {
         /// @param mapName the map group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
         /// @param keyType the physical type of the required `key`
-        /// @param value declares the map's value, like a list element
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no value is declared
+        /// @param value declares the map's value, like a list element, and, through
+        ///        [ElementBuilder#fieldId], the map's field id
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
+        ///         or `keyType` is `FIXED_LEN_BYTE_ARRAY`
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                            Consumer<ElementBuilder> value) {
             content.map(mapName, repetition, keyType, value);
             return this;
         }
 
-        /// Append a `MAP` group whose key carries a logical type annotation — a `STRING` key
-        /// being the common case. A `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation
-        /// implies, as [#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
+        /// Append a `MAP` group whose key's logical type, type length or field id is declared by
+        /// `key`, a `STRING` key being the common case.
         ///
         /// @param mapName the map group name
         /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
         /// @param keyType the physical type of the required `key`
-        /// @param keyLogicalType the key's annotation, which must be legal for `keyType`
-        /// @param value declares the map's value, like a list element
+        /// @param key declares the key's optional attributes, as for a column
+        /// @param value declares the map's value, like a list element, and, through
+        ///        [ElementBuilder#fieldId], the map's field id
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         the annotation does not apply to the key's physical type, or `keyType` is
-        ///         `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
+        ///         the key's type length does not match its type, or its annotation does not apply
+        ///         to it
         public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                           LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
-            content.map(mapName, repetition, keyType, keyLogicalType, value);
-            return this;
-        }
-
-        /// Append a `MAP` group whose key carries a logical type annotation, giving the fixed
-        /// byte length of a `FIXED_LEN_BYTE_ARRAY` key.
-        ///
-        /// @param mapName the map group name
-        /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
-        /// @param keyType the physical type of the required `key`
-        /// @param keyTypeLength the key's fixed byte length (required and positive for
-        ///        `FIXED_LEN_BYTE_ARRAY`, rejected for any other type)
-        /// @param keyLogicalType the key's annotation, which must be legal for `keyType` and
-        ///        `keyTypeLength`
-        /// @param value declares the map's value, like a list element
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         `keyTypeLength` does not match the key's type, or the annotation does not
-        ///         apply to it
-        public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType, int keyTypeLength,
-                           LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
-            content.map(mapName, repetition, keyType, keyTypeLength, keyLogicalType, value);
+                           Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+            content.map(mapName, repetition, keyType, key, value);
             return this;
         }
 
@@ -652,63 +624,112 @@ public class FileSchema {
         }
     }
 
+    /// Declares the optional attributes of a primitive leaf: a column, a list element, a map
+    /// value or a map key. Each attribute is declared at most once.
+    public static final class ColumnBuilder {
+
+        private final String columnName;
+        private LogicalType logicalType;
+        private boolean logicalTypeDeclared;
+        private Integer typeLength;
+        private Integer fieldId;
+
+        private ColumnBuilder(String columnName) {
+            this.columnName = columnName;
+        }
+
+        /// Annotate the leaf with a logical type.
+        ///
+        /// A `FIXED_LEN_BYTE_ARRAY` leaf declared without a [#typeLength] takes the length its
+        /// annotation implies: 16 bytes for `UUID`, 12 for `INTERVAL`, 2 for `FLOAT16`, and for
+        /// `DECIMAL` the fewest bytes that hold its precision. Any other annotation implies none.
+        ///
+        /// @param logicalType the annotation, which must be legal for the leaf's physical type
+        ///        and type length, or `null` for none
+        /// @throws IllegalArgumentException if the logical type is already declared
+        public ColumnBuilder logicalType(LogicalType logicalType) {
+            requireUndeclared(logicalTypeDeclared, "logical type");
+            this.logicalType = logicalType;
+            logicalTypeDeclared = true;
+            return this;
+        }
+
+        /// Give the fixed byte length of a `FIXED_LEN_BYTE_ARRAY` leaf.
+        ///
+        /// @param typeLength the byte length, positive
+        /// @throws IllegalArgumentException if the type length is already declared; a length on
+        ///         any other physical type, or one that is not positive, is rejected when the leaf
+        ///         is declared
+        public ColumnBuilder typeLength(int typeLength) {
+            requireUndeclared(this.typeLength != null, "type length");
+            this.typeLength = typeLength;
+            return this;
+        }
+
+        /// Give the leaf a `field_id`, the schema element's id by which table formats such as
+        /// Iceberg identify a column.
+        ///
+        /// @param fieldId the field id
+        /// @throws IllegalArgumentException if the field id is already declared
+        public ColumnBuilder fieldId(int fieldId) {
+            requireUndeclared(this.fieldId != null, "field id");
+            this.fieldId = fieldId;
+            return this;
+        }
+
+        private void requireUndeclared(boolean declared, String attribute) {
+            if (declared) {
+                throw new IllegalArgumentException("The " + attribute + " of column " + columnName
+                        + " is already declared");
+            }
+        }
+    }
+
     /// Declares the fields of a `struct` group. Nested structs compose by calling
     /// [#struct] again inside the filler.
     public static final class StructBuilder {
 
+        private final String structName;
         private final List<BuilderNode> children = new ArrayList<>();
+        private Integer fieldId;
 
-        private StructBuilder() {
+        private StructBuilder(String structName) {
+            this.structName = structName;
+        }
+
+        /// Give the struct a `field_id`.
+        ///
+        /// @param fieldId the field id
+        /// @throws IllegalArgumentException if the field id is already declared
+        public StructBuilder fieldId(int fieldId) {
+            if (this.fieldId != null) {
+                throw new IllegalArgumentException("The field id of struct " + structName + " is already declared");
+            }
+            this.fieldId = fieldId;
+            return this;
         }
 
         /// Append a primitive field.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or the type is
-        ///         `FIXED_LEN_BYTE_ARRAY` (use the type-length overload)
+        ///         `FIXED_LEN_BYTE_ARRAY`, which needs a type length or an annotation implying one
         public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
-            return addColumn(columnName, type, repetition, null, null);
+            return addColumn(columnName, type, repetition, NO_ATTRIBUTES);
         }
 
-        /// Append a primitive field, giving the fixed byte length of a `FIXED_LEN_BYTE_ARRAY`
-        /// column.
+        /// Append a primitive field whose logical type, type length or field id is declared by
+        /// `column`, as for [Builder#addColumn(String, PhysicalType, RepetitionType, Consumer)].
         ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, or `typeLength` does
-        ///         not match the type (required and positive for `FIXED_LEN_BYTE_ARRAY`, absent
-        ///         otherwise)
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the type length does
+        ///         not match the type, or the annotation does not apply to the physical type and
+        ///         type length
         public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
-                                       int typeLength) {
-            return addColumn(columnName, type, repetition, (Integer) typeLength, null);
-        }
-
-        /// Append a primitive field carrying a logical type annotation. A `FIXED_LEN_BYTE_ARRAY`
-        /// field takes the length its annotation implies, as [Builder#addColumn(String,
-        /// PhysicalType, RepetitionType, LogicalType)] describes.
-        ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, the annotation does
-        ///         not apply to the physical type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the
-        ///         annotation implies no length
-        public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
-                                       LogicalType logicalType) {
-            return addColumn(columnName, type, repetition, null, logicalType);
-        }
-
-        /// Append a primitive field carrying a logical type annotation, giving the fixed byte
-        /// length of a `FIXED_LEN_BYTE_ARRAY` column.
-        ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, `typeLength` does not
-        ///         match the type, or the annotation does not apply to the physical type
-        public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
-                                       int typeLength, LogicalType logicalType) {
-            return addColumn(columnName, type, repetition, (Integer) typeLength, logicalType);
-        }
-
-        private StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition,
-                                        Integer typeLength, LogicalType logicalType) {
+                                       Consumer<ColumnBuilder> column) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated columns are not yet supported by the writer: " + columnName);
             }
-            children.add(leaf(columnName, type, repetition, typeLength, logicalType));
+            children.add(leaf(columnName, type, repetition, column));
             return this;
         }
 
@@ -720,12 +741,7 @@ public class FileSchema {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + structName);
             }
-            StructBuilder nested = new StructBuilder();
-            filler.accept(nested);
-            if (nested.children.isEmpty()) {
-                throw new IllegalArgumentException("Struct must have at least one field: " + structName);
-            }
-            children.add(new BuilderStruct(structName, repetition, nested.children));
+            children.add(buildStruct(structName, repetition, filler));
             return this;
         }
 
@@ -737,154 +753,111 @@ public class FileSchema {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + listName);
             }
-            ElementBuilder builder = new ElementBuilder();
-            element.accept(builder);
-            children.add(new BuilderList(listName, repetition, builder.require(listName)));
+            children.add(buildList(listName, repetition, element));
             return this;
         }
 
         /// Append a nested `MAP` field.
         ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no value is declared
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
+        ///         or `keyType` is `FIXED_LEN_BYTE_ARRAY`
         public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
                                  Consumer<ElementBuilder> value) {
-            return map(mapName, repetition, keyType, null, null, value);
+            return map(mapName, repetition, keyType, NO_ATTRIBUTES, value);
         }
 
-        /// Append a nested `MAP` field whose key carries a logical type annotation. A
-        /// `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation implies, as
-        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
+        /// Append a nested `MAP` field whose key's logical type, type length or field id is
+        /// declared by `key`.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         the annotation does not apply to the key's physical type, or `keyType` is
-        ///         `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
+        ///         the key's type length does not match its type, or its annotation does not apply
+        ///         to it
         public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                                 LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
-            return map(mapName, repetition, keyType, null, keyLogicalType, value);
-        }
-
-        /// Append a nested `MAP` field whose key carries a logical type annotation, giving the
-        /// fixed byte length of a `FIXED_LEN_BYTE_ARRAY` key.
-        ///
-        /// @throws IllegalArgumentException if `repetition` is `REPEATED`, no value is declared,
-        ///         `keyTypeLength` does not match the key's type, or the annotation does not
-        ///         apply to it
-        public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                                 int keyTypeLength, LogicalType keyLogicalType,
-                                 Consumer<ElementBuilder> value) {
-            return map(mapName, repetition, keyType, (Integer) keyTypeLength, keyLogicalType, value);
-        }
-
-        private StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
-                                  Integer keyTypeLength, LogicalType keyLogicalType,
-                                  Consumer<ElementBuilder> value) {
+                                 Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
             if (repetition == RepetitionType.REPEATED) {
                 throw new IllegalArgumentException(
                         "Repeated groups are not yet supported by the writer: " + mapName);
             }
-            children.add(buildMap(mapName, repetition, keyType, keyTypeLength, keyLogicalType, value));
+            children.add(buildMap(mapName, repetition, keyType, key, value));
             return this;
         }
     }
 
     /// Declares the element of a `LIST`, or the value of a `MAP`: a primitive, a nested
     /// `struct`, a nested `LIST`, or a nested `MAP`. The declared node is named `element`
-    /// inside a list and `value` inside a map.
+    /// inside a list and `value` inside a map. [#fieldId] gives the enclosing `LIST` or `MAP`
+    /// group its field id; the element's own id is declared where the element is.
     public static final class ElementBuilder {
 
+        private final String groupName;
         private final String childName;
         private BuilderNode element;
+        private Integer fieldId;
 
-        private ElementBuilder() {
-            this("element");
+        private ElementBuilder(String groupName, String childName) {
+            this.groupName = groupName;
+            this.childName = childName;
         }
 
-        private ElementBuilder(String childName) {
-            this.childName = childName;
+        /// Give the enclosing `LIST` or `MAP` group a `field_id`.
+        ///
+        /// @param fieldId the field id
+        /// @throws IllegalArgumentException if the field id is already declared
+        public ElementBuilder fieldId(int fieldId) {
+            if (this.fieldId != null) {
+                throw new IllegalArgumentException("The field id of " + groupName + " is already declared");
+            }
+            this.fieldId = fieldId;
+            return this;
         }
 
         /// Declare a primitive element.
         ///
-        /// @throws IllegalArgumentException if the type is `FIXED_LEN_BYTE_ARRAY` (use the
-        ///         type-length overload)
+        /// @throws IllegalArgumentException if the type is `FIXED_LEN_BYTE_ARRAY`, which needs a
+        ///         type length or an annotation implying one
         public void primitive(PhysicalType type, RepetitionType repetition) {
-            set(leaf(childName, type, repetition, null, null));
+            primitive(type, repetition, NO_ATTRIBUTES);
         }
 
-        /// Declare a primitive element, giving the fixed byte length of a `FIXED_LEN_BYTE_ARRAY`
-        /// element.
+        /// Declare a primitive element whose logical type, type length or field id is declared by
+        /// `column`.
         ///
-        /// @throws IllegalArgumentException if `typeLength` does not match the type
-        public void primitive(PhysicalType type, RepetitionType repetition, int typeLength) {
-            set(leaf(childName, type, repetition, (Integer) typeLength, null));
-        }
-
-        /// Declare a primitive element carrying a logical type annotation. A
-        /// `FIXED_LEN_BYTE_ARRAY` element takes the length its annotation implies, as
-        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
-        ///
-        /// @throws IllegalArgumentException if the annotation does not apply to the physical
-        ///         type, or `type` is `FIXED_LEN_BYTE_ARRAY` and the annotation implies no length
-        public void primitive(PhysicalType type, RepetitionType repetition, LogicalType logicalType) {
-            set(leaf(childName, type, repetition, null, logicalType));
-        }
-
-        /// Declare a primitive element carrying a logical type annotation, giving the fixed byte
-        /// length of a `FIXED_LEN_BYTE_ARRAY` element.
-        ///
-        /// @throws IllegalArgumentException if `typeLength` does not match the type or the
+        /// @throws IllegalArgumentException if the type length does not match the type or the
         ///         annotation does not apply to it
-        public void primitive(PhysicalType type, RepetitionType repetition, int typeLength,
-                              LogicalType logicalType) {
-            set(leaf(childName, type, repetition, (Integer) typeLength, logicalType));
+        public void primitive(PhysicalType type, RepetitionType repetition, Consumer<ColumnBuilder> column) {
+            set(leaf(childName, type, repetition, column));
         }
 
         /// Declare a `struct` element.
         ///
         /// @throws IllegalArgumentException if the struct has no fields
         public void struct(RepetitionType repetition, Consumer<StructBuilder> filler) {
-            StructBuilder nested = new StructBuilder();
-            filler.accept(nested);
-            if (nested.children.isEmpty()) {
-                throw new IllegalArgumentException(childName + " struct must have at least one field");
-            }
-            set(new BuilderStruct(childName, repetition, nested.children));
+            set(buildStruct(childName, repetition, filler));
         }
 
         /// Declare a nested `LIST` element.
+        ///
+        /// @throws IllegalArgumentException if no element is declared
         public void list(RepetitionType repetition, Consumer<ElementBuilder> element) {
-            ElementBuilder inner = new ElementBuilder();
-            element.accept(inner);
-            set(new BuilderList(childName, repetition, inner.require(childName)));
+            set(buildList(childName, repetition, element));
         }
 
         /// Declare a nested `MAP` element.
         ///
-        /// @throws IllegalArgumentException if no value is declared
+        /// @throws IllegalArgumentException if no value is declared, or `keyType` is
+        ///         `FIXED_LEN_BYTE_ARRAY`
         public void map(RepetitionType repetition, PhysicalType keyType, Consumer<ElementBuilder> value) {
-            set(buildMap(childName, repetition, keyType, null, null, value));
+            map(repetition, keyType, NO_ATTRIBUTES, value);
         }
 
-        /// Declare a nested `MAP` element whose key carries a logical type annotation. A
-        /// `FIXED_LEN_BYTE_ARRAY` key takes the length its annotation implies, as
-        /// [Builder#addColumn(String, PhysicalType, RepetitionType, LogicalType)] describes.
+        /// Declare a nested `MAP` element whose key's logical type, type length or field id is
+        /// declared by `key`.
         ///
-        /// @throws IllegalArgumentException if no value is declared, the annotation does not
-        ///         apply to the key's physical type, or `keyType` is `FIXED_LEN_BYTE_ARRAY` and
-        ///         the annotation implies no length
-        public void map(RepetitionType repetition, PhysicalType keyType, LogicalType keyLogicalType,
+        /// @throws IllegalArgumentException if no value is declared, the key's type length does
+        ///         not match its type, or its annotation does not apply to it
+        public void map(RepetitionType repetition, PhysicalType keyType, Consumer<ColumnBuilder> key,
                         Consumer<ElementBuilder> value) {
-            set(buildMap(childName, repetition, keyType, null, keyLogicalType, value));
-        }
-
-        /// Declare a nested `MAP` element whose key carries a logical type annotation, giving the
-        /// fixed byte length of a `FIXED_LEN_BYTE_ARRAY` key.
-        ///
-        /// @throws IllegalArgumentException if no value is declared, `keyTypeLength` does not
-        ///         match the key's type, or the annotation does not apply to it
-        public void map(RepetitionType repetition, PhysicalType keyType, int keyTypeLength,
-                        LogicalType keyLogicalType, Consumer<ElementBuilder> value) {
-            set(buildMap(childName, repetition, keyType, (Integer) keyTypeLength, keyLogicalType, value));
+            set(buildMap(childName, repetition, keyType, key, value));
         }
 
         private void set(BuilderNode node) {
@@ -902,41 +875,60 @@ public class FileSchema {
         }
     }
 
+    private static final Consumer<ColumnBuilder> NO_ATTRIBUTES = column -> {
+    };
+
+    private static BuilderStruct buildStruct(String name, RepetitionType repetition, Consumer<StructBuilder> filler) {
+        StructBuilder nested = new StructBuilder(name);
+        filler.accept(nested);
+        if (nested.children.isEmpty()) {
+            throw new IllegalArgumentException("Struct must have at least one field: " + name);
+        }
+        return new BuilderStruct(name, repetition, nested.children, nested.fieldId);
+    }
+
+    private static BuilderList buildList(String name, RepetitionType repetition, Consumer<ElementBuilder> element) {
+        ElementBuilder builder = new ElementBuilder(name, "element");
+        element.accept(builder);
+        return new BuilderList(name, repetition, builder.require(name), builder.fieldId);
+    }
+
     /// Builds a `MAP` node named `name` with a required `key` primitive of `keyType` and a
     /// `value` declared through the shared [ElementBuilder]. Shared by every `map` verb.
     ///
     /// The key goes through [#leaf] like any other primitive, so its type length and annotation
     /// are validated where the map is declared.
     private static BuilderMap buildMap(String name, RepetitionType repetition, PhysicalType keyType,
-                                       Integer keyTypeLength, LogicalType keyLogicalType,
-                                       Consumer<ElementBuilder> value) {
-        ElementBuilder builder = new ElementBuilder("value");
+                                       Consumer<ColumnBuilder> key, Consumer<ElementBuilder> value) {
+        ElementBuilder builder = new ElementBuilder(name, "value");
         value.accept(builder);
-        BuilderLeaf key = leaf("key", keyType, RepetitionType.REQUIRED, keyTypeLength, keyLogicalType);
-        return new BuilderMap(name, repetition, key, builder.require(name));
+        BuilderLeaf keyLeaf = leaf("key", keyType, RepetitionType.REQUIRED, key);
+        return new BuilderMap(name, repetition, keyLeaf, builder.require(name), builder.fieldId);
     }
 
     private sealed interface BuilderNode {}
 
     private record BuilderLeaf(String name, PhysicalType type, RepetitionType repetition, Integer typeLength,
-                               LogicalType logicalType) implements BuilderNode {}
+                               LogicalType logicalType, Integer fieldId) implements BuilderNode {}
 
-    /// Builds a primitive leaf, validating the type length — required and positive for a
-    /// `FIXED_LEN_BYTE_ARRAY`, absent for every other type — and that the logical type
-    /// annotation, if any, is legal for that physical type. A `FIXED_LEN_BYTE_ARRAY` declared
-    /// without a length takes the one its annotation implies
+    /// Builds a primitive leaf from the attributes `attributes` declares, validating the type
+    /// length — required and positive for a `FIXED_LEN_BYTE_ARRAY`, absent for every other
+    /// type — and that the logical type annotation, if any, is legal for that physical type. A
+    /// `FIXED_LEN_BYTE_ARRAY` declared without a length takes the one its annotation implies
     /// ([AnnotationKind#impliedFixedWidth]), where it implies one.
-    private static BuilderLeaf leaf(String name, PhysicalType type, RepetitionType repetition, Integer typeLength,
-                                    LogicalType logicalType) {
-        if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength != null) {
+    private static BuilderLeaf leaf(String name, PhysicalType type, RepetitionType repetition,
+                                    Consumer<ColumnBuilder> attributes) {
+        ColumnBuilder column = new ColumnBuilder(name);
+        attributes.accept(column);
+        if (type != PhysicalType.FIXED_LEN_BYTE_ARRAY && column.typeLength != null) {
             throw new IllegalArgumentException("A type length is only valid for a FIXED_LEN_BYTE_ARRAY column, not "
                     + type + " (" + name + ")");
         }
-        Integer length = type == PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength == null
-                ? AnnotationKind.impliedFixedWidth(logicalType)
-                : typeLength;
-        LogicalTypeValidator.validateLeaf(name, type, repetition, length, logicalType);
-        return new BuilderLeaf(name, type, repetition, length, logicalType);
+        Integer length = type == PhysicalType.FIXED_LEN_BYTE_ARRAY && column.typeLength == null
+                ? AnnotationKind.impliedFixedWidth(column.logicalType)
+                : column.typeLength;
+        LogicalTypeValidator.validateLeaf(name, type, repetition, length, column.logicalType);
+        return new BuilderLeaf(name, type, repetition, length, column.logicalType, column.fieldId);
     }
 
     /// Lowers a primitive leaf to its [SchemaElement], deriving both annotation representations
@@ -944,41 +936,43 @@ public class FileSchema {
     private static SchemaElement leafElement(BuilderLeaf leaf) {
         LogicalTypeAnnotations annotations = LogicalTypeAnnotations.of(leaf.type(), leaf.logicalType());
         return new SchemaElement(leaf.name(), leaf.type(), leaf.typeLength(), leaf.repetition(), null,
-                annotations.convertedType(), annotations.scale(), annotations.precision(), null,
+                annotations.convertedType(), annotations.scale(), annotations.precision(), leaf.fieldId(),
                 annotations.union());
     }
 
-    private record BuilderStruct(String name, RepetitionType repetition, List<BuilderNode> children)
+    private record BuilderStruct(String name, RepetitionType repetition, List<BuilderNode> children,
+                                 Integer fieldId) implements BuilderNode {}
+
+    private record BuilderList(String name, RepetitionType repetition, BuilderNode element, Integer fieldId)
             implements BuilderNode {}
 
-    private record BuilderList(String name, RepetitionType repetition, BuilderNode element) implements BuilderNode {}
-
-    private record BuilderMap(String name, RepetitionType repetition, BuilderLeaf key, BuilderNode value)
-            implements BuilderNode {}
+    private record BuilderMap(String name, RepetitionType repetition, BuilderLeaf key, BuilderNode value,
+                              Integer fieldId) implements BuilderNode {}
 
     /// Flattens the builder's field tree into the depth-first [SchemaElement] list
     /// [#fromSchemaElements] consumes, a group element followed by its children. A `LIST`
     /// expands to the canonical 3-level shape (the annotated group, a synthetic `repeated
     /// group list`, then the element); a `MAP` expands to the canonical 2-level shape (the
     /// annotated group, a synthetic `repeated group key_value`, then the required `key` and
-    /// the value).
+    /// the value). The synthetic groups carry no field id.
     private static void flatten(List<BuilderNode> nodes, List<SchemaElement> out) {
         for (BuilderNode node : nodes) {
             switch (node) {
                 case BuilderLeaf leaf -> out.add(leafElement(leaf));
                 case BuilderStruct group -> {
-                    out.add(SchemaElement.group(group.name(), group.repetition(), group.children().size()));
+                    out.add(new SchemaElement(group.name(), null, null, group.repetition(), group.children().size(),
+                            null, null, null, group.fieldId(), null));
                     flatten(group.children(), out);
                 }
                 case BuilderList list -> {
                     out.add(new SchemaElement(list.name(), null, null, list.repetition(), 1,
-                            ConvertedType.LIST, null, null, null, LogicalType.list()));
+                            ConvertedType.LIST, null, null, list.fieldId(), LogicalType.list()));
                     out.add(SchemaElement.group("list", RepetitionType.REPEATED, 1));
                     flatten(List.of(list.element()), out);
                 }
                 case BuilderMap map -> {
                     out.add(new SchemaElement(map.name(), null, null, map.repetition(), 1,
-                            ConvertedType.MAP, null, null, null, LogicalType.map()));
+                            ConvertedType.MAP, null, null, map.fieldId(), LogicalType.map()));
                     out.add(SchemaElement.group("key_value", RepetitionType.REPEATED, 2));
                     out.add(leafElement(map.key()));
                     flatten(List.of(map.value()), out);

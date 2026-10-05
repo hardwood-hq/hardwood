@@ -25,6 +25,7 @@ import dev.hardwood.metadata.RepetitionType;
 /// @param maxDefinitionLevel maximum definition level, computed from the schema hierarchy
 /// @param maxRepetitionLevel maximum repetition level, computed from the schema hierarchy
 /// @param logicalType logical type annotation, or `null` if absent
+/// @param fieldId the schema element's `field_id`, or `null` if absent
 /// @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnSchema(
@@ -35,7 +36,8 @@ public record ColumnSchema(
         int columnIndex,
         int maxDefinitionLevel,
         int maxRepetitionLevel,
-        LogicalType logicalType) {
+        LogicalType logicalType,
+        Integer fieldId) {
 
     /// Returns the leaf (last) element of the field path, i.e. the column name.
     public String name() {
@@ -55,6 +57,9 @@ public record ColumnSchema(
         sb.append(name());
         if (logicalType != null) {
             sb.append(" (").append(logicalType).append(")");
+        }
+        if (fieldId != null) {
+            sb.append(" = ").append(fieldId);
         }
         sb.append(";");
         return sb.toString();

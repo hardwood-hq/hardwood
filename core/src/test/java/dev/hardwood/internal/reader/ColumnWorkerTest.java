@@ -239,7 +239,7 @@ class ColumnWorkerTest {
                     FieldPath.of("error_col"),
                     PhysicalType.INT32,
                     RepetitionType.REQUIRED,
-                    null, 0, 0, 0, null);
+                    null, 0, 0, 0, null, null);
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
@@ -266,7 +266,7 @@ class ColumnWorkerTest {
                     FieldPath.of("col"),
                     PhysicalType.INT32,
                     RepetitionType.REQUIRED,
-                    null, 0, 0, 0, null);
+                    null, 0, 0, 0, null, null);
             int batchCapacity = 64;
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
@@ -608,7 +608,7 @@ class ColumnWorkerTest {
                     FieldPath.of("col"),
                     PhysicalType.INT32,
                     RepetitionType.REQUIRED,
-                    null, 0, 0, 0, null);
+                    null, 0, 0, 0, null, null);
             int batchCapacity = 64;
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
@@ -652,7 +652,7 @@ class ColumnWorkerTest {
                     FieldPath.of("col"),
                     PhysicalType.INT32,
                     RepetitionType.REQUIRED,
-                    null, 0, 0, 0, null);
+                    null, 0, 0, 0, null, null);
             int batchCapacity = 64;
 
             BatchExchange<NestedBatch> exchange = BatchExchange.recycling(

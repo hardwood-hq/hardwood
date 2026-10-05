@@ -114,7 +114,7 @@ class WriterLogicalTypeStatisticsTest {
     void undefinedOrderColumnsStillCountNulls() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        LogicalType.geometry("EPSG:4326"))
+                        c -> c.logicalType(LogicalType.geometry("EPSG:4326")))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -228,8 +228,8 @@ class WriterLogicalTypeStatisticsTest {
         byte[][] values = { half(1.0f), half(Float.NaN), half(-99.0f), half(Float.NaN),
                 half(2.0f), half(-99.0f) };
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL, 2,
-                        LogicalType.float16())
+                .addColumn("v", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.typeLength(2).logicalType(LogicalType.float16()))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -255,7 +255,7 @@ class WriterLogicalTypeStatisticsTest {
                 .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("s", RepetitionType.OPTIONAL, group -> group
                         .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
-                                LogicalType.string()))
+                                c -> c.logicalType(LogicalType.string())))
                 .build();
 
         InMemoryOutputFile out = OutputFile.inMemory();
@@ -288,10 +288,11 @@ class WriterLogicalTypeStatisticsTest {
                                                      BatchFiller filler) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (typeLength == null) {
-            builder.addColumn("v", type, RepetitionType.REQUIRED, logicalType);
+            builder.addColumn("v", type, RepetitionType.REQUIRED, c -> c.logicalType(logicalType));
         }
         else {
-            builder.addColumn("v", type, RepetitionType.REQUIRED, typeLength, logicalType);
+            builder.addColumn("v", type, RepetitionType.REQUIRED,
+                    c -> c.typeLength(typeLength).logicalType(logicalType));
         }
 
         InMemoryOutputFile out = OutputFile.inMemory();

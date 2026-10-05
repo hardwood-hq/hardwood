@@ -283,7 +283,7 @@ class WriterInteropTest {
 
         FileSchema schema = FileSchema.builder("interop")
                 .addColumn(COLUMN, PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.OPTIONAL,
-                        testCase.typeLength())
+                        c -> c.typeLength(testCase.typeLength()))
                 .build();
         WriterConfig config = WriterConfig.builder().encoding(testCase.policy()).build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {

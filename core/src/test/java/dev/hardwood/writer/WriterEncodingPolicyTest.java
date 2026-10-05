@@ -585,7 +585,7 @@ class WriterEncodingPolicyTest {
             boolean[] nulls, int rows) throws Exception {
         FileSchema.Builder builder = FileSchema.builder("schema");
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            builder.addColumn("v", type, repetition, FIXED_WIDTH);
+            builder.addColumn("v", type, repetition, c -> c.typeLength(FIXED_WIDTH));
         }
         else {
             builder.addColumn("v", type, repetition);
@@ -804,7 +804,7 @@ class WriterEncodingPolicyTest {
     /// Declares a list's element of this type, with the fixed width where one is needed.
     private static void declareElement(ElementBuilder element, PhysicalType type) {
         if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            element.primitive(type, RepetitionType.REQUIRED, FIXED_WIDTH);
+            element.primitive(type, RepetitionType.REQUIRED, c -> c.typeLength(FIXED_WIDTH));
         }
         else {
             element.primitive(type, RepetitionType.REQUIRED);

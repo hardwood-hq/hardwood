@@ -92,7 +92,7 @@ class WriterBloomFilterTest {
     void holdsEveryValueOfEachBinaryType() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("b", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)
-                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8)
+                .addColumn("x", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(8))
                 .build();
         byte[][] strings = new byte[ROWS][];
         boolean[] nulls = new boolean[ROWS];

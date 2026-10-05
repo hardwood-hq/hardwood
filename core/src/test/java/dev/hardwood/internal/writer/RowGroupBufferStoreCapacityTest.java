@@ -70,7 +70,7 @@ class RowGroupBufferStoreCapacityTest {
     @Test
     void rowGroupIsCutBeforeFixedLengthContentOverflowsItsStore() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
-                .addColumn("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16)
+                .addColumn("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(16))
                 .build();
         byte[][] values = distinctValues(400, 16);
 

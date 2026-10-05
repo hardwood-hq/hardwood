@@ -151,9 +151,9 @@ class FixedWidthSchemaValidationTest {
     private static byte[] validFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
-                .addColumn("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 8,
-                        LogicalType.decimal(18, 2))
+                .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.typeLength(4))
+                .addColumn("price", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(8).logicalType(LogicalType.decimal(18, 2)))
                 .build();
 
         byte[][] digests = { bytes("aaaa"), bytes("bbbb"), bytes("cccc") };

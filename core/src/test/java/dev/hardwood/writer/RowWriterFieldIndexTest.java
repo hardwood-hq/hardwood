@@ -181,7 +181,8 @@ class RowWriterFieldIndexTest {
     void aRowCopiedByIndexReproducesTheFileItWasReadFrom() throws Exception {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(LogicalType.string()))
                 .addColumn("score", PhysicalType.DOUBLE, RepetitionType.OPTIONAL)
                 .build();
 
@@ -307,21 +308,22 @@ class RowWriterFieldIndexTest {
                 .addColumn("i64", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .addColumn("f32", PhysicalType.FLOAT, RepetitionType.REQUIRED)
                 .addColumn("f64", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
-                .addColumn("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                .addColumn("text", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.logicalType(LogicalType.string()))
                 .addColumn("bin", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
-                .addColumn("day", PhysicalType.INT32, RepetitionType.REQUIRED, LogicalType.date())
+                .addColumn("day", PhysicalType.INT32, RepetitionType.REQUIRED, c -> c.logicalType(LogicalType.date()))
                 .addColumn("clock", PhysicalType.INT32, RepetitionType.REQUIRED,
-                        LogicalType.time(true, TimeUnit.MILLIS))
+                        c -> c.logicalType(LogicalType.time(true, TimeUnit.MILLIS)))
                 .addColumn("moment", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        LogicalType.timestamp(true, TimeUnit.MICROS))
+                        c -> c.logicalType(LogicalType.timestamp(true, TimeUnit.MICROS)))
                 .addColumn("wall", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        LogicalType.timestamp(false, TimeUnit.MILLIS))
+                        c -> c.logicalType(LogicalType.timestamp(false, TimeUnit.MILLIS)))
                 .addColumn("amount", PhysicalType.INT64, RepetitionType.REQUIRED,
-                        LogicalType.decimal(18, 2))
-                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 16,
-                        LogicalType.uuid())
-                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 12,
-                        LogicalType.interval())
+                        c -> c.logicalType(LogicalType.decimal(18, 2)))
+                .addColumn("uuid", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(16).logicalType(LogicalType.uuid()))
+                .addColumn("span", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED,
+                        c -> c.typeLength(12).logicalType(LogicalType.interval()))
                 .addColumn("absent", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
     }
@@ -331,10 +333,11 @@ class RowWriterFieldIndexTest {
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
                         .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                                LogicalType.string()))
+                                c -> c.logicalType(LogicalType.string())))
                 .list("tags", RepetitionType.OPTIONAL, element -> element.primitive(
-                        PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string()))
-                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                        PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, c -> c.logicalType(LogicalType.string())))
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY,
+                        k -> k.logicalType(LogicalType.string()),
                         value -> value.primitive(PhysicalType.INT64, RepetitionType.OPTIONAL))
                 .build();
     }
@@ -344,7 +347,8 @@ class RowWriterFieldIndexTest {
     private static FileSchema rulesSchema() {
         return FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                        c -> c.logicalType(LogicalType.string()))
                 .list("tags", RepetitionType.OPTIONAL,
                         element -> element.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED))
                 .struct("address", RepetitionType.OPTIONAL, address -> address

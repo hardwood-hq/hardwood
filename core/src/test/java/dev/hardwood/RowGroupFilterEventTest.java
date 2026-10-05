@@ -155,7 +155,8 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .struct("address", RepetitionType.OPTIONAL, address -> address
-                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string()))
+                        .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                                c -> c.logicalType(LogicalType.string())))
                 .build();
         byte[] file = writeRows(schema, rows -> {
             for (int i = 0; i < NULL_ROWS; i++) {
