@@ -32,6 +32,7 @@ The script:
     | Group | What it holds |
     |---|---|
     | `flat` | one column per row of the design's per-column table |
+    | `unindexed` | `flat` with no Page Index on `__row__`, which every path reads beside the page-filtered predicate columns; unlinked by `derive_fixtures.py` |
     | `exotic` | `BSON`, `NULL`, `GEOMETRY` |
     | `ts12` | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` at every unit, past the `INT64` nanosecond range; annotated and given bounds by `derive_fixtures.py` |
     | `legacy` | converted types only |

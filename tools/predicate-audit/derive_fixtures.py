@@ -13,9 +13,12 @@ Run after `PredicateAudit fixtures <dir>`, with the fixture directory as the onl
 - dropped_*: flat_* with annotations the physical type cannot carry
 - ts12_*: the FIXED_LEN_BYTE_ARRAY(12) columns annotated TIMESTAMP, with bounds in the order of the values
 - zerobloom_bloom: flat_bloom with every Bloom filter bitset zeroed
+- unindexed_*: flat_* with the Page Index of `__row__` unlinked, so it is read without one while the predicate columns
+  are page-filtered
 - shapes: the v and sv groups annotated as VARIANT
 - pyarrow_nan: NaN outside the float bounds, signed zeros and TIMESTAMP(NANOS), as PyArrow writes them
 """
+import shutil
 import sys
 from pathlib import Path
 
@@ -126,6 +129,13 @@ def zeroed_bloom(directory):
     (directory / 'zerobloom_bloom.parquet').write_bytes(bytes(data))
 
 
+def unindexed(directory):
+    for layout in LAYOUTS:
+        path = directory / f'unindexed_{layout}.parquet'
+        shutil.copyfile(directory / f'flat_{layout}.parquet', path)
+        annotators.drop_page_index(str(path), '__row__')
+
+
 def shapes(directory):
     path = str(directory / 'shapes.parquet')
     annotators.annotate_group_at_path_as_variant(path, ['v'])
@@ -152,6 +162,7 @@ if __name__ == '__main__':
     dropped(target)
     ts12(target)
     zeroed_bloom(target)
+    unindexed(target)
     shapes(target)
     pyarrow_nan(target)
     print(f'derived fixtures in {target}')

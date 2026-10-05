@@ -50,6 +50,7 @@ final class Matrix {
         List<P> flatCases = new ArrayList<>(Cases.forColumns(Columns.flat()));
         flatCases.addAll(Cases.compositions());
         groups.add(new Group("flat", flatRows(Columns.flat()), flatCases, flatLayouts));
+        groups.add(new Group("unindexed", flatRows(Columns.flat()), flatCases, flatLayouts));
         List<P> exoticCases = new ArrayList<>(Cases.forColumns(Columns.exotic()));
         exoticCases.addAll(Cases.intersects());
         groups.add(new Group("exotic", flatRows(Columns.exotic()), exoticCases, flatLayouts));
