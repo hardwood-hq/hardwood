@@ -280,7 +280,7 @@ The level histograms of `SizeStatistics` and the `ColumnIndex`, and the `Geospat
 
 ### Bloom filters
 
-A column named through `bloomFilter(...)` carries a split-block Bloom filter in every row group, which a reader probes for the literal of an `eq` or `in` predicate (see [Query Controls](../how-to/query-controls.md)). No other column carries one.
+To let `eq` and `in` predicates on a high-cardinality column skip row groups, add a Bloom filter for the column with `bloomFilter(...)` (see [Writer Options](#writer-options)). The column then carries a split-block Bloom filter in every row group. [Bloom filters: skipping on equality](../concepts/parquet-layout.md#bloom-filters-skipping-on-equality) describes which columns benefit and what a filter costs.
 
 - **Contents.** Every non-null value of the column chunk, hashed with XXH64 over its bytes as stored: `INT32` and `FLOAT` as 4 little-endian bytes, `INT64` and `DOUBLE` as 8, `BYTE_ARRAY` without its length prefix, `FIXED_LEN_BYTE_ARRAY` as is. `FLOAT` and `DOUBLE` values are hashed over their raw bits, so `-0.0` and `0.0` are distinct values, as are `NaN`s with different bits.
 - **Size.** About 1.2 bytes per distinct value of the chunk at the default probability of `0.01`, rounded up to a power of two between 32 bytes and 128 MiB. Every chunk gets a filter whatever its encoding, an all-null chunk included.

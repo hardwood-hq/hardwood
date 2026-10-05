@@ -81,6 +81,38 @@ never fetched.
 | **[Split reading](../how-to/query-controls.md#split-aware-reading)** | Row groups are self-contained, so a file partitions cleanly across parallel readers at row-group boundaries. |
 | **Seek / head / tail** | The footer records each row group's row count, so the reader can jump to the row group containing an absolute row without scanning earlier ones. |
 
+## Bloom filters: skipping on equality
+
+Min/max statistics bound the values of a row group. For an `eq` or `in` predicate on a column
+whose values spread over the whole domain in every row group, such as an ID, a UUID or a trace
+key, every row group's bounds cover the literal and statistics skip nothing. Skipping such a row
+group takes a structure that records which values the column chunk holds, and a chunk can carry
+two:
+
+- **The dictionary.** When every data page of the chunk is dictionary-encoded, the dictionary page
+  lists every value the chunk holds. A high-cardinality column often has no such dictionary:
+  Hardwood's writer drops it when `PLAIN` encoding comes out smaller (see
+  [How the writer picks an encoding](write-model.md#how-the-writer-picks-an-encoding)), and other
+  writers fall back to `PLAIN` pages once the dictionary passes a size limit.
+- **A Bloom filter.** A bit set that answers "absent" with certainty and "present" with a
+  configurable false-positive probability. It does not depend on the chunk's encoding, and its
+  size follows the chunk's distinct values.
+
+A Bloom filter therefore pays off on a column with all of these properties:
+
+- Queries filter it with equality predicates the filter can answer; which ones those are is listed
+  under [Bloom filter and dictionary pruning](../reference/query-controls.md#bloom-filter-and-dictionary-pruning).
+- It has high cardinality: many distinct values per row group, so its chunks have no dictionary.
+- Its values are not sorted or clustered. On a sorted column each row group's bounds cover a
+  narrow slice of the domain, and statistics already skip the row groups.
+- A queried value occurs in few row groups. A value present in every row group leaves nothing to
+  skip.
+
+Each filter adds its size to the file for every row group, and the writer holds it in memory
+until the file is closed; see [What bounds memory](write-model.md#what-bounds-memory). Configuring
+a column to carry one is described under [Bloom filters](../reference/writer.md#bloom-filters) in
+the Writer Reference.
+
 ## Logical structure: the schema
 
 Orthogonal to the physical hierarchy is the **schema**, also stored in the footer. Parquet's
