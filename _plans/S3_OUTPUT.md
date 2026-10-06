@@ -1,8 +1,8 @@
 # #1454 S3 Output: Analysis and Delivery
 
-Tentative proposal for review; no implementation has been made. The proposed
-end state is [_designs/S3_OUTPUT.md](../_designs/S3_OUTPUT.md). Contract decisions
-below remain unresolved until discussed with the maintainer.
+Implementation follows the reviewed phases below. The proposed end state is
+[_designs/S3_OUTPUT.md](../_designs/S3_OUTPUT.md). Contract decisions below remain
+unresolved until discussed with the maintainer.
 
 ## Accepted design direction
 
@@ -20,7 +20,8 @@ direction is accepted for the draft; the maintainer may recommend changes in rev
 ## Research baseline and contribution rules
 
 Reviewed upstream `main` at `e4be4824ad08080e91c2ff3f544b2b925ef2fd5c`, fetched on
-2026-10-05. The working checkout remains on `1101-jump-to-row-or-row-group`.
+2026-10-05. Implementation uses `1454-s3-output`, based on upstream `main` at
+`292654e5`, separately from `1101-jump-to-row-or-row-group`.
 Existing untracked `AGENTS.md` and `_designs/DIVE_COLUMN_SHAPE.md` are unrelated.
 
 `CONTRIBUTING.md` requires issue-linked changes, behavior tests, small public API,
@@ -36,7 +37,8 @@ implementation. The contribution guide separates current subsystem documentation
 from delivery plans under `_plans/`. This pair keeps a proposed end-state design
 in the requested location and planning/research material outside the subsystem
 design. Existing subsystem docs and roadmap completion boxes stay unchanged until
-implementation lands. No design commit or external PR is part of this analysis.
+implementation lands. The design and plan were committed with phase 1; no
+external PR is part of this local implementation workflow.
 
 ## Issue and linked context
 
@@ -259,10 +261,21 @@ Phase 1 begins on `1454-s3-output`, based on upstream `main` at
 `292654e5`. Phases 1–4 do not expose a user-facing output factory. The final
 documentation and roadmap mark the feature implemented only after phase 6.
 
+Phase 1 was approved and committed as `9d9e70f7`. Its 45 new XML cases and
+full `./mvnw verify` passed.
+
+Phase 2 is implemented, reviewed, and approved for its issue-linked commit. Its
+50 new tests pass, along with the 45 phase 1 XML cases, and full `./mvnw verify`
+passed. The transport signs multipart, small-PUT, and HEAD requests, hashes only
+the payload prefix, bounds response bodies, and applies request deadlines through
+body completion. Bounded retries apply to parts and normal aborts. HEAD, paginated
+listing, and the single-attempt abort helper leave retries to the later shared
+recovery/cleanup budgets. No public output factory is exposed yet.
+
 - [x] Record the accepted per-output UUID and metadata-verification architecture in the design and analysis.
 - [ ] Resolve lost-response contract wording, replacement semantics, cleanup verification, and minimal public API.
 - [ ] Finalize the end-state design and submit the human-reviewed planning material if desired under CONTRIBUTING.md.
-- [ ] Create a feature branch from current upstream main; keep the existing navigation branch separate.
+- [x] Create a feature branch from current upstream main; keep the existing navigation branch separate.
 - [ ] Add failing tests for new output behavior using local HTTP servers and existing S3 signing-test patterns.
 - [ ] Add signed multipart request/response handling, write-ID metadata, HEAD verification, secure XML, valid-prefix hashing, bounded response reception, and whole-response deadlines.
 - [ ] Add the sequential internal sink, factory overloads, part-size validation, capacity guards, and lifecycle/cleanup rules.
@@ -302,9 +315,9 @@ clarification for the maintainer.
 
 ## Verification and practical effort
 
-This analysis has inspected source and primary protocol documentation. No product
-code, dependency, fixture, build setting, or external issue/PR has been changed;
-no implementation tests or Maven builds have been run for the draft.
+Initial analysis inspected source and primary protocol documentation before
+implementation. Each phase records its test coverage and verification result
+before contributor review; no external issue or PR is modified by this workflow.
 
 The feature is medium-sized after the contract decisions are settled. The original
 2-4-day estimate assumed the happy-path upload and existing harness would suffice.
@@ -323,6 +336,7 @@ scope.
 - [UploadPart](https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html): same-number replacement, ETag receipts, SigV4 payload integrity.
 - [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html): HTTP 200 can carry an error, ordered receipt XML, long processing, conditional-write behavior.
 - [AbortMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html): server-side part races and ListParts verification.
+- [ListParts](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html): part-number markers, pagination, and incomplete-upload inspection.
 - [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html): whole-object publication, concurrent writes, replacement/versioning.
 - [Object metadata](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html): custom write-ID metadata on creation and retrieval.
 - [HeadObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html): metadata-only verification, Content-Length, GetObject permission, and missing-key status behavior.

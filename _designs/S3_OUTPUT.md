@@ -227,8 +227,8 @@ close must make its bounded attempt and report any unresolved cleanup failure.
 | Initiate | `POST /key?uploads=` | HTTP 200 with valid `InitiateMultipartUploadResult` and a non-empty `UploadId` |
 | Upload part | `PUT /key?partNumber=N&uploadId=ID` | HTTP 200 with a non-empty ETag header |
 | Complete | `POST /key?uploadId=ID` | HTTP 200 with a valid `CompleteMultipartUploadResult` and non-empty ETag, not an `Error` document |
-| Abort | `DELETE /key?uploadId=ID` | HTTP 204, or a parsed `NoSuchUpload` identifying that this upload no longer exists |
-| Verify uncertain-part cleanup | `GET /key?uploadId=ID` | HTTP 200 with a valid `ListPartsResult`, or a parsed `NoSuchUpload` |
+| Abort | `DELETE /key?uploadId=ID` | HTTP 204, or HTTP 404 with a parsed `NoSuchUpload` identifying that this upload no longer exists |
+| Verify uncertain-part cleanup | `GET /key?uploadId=ID` | HTTP 200 with a valid `ListPartsResult`, or HTTP 404 with a parsed `NoSuchUpload` |
 | Verify publication | `HEAD /key` | HTTP 200 with this output's write UUID and the expected Content-Length |
 
 The completion body lists only acknowledged parts, in ascending part-number

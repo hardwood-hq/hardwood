@@ -13,12 +13,19 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import dev.hardwood.s3.S3Credentials;
 import dev.hardwood.s3.S3CredentialsProvider;
@@ -29,6 +36,8 @@ import dev.hardwood.s3.S3CredentialsProvider;
 /// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads and
 /// by test infrastructure for uploads.
 public final class S3Api {
+
+    static final String WRITE_ID_HEADER = "x-amz-meta-hardwood-write-id";
 
     private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
     private static final int HTTP_SERVICE_UNAVAILABLE = 503;
@@ -128,8 +137,8 @@ public final class S3Api {
         }
     }
 
-    private static void sleepBeforeRetry(int attempt) throws IOException {
-        Duration delay = BASE_DELAY.multipliedBy(1L << (attempt - 1));
+    static void sleepBeforeRetry(int attempt) throws IOException {
+        Duration delay = BASE_DELAY.multipliedBy(1L << Math.min(attempt - 1, 6));
         if (delay.compareTo(MAX_DELAY) > 0) {
             delay = MAX_DELAY;
         }
@@ -157,6 +166,226 @@ public final class S3Api {
         HttpRequest request = signRequest("PUT", bucketUri(bucket),
                 SHA256_EMPTY, HttpRequest.BodyPublishers.noBody());
         sendAndCheck(request, "PUT bucket " + bucket);
+    }
+
+    // ==================== Multipart output ====================
+
+    String initiateMultipartUpload(String bucket, String key, String writeId) throws IOException {
+        requireNonBlank(writeId, "writeId");
+        String description = "Initiate multipart upload s3://" + bucket + "/" + key;
+        HttpResponse<byte[]> response = sendWrite("POST", URI.create(objectUri(bucket, key) + "?uploads="),
+                new byte[0], 0, false, description, WRITE_ID_HEADER, writeId);
+        checkResponse(response, 200, description);
+        return S3Xml.uploadId(response.body());
+    }
+
+    String uploadPart(String bucket, String key, String uploadId, int partNumber, byte[] body, int length) throws IOException {
+        S3Xml.validatePartNumber(partNumber);
+        String description = "Upload part " + partNumber + " s3://" + bucket + "/" + key;
+        URI uri = multipartUri(bucket, key, uploadId, "partNumber=" + partNumber + "&");
+        HttpResponse<byte[]> response = sendWrite("PUT", uri, body, length, true, description);
+        checkResponse(response, 200, description);
+        List<String> etags = response.headers().allValues("ETag");
+        if (etags.size() != 1 || etags.getFirst().isBlank()) {
+            throw new IOException(description + " returned a missing or ambiguous ETag");
+        }
+        return etags.getFirst();
+    }
+
+    String completeMultipartUpload(String bucket, String key, String uploadId, List<S3Xml.Part> parts) throws IOException {
+        byte[] body = S3Xml.completionBody(parts);
+        String description = "Complete multipart upload s3://" + bucket + "/" + key;
+        HttpResponse<byte[]> response = sendWrite("POST", multipartUri(bucket, key, uploadId, ""),
+                body, body.length, false, description, "Content-Type", "application/xml");
+        checkResponse(response, 200, description);
+        return S3Xml.completedETag(response.body());
+    }
+
+    void putObject(String bucket, String key, byte[] body, int length, String writeId) throws IOException {
+        requireNonBlank(writeId, "writeId");
+        String description = "PUT s3://" + bucket + "/" + key;
+        HttpResponse<byte[]> response = sendWrite("PUT", objectUri(bucket, key), body, length, false,
+                description, WRITE_ID_HEADER, writeId);
+        checkResponse(response, 200, description);
+    }
+
+    void abortMultipartUpload(String bucket, String key, String uploadId) throws IOException {
+        abortMultipartUpload(bucket, key, uploadId, true);
+    }
+
+    void abortMultipartUploadOnce(String bucket, String key, String uploadId) throws IOException {
+        abortMultipartUpload(bucket, key, uploadId, false);
+    }
+
+    private void abortMultipartUpload(String bucket, String key, String uploadId, boolean retry) throws IOException {
+        String description = "Abort multipart upload s3://" + bucket + "/" + key;
+        HttpResponse<byte[]> response = sendWrite("DELETE", multipartUri(bucket, key, uploadId, ""),
+                new byte[0], 0, retry, description);
+        checkUploadResponse(response, 204, description);
+    }
+
+    HttpResponse<Void> headObject(String bucket, String key) throws IOException {
+        HttpRequest request = signRequest("HEAD", objectUri(bucket, key), SHA256_EMPTY, HttpRequest.BodyPublishers.noBody());
+        return sendOnce(request, HttpResponse.BodyHandlers.discarding(), "HEAD s3://" + bucket + "/" + key);
+    }
+
+    UploadState inspectMultipartUpload(String bucket, String key, String uploadId) throws IOException {
+        int marker = 0;
+        String description = "List multipart upload parts s3://" + bucket + "/" + key;
+        while (true) {
+            String prefix = marker == 0 ? "" : "part-number-marker=" + marker + "&";
+            HttpResponse<byte[]> response = sendWrite("GET", multipartUri(bucket, key, uploadId, prefix),
+                    new byte[0], 0, false, description);
+            if (!checkUploadResponse(response, 200, description)) {
+                return UploadState.MISSING;
+            }
+            S3Xml.PartsPage page = S3Xml.partsPage(response.body());
+            if (page.hasParts()) {
+                return UploadState.HAS_PARTS;
+            }
+            if (page.nextMarker() == 0) {
+                return UploadState.EMPTY;
+            }
+            if (page.nextMarker() <= marker) {
+                throw new IOException(description + " returned a non-increasing pagination marker");
+            }
+            marker = page.nextMarker();
+        }
+    }
+
+    enum UploadState {
+        MISSING, EMPTY, HAS_PARTS
+    }
+
+    int maxRetries() {
+        return maxRetries;
+    }
+
+    private HttpResponse<byte[]> sendWrite(String method, URI uri, byte[] body, int length,
+            boolean retry, String description, String... headers) throws IOException {
+        String hash = Aws4Signer.hexEncode(Aws4Signer.sha256(body, 0, length));
+        for (int attempt = 0;; attempt++) {
+            if (attempt > 0) {
+                sleepBeforeRetry(attempt);
+            }
+            HttpRequest request = signRequest(method, uri, hash, HttpRequest.BodyPublishers.ofByteArray(body, 0, length), headers);
+            HttpResponse<byte[]> response;
+            try {
+                response = sendOnce(request, info -> new BoundedBodySubscriber(S3Xml.MAX_RESPONSE_SIZE), description);
+            }
+            catch (IOException e) {
+                if (!retry || attempt >= maxRetries || Thread.currentThread().isInterrupted() || bodyLimitFailure(e)) {
+                    throw e;
+                }
+                continue;
+            }
+            int status = response.statusCode();
+            if (retry && attempt < maxRetries && (status == HTTP_INTERNAL_SERVER_ERROR || status == HTTP_SERVICE_UNAVAILABLE)) {
+                continue;
+            }
+            return response;
+        }
+    }
+
+    private <T> HttpResponse<T> sendOnce(HttpRequest request, HttpResponse.BodyHandler<T> handler, String description) throws IOException {
+        CompletableFuture<HttpResponse<T>> response = httpClient.sendAsync(request, handler);
+        try {
+            if (requestTimeout == null) {
+                return response.get();
+            }
+            Duration maxTimeout = Duration.ofNanos(Long.MAX_VALUE);
+            long nanos = requestTimeout.compareTo(maxTimeout) > 0 ? Long.MAX_VALUE : requestTimeout.toNanos();
+            return response.get(nanos, TimeUnit.NANOSECONDS);
+        }
+        catch (InterruptedException e) {
+            response.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted during " + description, e);
+        }
+        catch (TimeoutException e) {
+            response.cancel(true);
+            HttpTimeoutException failure = new HttpTimeoutException("Timed out during " + description);
+            failure.initCause(e);
+            throw failure;
+        }
+        catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IOException failure) {
+                throw failure;
+            }
+            if (cause instanceof RuntimeException failure) {
+                throw failure;
+            }
+            if (cause instanceof Error failure) {
+                throw failure;
+            }
+            throw new IOException(description + " failed", cause);
+        }
+    }
+
+    private static boolean bodyLimitFailure(IOException failure) {
+        Throwable cause = failure;
+        for (int depth = 0; cause != null && depth < 16; depth++) {
+            if (cause instanceof BoundedBodySubscriber.BodyLimitException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private static void checkResponse(HttpResponse<byte[]> response, int expectedStatus, String description) throws IOException {
+        if (response.statusCode() != expectedStatus) {
+            throw responseFailure(response, description);
+        }
+    }
+
+    private static boolean checkUploadResponse(HttpResponse<byte[]> response, int expectedStatus, String description) throws IOException {
+        if (response.statusCode() == expectedStatus) {
+            return true;
+        }
+        HttpException failure = responseFailure(response, description);
+        if (response.statusCode() == 404 && failure.getCause() instanceof S3Xml.ServiceException error && "NoSuchUpload".equals(error.code())) {
+            return false;
+        }
+        throw failure;
+    }
+
+    private static HttpException responseFailure(HttpResponse<byte[]> response, String description) {
+        IOException error;
+        try {
+            error = S3Xml.error(response.body());
+        }
+        catch (IOException e) {
+            error = e;
+        }
+        return new HttpException(response.statusCode(), description, error);
+    }
+
+    private URI multipartUri(String bucket, String key, String uploadId, String prefix) {
+        requireNonBlank(uploadId, "uploadId");
+        return URI.create(objectUri(bucket, key) + "?" + prefix + "uploadId=" + Aws4Signer.uriEncode(uploadId));
+    }
+
+    private static void requireNonBlank(String value, String name) {
+        Objects.requireNonNull(value, name);
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(name + " must not be blank");
+        }
+    }
+
+    static final class HttpException extends IOException {
+
+        private final int statusCode;
+
+        private HttpException(int statusCode, String description, IOException cause) {
+            super(description + " failed: HTTP " + statusCode + " " + cause.getMessage(), cause);
+            this.statusCode = statusCode;
+        }
+
+        int statusCode() {
+            return statusCode;
+        }
     }
 
     // ==================== URI construction ====================

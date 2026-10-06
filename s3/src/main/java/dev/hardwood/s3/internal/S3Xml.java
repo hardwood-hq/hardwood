@@ -44,6 +44,28 @@ final class S3Xml {
         return serviceException(parse(body, "Error", ERROR_FIELDS).fields());
     }
 
+    static PartsPage partsPage(byte[] body) throws IOException {
+        Document document = parse(body, "ListPartsResult", Set.of("IsTruncated", "NextPartNumberMarker"));
+        if ("Error".equals(document.root())) {
+            throw serviceException(document.fields());
+        }
+        String truncated = requiredValue(document.fields(), "IsTruncated").strip();
+        if (!"true".equals(truncated) && !"false".equals(truncated)) {
+            throw new IOException("Invalid IsTruncated in S3 list-parts response");
+        }
+        int nextMarker = 0;
+        if ("true".equals(truncated)) {
+            nextMarker = partNumber(requiredValue(document.fields(), "NextPartNumberMarker"));
+            if (nextMarker < document.lastPartNumber()) {
+                throw new IOException("S3 list-parts marker precedes its last part");
+            }
+        }
+        return new PartsPage(document.lastPartNumber() != 0, nextMarker);
+    }
+
+    record PartsPage(boolean hasParts, int nextMarker) {
+    }
+
     static byte[] completionBody(List<Part> parts) {
         Objects.requireNonNull(parts, "parts");
         if (parts.isEmpty()) {
@@ -67,9 +89,7 @@ final class S3Xml {
     record Part(int partNumber, String etag) {
 
         Part {
-            if (partNumber < 1 || partNumber > 10_000) {
-                throw new IllegalArgumentException("Part number must be between 1 and 10000");
-            }
+            validatePartNumber(partNumber);
             Objects.requireNonNull(etag, "etag");
             if (etag.isBlank()) {
                 throw new IllegalArgumentException("Part ETag must not be blank");
@@ -122,10 +142,12 @@ final class S3Xml {
 
     private static Document readDocument(XMLStreamReader reader, String expectedRoot, Set<String> expectedFields)
             throws XMLStreamException, IOException {
-        String root = null;
+        boolean elementOnly = reader.getEventType() == XMLStreamConstants.START_ELEMENT;
+        String root = elementOnly ? reader.getLocalName() : null;
         Set<String> fields = expectedFields;
         Map<String, String> values = new HashMap<>();
-        int depth = 0;
+        int depth = elementOnly ? 1 : 0;
+        int lastPartNumber = 0;
         while (reader.hasNext()) {
             int event = reader.next();
             rejectUnsafeEvent(event);
@@ -142,6 +164,14 @@ final class S3Xml {
                     root = name;
                     fields = "Error".equals(name) ? ERROR_FIELDS : expectedFields;
                 }
+                else if (depth == 2 && "ListPartsResult".equals(root) && "Part".equals(name)) {
+                    int number = readPart(reader);
+                    if (number <= lastPartNumber) {
+                        throw new IOException("S3 list-parts response has unordered or duplicate parts");
+                    }
+                    lastPartNumber = number;
+                    depth--;
+                }
                 else if (depth == 2 && fields.contains(name)) {
                     String value = readText(reader);
                     if (values.putIfAbsent(name, value) != null) {
@@ -152,12 +182,37 @@ final class S3Xml {
             }
             else if (event == XMLStreamConstants.END_ELEMENT) {
                 depth--;
+                if (depth == 0 && elementOnly) {
+                    break;
+                }
             }
         }
         if (root == null || depth != 0) {
             throw new IOException("Incomplete S3 XML response for " + expectedRoot);
         }
-        return new Document(root, values);
+        return new Document(root, values, lastPartNumber);
+    }
+
+    private static int readPart(XMLStreamReader reader) throws XMLStreamException, IOException {
+        Document part = readDocument(reader, "Part", Set.of("PartNumber"));
+        return partNumber(requiredValue(part.fields(), "PartNumber"));
+    }
+
+    private static int partNumber(String value) throws IOException {
+        try {
+            int number = Integer.parseInt(value.strip());
+            validatePartNumber(number);
+            return number;
+        }
+        catch (IllegalArgumentException e) {
+            throw new IOException("Invalid S3 list-parts number or marker", e);
+        }
+    }
+
+    static void validatePartNumber(int partNumber) {
+        if (partNumber < 1 || partNumber > 10_000) {
+            throw new IllegalArgumentException("Part number must be between 1 and 10000");
+        }
     }
 
     private static String readText(XMLStreamReader reader) throws XMLStreamException, IOException {
@@ -218,7 +273,7 @@ final class S3Xml {
         return value.length() <= limit ? value : value.substring(0, limit) + "...";
     }
 
-    private record Document(String root, Map<String, String> fields) {
+    private record Document(String root, Map<String, String> fields, int lastPartNumber) {
     }
 
     private record XmlReader(XMLStreamReader reader) implements AutoCloseable {
