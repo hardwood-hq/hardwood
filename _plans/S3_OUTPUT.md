@@ -272,7 +272,7 @@ body completion. Bounded retries apply to parts and normal aborts. HEAD, paginat
 listing, and the single-attempt abort helper leave retries to the later shared
 recovery/cleanup budgets. No public output factory is exposed yet.
 
-Phase 3 is implemented, reviewed, and approved for its issue-linked commit, based
+Phase 3 was reviewed, approved, and committed as `d629a89d`, based
 on `25382d17`. The internal `S3OutputFile` owns one reusable part buffer, validates
 whole-write capacity before consuming input, uploads full parts sequentially, and
 publishes only on close. Failed writes latch a terminal failure and release local
@@ -280,15 +280,29 @@ payload storage. Cleanup preserves the original exception and interrupt flag;
 uncertain part requests use a shared, bounded abort/list-parts budget and require
 parsed `NoSuchUpload` to confirm removal. Explicit discard can retry unresolved
 cleanup without replaying publication. Its 45 tests and the 95 existing protocol
-tests pass, and full `./mvnw verify` passed. Publication metadata recovery remains
-phase 4; public factories and documentation remain phase 5.
+tests pass, and full `./mvnw verify` passed. Public factories and documentation
+remain phase 5.
+
+Phase 4 is implemented and awaiting contributor review before committing, based
+on `d629a89d`. Uncertain publication responses enter bounded HEAD verification
+before multipart cleanup. A single UUID value and valid long Content-Length must
+match this output before close can succeed. Pending/mismatching metadata,
+HTTP 404, HTTP 500/503, and transport failures share one `maxRetries + 1` budget.
+Permission errors and other non-transient HEAD failures stop verification.
+Explicit validation/permission service errors remain failures even with a 5xx
+status or matching metadata. Cancellation stops verification, attempts cleanup,
+and preserves the interrupt flag. Unconfirmed publication retains the original
+exception and adds a suppressed diagnostic with UUID, expected length, result,
+and HEAD-attempt count. All 48 new recovery tests and 140 earlier sink/protocol
+tests pass; full `./mvnw verify` passed with 17,164 tests, zero failures/errors,
+and 75 skipped tests. No public factory is exposed yet.
 
 - [x] Record the accepted per-output UUID and metadata-verification architecture in the design and analysis.
 - [ ] Resolve lost-response contract wording, replacement semantics, cleanup verification, and minimal public API.
 - [ ] Finalize the end-state design and submit the human-reviewed planning material if desired under CONTRIBUTING.md.
 - [x] Create a feature branch from current upstream main; keep the existing navigation branch separate.
-- [ ] Add failing tests for new output behavior using local HTTP servers and existing S3 signing-test patterns.
-- [ ] Add signed multipart request/response handling, write-ID metadata, HEAD verification, secure XML, valid-prefix hashing, bounded response reception, and whole-response deadlines.
+- [x] Add failing tests for new output behavior using local HTTP servers and existing S3 signing-test patterns.
+- [x] Add signed multipart request/response handling, write-ID metadata, HEAD verification, secure XML, valid-prefix hashing, bounded response reception, and whole-response deadlines.
 - [ ] Add the sequential internal sink, factory overloads, part-size validation, capacity guards, and lifecycle/cleanup rules.
 - [ ] Make s3proxy filesystem mounts writable in both Testcontainers and compose; retain per-test isolated buckets and pinned images.
 - [ ] Add actual small/multipart writer/read-back ITs and failed-write/caller-abort ITs; query pending uploads instead of assuming an absent object proves cleanup.

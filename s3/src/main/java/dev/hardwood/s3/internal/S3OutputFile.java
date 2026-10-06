@@ -8,6 +8,8 @@
 package dev.hardwood.s3.internal;
 
 import java.io.IOException;
+import java.net.http.HttpHeaders;
+import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -115,13 +117,137 @@ public final class S3OutputFile implements OutputFile {
                 publicationAttempted = true;
                 api.completeMultipartUpload(bucket, key, uploadId, parts);
             }
-            state = State.COMMITTED;
-            uploadId = null;
-            releaseLocalState();
+            if (Thread.currentThread().isInterrupted()) {
+                throw new IOException("Interrupted during publication of " + target());
+            }
+            commit();
         }
         catch (IOException | RuntimeException | Error failure) {
+            if (publicationAttempted && uncertainPublication(failure)) {
+                Verification verification = verifyPublication(failure);
+                if (verification.confirmed() && !Thread.currentThread().isInterrupted()) {
+                    commit();
+                    return;
+                }
+                String detail = Thread.currentThread().isInterrupted() ? "stopped due to interruption" : verification.detail();
+                suppress(failure, new IOException("Publication of " + target()
+                        + " could not be confirmed; the destination may contain a completed object with write ID " + writeId
+                        + " and expected length " + position + "; verification " + detail + " after " + verification.checks() + " HEAD attempts"));
+            }
             fail(failure, publicationAttempted);
             throw failure;
+        }
+    }
+
+    private void commit() {
+        state = State.COMMITTED;
+        uploadId = null;
+        releaseLocalState();
+    }
+
+    private static boolean uncertainPublication(Throwable failure) {
+        if (failure instanceof S3Api.HttpException response) {
+            if (response.statusCode() != 408 && response.statusCode() < 500) {
+                return false;
+            }
+            return !(response.getCause() instanceof S3Xml.ServiceException error) || uncertainServiceError(error);
+        }
+        if (failure instanceof S3Xml.ServiceException error) {
+            return uncertainServiceError(error);
+        }
+        return failure instanceof IOException;
+    }
+
+    private static boolean uncertainServiceError(S3Xml.ServiceException error) {
+        return switch (error.code()) {
+            case "InternalError", "SlowDown", "ServiceUnavailable", "RequestTimeout" -> true;
+            default -> false;
+        };
+    }
+
+    private Verification verifyPublication(Throwable failure) {
+        state = State.VERIFYING;
+        long checks = 0;
+        for (int attempt = 0;; attempt++) {
+            if (Thread.currentThread().isInterrupted()) {
+                return new Verification(false, false, "skipped due to interruption", checks);
+            }
+            if (attempt != 0) {
+                try {
+                    S3Api.sleepBeforeRetry(attempt);
+                }
+                catch (IOException backoffFailure) {
+                    suppress(failure, backoffFailure);
+                    return new Verification(false, false, "stopped due to interruption", checks);
+                }
+            }
+            checks++;
+            Verification check = checkPublication(failure, checks);
+            if (!check.retryable()) {
+                return check;
+            }
+            if (attempt >= api.maxRetries()) {
+                return new Verification(false, false, "exhausted its budget", checks);
+            }
+        }
+    }
+
+    private Verification checkPublication(Throwable failure, long checks) {
+        try {
+            HttpResponse<Void> response = api.headObject(bucket, key);
+            if (Thread.currentThread().isInterrupted()) {
+                return new Verification(false, false, "stopped due to interruption", checks);
+            }
+            int status = response.statusCode();
+            if (status == 200 && metadataMatches(response.headers())) {
+                return new Verification(true, false, "matched", checks);
+            }
+            suppress(failure, new IOException("HEAD verification of " + target() + " returned HTTP " + status
+                    + (status == 200 ? " without matching write ID and length" : "")));
+            if (status != 200 && status != 404 && status != 500 && status != 503) {
+                return new Verification(false, false, (status == 403 ? "denied" : "stopped") + " at HTTP " + status, checks);
+            }
+            return new Verification(false, true, "pending", checks);
+        }
+        catch (IOException verificationFailure) {
+            suppress(failure, verificationFailure);
+            if (Thread.currentThread().isInterrupted()) {
+                return new Verification(false, false, "stopped due to interruption", checks);
+            }
+            return new Verification(false, true, "transport failure", checks);
+        }
+        catch (RuntimeException | Error verificationFailure) {
+            suppress(failure, verificationFailure);
+            return new Verification(false, false, "failed before confirmation", checks);
+        }
+    }
+
+    private boolean metadataMatches(HttpHeaders headers) {
+        List<String> ids = headers.allValues(S3Api.WRITE_ID_HEADER);
+        List<String> lengths = headers.allValues("Content-Length");
+        if (ids.size() != 1 || !writeId.equals(ids.getFirst()) || lengths.size() != 1) {
+            return false;
+        }
+        String length = lengths.getFirst();
+        if (length.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < length.length(); i++) {
+            if (length.charAt(i) < '0' || length.charAt(i) > '9') {
+                return false;
+            }
+        }
+        try {
+            return Long.parseLong(length) == position;
+        }
+        catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    private static void suppress(Throwable failure, Throwable secondary) {
+        if (failure != secondary) {
+            failure.addSuppressed(secondary);
         }
     }
 
@@ -182,18 +308,11 @@ public final class S3OutputFile implements OutputFile {
     private void fail(Throwable failure, boolean publicationAttempted) {
         state = publicationAttempted ? State.PUBLISH_UNKNOWN : State.FAILED;
         releaseLocalState();
-        if (publicationAttempted && failure instanceof IOException
-                && !(failure instanceof S3Api.HttpException) && !(failure instanceof S3Xml.ServiceException)) {
-            failure.addSuppressed(new IOException("Publication of " + target()
-                    + " could not be confirmed; the destination may contain a completed object with write ID " + writeId));
-        }
         try {
             cleanupPreservingInterrupt();
         }
         catch (IOException | RuntimeException | Error cleanupFailure) {
-            if (cleanupFailure != failure) {
-                failure.addSuppressed(cleanupFailure);
-            }
+            suppress(failure, cleanupFailure);
         }
     }
 
@@ -290,6 +409,9 @@ public final class S3OutputFile implements OutputFile {
     }
 
     private enum State {
-        NEW, OPEN, FAILED, COMMITTED, DISCARDED, PUBLISH_UNKNOWN
+        NEW, OPEN, FAILED, VERIFYING, COMMITTED, DISCARDED, PUBLISH_UNKNOWN
+    }
+
+    private record Verification(boolean confirmed, boolean retryable, String detail, long checks) {
     }
 }

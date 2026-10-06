@@ -412,10 +412,13 @@ ID for a different write; ordinary byte-integrity checks remain on the signed
 upload path. There is no full-file download during verification.
 
 If verification cannot confirm publication, throw `IOException` explicitly
-stating that the destination may contain the completed object. Retain the original
-publication cause and include the write UUID and whether verification was attempted,
-denied, interrupted, or exhausted. Verification failures and abort failures are
-suppressed; a recovered close reports success rather than leaking the earlier
+stating that the destination may contain the completed object. Preserve the original
+publication exception, including its type and cause. Attach the publication
+diagnostic as a suppressed `IOException` with the write UUID, expected length,
+verification result, and number of HEAD attempts. The result distinguishes skipped
+checks, denied access, interruption, and exhausted budgets. Verification failures
+and abort failures are also suppressed; a recovered close reports success rather
+than leaking the earlier
 transport exception. Cleanup can abort a known unfinished upload, but cannot
 retract an already-completed object. `NoSuchUpload` does not change an unverified
 publication into a confirmed failure.
