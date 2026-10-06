@@ -1,9 +1,11 @@
 # S3 Output Files
 
-Proposed end-state design for [#1454](https://github.com/hardwood-hq/hardwood/issues/1454).
-The source analysis, unresolved contract decisions, and delivery checklist are in
-[_plans/S3_OUTPUT.md](../_plans/S3_OUTPUT.md). This document specifies the proposed
-behavior; it does not describe an implemented backend.
+Completed design for [#1454](https://github.com/hardwood-hq/hardwood/issues/1454).
+
+The `hardwood-s3` output backend implements the sequential upload, publication
+verification, and cleanup contracts described here. [S3_STORAGE.md](S3_STORAGE.md)
+places it within the shared transport and source configuration, and
+[WRITER.md](WRITER.md) describes its writer integration.
 
 Related documents:
 
@@ -468,14 +470,15 @@ Do not claim every S3-compatible service implements every AWS-specific policy.
 
 JVM-only tests use the repository's local `HttpServer` pattern or a recording
 HTTP client. They exercise protocol failures deterministically. `*IT` tests use
-the existing signed s3proxy endpoint with writable filesystem storage. A proxy
+the signed s3proxy endpoints with writable filesystem storage and a metadata-capable
+transient provider using the same pinned image. A proxy
 over that endpoint can fail a selected operation while forwarding other requests.
 Writable test buckets start empty or seed replaceable objects from independent
 bytes. They do not register a fixture path through `TestBucket.withObject(Path)`
 and then overwrite it: that helper may hard-link the checked-in fixture, so a
 server-side overwrite could modify the source file. Incomplete-upload assertions
 use a test-only signed `ListMultipartUploads` helper, filter by exact key, and
-follow pagination; object absence alone is insufficient.
+follow returned pagination markers; object absence alone is insufficient.
 
 | Area | Scenarios and assertions |
 |---|---|

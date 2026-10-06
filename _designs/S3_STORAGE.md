@@ -1,6 +1,9 @@
 # S3 Storage
 
-Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+Covers the `hardwood-s3` module: its JDK HTTP transport, SigV4 signing, credential
+delegation and optional `hardwood-aws-auth` bridge, `S3Source` configuration,
+`S3InputFile` suffix-range reads and range backing, sequential `S3OutputFile`
+uploads, publication verification, cleanup, retry policies, and error mapping.
 
 Related documents:
 
@@ -22,11 +25,14 @@ Related documents:
 
 `hardwood-aws-auth` pulls in `software.amazon.awssdk:auth` with the signing, checksum, eventstream, endpoint, metrics and retry modules excluded. `http-client-spi` stays on the classpath because the container-credentials provider references it during GraalVM native-image analysis. The exclusions are signing and transport infrastructure, not credential sources, so the chain resolves the same sources as an unexcluded `auth` module.
 
-Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): credential lookup, signing, URI construction and dispatch. `S3Api` also exposes `putObject` and `createBucket`, which exist for test fixtures; no production code path writes to S3.
+Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): credential lookup, signing, URI construction and dispatch. `S3Api` also handles signed whole-object PUT, multipart initiation, part upload,
+completion, abort, ListParts, and HEAD verification for the internal `S3OutputFile`.
+Its legacy `createBucket` and byte-array PUT helpers remain available for test fixtures.
+The multipart XML and bounded response helpers stay in `dev.hardwood.s3.internal`.
 
 ## S3Source and configuration
 
-`S3Source` is a configured connection to one S3-compatible service. It owns the `HttpClient` and the `S3Api` built on it, and creates `S3InputFile` instances for `(bucket, key)` pairs or `s3://bucket/key` URIs, singly or in lists (`inputFilesInBucket`, `inputFiles`; the latter may span buckets). One source is meant to serve many files, which share its connection pool and credential provider.
+`S3Source` is a configured connection to one S3-compatible service. It owns the `HttpClient` and the `S3Api` built on it, and creates `S3InputFile` and sequential `OutputFile` instances for `(bucket, key)` pairs or `s3://bucket/key` URIs. Input files can also be created in lists (`inputFilesInBucket`, `inputFiles`; the latter may span buckets). One source is meant to serve many files, which share its connection pool and credential provider.
 
 | Builder option | Default | Contract |
 |---|---|---|
@@ -36,7 +42,8 @@ Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): creden
 | `credentials` | none | An `S3CredentialsProvider`, or static `S3Credentials` wrapped as one. Required; `build()` throws otherwise. |
 | `connectTimeout` | 10 s | Applied to the `HttpClient` the source builds; ignored with a caller-supplied client. |
 | `requestTimeout` | 30 s | Per HTTP request, applied by `S3Api` to every request. |
-| `maxRetries` | 3 | Retries per `GET` (see [Errors and retries](#errors-and-retries)); negative values are rejected. |
+| `maxRetries` | 3 | Retries per GET, part upload, or normal abort. Publication verification and uncertain-part cleanup each share one `maxRetries + 1` attempt budget; negative values are rejected. |
+| `uploadPartSize` | 8 MiB | Per-output payload buffer, from 5 MiB through `Integer.MAX_VALUE - 8`; at most 10,000 parts per file. Validated before resource allocation. |
 | `httpClient` | built by the source | A caller-supplied client is never closed by the source. |
 | `rangeBacking` | `NONE` | Range cache mode for every file from this source (see [Range backing](#range-backing)). |
 | `tempDir` | `java.io.tmpdir` | Backing-file directory under `SPARSE_TEMPFILE`; ignored under `NONE`. |
@@ -164,7 +171,7 @@ Every failure from the network path is an `IOException`, the checked type the `I
 
 `S3Api.sendWithRetry` retries a `GET` up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh, so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
 
-The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. `PUT` requests (test fixtures only) are never retried.
+The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. Whole-object PUT, multipart initiation, and completion are never replayed. Parts and normal aborts retry transient failures. Write response reception is bounded in bytes and by a whole-response deadline, including completion XML; interrupted requests preserve the interrupt flag.
 
 Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3). Backoff, retry exhaustion and the non-retried statuses are untested.
 
@@ -174,10 +181,54 @@ Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3). 
 
 Tests: `ParquetReaderS3CompatIT` (parquet-java-compat).
 
+## Sequential output
+
+`S3Source.outputFile(bucket, key)` and `outputFile(uri)` return uncreated
+`OutputFile` instances. Factories validate the destination without network I/O.
+`create()` allocates one reusable payload buffer and generates a UUID. Outputs
+smaller than the configured part size use a single PUT on close; reaching that
+size starts a multipart upload with consecutive, synchronous part requests.
+The output tracks logical byte position, validated part ETags, and only its own
+upload ID. Input range backing never stages output data.
+
+The buffer and each request payload cover exactly the valid bytes. A write checks
+remaining capacity using long arithmetic before consuming input; exceeding
+`uploadPartSize * 10,000` bytes fails the output. A failed output rejects further
+writes and releases local payload storage. Outputs retain the source's transport
+and do not close its client.
+
+The reserved `x-amz-meta-hardwood-write-id` metadata identifies each output attempt.
+It is signed on PUT or multipart initiation and persists on the completed object.
+A lost or uncertain publication response enters bounded HEAD verification before
+known-upload cleanup. One matching UUID and the expected long Content-Length
+confirm success. Pending, missing, or nonmatching metadata and transient failures
+share one verification budget. Permission denial, definitive service errors, and
+interruption cannot be recovered as success. Inconclusive publication preserves
+the original exception and adds a suppressed UUID/length/result diagnostic.
+
+Discard aborts only a known upload ID and never deletes the object. Uncertain
+part outcomes require bounded abort/ListParts cleanup until `NoSuchUpload` confirms
+removal. An unknown upload ID cannot be cleaned up by the client. Cleanup failures
+are preserved; explicit discard may retry unresolved cleanup. Interrupt cleanup
+temporarily clears and restores the interrupt flag. A repeated close never replays
+publication or restarts HEAD verification.
+
+[S3_OUTPUT.md](S3_OUTPUT.md) specifies the complete state machine, retry policies,
+XML validation, ownership, failure semantics, and test matrix. [WRITER.md](WRITER.md)
+places publication/discard within the writer lifecycle. User-facing usage and
+permissions are in [Write to S3](../docs/content/how-to/write-to-s3.md) and the
+[S3 reference](../docs/content/reference/s3.md#writing).
+
+Tests: `S3XmlTest`, `S3ListPartsXmlTest`, `S3WriteApiTest`,
+`BoundedBodySubscriberTest`, `S3OutputFileTest`, `S3PublicationRecoveryTest`,
+`S3SourceOutputTest`, and `S3OutputFileIT`. The integration suite uses real signed
+s3proxy uploads, reads the produced Parquet through `S3InputFile`, and checks
+pending uploads separately from object visibility.
+
 ## Boundaries
 
 - **Parallel range requests (#260).** A wide column chunk is fetched in sequential range requests, never split into parallel ones.
 - **Latency-aware coalescing (#763).** The gap policy does not adapt to the latency of the remote backend ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
 - **Other remote backends (#519).** Only S3 is a remote backend; there is no plain HTTP(S) `InputFile`.
 - **Range-backed files over 2 GB (#501).** See [INPUT_FILES.md](INPUT_FILES.md#boundaries).
-- **Not tracked.** Anonymous (unsigned) requests, requester-pays buckets, SigV4a, writing to S3, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.
+- **Not tracked.** Anonymous (unsigned) requests, requester-pays buckets, SigV4a, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.

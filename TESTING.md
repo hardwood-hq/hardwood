@@ -57,7 +57,7 @@ Every S3 test works in a `TestBucket` from `S3Proxy.get().bucketFor(...)`, serve
 | Environment | Server | Data dir |
 |-------------|--------|----------|
 | `HARDWOOD_S3PROXY_ENDPOINT` and `HARDWOOD_S3PROXY_DATA_DIR` set | `SharedS3Proxy`: the running server at that endpoint | the directory that server serves |
-| neither set | `ContainerS3Proxy`: one Testcontainers container per test JVM; with `-DforkCount=4` from `.mvn/maven.config`, up to four per module | `target/s3proxy/` of the module, bind-mounted read-only |
+| neither set | `ContainerS3Proxy`: one Testcontainers container per test JVM; with `-DforkCount=4` from `.mvn/maven.config`, up to four per module | `target/s3proxy/` of the module, bind-mounted read-write |
 
 The dev container (`docker-compose.yaml`) sets both variables: its `s3proxy` service serves `.s3proxy-data/` in the repository root, which the `claude` service sees under `/workspace`. The tests there start no containers, and the `claude` container has no access to a Docker daemon. The service's port is published on `localhost` (`8080`, or `S3PROXY_PORT`), so a build on the host can use the same server while the stack is up:
 
@@ -66,6 +66,33 @@ HARDWOOD_S3PROXY_ENDPOINT=http://localhost:8080 HARDWOOD_S3PROXY_DATA_DIR=$PWD/.
 ```
 
 `HARDWOOD_S3PROXY_DATA_DIR` must be absolute, since each module's tests run in the module directory. Any number of builds can share the server at once, as each test class works in its own bucket. The first `S3Proxy.get()` in a JVM deletes buckets older than a day, left behind by runs that did not finish.
+
+### Upload integration tests
+
+`S3OutputFileIT` creates empty isolated buckets and uploads every payload through
+signed S3 requests. It reads actual produced Parquet through `S3InputFile` and
+observes pending uploads with signed `ListMultipartUploads`; object absence alone
+does not prove cleanup. Do not overwrite objects registered with
+`TestBucket.withObject(Path)`, which can hard-link source fixtures. Seed replaceable
+objects from independent bytes or through PUT.
+
+The filesystem storage is writable in both Testcontainers and Compose. The suite
+includes a write/read-back check against that provider. User metadata requires
+extended attributes, which Docker Desktop bind mounts may not support. Metadata
+recovery therefore uses a second real s3proxy with the same pinned image and the
+`transient` provider. `S3UploadServer` starts it with Testcontainers, or connects to
+`HARDWOOD_S3PROXY_UPLOAD_ENDPOINT` when set. Compose provides `s3proxy-upload` and
+sets that variable for the dev container. Host builds sharing Compose can also set
+`HARDWOOD_S3PROXY_UPLOAD_ENDPOINT=http://localhost:8081` (or `S3PROXY_UPLOAD_PORT`).
+The tests create and delete their remote buckets through signed requests.
+
+The pinned server rejects multipart-listing pagination parameters; the observation
+client requests its default listing and follows markers if a response is truncated.
+`S3UploadTestClientTest` covers marker encoding, exact-key filtering, and repeated
+marker rejection. The pinned server also omits required ListParts fields and does
+not reliably return `NoSuchUpload` for an aborted ID. Failed-part tests retain the
+sink's conservative cleanup diagnostic and independently prove upload removal via
+`ListMultipartUploads`; production parsing and cleanup guarantees remain strict.
 
 ### The s3proxy image
 

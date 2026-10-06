@@ -34,7 +34,8 @@ import dev.hardwood.s3.S3CredentialsProvider;
 ///
 /// Encapsulates credential resolution, SigV4 signing, URI construction,
 /// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads and
-/// by test infrastructure for uploads.
+/// by the sequential S3 output backend. Bucket creation and legacy whole-array
+/// uploads also support test fixtures.
 public final class S3Api {
 
     static final String WRITE_ID_HEADER = "x-amz-meta-hardwood-write-id";

@@ -55,8 +55,8 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 | `create()` | Acquires the destination's resources. Must be called before `write` or `position`; the writer calls it. |
 | `write(ByteBuffer)` | Appends the buffer's remaining bytes and consumes it (position advances to limit). |
 | `position()` | The number of bytes written so far, which is the offset of the next `write`. |
-| `close()` | Finalizes (publishes) the file. The file is valid at the destination only after this returns. A `close()` that fails before publishing releases its resources and discards what was written, then throws. |
-| `discard()` | Throws everything written away and releases resources without publishing; the destination is left as if nothing was written, and a later `close()` does nothing. |
+| `close()` | Finalizes and publishes the file. Successful close confirms publication; an uncertain remote response may leave a completed object even when close throws. The backend releases resources and attempts cleanup of unpublished data before reporting failure. |
+| `discard()` | Abandons unpublished data and releases resources. It cannot undo completed remote publication or guarantee cleanup of unknown remote state. A later close does not publish. |
 
 `close()` and `discard()` are the commit and the rollback of one output. The writer calls exactly one of them per output, so an implementation can hold its output out of sight until `close()` (a temporary file, an uncompleted multipart upload) and throw it away on `discard()`.
 
@@ -67,7 +67,12 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 
 `buffer()` promises the file's contents and a position and limit per call, not a view of the storage: callers must not modify the buffer. Storage is therefore free to change from one growable array to a list of chunks, which is what a file past 2 GB needs. A single `ByteBuffer` is `int`-indexed, so `buffer()` stays capped at 2 GB under any storage, and a larger file would leave through an accessor that has no such cap: a transfer to a `WritableByteChannel`, or an `InputFile` over the chunks (`InputFile.readRange` takes a `long` offset). Neither exists. A `MemorySegment` accessor is unavailable while the baseline is Java 21, where it is a preview API.
 
-There is no object-store backend; `S3_STORAGE.md` covers read access only.
+The object-store backend is `dev.hardwood.s3.internal.S3OutputFile`, exposed as
+`OutputFile` through `S3Source.outputFile(...)`. It uses one bounded upload buffer,
+single PUT for sub-part outputs, and sequential multipart upload otherwise.
+Publication verification distinguishes confirmed success from an unknown remote
+outcome; discard aborts known pending uploads without deleting completed objects.
+See [S3_STORAGE.md](S3_STORAGE.md#sequential-output) and [S3_OUTPUT.md](S3_OUTPUT.md).
 
 ### Writer lifecycle and failure
 
