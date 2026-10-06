@@ -39,9 +39,10 @@ import dev.tamboui.widgets.table.TableState;
 
 /// Projected-row preview. `firstRow` / `pageSize` define which rows are currently
 /// loaded; `←/→` scrolls the visible column window for wide schemas; `PgDn`/`PgUp`
-/// (or `Shift+↓/↑`) flip pages. Pages are served from a [PreviewWindow] of
-/// pre-formatted rows around the viewport; a page outside it refills the
-/// window with one [ParquetModel#readPreviewPage] call.
+/// (or `Shift+↓/↑`) flip pages; `:` jumps to a row. Pages are
+/// served from a [PreviewWindow] of pre-formatted rows around the viewport;
+/// a page outside it refills the window with one
+/// [ParquetModel#readPreviewPage] call.
 public final class DataPreviewScreen {
 
     private static final int COLUMN_SPACING = 1;
@@ -69,6 +70,41 @@ public final class DataPreviewScreen {
     /// viewport-derived overload.
     public static ScreenState.DataPreview initialState(ParquetModel model, int pageSize) {
         return loadPage(model, 0, pageSize, 0, true);
+    }
+
+    /// The screen opened at `firstRow`, with that row selected — what the
+    /// Row groups screens push when the reader asks to see a group's records.
+    public static ScreenState.DataPreview stateAt(ParquetModel model, long firstRow) {
+        return loadPage(model, firstRow, Keys.viewportStride(), 0, true);
+    }
+
+    /// Opens the preview on the first row of `rowGroupIndex`, and reports
+    /// whether it did. What the Row groups screens do with `d`.
+    public static boolean openAtRowGroup(ParquetModel model, NavigationStack stack, int rowGroupIndex) {
+        if (!hasRows(model, rowGroupIndex)) {
+            return false;
+        }
+        stack.push(stateAt(model, model.firstRowOf(rowGroupIndex)));
+        return true;
+    }
+
+    /// Whether a row group has records to show. An empty one starts where its
+    /// successor does, so opening the preview on it would show another
+    /// group's rows under its number.
+    public static boolean hasRows(ParquetModel model, int rowGroupIndex) {
+        return rowGroupIndex >= 0 && rowGroupIndex < model.rowGroupCount()
+                && model.rowGroup(rowGroupIndex).numRows() > 0;
+    }
+
+    /// Resolves the `:` prompt's typed row against this screen — what
+    /// [DiveApp] calls on `Enter`. `n` is refused
+    /// rather than clamped when it names no row in the file.
+    public static JumpOutcome resolveJump(ScreenState.DataPreview state, ParquetModel model, long n) {
+        long total = model.facts().totalRows();
+        if (n < 0 || n >= total) {
+            return JumpOutcome.refuse(Fmt.fmt("Row %,d is outside 0–%,d", n, total - 1));
+        }
+        return JumpOutcome.to(moveTo(state, n, model, total, ScrollBias.TOP));
     }
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
@@ -203,15 +239,23 @@ public final class DataPreviewScreen {
         int columnCount = state.columnNames().size();
         ColumnWindow window = columnWindow(state, area.width());
 
+        // The `#` column leads every row, outside the column window: it names
+        // the row by its position in the file, as the `:` prompt does, and
+        // stays put while `←/→` scroll the value columns.
         List<Row> rows = new ArrayList<>();
-        for (List<String> row : state.rows()) {
-            String[] truncated = new String[window.widths().size()];
-            for (int i = 0; i < truncated.length; i++) {
-                truncated[i] = truncate(row.get(state.columnScroll() + i), window.widths().get(i));
+        for (int r = 0; r < state.rows().size(); r++) {
+            List<String> row = state.rows().get(r);
+            String[] cells = new String[window.widths().size() + 1];
+            cells[0] = String.valueOf(state.firstRow() + r);
+            for (int i = 0; i < window.widths().size(); i++) {
+                cells[i + 1] = truncate(row.get(state.columnScroll() + i), window.widths().get(i));
             }
-            rows.add(Row.from(truncated));
+            rows.add(Row.from(cells));
         }
-        Row header = Row.from(window.headers().toArray(new String[0])).style(Theme.accent().bold());
+        List<String> headerCells = new ArrayList<>();
+        headerCells.add("#");
+        headerCells.addAll(window.headers());
+        Row header = Row.from(headerCells.toArray(new String[0])).style(Theme.accent().bold());
 
         long total = model.facts().totalRows();
         long lastRow = state.firstRow() + state.rows().size();
@@ -219,9 +263,12 @@ public final class DataPreviewScreen {
         // A clipped trailing column is only partly on screen — mark the range
         // with the same ellipsis the cells use rather than claiming it whole.
         String clipMark = window.clipped() ? "…" : "";
-        String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %,d–%,d%s of %,d%s) ",
-                state.firstRow() + 1, lastRow, total,
-                state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
+        // A file without rows has no first or last row to name.
+        String rowRange = total == 0
+                ? "no rows"
+                : Fmt.fmt("rows %,d–%,d of %,d", state.firstRow() + 1, lastRow, total);
+        String title = Fmt.fmt(" Data preview (%s · cols %,d–%,d%s of %,d%s) ",
+                rowRange, state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
 
         Block block = Block.builder()
                 .title(title)
@@ -229,6 +276,7 @@ public final class DataPreviewScreen {
                 .borderType(BorderType.ROUNDED)
                 .build();
         List<Constraint> widths = new ArrayList<>();
+        widths.add(new Constraint.Length(indexColumnWidth(state)));
         for (int width : window.widths()) {
             widths.add(new Constraint.Length(width));
         }
@@ -396,7 +444,7 @@ public final class DataPreviewScreen {
 
         long absRow = state.firstRow() + state.modalRow();
         Block block = Block.builder()
-                .title(Fmt.fmt(" Row %,d ", absRow + 1))
+                .title(Fmt.fmt(" Row %,d ", absRow))
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .build();
@@ -456,6 +504,10 @@ public final class DataPreviewScreen {
     }
 
     public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
+        // The record modal carries its own keys, so the keybar stands down
+        // while it is open rather than offering keys the modal has taken.
+        // The `:` prompt is a DiveApp-level overlay and suppresses the
+        // keybar itself.
         if (state.modalRow() >= 0) {
             return "";
         }
@@ -478,6 +530,7 @@ public final class DataPreviewScreen {
                 .add(canPage, "[PgDn/PgUp or Shift+↓↑] page")
                 .add(canPage, "[g/G] start/end")
                 .add(anyLogical, "[t] logical types")
+                .add(total > 1, "[:] jump to row")
                 .add(true, "[Esc] back")
                 .build();
     }
@@ -804,6 +857,7 @@ public final class DataPreviewScreen {
         if (!state.rows().isEmpty()) {
             availableWidth -= 2;
         }
+        availableWidth -= indexColumnWidth(state) + COLUMN_SPACING;
         availableWidth = Math.max(1, availableWidth);
 
         List<String> headers = new ArrayList<>();
@@ -850,6 +904,13 @@ public final class DataPreviewScreen {
         int columnCount = state.columnNames().size();
         return window.end() < columnCount
                 || (window.clipped() && state.columnScroll() < columnCount - 1);
+    }
+
+    /// Width of the `#` column: the header, or the last loaded row's number,
+    /// whichever is wider.
+    private static int indexColumnWidth(ScreenState.DataPreview state) {
+        long lastRow = state.firstRow() + Math.max(0, state.rows().size() - 1);
+        return Math.max(1, String.valueOf(lastRow).length());
     }
 
     private static int columnContentWidth(ScreenState.DataPreview state, int column) {

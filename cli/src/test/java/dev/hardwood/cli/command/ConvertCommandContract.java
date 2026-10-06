@@ -294,6 +294,57 @@ interface ConvertCommandContract {
     }
 
     @Test
+    default void skipStartsAtTheGivenRow() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "--skip", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value
+                3,300""");
+    }
+
+    @Test
+    default void rowGroupConvertsThatGroupOnly() {
+        // filter_pushdown_int.parquet holds three row groups of 100 rows each.
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv",
+                "-c", "id", "--row-group", "2", "-n", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id
+                201
+                202""");
+    }
+
+    @Test
+    default void rowGroupRejectsANegativeIndex() {
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv", "--row-group", "-1");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).isEqualTo("No such row group: -1 (file has 3)");
+    }
+
+    @Test
+    default void rowGroupIsRefusedWithATailLimit() {
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv",
+                "--row-group", "1", "-n", "-1");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput())
+                .isEqualTo("A negative '-n' counts the last rows of the file, so it cannot be combined with --row-group");
+    }
+
+    @Test
+    default void skipAndRowGroupAreRefusedTogether() {
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv",
+                "--skip", "1", "--row-group", "1");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput())
+                .isEqualTo("--skip and --row-group cannot be combined: both name where to start reading");
+    }
+
+    @Test
     default void rejectsNonIntegerRowLimit() {
         Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "abc");
 

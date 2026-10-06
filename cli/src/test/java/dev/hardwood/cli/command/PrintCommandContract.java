@@ -94,6 +94,144 @@ interface PrintCommandContract {
     }
 
     @Test
+    default void skipStartsAtTheGivenRow() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 2  | 200   |
+                | 3  | 300   |
+                +----+-------+""");
+    }
+
+    @Test
+    default void skipComposesWithHead() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "1", "-n", "1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 2  | 200   |
+                +----+-------+""");
+    }
+
+    @Test
+    default void rowIndexKeepsCountingFromTheFile() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "2", "--row-index");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----------+----+-------+
+                | rowIndex | id | value |
+                +----------+----+-------+
+                | 2        | 3  | 300   |
+                +----------+----+-------+""");
+    }
+
+    @Test
+    default void rowIndexCountsFromTheEndWithATailLimit() {
+        // plainFile() has 3 rows; the tail of 2 is rows 1 and 2, not 0 and 1.
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-n", "-2", "--row-index");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----------+----+-------+
+                | rowIndex | id | value |
+                +----------+----+-------+
+                | 1        | 2  | 200   |
+                | 2        | 3  | 300   |
+                +----------+----+-------+""");
+    }
+
+    @Test
+    default void rowGroupPrintsThatGroupOnly() {
+        // filter_pushdown_int.parquet holds three row groups of 100 rows each.
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--row-group", "1", "-c", "id", "-n", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +-----+
+                | id  |
+                +-----+
+                | 101 |
+                | 102 |
+                +-----+""");
+    }
+
+    @Test
+    default void rowGroupStopsAtTheEndOfTheGroup() {
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--row-group", "0", "-c", "id", "-s", "100");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).contains("| 1   ").contains("| 100 ").doesNotContain("| 101 ");
+    }
+
+    @Test
+    default void rowGroupRejectsAnIndexPastTheLast() {
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--row-group", "3");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput()).isEqualTo("No such row group: 3 (file has 3)");
+    }
+
+    @Test
+    default void rowGroupRejectsANegativeIndex() {
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--row-group", "-1");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput()).isEqualTo("No such row group: -1 (file has 3)");
+    }
+
+    @Test
+    default void rowGroupIsRefusedWithATailLimit() {
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--row-group", "1", "-n", "-1");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput())
+                .isEqualTo("A negative '-n' counts the last rows of the file, so it cannot be combined with --row-group");
+    }
+
+    @Test
+    default void skipRejectsANegativeRow() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "-1");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput())
+                .isEqualTo("Invalid value for option '--skip': expected a non-negative row number, got '-1'");
+    }
+
+    @Test
+    default void skipRejectsARowPastTheLast() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "3");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput()).isEqualTo("Cannot skip 3 rows (file has 3)");
+    }
+
+    @Test
+    default void skipAndRowGroupAreRefusedTogether() {
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "--skip", "1", "--row-group", "1");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput())
+                .isEqualTo("--skip and --row-group cannot be combined: both name where to start reading");
+    }
+
+    @Test
+    default void skipIsRefusedWithATailLimit() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--skip", "1", "-n", "-1");
+
+        assertThat(result.exitCode()).isOne();
+        assertThat(result.errorOutput())
+                .isEqualTo("A negative '-n' counts the last rows of the file, so it cannot be combined with --skip");
+    }
+
+    @Test
     default void head() {
         Cli.Result result = Cli.launch("print", "-f", plainFile(), "-n", "2");
 

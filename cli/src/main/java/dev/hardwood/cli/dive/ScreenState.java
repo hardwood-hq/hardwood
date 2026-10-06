@@ -299,6 +299,7 @@ public sealed interface ScreenState {
             int modalCursorLine,
             int modalScroll)
             implements ScreenState {
+
         public DataPreview {
             columnNames = List.copyOf(columnNames);
             rows = List.copyOf(rows);

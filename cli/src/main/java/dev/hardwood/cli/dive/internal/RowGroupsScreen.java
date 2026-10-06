@@ -49,12 +49,27 @@ public final class RowGroupsScreen {
                     state.selection(), ScreenState.RowGroupDetail.Pane.MENU, 0));
             return true;
         }
+        if (Keys.isOpenDataPreview(event)
+                && DataPreviewScreen.openAtRowGroup(model, stack, state.selection())) {
+            return true;
+        }
         return false;
     }
 
     private static ScreenState.RowGroups moved(ScreenState.RowGroups state, int newSelection) {
         int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
         return new ScreenState.RowGroups(newSelection, newTop);
+    }
+
+    /// Resolves the `:` prompt's typed row group against this screen — what
+    /// [DiveApp] calls on `Enter`. `n` is refused
+    /// rather than clamped when it names no row group in the file.
+    public static JumpOutcome resolveJump(ScreenState.RowGroups state, ParquetModel model, long n) {
+        int count = model.rowGroupCount();
+        if (n < 0 || n >= count) {
+            return JumpOutcome.refuse(Fmt.fmt("Row group %,d is outside 0–%,d", n, count - 1));
+        }
+        return JumpOutcome.to(moved(state, Math.toIntExact(n)));
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.RowGroups state) {
@@ -122,6 +137,8 @@ public final class RowGroupsScreen {
         return new Keys.Hints()
                 .add(true, CursorPane.hints(count))
                 .add(count > 0, "[Enter] open")
+                .add(DataPreviewScreen.hasRows(model, state.selection()), "[d] data")
+                .add(count > 1, "[:] jump to row group")
                 .add(true, "[Esc] back")
                 .build();
     }

@@ -50,6 +50,12 @@ hardwood print -n 20 -f data.parquet
 # Show last 5 rows
 hardwood print -n -5 -f data.parquet
 
+# Start at row 5000 (rows are counted from 0)
+hardwood print --skip 5000 -n 20 -f data.parquet
+
+# Show the rows of row group 3 (row groups are counted from 0)
+hardwood print --row-group 3 -f data.parquet
+
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 
@@ -71,9 +77,30 @@ hardwood inspect dictionary -f data.parquet -c category --limit 0
 # Convert first 100 rows to JSON
 hardwood convert -n 100 --format json -f data.parquet
 
+# Convert one row group to CSV
+hardwood convert --row-group 3 --format csv -f data.parquet
+
 # Convert to CSV, writing \N for null values
 hardwood convert --format csv --null-string '\N' -f data.parquet
 ```
+
+## Row selection
+
+`print` and `convert` accept the same row-selection options:
+
+| Option | Rows selected |
+|---|---|
+| `-n N`, `--rows N` | The first `N` rows for a positive number, the last `N` rows for a negative number, or every row for `ALL` (the default). `0` is rejected. |
+| `--skip N` | Start at row `N`, counted from zero. A positive `-n` limits the number of rows read from that position. |
+| `--row-group I` | Read only row group `I`, counted from zero. A positive `-n` limits the read to at most that many rows within the group. |
+
+`--skip` and `--row-group` cannot be combined with each other or with a negative `-n`.
+Negative or out-of-range row and row-group numbers are rejected. `--skip` must identify
+an existing row, and `--row-group` rejects an empty row group.
+
+`print --row-index` shows each row's zero-based position in the original file,
+including when using `--skip`, `--row-group`, or a negative `-n`. For a file with
+100 rows, `-n -2 --row-index` prints indexes `98` and `99`.
 
 ## Convert output
 
@@ -302,6 +329,8 @@ hardwood dive -f data.parquet
 | `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
 | `l` | Toggle the repetition / definition level histograms (Column chunk detail) |
 | `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
+| `:` | Jump to a row or row group by number (Data preview, Row groups) |
+| `d` | Open the Data preview at the row group under the cursor (Row groups, Row group detail) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
@@ -318,8 +347,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Overview** — file summary and key/value metadata, with Spark JSON schemas pretty-printed and
   Arrow IPC schemas decoded to a hex dump
 - **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`
-- **Row groups**
-- **Row group detail**
+- **Row groups** — `:` jumps to a row group by number, `d` opens the Data preview at the selected group's first row
+- **Row group detail** — `d` opens the Data preview at this row group's first row
 - **Column chunks** — the chunks of one row group, ranked by compressed size, with codec and
   dictionary flag
 - **Column chunk detail** — facts pane grouped into Identity, Storage, Content and Layout, whose
@@ -335,8 +364,8 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Column-across-row-groups** — `Enter` on a Schema leaf: one row per row group with that
   column's sizes (including unencoded size), encodings and stats; drills into the chunk detail
 - **Dictionary** — `Enter` shows the full value of an entry; `/` inline search
-- **Data preview** — row values via `RowReader`; `←/→` scrolls the visible column window,
-  `PgDn/PgUp` flips pages; `Enter` opens a per-row modal, where the cursor stops on every line and
+- **Data preview** — row values via `RowReader`, with a `#` column giving each row's position in the file, counted from 0; `←/→` scrolls the visible column window,
+  `PgDn/PgUp` flips pages; `:` jumps to a row by number; `Enter` opens a per-row modal, where the cursor stops on every line and
   `Enter` expands the field under it when its full value is not on screen
 
 Screenshots (click any shot to open it full size):
