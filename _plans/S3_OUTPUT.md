@@ -264,13 +264,24 @@ documentation and roadmap mark the feature implemented only after phase 6.
 Phase 1 was approved and committed as `9d9e70f7`. Its 45 new XML cases and
 full `./mvnw verify` passed.
 
-Phase 2 is implemented, reviewed, and approved for its issue-linked commit. Its
+Phase 2 was reviewed, approved, and committed as `25382d17`. Its
 50 new tests pass, along with the 45 phase 1 XML cases, and full `./mvnw verify`
 passed. The transport signs multipart, small-PUT, and HEAD requests, hashes only
 the payload prefix, bounds response bodies, and applies request deadlines through
 body completion. Bounded retries apply to parts and normal aborts. HEAD, paginated
 listing, and the single-attempt abort helper leave retries to the later shared
 recovery/cleanup budgets. No public output factory is exposed yet.
+
+Phase 3 is implemented, reviewed, and approved for its issue-linked commit, based
+on `25382d17`. The internal `S3OutputFile` owns one reusable part buffer, validates
+whole-write capacity before consuming input, uploads full parts sequentially, and
+publishes only on close. Failed writes latch a terminal failure and release local
+payload storage. Cleanup preserves the original exception and interrupt flag;
+uncertain part requests use a shared, bounded abort/list-parts budget and require
+parsed `NoSuchUpload` to confirm removal. Explicit discard can retry unresolved
+cleanup without replaying publication. Its 45 tests and the 95 existing protocol
+tests pass, and full `./mvnw verify` passed. Publication metadata recovery remains
+phase 4; public factories and documentation remain phase 5.
 
 - [x] Record the accepted per-output UUID and metadata-verification architecture in the design and analysis.
 - [ ] Resolve lost-response contract wording, replacement semantics, cleanup verification, and minimal public API.
