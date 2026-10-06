@@ -71,7 +71,7 @@ import dev.hardwood.schema.FileSchema;
 /// body is compressed with the configured codec (`ZSTD` by default). All of these are
 /// configurable through [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
-/// The file is produced front to back and is valid only after `close()` returns. A writer whose
+/// The file is produced front to back; a successful `close()` confirms publication. A writer whose
 /// write has thrown accepts no more data, and `close()` discards its output rather than
 /// publishing the rows written before the failure. [#abort()] discards the output on a failure
 /// the writer does not see, such as one in the code producing the data.
@@ -539,9 +539,11 @@ public final class ParquetFileWriter implements Closeable {
     /// Finishes the file: writes the row group still buffered and the footer, and publishes the
     /// file at the destination.
     ///
-    /// If a write has thrown, the output is discarded instead, leaving nothing at the
-    /// destination. A failure while finishing or publishing the file discards the output as
-    /// well, and a failure to discard it is attached to the thrown exception as suppressed.
+    /// If a write has thrown, the output is discarded instead of published. A failure
+    /// while finishing discards the output, and a failure to discard is attached to
+    /// the thrown exception as suppressed. Publication failures follow the
+    /// [OutputFile#close()] contract: a remote destination may contain the completed
+    /// file even when publication could not be confirmed.
     /// Does nothing if the writer is already closed or aborted.
     ///
     /// @throws IOException if the file cannot be finished or published, or a discarded output
@@ -576,8 +578,7 @@ public final class ParquetFileWriter implements Closeable {
         out.close();
     }
 
-    /// Discards the output without publishing a file, leaving nothing at the destination, and
-    /// closes the writer.
+    /// Discards unpublished output and closes the writer.
     ///
     /// For a failure the writer does not see, such as one in the code producing the data:
     ///

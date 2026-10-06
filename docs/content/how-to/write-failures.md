@@ -60,3 +60,9 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
 When the output cannot be released, `close()` or `abort()` throws the `IOException`. Adding it to the original exception with `addSuppressed`, as above, keeps both. On a local file, the temporary sibling of the target path (`<name>.hardwood-tmp`) is left behind only when it cannot be deleted.
 
 The complete rules are in the [Writer Reference](../reference/writer.md#finishing-and-abandoning-a-file).
+
+## S3 Publication Cannot Be Confirmed
+
+If S3 close throws, inspect the original exception and its suppressed exceptions. After an uncertain publication response, Hardwood checks the destination's write UUID and length with HEAD. A match makes close succeed. If verification cannot confirm publication, a suppressed diagnostic records the UUID, expected length, verification result, and attempt count; the destination may already contain the completed object.
+
+Check the destination before starting a replacement write. Repeating close does not republish or verify again, and discard never deletes a completed object. If cleanup of a known upload failed and you retained its `OutputFile`, call `discard()` explicitly to retry cleanup while the source remains open. A lost upload-initialization response may leave no known upload ID to discard. See [S3 publication and cleanup](../reference/s3.md#publication-and-cleanup) for the full contract.

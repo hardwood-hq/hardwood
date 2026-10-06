@@ -283,7 +283,7 @@ cleanup without replaying publication. Its 45 tests and the 95 existing protocol
 tests pass, and full `./mvnw verify` passed. Public factories and documentation
 remain phase 5.
 
-Phase 4 is implemented and awaiting contributor review before committing, based
+Phase 4 was reviewed, approved, and committed as `c9c3518a`, based
 on `d629a89d`. Uncertain publication responses enter bounded HEAD verification
 before multipart cleanup. A single UUID value and valid long Content-Length must
 match this output before close can succeed. Pending/mismatching metadata,
@@ -297,13 +297,30 @@ and HEAD-attempt count. All 48 new recovery tests and 140 earlier sink/protocol
 tests pass; full `./mvnw verify` passed with 17,164 tests, zero failures/errors,
 and 75 skipped tests. No public factory is exposed yet.
 
+Phase 5 is implemented and awaiting contributor review before committing, based
+on `c9c3518a`. `S3Source.outputFile(bucket, key)` and `outputFile(uri)` return
+uncreated `OutputFile` instances. `uploadPartSize(int)` defaults to 8 MiB,
+validates the supported range immediately, and is captured independently by each
+built source. Validation delegates to the internal sink; no output implementation
+or multipart types become public API.
+
+The writing guide and S3 reference cover factory inputs, opaque keys, buffering,
+limits, permissions, retry budgets, publication verification, and cleanup.
+Writer documentation and Markdown JavaDoc distinguish incomplete output from
+uncertain remote publication. All 24 new public factory/writer tests and 93
+existing sink/recovery tests pass. Full `./mvnw verify` passed with 17,188 tests,
+zero failures/errors, and 75 skipped. Core/S3 JavaDoc generation and the strict
+MkDocs build passed. Review: `_reviews/branch-1454-s3-output-phase5-review.md`.
+Phase 6 integration coverage, subsystem documentation, and roadmap updates have
+not started.
+
 - [x] Record the accepted per-output UUID and metadata-verification architecture in the design and analysis.
 - [ ] Resolve lost-response contract wording, replacement semantics, cleanup verification, and minimal public API.
 - [ ] Finalize the end-state design and submit the human-reviewed planning material if desired under CONTRIBUTING.md.
 - [x] Create a feature branch from current upstream main; keep the existing navigation branch separate.
 - [x] Add failing tests for new output behavior using local HTTP servers and existing S3 signing-test patterns.
 - [x] Add signed multipart request/response handling, write-ID metadata, HEAD verification, secure XML, valid-prefix hashing, bounded response reception, and whole-response deadlines.
-- [ ] Add the sequential internal sink, factory overloads, part-size validation, capacity guards, and lifecycle/cleanup rules.
+- [x] Add the sequential internal sink, factory overloads, part-size validation, capacity guards, and lifecycle/cleanup rules.
 - [ ] Make s3proxy filesystem mounts writable in both Testcontainers and compose; retain per-test isolated buckets and pinned images.
 - [ ] Add actual small/multipart writer/read-back ITs and failed-write/caller-abort ITs; query pending uploads instead of assuming an absent object proves cleanup.
 - [ ] Add fault-injection tests for protocol errors, lost responses, recovered publication, delayed/mismatching metadata, permission denial, interruption, and cleanup failure; use the matrix in the design.

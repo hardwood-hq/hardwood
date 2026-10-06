@@ -23,9 +23,9 @@ PAR1 | <row group 0 pages> | <row group 1 pages> | … | <Bloom filters> | <page
 
 The `FileMetaData` footer carries the schema and every page and column-chunk offset, and it can only be serialized once those offsets are known, so it goes last. The writer maintains a running byte position, records offsets as it streams pages out, and emits the accumulated metadata at the end. Each page's bounds and location go into the page index, which is written for the whole file just before the footer, after the Bloom filters of the columns configured to carry one.
 
-- **A file is valid only after `close()` returns.** Before that, the destination holds pages without a footer, and no reader can open it. A writer abandoned mid-way leaves nothing readable.
-- **A failure leaves nothing behind.** When the writer cannot finish, it discards what it has written; see [Handle Write Failures](../how-to/write-failures.md). `RowWriter.tryWriteRow` rejects a record without failing the writer. The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path.
-- **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close` / `discard`, with no seeking and no size known ahead of time. `close()` publishes the file and `discard()` throws it away; the writer calls exactly one of them.
+- **Publication follows completion.** The footer is written last. A successful close confirms that the destination published the finished file. A lost remote publication response can leave the client uncertain even though the completed file exists; no incomplete prefix is published as a valid file.
+- **Incomplete files are discarded.** When the writer cannot finish, it discards unpublished data; see [Handle Write Failures](../how-to/write-failures.md). `RowWriter.tryWriteRow` rejects a record without failing the writer. The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path. For a remote destination, losing a response can leave publication or cleanup uncertain; the destination's contract determines what can be confirmed.
+- **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close` / `discard`, with no seeking and no size known ahead of time. `close()` publishes the file and `discard()` abandons unpublished data; the writer calls exactly one of them.
 
 ## What bounds memory
 

@@ -19,6 +19,7 @@ The `OutputFile` a writer is created with decides where the file is written.
 |---|---|
 | `OutputFile.of(Path)` | A local file. The bytes are streamed to a temporary sibling of the target path and renamed onto it when the writer closes, so a write that fails or is abandoned leaves nothing at the path |
 | `OutputFile.inMemory()` | The heap, up to `Integer.MAX_VALUE - 8` bytes. Returns an `InMemoryOutputFile`, whose `buffer()` returns the finished file |
+| `S3Source.outputFile(bucket, key)` or `S3Source.outputFile(uri)` | An S3 object, buffered and uploaded sequentially. Close publishes the finished object; discard aborts known pending uploads. See [S3 writing](s3.md#writing) for limits, permissions, and uncertain outcomes. |
 
 An in-memory file can be written and read back without a filesystem: `buffer()` returns the whole file as a `ByteBuffer` positioned at its first byte, which is what `InputFile.of(ByteBuffer)` expects.
 
@@ -38,7 +39,7 @@ The buffer grows with the file, so no size has to be given up front; the length 
 
 The file is complete only after the writer is closed, and `buffer()` throws `IllegalStateException` before that, or if the destination was discarded.
 
-To write anywhere else (an object store, a network connection), implement `OutputFile`.
+For S3, use `S3Source.outputFile(...)` from `hardwood-s3`; [Write to S3](../how-to/write-to-s3.md) shows a complete example. For another destination, implement `OutputFile`.
 
 ## Schema
 
@@ -335,13 +336,15 @@ The row-group targets close row groups as well; a row group ends at a target or 
 | Call | Effect |
 |---|---|
 | `close()` | Writes the buffered row group and the footer, and publishes the file at the destination |
-| `close()` after the writer has failed | Discards the output, leaving nothing at the destination |
+| `close()` after the writer has failed | Discards unpublished output |
 | `abort()` | Discards the output and closes the writer |
 | `close()` or `abort()` on a closed or aborted writer | Nothing |
 
 The writer fails when `ColumnWriter.writeBatch`, `RowWriter.writeRow` or `endRowGroup` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
-A failure while `close()` finishes or publishes the file discards the output as well, and `close()` throws it. When the output cannot be discarded, `abort()` and `close()` on a failed writer throw the `IOException`; a failure while finishing or publishing carries it as a suppressed exception.
+A failure while `close()` finishes the file discards the output and is thrown. A publication failure follows the destination's close contract: for S3, the completed object may exist even when publication cannot be confirmed. A successful close confirms publication. See [S3 publication and cleanup](s3.md#publication-and-cleanup).
+
+When output cleanup fails, `abort()` or `close()` throws `IOException`, or attaches the cleanup failure as suppressed to an existing exception. Local-file cleanup can leave a temporary sibling only when it cannot be deleted. An S3 cleanup failure can leave pending parts; a lost initialization response can also leave an upload with an unknown ID. Discard never deletes a completed S3 object.
 
 ## `RowWriteResult`
 

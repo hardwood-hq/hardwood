@@ -25,8 +25,10 @@ import dev.hardwood.internal.writer.ChannelOutputFile;
 /// before [#write] or [#position]; the writer framework
 /// ([dev.hardwood.writer.ParquetFileWriter]) calls it automatically.
 ///
-/// A file is valid only after [#close()] returns successfully. A writer
+/// A successful [#close()] confirms publication of the finished file. A writer
 /// abandoned before `close()` produces no footer and therefore no readable file.
+/// A remote destination may contain a completed file even when close throws
+/// because publication could not be confirmed.
 public interface OutputFile extends Closeable {
 
     /// Performs resource acquisition (e.g. opening a file channel).
@@ -53,20 +55,23 @@ public interface OutputFile extends Closeable {
 
     /// Finalizes the file and publishes it at the destination.
     ///
-    /// When publishing fails, `close()` releases the resources and discards what was
-    /// written before it throws, leaving the destination as if nothing was written. A
-    /// failure to discard is attached to the thrown exception as suppressed.
+    /// When publishing fails, `close()` releases resources and attempts to discard
+    /// unpublished data. A failure to discard is attached to the thrown exception
+    /// as suppressed. A remote service may have published the complete file before
+    /// its response was lost, so a thrown exception does not always mean that the
+    /// destination is unchanged. Consult the destination's publication contract.
     ///
     /// @throws IOException if the file cannot be published
     @Override
     void close() throws IOException;
 
-    /// Discards everything written and releases resources without publishing a
-    /// file at the destination. This is the failure counterpart to [#close()]:
-    /// [#close()] finalizes (commits) the file, `discard()` throws it away. The
-    /// writer calls `discard()` when it cannot finish a valid file, so a partially
-    /// written file is never presented as valid. After `discard()` the destination
-    /// is left as if nothing was written; calling `close()` afterwards is a no-op.
+    /// Discards staged data and releases resources without publishing a file.
+    /// This is the failure counterpart to [#close()]: [#close()] finalizes (commits)
+    /// the file, and `discard()` abandons it. The writer calls `discard()` when it
+    /// cannot finish a valid file, so partially written data is never presented
+    /// as valid. Successful discard removes staged data; it cannot undo an already
+    /// completed remote publication or guarantee cleanup after an unknown remote
+    /// outcome. Calling `close()` afterwards is a no-op.
     ///
     /// @throws IOException if resources cannot be released
     void discard() throws IOException;

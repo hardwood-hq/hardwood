@@ -263,7 +263,7 @@ public final class S3OutputFile implements OutputFile {
         cleanupPreservingInterrupt();
     }
 
-    static void validatePartSize(int partSize) {
+    public static void validatePartSize(int partSize) {
         if (partSize < MIN_PART_SIZE || partSize > MAX_PART_SIZE) {
             throw new IllegalArgumentException("S3 upload part size must be between " + MIN_PART_SIZE + " and " + MAX_PART_SIZE + " bytes");
         }
