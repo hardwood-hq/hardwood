@@ -65,7 +65,9 @@ public final class S3Api {
     /// @param endpoint            custom endpoint URI, or `null` for AWS virtual-hosted style
     /// @param pathStyle           if `true`, use path-style access (`endpoint/bucket/key`)
     /// @param requestTimeout      timeout for individual HTTP requests, or `null` for no timeout
-    /// @param maxRetries          maximum number of retries for GET requests (0 means no retries)
+    /// @param maxRetries          maximum retries for GET, part-upload, and normal abort requests;
+    ///                            publication verification and uncertain-part cleanup each share
+    ///                            a budget of `maxRetries + 1` attempts (0 means one attempt)
     public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
             String region, URI endpoint, boolean pathStyle,
             Duration requestTimeout, int maxRetries) {

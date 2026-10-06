@@ -58,12 +58,16 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 | `close()` | Finalizes and publishes the file. Successful close confirms publication; an uncertain remote response may leave a completed object even when close throws. The backend releases resources and attempts cleanup of unpublished data before reporting failure. |
 | `discard()` | Abandons unpublished data and releases resources. It cannot undo completed remote publication or guarantee cleanup of unknown remote state. A later close does not publish. |
 
-`close()` and `discard()` are the commit and the rollback of one output. The writer calls exactly one of them per output, so an implementation can hold its output out of sight until `close()` (a temporary file, an uncompleted multipart upload) and throw it away on `discard()`.
+`close()` publishes one output and `discard()` abandons its unpublished data.
+The writer calls exactly one of them per output. Backends keep unfinished output
+out of sight in a temporary file or uncompleted multipart upload. Remote cleanup
+can remain unconfirmed, and discard cannot undo an already completed publication.
 
 | Backend | Where | Behaviour |
 |---|---|---|
 | Local file | `internal.writer.ChannelOutputFile`, from `OutputFile.of(Path)` | Streams to a temporary sibling (`<name>.hardwood-tmp`) through a coalescing buffer, and atomically renames it onto the target on `close()`; `discard()`, or a `close()` whose final flush or rename fails, deletes the sibling. A reader never observes a half-written file at the target path. |
 | In memory | `InMemoryOutputFile`, from `OutputFile.inMemory()` | A growable heap buffer, the write-side counterpart to `ByteBufferInputFile`. It is public, final, `@Experimental` and constructed only by the factory; its `buffer()` method, after `close()`, returns a buffer spanning exactly the file, so it passes to `InputFile.of(ByteBuffer)` unchanged. A file is capped at the largest array the JVM allocates; a write past it throws `IOException`. |
+| S3 object | `s3.internal.S3OutputFile`, from `S3Source.outputFile(...)` | Uses a bounded payload buffer, sub-part PUT or sequential multipart uploads, and UUID/length verification after an uncertain publication response; discard aborts only its known pending upload. |
 
 `buffer()` promises the file's contents and a position and limit per call, not a view of the storage: callers must not modify the buffer. Storage is therefore free to change from one growable array to a list of chunks, which is what a file past 2 GB needs. A single `ByteBuffer` is `int`-indexed, so `buffer()` stays capped at 2 GB under any storage, and a larger file would leave through an accessor that has no such cap: a transfer to a `WritableByteChannel`, or an `InputFile` over the chunks (`InputFile.readRange` takes a `long` offset). Neither exists. A `MemorySegment` accessor is unavailable while the baseline is Java 21, where it is a preview API.
 
@@ -72,7 +76,7 @@ The object-store backend is `dev.hardwood.s3.internal.S3OutputFile`, exposed as
 single PUT for sub-part outputs, and sequential multipart upload otherwise.
 Publication verification distinguishes confirmed success from an unknown remote
 outcome; discard aborts known pending uploads without deleting completed objects.
-See [S3_STORAGE.md](S3_STORAGE.md#sequential-output) and [S3_OUTPUT.md](S3_OUTPUT.md).
+See [S3_STORAGE.md](S3_STORAGE.md#sequential-output).
 
 ### Writer lifecycle and failure
 
