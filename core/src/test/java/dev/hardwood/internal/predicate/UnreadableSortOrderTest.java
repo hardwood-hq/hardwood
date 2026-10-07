@@ -24,9 +24,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.MetadataSource;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
@@ -41,6 +43,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.ParsedFooter;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -396,6 +399,31 @@ class UnreadableSortOrderTest {
                         + "physical type. The file may have been written against a newer version of the "
                         + "format.",
                 "[unrecognized-type.parquet: column 'ts'] " + UNREADABLE_BOUNDS_WARNING);
+    }
+
+    /// A footer a [MetadataSource] supplies carries which leaves had a logical type the parse did
+    /// not read, so their bounds stay unreadable as on a reader's own footer read.
+    @Test
+    void boundsUnderAnUnrecognizedLogicalTypeDoNotPruneOnASuppliedFooter() throws Exception {
+        Path file = sixteenByteColumnWithValueOrderBounds(LogicalType.uuid(), "unrecognized-type.parquet",
+                UnreadableSortOrderTest::withUnrecognizedLogicalType);
+        ParsedFooter footer;
+        try (InputFile input = InputFile.of(file)) {
+            input.open();
+            footer = ParsedFooter.readFrom(input);
+        }
+
+        try (HardwoodContext context = HardwoodContext.builder().metadataSource(input -> footer).build();
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context);
+                RowReader rows = reader.buildRowReader()
+                        .filter(FilterPredicate.gt("ts", littleEndian(2))).build()) {
+            List<byte[]> values = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                values.add(rows.getBinary("ts"));
+            }
+            assertThat(values).containsExactly(littleEndian(300));
+        }
     }
 
     /// The unannotated column beside a leaf of unrecognized logical type keeps its bounds.

@@ -266,7 +266,7 @@ public class RowGroupIterator implements Closeable {
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles), true, NO_CLOSE_LISTENER, context,
+        this(new FileMetadataCache(inputFiles, context.metadataSource()), true, NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
 
@@ -1788,6 +1788,12 @@ public class RowGroupIterator implements Closeable {
         event.commit();
 
         return filtered;
+    }
+
+    /// Whether a [dev.hardwood.MetadataSource] supplied the footers of the read's files, so that a
+    /// failure reading a file's data may be a footer of content the file no longer holds.
+    public boolean footersSupplied() {
+        return fileMetadataCache.footersSupplied();
     }
 
     /// The name of the first file, whose schema is the reference schema of the read: what a

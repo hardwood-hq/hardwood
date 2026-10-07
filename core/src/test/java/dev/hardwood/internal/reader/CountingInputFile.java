@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -95,6 +96,11 @@ public class CountingInputFile implements InputFile {
     @Override
     public String name() {
         return delegate.name();
+    }
+
+    @Override
+    public Optional<String> identity() throws IOException {
+        return delegate.identity();
     }
 
     @Override

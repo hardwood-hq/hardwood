@@ -104,6 +104,12 @@ public class PageSource {
         return rowGroupIterator.hasFilter();
     }
 
+    /// Whether a [dev.hardwood.MetadataSource] supplied the footers of the files this source
+    /// reads. Fixed for the read, so valid on any thread.
+    public boolean footersSupplied() {
+        return rowGroupIterator.footersSupplied();
+    }
+
     public PageInfo next() throws IOException {
         while (true) {
             if (currentPlan != null && currentPlan.hasNext()) {

@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
@@ -56,6 +57,8 @@ final class S3Fetcher implements InputFile {
     private long fileLength = -1;
     private ByteBuffer tailCache;
     private long tailCacheOffset;
+    /// The object's `ETag` from the response to the suffix-range `GET` in [#open()].
+    private Optional<String> identity;
     private final AtomicLong networkRequestCount = new AtomicLong();
     private final AtomicLong networkBytesFetched = new AtomicLong();
 
@@ -78,6 +81,7 @@ final class S3Fetcher implements InputFile {
                     + ": HTTP " + status + " " + new String(response.body()));
         }
         fileLength = parseFileLength(response);
+        identity = response.headers().firstValue("ETag");
         byte[] tail = response.body();
         long requestNo = networkRequestCount.incrementAndGet();
         long totalBytes = networkBytesFetched.addAndGet(tail.length);
@@ -159,6 +163,16 @@ final class S3Fetcher implements InputFile {
     @Override
     public String name() {
         return "s3://" + bucket + "/" + key;
+    }
+
+    /// The object's `ETag`, as returned with the suffix-range `GET` in [#open()]; empty when the
+    /// endpoint sent none.
+    @Override
+    public Optional<String> identity() {
+        if (fileLength < 0) {
+            throw new IllegalStateException("File not opened: " + name());
+        }
+        return identity;
     }
 
     /// No-op: the fetcher holds no per-file resources. The [S3Api] and its

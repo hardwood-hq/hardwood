@@ -17,13 +17,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.MetadataSource;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.BoundsReadability;
-import dev.hardwood.internal.schema.BareRepeatedGroups;
-import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.StaleMetadataException;
 import dev.hardwood.schema.FileSchema;
 
 /// Lazily opens input files and caches each parsed footer for one
@@ -31,30 +31,41 @@ import dev.hardwood.schema.FileSchema;
 public final class FileMetadataCache {
 
     private final List<InputFile> inputFiles;
+    private final MetadataSource metadataSource;
     private final Object lifecycleLock = new Object();
     private final Map<Integer, CompletableFuture<PreparedFile>> fileFutures = new HashMap<>();
     private final CompletableFuture<Void> closeCompletion = new CompletableFuture<>();
     private boolean closeStarted;
 
-    FileMetadataCache(List<InputFile> inputFiles) {
+    /// @param metadataSource the context's source of footers, [ParquetMetadataReader#FROM_FILE]
+    ///        to read each footer from its file
+    FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         this.inputFiles = List.copyOf(inputFiles);
+        this.metadataSource = metadataSource;
     }
 
-    /// Seeds the first file's footer, already read by the owning
+    /// Seeds the first file's footer, already loaded by the owning
     /// [dev.hardwood.reader.ParquetFileReader], so that opening the reader and
-    /// inspecting index `0` never read it twice.
-    public FileMetadataCache(List<InputFile> inputFiles, ReadFooter firstFileFooter,
-                             FileSchema firstFileSchema) {
-        this(inputFiles);
+    /// inspecting index `0` never load it twice.
+    public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
+                             MetadataSource metadataSource) {
+        this(inputFiles, metadataSource);
         fileFutures.put(0, CompletableFuture.completedFuture(
-                PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter, firstFileSchema)));
+                PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter)));
     }
 
     List<InputFile> inputFiles() {
         return inputFiles;
+    }
+
+    /// Whether a [MetadataSource] supplied the footers rather than each being read from its file.
+    /// It supplies every file's footer or none: [ParquetMetadataReader#load] takes the footer from
+    /// a source it is given and fails the file when the source returns none.
+    boolean footersSupplied() {
+        return metadataSource != ParquetMetadataReader.FROM_FILE;
     }
 
     public FileMetaData getFileMetaData(int fileIndex) throws IOException {
@@ -162,18 +173,27 @@ public final class FileMetadataCache {
                     ExceptionContext.filePrefix(inputFile.name()) + "Failed to open file", e);
         }
 
+        FileFooter footer;
         try {
-            ReadFooter footer = ParquetMetadataReader.readFooter(inputFile);
-            FileMetaData metaData = footer.metaData();
-            FileSchema schema = FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(metaData.schema()));
+            footer = ParquetMetadataReader.load(inputFile, metadataSource);
+        }
+        catch (StaleMetadataException e) {
+            // Carried as the cause alone, so that getFile unwraps it to the exception itself.
+            throw new UncheckedIOException(e);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(
+                    ExceptionContext.filePrefix(inputFile.name()) + "Failed to read metadata", e);
+        }
 
+        try {
             event.file = inputFile.name();
             event.fileSize = inputFile.length();
-            event.rowGroupCount = metaData.rowGroups().size();
-            event.columnCount = schema.getColumnCount();
+            event.rowGroupCount = footer.metaData().rowGroups().size();
+            event.columnCount = footer.schema().getColumnCount();
             event.commit();
 
-            return PreparedFile.of(inputFile, footer, schema);
+            return PreparedFile.of(inputFile, footer);
         }
         catch (IOException e) {
             throw new UncheckedIOException(
@@ -204,10 +224,10 @@ public final class FileMetadataCache {
             Objects.requireNonNull(boundsReadability, "boundsReadability");
         }
 
-        static PreparedFile of(InputFile inputFile, ReadFooter footer, FileSchema schema) {
+        static PreparedFile of(InputFile inputFile, FileFooter footer) {
             FileMetaData metaData = footer.metaData();
-            return new PreparedFile(inputFile, metaData, schema, metaData.rowGroups(),
-                    BoundsReadability.of(schema, footer));
+            return new PreparedFile(inputFile, metaData, footer.schema(), metaData.rowGroups(),
+                    BoundsReadability.of(footer.schema(), footer.readFooter()));
         }
     }
 }
