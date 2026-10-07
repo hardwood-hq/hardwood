@@ -41,6 +41,7 @@ $ printf '\e[8;35;120t'
 # 4. Record. COLORTERM=truecolor is the load-bearing part: dive only emits
 #    24-bit RGB accent/selection colours when it sees it (Theme.supportsTruecolor),
 #    otherwise it falls back to indexed ANSI 33/34 and the cast looks washed out.
+#    Alternatively, set -Dhardwood.dive.truecolor=true.
 $ asciinema rec dive-demo.cast \
       --rows 35 --cols 120 --idle-time-limit 2 \
       --title "hardwood dive — Overture Places" \
@@ -73,10 +74,15 @@ restart the take instead.
 ## Share / export
 
 ```bash
-$ asciinema upload dive-demo.cast                          # asciinema.org URL
-$ agg dive-demo.cast dive-demo.gif                         # GIF
+$ cp dive-demo.cast ../docs/content/assets/cli/dive-demo.cast  # update self-hosted docs asset
+$ agg dive-demo.cast dive-demo.gif                            # optional: render GIF
 $ agg --theme monokai --font-size 14 dive-demo.cast dive-demo.gif
 ```
+
+The documentation website self-hosts the player and plays the cast directly from
+`docs/content/assets/cli/dive-demo.cast`. No upload to asciinema.org is needed.
+Update both `_demos/dive-demo.cast` and `docs/content/assets/cli/dive-demo.cast`
+with the new recording.
 
 ## Tips for clean takes
 
