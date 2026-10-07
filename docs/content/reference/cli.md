@@ -313,7 +313,28 @@ hardwood dive -f data.parquet
 
 `dive` writes no warnings to the terminal while it runs. `--log-file <path>` writes them to `<path>` instead, together with a trace of the session's reads, replacing the file's contents; `dive` exits with an error when it cannot create the file.
 
-<script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
+<div id="dive-player"></div>
+<script>
+  (function() {
+    function initDivePlayer() {
+      var container = document.getElementById('dive-player');
+      if (container && typeof AsciinemaPlayer !== 'undefined' && !container.dataset.rendered) {
+        container.dataset.rendered = 'true';
+        AsciinemaPlayer.create('../../assets/cli/dive-demo.cast', container, {
+          cols: 120,
+          rows: 35,
+          idleTimeLimit: 2,
+          theme: 'solarized-dark'
+        });
+      }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initDivePlayer);
+    } else {
+      initDivePlayer();
+    }
+  })();
+</script>
 
 ### Keys
 
