@@ -42,7 +42,7 @@ class FileMetadataCacheTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void concurrentCheckedAndDataLookupsJoinOneInProgressLoad() throws Exception {
         LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile));
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE);
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FileMetaData> firstChecked = executor.submit(() -> cache.getFileMetaData(0));
@@ -83,7 +83,7 @@ class FileMetadataCacheTest {
     @Test
     void closePreventsLaterLoadsWithoutClosingInputs() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile));
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE);
 
         cache.close();
         cache.prefetch(0);

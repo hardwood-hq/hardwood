@@ -715,6 +715,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// The column is this worker's own; the file, row group and page are the work item and
     /// page the failure came from, which each caller passes from what it holds — the
     /// retriever from the source, the decode task and drain from the page's slot.
+    ///
+    /// Where a [dev.hardwood.MetadataSource] supplied the footers, a read failure also says so
+    /// ([ExceptionContext#addSuppliedFooterHint]): the checks a supplied footer passes on open do
+    /// not catch every file rewritten since the footer was read.
     private Exception enrichWithPlace(Exception e, String fileName, int rowGroup, int page) {
         Exception typed = asReadFailure(e);
         if (fileName == null || fileName.isEmpty()) {
@@ -722,7 +726,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         }
         String columnPath = column.fieldPath().toString();
         if (typed instanceof RuntimeException re) {
-            return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
+            RuntimeException placed = ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
+            return pageSource.footersSupplied() ? ExceptionContext.addSuppliedFooterHint(placed) : placed;
         }
         if (typed instanceof IOException ioe) {
             // Stays checked. The pipeline carries a failure across its thread

@@ -36,6 +36,9 @@ public final class ExceptionContext {
 
     private static final String INTERNAL_PACKAGE = "dev.hardwood.internal";
 
+    private static final String SUPPLIED_FOOTER_HINT =
+            " (footer supplied by the MetadataSource; the file may have changed since the footer was read)";
+
     private ExceptionContext() {
     }
 
@@ -285,6 +288,26 @@ public final class ExceptionContext {
             return new ParquetReadException(newMessage, e);
         }
         return new RuntimeException(newMessage, e);
+    }
+
+    /// Appends to a read failure of a file whose footer a [dev.hardwood.MetadataSource] supplied
+    /// that the footer was supplied, and that the file may have changed since the footer was read.
+    ///
+    /// Only a plain [ParquetReadException] gains it, a failure of the file's bytes to say what the
+    /// footer locates in them. A [dev.hardwood.reader.SchemaIncompatibleException] compares
+    /// footers, which a changed file does not explain; any other type is not the file's bytes at
+    /// all. The result is a [ParquetReadException] with `e` as its cause.
+    ///
+    /// @param e the read failure, already classified and placed
+    /// @return the failure with the hint, or `e` unchanged when it is not a plain
+    ///         [ParquetReadException] or already carries the hint
+    public static RuntimeException addSuppliedFooterHint(RuntimeException e) {
+        String message = e.getMessage();
+        if (e.getClass() != ParquetReadException.class || message == null
+                || message.endsWith(SUPPLIED_FOOTER_HINT)) {
+            return e;
+        }
+        return new ParquetReadException(message + SUPPLIED_FOOTER_HINT, e);
     }
 
     /// Classifies a runtime failure with [#asReadFailure], then names where the read was with

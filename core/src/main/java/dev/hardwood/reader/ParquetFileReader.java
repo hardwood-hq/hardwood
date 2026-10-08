@@ -24,6 +24,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchSizing;
+import dev.hardwood.internal.reader.FileFooter;
 import dev.hardwood.internal.reader.FileMetadataCache;
 import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -31,11 +32,9 @@ import dev.hardwood.internal.reader.InputFileCloser;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
-import dev.hardwood.internal.schema.BareRepeatedGroups;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
-import dev.hardwood.internal.thrift.FileMetaDataReader.ReadFooter;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -118,13 +117,13 @@ public class ParquetFileReader implements Closeable {
     private final ReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
     private volatile boolean closed;
 
-    private ParquetFileReader(List<InputFile> inputFiles, ReadFooter firstFileFooter,
-                              FileSchema schema, HardwoodContextImpl context, boolean fixedListFastPathEnabled,
+    private ParquetFileReader(List<InputFile> inputFiles, FileFooter firstFileFooter,
+                              HardwoodContextImpl context, boolean fixedListFastPathEnabled,
                               boolean metadataFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileFooter.metaData();
-        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, schema);
-        this.schema = schema;
+        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context.metadataSource());
+        this.schema = firstFileFooter.schema();
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
         this.metadataFilteringEnabled = metadataFilteringEnabled;
@@ -269,25 +268,15 @@ public class ParquetFileReader implements Closeable {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
         first.open();
-        ReadFooter firstFileFooter;
-        FileMetaData firstFileMetaData;
-        FileSchema schema;
-        try {
-            firstFileFooter = ParquetMetadataReader.readFooter(first);
-            firstFileMetaData = firstFileFooter.metaData();
-            schema = FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(firstFileMetaData.schema()));
-        }
-        catch (RuntimeException e) {
-            throw ExceptionContext.addFileContext(first.name(), ExceptionContext.asReadFailure(e));
-        }
+        FileFooter firstFileFooter = ParquetMetadataReader.load(first, context.metadataSource());
 
         fileOpenedEvent.file = first.name();
         fileOpenedEvent.fileSize = first.length();
-        fileOpenedEvent.rowGroupCount = firstFileMetaData.rowGroups().size();
-        fileOpenedEvent.columnCount = schema.getColumnCount();
+        fileOpenedEvent.rowGroupCount = firstFileFooter.metaData().rowGroups().size();
+        fileOpenedEvent.columnCount = firstFileFooter.schema().getColumnCount();
         fileOpenedEvent.commit();
 
-        return new ParquetFileReader(files, firstFileFooter, schema, context, fixedListFastPathEnabled,
+        return new ParquetFileReader(files, firstFileFooter, context, fixedListFastPathEnabled,
                 metadataFilteringEnabled, ownsContext, true);
     }
 
