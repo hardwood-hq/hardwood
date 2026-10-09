@@ -8,6 +8,7 @@
 package dev.hardwood.cli.dive;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -25,7 +26,12 @@ class DataPreviewIoTest {
 
     /// 3 row groups of 100 rows each: id 1..100, 101..200, 201..300.
     private static Path fixture() {
-        return Path.of(DataPreviewIoTest.class.getResource("/filter_pushdown_int.parquet").getPath());
+        try {
+            return Path.of(DataPreviewIoTest.class.getResource("/filter_pushdown_int.parquet").toURI());
+        }
+        catch (URISyntaxException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test

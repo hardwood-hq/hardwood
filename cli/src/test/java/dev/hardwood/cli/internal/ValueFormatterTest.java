@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -61,6 +62,14 @@ class ValueFormatterTest {
 
     private static final int NO_LIMIT = BinaryValues.NO_LIMIT;
 
+    private static Path resourcePath(String resource) {
+        try {
+            return Path.of(ValueFormatterTest.class.getResource(resource).toURI());
+        } catch (URISyntaxException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private SchemaNode durationField;
     private int durationIdx;
     private String row0Compact;
@@ -80,7 +89,7 @@ class ValueFormatterTest {
 
     @BeforeAll
     void readIntervalFixture() throws IOException {
-        Path file = Path.of(getClass().getResource("/interval_logical_type_test.parquet").getPath());
+        Path file = resourcePath("/interval_logical_type_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();
@@ -130,7 +139,7 @@ class ValueFormatterTest {
     }
 
     private void withIntervalReader(IntervalReaderCase testCase) throws IOException {
-        Path file = Path.of(getClass().getResource("/interval_logical_type_test.parquet").getPath());
+        Path file = resourcePath("/interval_logical_type_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             testCase.run(rowReader);
@@ -142,7 +151,7 @@ class ValueFormatterTest {
     }
 
     private void withDiveFixtureReader(DiveReaderCase testCase) throws Exception {
-        Path file = Path.of(getClass().getResource("/dive_screenshots_fixture.parquet").getPath());
+        Path file = resourcePath("/dive_screenshots_fixture.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             testCase.run(rowReader, fileReader.getFileSchema());
@@ -789,7 +798,7 @@ class ValueFormatterTest {
 
     @Test
     void int96RendersCanonicalTimestampAcrossEverySource() throws IOException {
-        Path file = Path.of(getClass().getResource("/int96_timestamp_test.parquet").getPath());
+        Path file = resourcePath("/int96_timestamp_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();
@@ -809,7 +818,7 @@ class ValueFormatterTest {
 
     @Test
     void int96PhysicalModeRendersHexAcrossEverySource() throws IOException {
-        Path file = Path.of(getClass().getResource("/int96_timestamp_test.parquet").getPath());
+        Path file = resourcePath("/int96_timestamp_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();
@@ -830,7 +839,7 @@ class ValueFormatterTest {
     /// the value comes from: a row, a dictionary entry, a materialised value and a statistics bound.
     @Test
     void flba12TimestampRendersTheSameAcrossEverySource() throws IOException {
-        Path file = Path.of(getClass().getResource("/flba12_timestamp_test.parquet").getPath());
+        Path file = resourcePath("/flba12_timestamp_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();

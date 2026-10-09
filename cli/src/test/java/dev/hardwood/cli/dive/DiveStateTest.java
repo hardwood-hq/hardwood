@@ -56,7 +56,7 @@ class DiveStateTest {
         // 10 000 rows × 2 columns (id, value) in 1 RG / ~10 pages; has a Column Index.
         // Covers pagination, schema navigation, and column-index drills without
         // needing multiple fixtures.
-        Path path = Path.of(getClass().getResource("/column_index_pushdown.parquet").getPath());
+        Path path = Path.of(getClass().getResource("/column_index_pushdown.parquet").toURI());
         model = ParquetModel.open(InputFile.of(path), path.toString());
     }
 
@@ -276,7 +276,7 @@ class DiveStateTest {
 
     @Test
     void dictionaryWithCrcFixtureHasDictOnCategoryColumnOnly() throws Exception {
-        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             // col0 = id (int64): no dictionary
             assertThat(m.chunk(0, 0).metaData().dictionaryPageOffset()).isNull();
@@ -358,7 +358,7 @@ class DiveStateTest {
     void dataPreviewLoadsNestedSchemaWithoutIndexOutOfBounds() throws Exception {
         // Regression for the AIOOBE that fired when loadPage iterated leaf-column
         // indices against a RowReader that expects top-level field indices.
-        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").getPath());
+        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").toURI());
         try (ParquetModel nestedModel = ParquetModel.open(InputFile.of(nested), nested.toString())) {
             ScreenState.DataPreview state = DataPreviewScreen.initialState(nestedModel, 5);
 
@@ -377,7 +377,7 @@ class DiveStateTest {
         // Regression: PqList / PqStruct / PqMap / PqVariant fall through to
         // the JVM default toString, producing "dev.hardwood.internal.reader.…".
         // The formatter now renders them as JSON-like text.
-        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").getPath());
+        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").toURI());
         try (ParquetModel nestedModel = ParquetModel.open(InputFile.of(nested), nested.toString())) {
             ScreenState.DataPreview state = DataPreviewScreen.initialState(nestedModel, 5);
             for (List<String> row : state.rows()) {
@@ -760,7 +760,7 @@ class DiveStateTest {
     @Test
     void dataPreviewRowModalCursorStopsOnScalarFieldsToo() throws Exception {
         // First row: scalar id, followed by two non-empty expandable lists.
-        Path file = Path.of(getClass().getResource("/list_basic_test.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/list_basic_test.parquet").toURI());
         try (ParquetModel listModel = ParquetModel.open(InputFile.of(file), file.toString())) {
             ScreenState.DataPreview initial = DataPreviewScreen.initialState(listModel, 5);
             NavigationStack stack = rooted(initial);
@@ -793,7 +793,7 @@ class DiveStateTest {
     void dataPreviewRowModalEnterTogglesInlineExpansion() throws Exception {
         // Needs a record with an expandable field: id is scalar, tags and
         // scores are lists whose full value doesn't fit the collapsed line.
-        Path file = Path.of(getClass().getResource("/list_basic_test.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/list_basic_test.parquet").toURI());
         try (ParquetModel listModel = ParquetModel.open(InputFile.of(file), file.toString())) {
             ScreenState.DataPreview initial = DataPreviewScreen.initialState(listModel, 5);
             NavigationStack stack = rooted(initial);
@@ -1126,7 +1126,7 @@ class DiveStateTest {
         // Force the cap below the dictionary page's size so the screen lands
         // on the confirm prompt instead of auto-loading. dictionary_with_crc
         // has an actual dictionary on column 1.
-        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             long pageBytes = m.dictionaryPageBytes(0, 1);
             assertThat(pageBytes).isPositive();
@@ -1153,7 +1153,7 @@ class DiveStateTest {
     void dictionaryConfirmPromptSkippedWhenChunkUnderCap() throws Exception {
         // Default cap (16 MiB) is well above the fixture chunk; the screen
         // proceeds straight to the table without prompting.
-        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
             stack.push(new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true));
@@ -1172,7 +1172,7 @@ class DiveStateTest {
     /// header states it, not the chunk's.
     @Test
     void dictionaryPageBytesIsTheDictionaryPagesCompressedSize() throws Exception {
-        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             PageHeader dictionaryHeader = m.pageHeaders(0, 1).getFirst();
 
@@ -1185,7 +1185,7 @@ class DiveStateTest {
     /// including in a chunk that omits the optional `dictionary_page_offset` (`label`).
     @Test
     void dictionaryEntriesOfAChunkWithoutItsDeclaredOffset() throws Exception {
-        Path file = Path.of(getClass().getResource("/dict_missing_page_offset.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/dict_missing_page_offset.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             assertThat(m.chunk(0, 1).metaData().dictionaryPageOffset()).isNull();
 
@@ -1198,7 +1198,7 @@ class DiveStateTest {
     /// A chunk far larger than the cap whose dictionary page fits under it loads without asking.
     @Test
     void dictionaryConfirmPromptSkippedWhenOnlyTheChunkExceedsCap() throws Exception {
-        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             m.setDictionaryReadCapBytes(1_000);
             assertThat(m.chunk(0, 1).metaData().totalCompressedSize()).isGreaterThan(1_000);
@@ -1209,7 +1209,7 @@ class DiveStateTest {
 
     @Test
     void dictionaryConfirmPromptNamesTheDictionaryPageSize() throws Exception {
-        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").toURI());
         try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
             m.setDictionaryReadCapBytes(1);
             ScreenState.DictionaryView state = new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true);
@@ -1226,7 +1226,7 @@ class DiveStateTest {
     /// hint that offers `Enter` is the observable proof they agree.
     @Test
     void columnIndexOffersEnterForAnOpaqueBinaryBound() throws Exception {
-        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").getPath());
+        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").toURI());
         try (ParquetModel binaryModel = ParquetModel.open(InputFile.of(path), path.toString())) {
             int blob = columnIndexOf(binaryModel, "blob");
             ScreenState.ColumnIndexView state =
@@ -1248,7 +1248,7 @@ class DiveStateTest {
     /// there would redraw what the row already shows.
     @Test
     void dictionaryOffersEnterOnlyForAnEntryTheRowHadToTruncate() throws Exception {
-        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").getPath());
+        Path path = Path.of(getClass().getResource("/nested_binary_test.parquet").toURI());
         try (ParquetModel binaryModel = ParquetModel.open(InputFile.of(path), path.toString())) {
             assertDictionaryExpandable(binaryModel, "var.value", true);
             assertDictionaryExpandable(binaryModel, "blob", false);
@@ -1289,7 +1289,7 @@ class DiveStateTest {
     @Test
     void rowGroupsScreenOpensTheDataPreviewAtTheSelectedGroup() throws Exception {
         // 3 row groups of 100 rows; ids run 1..300.
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             NavigationStack stack = rooted(new ScreenState.RowGroups(0));
             RowGroupsScreen.handle(key(KeyCode.DOWN), rowGroups, stack);
@@ -1306,7 +1306,7 @@ class DiveStateTest {
 
     @Test
     void rowGroupDetailScreenOpensTheDataPreviewAtItsGroup() throws Exception {
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
                     2, ScreenState.RowGroupDetail.Pane.MENU, 0));
@@ -1320,7 +1320,7 @@ class DiveStateTest {
 
     @Test
     void rowGroupDetailScreenOpensTheDataPreviewFromTheFactsPaneToo() throws Exception {
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
                     1, ScreenState.RowGroupDetail.Pane.FACTS, 0));
@@ -1333,7 +1333,7 @@ class DiveStateTest {
 
     @Test
     void openingTheDataPreviewLeavesTheRowGroupsScreenBehindToReturnTo() throws Exception {
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             NavigationStack stack = rooted(new ScreenState.RowGroups(2));
 

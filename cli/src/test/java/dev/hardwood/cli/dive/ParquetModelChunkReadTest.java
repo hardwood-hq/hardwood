@@ -8,6 +8,7 @@
 package dev.hardwood.cli.dive;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
@@ -22,8 +23,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ParquetModelChunkReadTest {
 
     /// One row group, 10 000 rows; column 1 (`category`) is dictionary-encoded with 10 entries.
-    private static final Path FIXTURE = Path.of(ParquetModelChunkReadTest.class
-            .getResource("/column_index_pushdown_dict.parquet").getPath());
+    private static final Path FIXTURE = fixture();
+
+    private static Path fixture() {
+        try {
+            return Path.of(ParquetModelChunkReadTest.class
+                    .getResource("/column_index_pushdown_dict.parquet").toURI());
+        } catch (URISyntaxException e) {
+            throw new AssertionError(e);
+        }
+    }
 
     private static final int DICTIONARY_COLUMN = 1;
 

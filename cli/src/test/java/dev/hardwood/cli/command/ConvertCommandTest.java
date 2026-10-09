@@ -32,30 +32,30 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConvertCommandTest implements ConvertCommandContract {
 
-    private final String VARIANT_FILE = getClass().getResource("/variant_test.parquet").getPath();
+    private final String VARIANT_FILE = Cli.resourcePath("/variant_test.parquet");
 
-    private final String VARIANT_SHREDDED_FILE = getClass().getResource("/variant_shredded_test.parquet").getPath();
+    private final String VARIANT_SHREDDED_FILE = Cli.resourcePath("/variant_shredded_test.parquet");
 
-    private final String VARIANT_ATTRIBUTES_FILE = getClass().getResource("/variant_attributes_example.parquet").getPath();
+    private final String VARIANT_ATTRIBUTES_FILE = Cli.resourcePath("/variant_attributes_example.parquet");
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
     public String deepNestedFile() {
-        return getClass().getResource("/deep_nested_struct_test.parquet").getPath();
+        return Cli.resourcePath("/deep_nested_struct_test.parquet");
     }
 
     @Override
     public String listFile() {
-        return getClass().getResource("/list_basic_test.parquet").getPath();
+        return Cli.resourcePath("/list_basic_test.parquet");
     }
 
     @Override
     public String multiRowGroupIntFile() {
-        return getClass().getResource("/filter_pushdown_int.parquet").getPath();
+        return Cli.resourcePath("/filter_pushdown_int.parquet");
     }
 
     @Override
@@ -65,12 +65,12 @@ class ConvertCommandTest implements ConvertCommandContract {
 
     @Override
     public String fidelityFile() {
-        return getClass().getResource("/convert_fidelity_test.parquet").getPath();
+        return Cli.resourcePath("/convert_fidelity_test.parquet");
     }
 
     @Test
     void jsonRendersUnsignedIntegersAsNumbers() {
-        Cli.Result result = Cli.launch("convert", "-f", getClass().getResource("/unsigned_int_test.parquet").getPath(),
+        Cli.Result result = Cli.launch("convert", "-f", Cli.resourcePath("/unsigned_int_test.parquet"),
                 "--format", "json");
 
         assertThat(result.exitCode()).isZero();
@@ -82,7 +82,7 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void jsonWritesRepeatedPrimitiveAsNativeArray() {
         Cli.Result result = Cli.launch("convert", "-f",
-                getClass().getResource("/unannotated_repeated_primitive_test.parquet").getPath(),
+                Cli.resourcePath("/unannotated_repeated_primitive_test.parquet"),
                 "--format", "json");
 
         assertThat(result.exitCode()).isZero();
@@ -109,7 +109,7 @@ class ConvertCommandTest implements ConvertCommandContract {
 
     @Test
     void jsonKeepsAnnotatedLogicalTypesAsStrings() {
-        Cli.Result result = Cli.launch("convert", "-f", getClass().getResource("/logical_types_test.parquet").getPath(),
+        Cli.Result result = Cli.launch("convert", "-f", Cli.resourcePath("/logical_types_test.parquet"),
                 "--format", "json");
 
         assertThat(result.exitCode()).isZero();
@@ -125,7 +125,7 @@ class ConvertCommandTest implements ConvertCommandContract {
 
     @Test
     void jsonRendersIntAnnotatedColumnsAsNumbers() {
-        Cli.Result result = Cli.launch("convert", "-f", getClass().getResource("/logical_types_test.parquet").getPath(),
+        Cli.Result result = Cli.launch("convert", "-f", Cli.resourcePath("/logical_types_test.parquet"),
                 "--format", "json");
 
         assertThat(result.exitCode()).isZero();
@@ -140,11 +140,11 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void jsonKeepsInt96IntervalAndFloat16AsStrings() {
         Cli.Result int96 = Cli.launch("convert", "-f",
-                getClass().getResource("/int96_timestamp_test.parquet").getPath(), "--format", "json");
+                Cli.resourcePath("/int96_timestamp_test.parquet"), "--format", "json");
         Cli.Result interval = Cli.launch("convert", "-f",
-                getClass().getResource("/interval_logical_type_test.parquet").getPath(), "--format", "json");
+                Cli.resourcePath("/interval_logical_type_test.parquet"), "--format", "json");
         Cli.Result float16 = Cli.launch("convert", "-f",
-                getClass().getResource("/float16_logical_type_test.parquet").getPath(), "--format", "json");
+                Cli.resourcePath("/float16_logical_type_test.parquet"), "--format", "json");
 
         assertThat(int96.exitCode()).isZero();
         assertThat(int96.output())
@@ -158,7 +158,7 @@ class ConvertCommandTest implements ConvertCommandContract {
 
     @Test
     void variantNullValueIsDistinctFromANullVariantColumn() {
-        String file = getClass().getResource("/convert_variant_null_test.parquet").getPath();
+        String file = Cli.resourcePath("/convert_variant_null_test.parquet");
 
         Cli.Result csv = Cli.launch("convert", "-f", file, "--format", "csv", "--null-string", "\\N");
         Cli.Result json = Cli.launch("convert", "-f", file, "--format", "json");
@@ -184,7 +184,7 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void csvWritesBareRepeatedGroupAsOneListCell() {
         Cli.Result result = Cli.launch("convert", "-f",
-                getClass().getResource("/unannotated_repeated_group_empty_test.parquet").getPath(),
+                Cli.resourcePath("/unannotated_repeated_group_empty_test.parquet"),
                 "--format", "csv");
 
         assertThat(result.exitCode()).isZero();
@@ -199,7 +199,7 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Test
     void csvWritesAnnotatedBareRepeatedGroupAsOneListCell() {
         Cli.Result result = Cli.launch("convert", "-f",
-                getClass().getResource("/annotated_repeated_group_test.parquet").getPath(),
+                Cli.resourcePath("/annotated_repeated_group_test.parquet"),
                 "--format", "csv", "--columns", "foo_mkv,foo_list");
 
         assertThat(result.exitCode()).isZero();
@@ -230,7 +230,7 @@ class ConvertCommandTest implements ConvertCommandContract {
 
 
     private String nestedBinaryFile() {
-        return getClass().getResource("/nested_binary_test.parquet").getPath();
+        return Cli.resourcePath("/nested_binary_test.parquet");
     }
 
     /// A CSV cell has to carry the payload, not describe it — a byte count

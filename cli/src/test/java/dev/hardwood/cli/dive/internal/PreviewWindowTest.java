@@ -9,6 +9,7 @@ package dev.hardwood.cli.dive.internal;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
@@ -29,15 +30,19 @@ class PreviewWindowTest {
 
     /// 3 row groups of 100 rows each: id 1..100, 101..200, 201..300.
     private static Path fixture() {
-        return Path.of(PreviewWindowTest.class.getResource("/filter_pushdown_int.parquet").getPath());
+        try {
+            return Path.of(PreviewWindowTest.class.getResource("/filter_pushdown_int.parquet").toURI());
+        } catch (URISyntaxException e) {
+            throw new AssertionError(e);
+        }
     }
 
     /// A binary payload renders as hex wherever it sits — top level or nested
     /// in a list, a struct or a map — and whichever physical type carries it.
     /// The screen caps the cell afterwards, as it does for any long value.
     @Test
-    void binaryRendersAsHexAtEveryNestingPosition() throws IOException {
-        Path path = Path.of(PreviewWindowTest.class.getResource("/nested_binary_test.parquet").getPath());
+    void binaryRendersAsHexAtEveryNestingPosition() throws Exception {
+        Path path = Path.of(PreviewWindowTest.class.getResource("/nested_binary_test.parquet").toURI());
         String hex = "0x010100000000000000005366c0f71622f0fa1955c0";
 
         try (ParquetModel model = ParquetModel.open(InputFile.of(path), "nested_binary_test.parquet")) {
@@ -62,8 +67,8 @@ class PreviewWindowTest {
     /// the compact walker even on the modal's path, since a Variant primitive
     /// has no expanded form of its own. The row is bounded; the modal is not.
     @Test
-    void theRecordModalShowsAVariantBinaryPayloadWhole() throws IOException {
-        Path path = Path.of(PreviewWindowTest.class.getResource("/nested_binary_test.parquet").getPath());
+    void theRecordModalShowsAVariantBinaryPayloadWhole() throws Exception {
+        Path path = Path.of(PreviewWindowTest.class.getResource("/nested_binary_test.parquet").toURI());
 
         try (ParquetModel model = ParquetModel.open(InputFile.of(path), "nested_binary_test.parquet")) {
             PreviewWindow.Slice slice = new PreviewWindow().slice(model, 0, 1, true);

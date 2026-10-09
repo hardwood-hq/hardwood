@@ -8,6 +8,7 @@
 package dev.hardwood.cli.internal;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -31,8 +32,16 @@ class PageHeaderWalkTest {
 
     /// One row group, 10 000 rows; column 1 (`category`) is dictionary-encoded, with several
     /// data pages.
-    private static final Path FIXTURE = Path.of(PageHeaderWalkTest.class
-            .getResource("/column_index_pushdown_dict.parquet").getPath());
+    private static final Path FIXTURE = fixture();
+
+    private static Path fixture() {
+        try {
+            return Path.of(PageHeaderWalkTest.class
+                    .getResource("/column_index_pushdown_dict.parquet").toURI());
+        } catch (URISyntaxException e) {
+            throw new AssertionError(e);
+        }
+    }
 
     /// A window smaller than a page makes headers straddle window ends and bodies span several
     /// windows; the walk must find the same headers as one read of the whole chunk.

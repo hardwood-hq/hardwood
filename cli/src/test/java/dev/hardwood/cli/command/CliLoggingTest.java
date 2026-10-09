@@ -18,7 +18,7 @@ class CliLoggingTest {
     @Test
     void aWarningIsOneLineOnStderr() {
         Cli.Result result = Cli.launch("schema", "-f",
-                getClass().getResource("/annotated_repeated_group_test.parquet").getPath());
+                Cli.resourcePath("/annotated_repeated_group_test.parquet"));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.errorOutput()).isEqualTo("WARNING: Ignoring 6 annotation(s) on repeated groups outside"

@@ -36,21 +36,21 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 class SchemaCommandTest implements SchemaCommandContract {
 
-    private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
+    private final String NESTED_FILE = Cli.resourcePath("/nested_struct_test.parquet");
 
-    private final String VARIANT_FILE = this.getClass().getResource("/variant_test.parquet").getPath();
+    private final String VARIANT_FILE = Cli.resourcePath("/variant_test.parquet");
 
-    private final String VARIANT_SHREDDED_FILE = this.getClass().getResource("/variant_shredded_test.parquet").getPath();
+    private final String VARIANT_SHREDDED_FILE = Cli.resourcePath("/variant_shredded_test.parquet");
 
-    private final String LIST_STRUCT_FILE = this.getClass().getResource("/list_struct_test.parquet").getPath();
+    private final String LIST_STRUCT_FILE = Cli.resourcePath("/list_struct_test.parquet");
 
-    private final String MAP_STRUCT_VALUE_FILE = this.getClass().getResource("/map_struct_value_test.parquet").getPath();
+    private final String MAP_STRUCT_VALUE_FILE = Cli.resourcePath("/map_struct_value_test.parquet");
 
-    private final String INT96_FILE = this.getClass().getResource("/int96_timestamp_test.parquet").getPath();
+    private final String INT96_FILE = Cli.resourcePath("/int96_timestamp_test.parquet");
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
@@ -193,7 +193,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     }
 
     private Schema avroSchemaOf(String resource) throws Exception {
-        Cli.Result result = Cli.launch("schema", "-f", getClass().getResource(resource).getPath(), "--format", "AVRO");
+        Cli.Result result = Cli.launch("schema", "-f", Cli.resourcePath(resource), "--format", "AVRO");
         assertThat(result.exitCode()).isZero();
         return parseAndCreateFileHeader(result.output());
     }
@@ -523,7 +523,7 @@ class SchemaCommandTest implements SchemaCommandContract {
                 "unannotated_repeated_group_annotated_list_test.parquet",
                 "variant_in_repeated_test.parquet");
         for (String fixture : fixtures) {
-            String path = this.getClass().getResource("/" + fixture).getPath();
+            String path = Cli.resourcePath("/" + fixture);
             Cli.Result result = Cli.launch("schema", "-f", path, "--format", "PROTO");
             assertThat(result.exitCode()).as(fixture).isZero();
             assertProtocAccepts(tempDir, fixture, result.output());
@@ -609,7 +609,7 @@ class SchemaCommandTest implements SchemaCommandContract {
     }
 
     private Cli.Result protoSchemaOf(String resource) {
-        Cli.Result result = Cli.launch("schema", "-f", getClass().getResource(resource).getPath(), "--format", "PROTO");
+        Cli.Result result = Cli.launch("schema", "-f", Cli.resourcePath(resource), "--format", "PROTO");
         assertThat(result.exitCode()).isZero();
         return result;
     }

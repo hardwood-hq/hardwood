@@ -15,7 +15,7 @@ class FooterCommandTest implements FooterCommandContract {
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
@@ -34,7 +34,7 @@ class FooterCommandTest implements FooterCommandContract {
     @Test
     void reportsEncryptedFooterGracefully() {
         // Encrypted-footer mode: 'PARE' magic instead of 'PAR1'.
-        String file = getClass().getResource("/encrypted_footer.parquet").getPath();
+        String file = Cli.resourcePath("/encrypted_footer.parquet");
 
         Cli.Result result = Cli.launch("footer", "-f", file);
 

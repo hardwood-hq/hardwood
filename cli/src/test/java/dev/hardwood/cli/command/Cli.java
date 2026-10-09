@@ -9,7 +9,9 @@ package dev.hardwood.cli.command;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 
 import dev.hardwood.cli.Main;
 
@@ -19,6 +21,15 @@ import dev.hardwood.cli.Main;
 final class Cli {
 
     private Cli() {
+    }
+
+    static String resourcePath(String resource) {
+        try {
+            return Path.of(Cli.class.getResource(resource).toURI()).toString();
+        }
+        catch (URISyntaxException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     static Result launch(String... args) {
@@ -39,8 +50,8 @@ final class Cli {
         }
 
         return new Result(exitCode,
-                stripTrailingNewlines(outBuf.toString(StandardCharsets.UTF_8)),
-                stripTrailingNewlines(errBuf.toString(StandardCharsets.UTF_8)));
+                stripTrailingNewlines(outBuf.toString(StandardCharsets.UTF_8)).replace("\r\n", "\n"),
+                stripTrailingNewlines(errBuf.toString(StandardCharsets.UTF_8)).replace("\r\n", "\n"));
     }
 
     private static String stripTrailingNewlines(String s) {

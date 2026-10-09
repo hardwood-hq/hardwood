@@ -58,7 +58,7 @@ class NativeCompressionCodecIT {
     @ParameterizedTest(name = "{0}")
     @MethodSource("codecs")
     void printsCompressedFile(String resource, String expectedContent) throws IOException, InterruptedException {
-        String file = getClass().getResource("/compression/" + resource).getPath();
+        String file = Cli.resourcePath("/compression/" + resource);
 
         NativeResult result = NativeBinarySmokeIT.exec(nativeBinary, "print", "-n", "3", "-f", file);
 

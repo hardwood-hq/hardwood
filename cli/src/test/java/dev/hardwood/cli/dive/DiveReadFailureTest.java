@@ -59,7 +59,7 @@ class DiveReadFailureTest {
     }
 
     private void damage(String fixture, ToLongFunction<ParquetModel> region, int count) throws Exception {
-        Path source = Path.of(getClass().getResource(fixture).getPath());
+        Path source = Path.of(getClass().getResource(fixture).toURI());
         byte[] bytes = Files.readAllBytes(source);
 
         long at;
@@ -266,7 +266,7 @@ class DiveReadFailureTest {
     /// parse error, which is a different set of types for the guard to hold.
     @Test
     void aDamagedPageBodyIsReportedRatherThanFatal() throws Exception {
-        Path source = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").getPath());
+        Path source = Path.of(getClass().getResource("/column_index_pushdown_dict.parquet").toURI());
         byte[] bytes = Files.readAllBytes(source);
         long bodyStart;
         try (ParquetModel intact = ParquetModel.open(InputFile.of(source), source.toString())) {

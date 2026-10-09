@@ -308,7 +308,7 @@ class StreamedTableTest {
                 maxWidth,
                 truncate,
                 false);
-        return output.toString().stripTrailing();
+        return output.toString().replace("\r\n", "\n").stripTrailing();
     }
 
     private static void assertEqualDisplayWidths(String output) {

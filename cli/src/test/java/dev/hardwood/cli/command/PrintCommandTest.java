@@ -24,30 +24,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class PrintCommandTest implements PrintCommandContract {
 
-    private final String VARIANT_FILE = getClass().getResource("/variant_test.parquet").getPath();
+    private final String VARIANT_FILE = Cli.resourcePath("/variant_test.parquet");
 
-    private final String VARIANT_SHREDDED_FILE = getClass().getResource("/variant_shredded_test.parquet").getPath();
+    private final String VARIANT_SHREDDED_FILE = Cli.resourcePath("/variant_shredded_test.parquet");
 
-    private final String VARIANT_ATTRIBUTES_FILE = getClass().getResource("/variant_attributes_example.parquet").getPath();
+    private final String VARIANT_ATTRIBUTES_FILE = Cli.resourcePath("/variant_attributes_example.parquet");
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
     public String byteArrayFile() {
-        return getClass().getResource("/delta_byte_array_test.parquet").getPath();
+        return Cli.resourcePath("/delta_byte_array_test.parquet");
     }
 
     @Override
     public String deepNestedFile() {
-        return getClass().getResource("/deep_nested_struct_test.parquet").getPath();
+        return Cli.resourcePath("/deep_nested_struct_test.parquet");
     }
 
     @Override
     public String listFile() {
-        return getClass().getResource("/list_basic_test.parquet").getPath();
+        return Cli.resourcePath("/list_basic_test.parquet");
     }
 
     @Override
@@ -57,12 +57,12 @@ class PrintCommandTest implements PrintCommandContract {
 
     @Override
     public String unsignedIntFile() {
-        return getClass().getResource("/unsigned_int_test.parquet").getPath();
+        return Cli.resourcePath("/unsigned_int_test.parquet");
     }
 
     @Override
     public String multiRowGroupIntFile() {
-        return getClass().getResource("/filter_pushdown_int.parquet").getPath();
+        return Cli.resourcePath("/filter_pushdown_int.parquet");
     }
 
     @Test

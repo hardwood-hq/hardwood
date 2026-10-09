@@ -44,7 +44,7 @@ class DiveAppTest {
     @BeforeEach
     void openFixture() throws Exception {
         dev.hardwood.cli.dive.internal.Keys.resetObservedGeometry();
-        Path path = Path.of(getClass().getResource("/column_index_pushdown.parquet").getPath());
+        Path path = Path.of(getClass().getResource("/column_index_pushdown.parquet").toURI());
         model = ParquetModel.open(InputFile.of(path), path.toString());
         app = new DiveApp(model);
     }
@@ -311,7 +311,7 @@ class DiveAppTest {
 
     @Test
     void colonOnRowGroupsSelectsTheTypedGroup() throws Exception {
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             DiveApp rgApp = new DiveApp(rowGroups);
             rgApp.stack().push(new ScreenState.RowGroups(0));
@@ -384,7 +384,7 @@ class DiveAppTest {
 
     @Test
     void colonOnRowGroupsPastTheLastIsRefused() throws Exception {
-        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").getPath());
+        Path file = Path.of(getClass().getResource("/filter_pushdown_int.parquet").toURI());
         try (ParquetModel rowGroups = ParquetModel.open(InputFile.of(file), file.toString())) {
             DiveApp rgApp = new DiveApp(rowGroups);
             rgApp.stack().push(new ScreenState.RowGroups(0));
