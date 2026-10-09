@@ -13,7 +13,7 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
-## 1.1.0.Beta2 (2026-10-06)
+## 1.1.0.Beta2 (2026-10-09)
 
 [API changes](/api-changes/1.1.0.Beta2/)
 
@@ -76,7 +76,7 @@ Highlights of this release:
 
 See the [1.1.0.Beta2 milestone](https://github.com/hardwood-hq/hardwood/milestone/9?closed=1) on GitHub for the full list of resolved issues.
 
-Thank you to all contributors to this release: [Chandan Dhamande](https://github.com/nitrogen404), [Doug Hoard](https://github.com/dhoard), [Fawzi Essam](https://github.com/iifawzi), [Fhatuwani Sikhwari](https://github.com/Fhatu12), [Gunnar Morling](https://github.com/gunnarmorling), [Kohinoor Gupta](https://github.com/kogupta), [Mingjie Zhao](https://github.com/ZhaoMJ), [Mohamed Ibrahim Elsawy](https://github.com/mohamedibrahim54), [Movindu Jayathilake](https://github.com/MovinduJay), [Shril Kumar](https://github.com/shril).
+Thank you to all contributors to this release: [Arnab Nandy](https://github.com/arnabnandy7), [Chandan Dhamande](https://github.com/nitrogen404), [Doug Hoard](https://github.com/dhoard), [Fawzi Essam](https://github.com/iifawzi), [Fhatuwani Sikhwari](https://github.com/Fhatu12), [Gunnar Morling](https://github.com/gunnarmorling), [Kohinoor Gupta](https://github.com/kogupta), [Mingjie Zhao](https://github.com/ZhaoMJ), [Mohamed Ibrahim Elsawy](https://github.com/mohamedibrahim54), [Movindu Jayathilake](https://github.com/MovinduJay), [Shril Kumar](https://github.com/shril).
 
 ## 1.1.0.Beta1 (2026-08-31)
 
