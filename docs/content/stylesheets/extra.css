@@ -91,3 +91,14 @@
   -webkit-mask-image: var(--md-admonition-icon--news);
           mask-image: var(--md-admonition-icon--news);
 }
+
+/* Caption bar below the dive demo player on the CLI reference page. */
+.dive-caption {
+  margin-top: 0.4em;
+  min-height: 2.6em;
+  padding: 0.4em 0.8em;
+  border-left: 0.2rem solid var(--md-accent-fg-color);
+  background-color: var(--md-code-bg-color);
+  color: var(--md-default-fg-color);
+  font-size: 0.75rem;
+}

@@ -313,26 +313,43 @@ hardwood dive -f data.parquet
 
 `dive` writes no warnings to the terminal while it runs. `--log-file <path>` writes them to `<path>` instead, together with a trace of the session's reads, replacing the file's contents; `dive` exits with an error when it cannot create the file.
 
+<link rel="stylesheet" href="../../stylesheets/asciinema-player.css">
 <div id="dive-player"></div>
+<div id="dive-caption" class="dive-caption"></div>
+<script src="../../javascripts/asciinema-player.min.js"></script>
 <script>
   (function() {
-    function initDivePlayer() {
-      var container = document.getElementById('dive-player');
-      if (container && typeof AsciinemaPlayer !== 'undefined' && !container.dataset.rendered) {
-        container.dataset.rendered = 'true';
-        AsciinemaPlayer.create('../../assets/cli/dive-demo.cast', container, {
-          cols: 120,
-          rows: 35,
-          idleTimeLimit: 2,
-          theme: 'solarized-dark'
+    var cast = '../../assets/cli/dive-demo.cast';
+    var caption = document.getElementById('dive-caption');
+    var player = AsciinemaPlayer.create(cast, document.getElementById('dive-player'), {
+      cols: 120,
+      rows: 35,
+      theme: 'solarized-dark'
+    });
+    // The cast's marker events carry the captions; seeking fires no marker
+    // event, so the bar follows the playback position instead.
+    fetch(cast).then(function(response) { return response.text(); }).then(function(text) {
+      var markers = text.split('\n').slice(1).filter(function(line) {
+        return line.indexOf('"m"') !== -1;
+      }).map(function(line) {
+        return JSON.parse(line);
+      }).filter(function(event) {
+        return event[1] === 'm';
+      });
+      function show(time) {
+        var current = markers[0];
+        markers.forEach(function(marker) {
+          if (marker[0] <= time) {
+            current = marker;
+          }
         });
+        caption.textContent = current[2];
       }
-    }
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initDivePlayer);
-    } else {
-      initDivePlayer();
-    }
+      show(0);
+      setInterval(function() {
+        Promise.resolve(player.getCurrentTime()).then(show);
+      }, 200);
+    });
   })();
 </script>
 
@@ -361,6 +378,11 @@ apply in the current context; the menus above list every key.
 
 ### Screens
 
+Every screen shares a four-region layout: a top bar with file identity, a
+breadcrumb showing the navigation stack, the active screen body, and a keybar:
+
+<figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
+
 **Overview** drills into **Row groups** → **Row group detail** → **Column chunks** →
 **Column chunk detail**, whose drill menu opens **Pages**, **Column index**, **Offset index**
 and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open from Overview too.
@@ -370,7 +392,7 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
 - **Schema** — expandable tree of groups and leaves, navigated with `→` / `←`
 - **Row groups** — `:` jumps to a row group by number, `d` opens the Data preview at the selected group's first row
 - **Row group detail** — `d` opens the Data preview at this row group's first row
-- **Column chunks** — the chunks of one row group, ranked by compressed size, with codec and
+- **Column chunks** — the chunks of one row group in column order, with type, codec, compressed size and
   dictionary flag
 - **Column chunk detail** — facts pane grouped into Identity, Storage, Content and Layout, whose
   cursor passes over the group headings, plus drill menu; `l` adds the repetition and definition level histograms, each level named after
@@ -389,31 +411,9 @@ and **Dictionary**. **Schema**, **Footer & indexes** and **Data preview** open f
   `PgDn/PgUp` flips pages; `:` jumps to a row by number; `Enter` opens a per-row modal, where the cursor stops on every line and
   `Enter` expands the field under it when its full value is not on screen
 
-Screenshots (click any shot to open it full size):
-
-<figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
-
-<figure markdown="span">[![Schema screen](../assets/cli/02-schema-tree.svg){ width="720" }](../assets/cli/02-schema-tree.svg)<figcaption>Schema</figcaption></figure>
-
-<figure markdown="span">[![Row groups screen](../assets/cli/03-1-rg.svg){ width="720" }](../assets/cli/03-1-rg.svg)<figcaption>Row groups</figcaption></figure>
-
-<figure markdown="span">[![Row group detail screen](../assets/cli/03-2-rg-detail.svg){ width="720" }](../assets/cli/03-2-rg-detail.svg)<figcaption>Row group detail</figcaption></figure>
-
-<figure markdown="span">[![Column chunks screen](../assets/cli/03-3-rg-column-chunks.svg){ width="720" }](../assets/cli/03-3-rg-column-chunks.svg)<figcaption>Column chunks</figcaption></figure>
-
-<figure markdown="span">[![Column chunk detail screen](../assets/cli/03-4-rg-column-chunk-detail.svg){ width="720" }](../assets/cli/03-4-rg-column-chunk-detail.svg)<figcaption>Column chunk detail</figcaption></figure>
-
-<figure markdown="span">[![Column chunk level histograms](../assets/cli/03-5-rg-column-chunk-levels.svg){ width="720" }](../assets/cli/03-5-rg-column-chunk-levels.svg)<figcaption>Column chunk detail with <code>l</code></figcaption></figure>
-
-<figure markdown="span">[![Pages screen with page-header modal](../assets/cli/04-pages-header-modal.svg){ width="720" }](../assets/cli/04-pages-header-modal.svg)<figcaption>Pages with the page-header modal</figcaption></figure>
-
 <figure markdown="span">[![Dictionary screen with inline search](../assets/cli/05-dict-search.svg){ width="720" }](../assets/cli/05-dict-search.svg)<figcaption>Dictionary with <code>/</code> inline search</figcaption></figure>
 
-<figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview scrolled right</figcaption></figure>
-
-Every screen shares a four-region layout: a top bar with file identity, a
-breadcrumb showing the navigation stack, the active screen body, and a keybar
-(all four visible in the Overview screenshot above).
+<figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview scrolled right with <code>→</code></figcaption></figure>
 
 ### When a file will not read
 
