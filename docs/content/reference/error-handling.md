@@ -64,3 +64,7 @@ the schema path of the offending group or column, not the file.
 ## Writing
 
 The exceptions a write can throw, the condition behind each, and the schema shapes the writer refuses are tabulated in the [Writer Reference](writer.md#what-the-writer-rejects).
+
+For S3 output, an `IOException` from close can mean publication could not be
+confirmed even though the completed object exists. Suppressed diagnostics describe
+verification and cleanup failures. See [S3 publication and cleanup](s3.md#publication-and-cleanup).

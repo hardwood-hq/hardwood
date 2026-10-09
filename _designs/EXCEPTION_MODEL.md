@@ -76,6 +76,24 @@ the same — retry, give up, report — the distinction belongs in the message e
 already carries. An unrecognized bloom filter variant raises `UnsupportedOperationException`
 naming the variant, rather than a type of its own.
 
+## Remote output failures
+
+An `IOException` from a remote output can report a failed operation or an outcome
+that the client could not confirm. It does not imply that replaying the operation
+is safe or that the destination is unchanged. S3 multipart initiation, whole-object
+PUT, and multipart completion are not automatically replayed.
+
+After an uncertain publication response, the S3 output checks the object's write
+UUID and expected length. A match confirms success; an inconclusive check preserves
+the original exception and adds a suppressed publication diagnostic. Verification
+and cleanup failures are also suppressed on the original failure. A lost
+initialization response can leave an upload whose ID is unknown; discard only
+aborts known uploads and never deletes a completed object.
+
+Interruption stops verification and remains set after the cleanup attempt.
+[Sequential S3 output](S3_STORAGE.md#sequential-output) defines the operation-specific
+retry budgets and publication/cleanup states.
+
 ## Propagating IO issues
 
 **A method declares `IOException` only if it can reach a file.** Parsing a buffer and decoding

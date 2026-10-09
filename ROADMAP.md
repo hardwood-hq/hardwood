@@ -428,6 +428,9 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ## Phase 11: Ecosystem Integration
 
 ### 11.1 S3 Support (`hardwood-s3`)
+- [x] Sequential S3 `OutputFile` backend with small-object PUT and multipart uploads (#1454)
+- [x] Bounded upload buffering, known-upload cleanup, and UUID/length publication verification
+- [x] Output factories, upload part-size configuration, usage docs, and real upload/read-back integration tests
 - [x] `S3InputFile` implementation with suffix-range GET for footer pre-fetch
 - [x] Tail caching (64 KB) for Parquet footer locality
 - [x] Range backing (`RangeBacking.SPARSE_TEMPFILE`) — mmap-backed whole-file range cache for repeat reads

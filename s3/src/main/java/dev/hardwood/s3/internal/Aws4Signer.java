@@ -16,6 +16,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 import javax.crypto.Mac;
@@ -231,8 +232,15 @@ public final class Aws4Signer {
     // ==================== Crypto primitives ====================
 
     static byte[] sha256(byte[] data) {
+        return sha256(data, 0, data.length);
+    }
+
+    static byte[] sha256(byte[] data, int offset, int length) {
+        Objects.checkFromIndexSize(offset, length, data.length);
         try {
-            return MessageDigest.getInstance("SHA-256").digest(data);
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(data, offset, length);
+            return digest.digest();
         }
         catch (NoSuchAlgorithmException e) {
             throw new AssertionError("SHA-256 not available", e);

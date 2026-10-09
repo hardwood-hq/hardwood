@@ -18,7 +18,7 @@ services:
     ports:
       - "127.0.0.1:${S3PROXY_PORT:-8080}:80"
     volumes:
-      - ./.s3proxy-data:/data:ro
+      - ./.s3proxy-data:/data:rw
     environment:
       S3PROXY_AUTHORIZATION: aws-v2-or-v4
       S3PROXY_IDENTITY: access
@@ -26,6 +26,22 @@ services:
       S3PROXY_ENDPOINT: http://0.0.0.0:80
       JCLOUDS_PROVIDER: filesystem
       JCLOUDS_FILESYSTEM_BASEDIR: /data
+    networks:
+      - claude-net
+
+  # Upload recovery needs stored user metadata. A transient provider preserves it
+  # even when Docker Desktop bind mounts cannot store filesystem extended attributes.
+  s3proxy-upload:
+    image: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${S3PROXY_UPLOAD_PORT:-8081}:80"
+    environment:
+      S3PROXY_AUTHORIZATION: aws-v2-or-v4
+      S3PROXY_IDENTITY: access
+      S3PROXY_CREDENTIAL: secret
+      S3PROXY_ENDPOINT: http://0.0.0.0:80
+      JCLOUDS_PROVIDER: transient
     networks:
       - claude-net
 
@@ -46,6 +62,7 @@ services:
       - CLAUDE_CONFIG_DIR=/claude-config
       - HARDWOOD_S3PROXY_ENDPOINT=http://s3proxy
       - HARDWOOD_S3PROXY_DATA_DIR=/workspace/.s3proxy-data
+      - HARDWOOD_S3PROXY_UPLOAD_ENDPOINT=http://s3proxy-upload
     networks:
       - claude-net
 
