@@ -411,7 +411,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 10.3 Reader API
 - [x] `ParquetFileReader` with static `open()` factory methods
-- [x] Column projection (`ColumnProjection` — select subset of columns, supports dot notation for nested)
+- [x] Column projection (`ColumnProjection` — select subset of columns, supports dot notation for nested; the row reader is chosen from the decoded projection, falling back to the nested reader when a predicate column repeats or its top-level field is a group)
 - [x] Filter predicate support (integrated with `ParquetFileReader` and `MultiFileParquetReader`)
 - [x] Struct-based row access (`PqStruct` — type-safe accessors for all types including nested)
 - [ ] Implement `ParquetReader.builder(path)` fluent API

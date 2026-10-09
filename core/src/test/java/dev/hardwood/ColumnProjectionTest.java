@@ -14,12 +14,16 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.reader.FlatRowReader;
+import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -263,6 +267,8 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
 
+            // The unselected struct does not keep this scalar projection on the nested reader.
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
             assertThat(rows.getFieldName(0)).isEqualTo("id");
 
@@ -554,17 +560,197 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("tags")).build()) {
 
+            assertThat(rows).isInstanceOf(NestedRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
 
             // Row 0: tags=["a","b","c"]
             rows.next();
-            assertThat(rows.getList("tags")).isNotNull();
-            assertThat(rows.getList("tags").size()).isEqualTo(3);
+            PqList tags = rows.getList("tags");
+            assertThat(tags).isNotNull();
+            assertThat(tags.size()).isEqualTo(3);
+            assertThat(tags.strings()).containsExactly("a", "b", "c");
 
             // Accessing non-projected column should throw
             assertThatThrownBy(() -> rows.getInt("id"))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Field 'id' not in projection");
+
+            // Row 1: tags=[]
+            rows.next();
+            assertThat(rows.getList("tags").isEmpty()).isTrue();
+
+            // Row 2: tags=null
+            rows.next();
+            assertThat(rows.getList("tags")).isNull();
+
+            // Row 3: tags=["single"]
+            rows.next();
+            assertThat(rows.getList("tags").strings()).containsExactly("single");
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    /// Projecting every column of a file that mixes a scalar with lists stays on the nested reader.
+    @Test
+    void testListFileAllColumnsStaysNested() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).build()) {
+
+            assertThat(rows).isInstanceOf(NestedRowReader.class);
+            assertThat(rows.getFieldCount()).isEqualTo(3);
+            rows.next();
+            assertThat(rows.getInt("id")).isEqualTo(1);
+            assertThat(rows.getList("tags").strings()).containsExactly("a", "b", "c");
+            assertThat(rows.getList("scores").size()).isEqualTo(3);
+        }
+    }
+
+    /// `id` is a top-level primitive; the lists beside it are not part of the projection.
+    @Test
+    void testListFileScalarProjectionReadsFlat() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
+
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+            assertThat(rows.getFieldName(0)).isEqualTo("id");
+            assertThat(readIds(rows)).containsExactly(1, 2, 3, 4);
+        }
+    }
+
+    @Test
+    void testListFileScalarProjectionFiltersFlat() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.gt("id", 2))
+                     .build()) {
+
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+            assertThat(readIds(rows)).containsExactly(3, 4);
+        }
+    }
+
+    /// Tail goes through the same row-reader factory as an ordinary read.
+    @Test
+    void testListFileScalarProjectionTailReadsFlat() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("id"))
+                     .tail(2)
+                     .build()) {
+
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+            assertThat(readIds(rows)).containsExactly(3, 4);
+        }
+    }
+
+    /// `labels` (STRING) and `ints` are nullable top-level primitives. `nums` is an unselected list.
+    @Test
+    void testNullableLogicalScalarsFromMixedFileReadFlat() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/batch_array_identity_test.parquet");
+        String[] labels = { "alpha", null, null, "delta" };
+        Integer[] ints = { 10, null, null, 40 };
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("labels", "ints")).build()) {
+
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+            assertThat(rows.getFieldCount()).isEqualTo(2);
+            assertThat(rows.getFieldName(0)).isEqualTo("labels");
+            assertThat(rows.getFieldName(1)).isEqualTo("ints");
+
+            for (int row = 0; row < labels.length; row++) {
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+
+                String label = labels[row];
+                assertThat(rows.isNull("labels")).isEqualTo(label == null);
+                assertThat(rows.isNull(0)).isEqualTo(label == null);
+                assertThat(rows.getString("labels")).isEqualTo(label);
+                assertThat(rows.getString(0)).isEqualTo(label);
+                assertThat(rows.getValue("labels")).isEqualTo(label);
+                assertThat(rows.getValue(0)).isEqualTo(label);
+
+                Integer value = ints[row];
+                assertThat(rows.isNull("ints")).isEqualTo(value == null);
+                assertThat(rows.isNull(1)).isEqualTo(value == null);
+                assertThat(rows.getValue("ints")).isEqualTo(value);
+                assertThat(rows.getValue(1)).isEqualTo(value);
+                if (value != null) {
+                    assertThat(rows.getInt("ints")).isEqualTo(value.intValue());
+                    assertThat(rows.getInt(1)).isEqualTo(value.intValue());
+                }
+            }
+            assertThat(rows.hasNext()).isFalse();
+            assertThatThrownBy(() -> rows.getString("nums"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[batch_array_identity_test.parquet] Column not in projection: nums");
+        }
+    }
+
+    /// Filtering on another top-level primitive keeps the flat reader, and that column stays unexposed.
+    @Test
+    void testFlatFilterOnlyColumnStaysOnFlatRowReader() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/batch_array_identity_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("labels"))
+                     .filter(FilterPredicate.gt("ints", 20))
+                     .build()) {
+
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+            assertThat(rows.getFieldName(0)).isEqualTo("labels");
+            assertThat(rows.hasNext()).isTrue();
+            rows.next();
+            assertThat(rows.getString("labels")).isEqualTo("delta");
+            assertThat(rows.getString(0)).isEqualTo("delta");
+            assertThatThrownBy(() -> rows.getInt("ints"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("[batch_array_identity_test.parquet] Column not in projection: ints");
+            assertThatThrownBy(() -> rows.getInt(1))
+                    .isInstanceOf(IndexOutOfBoundsException.class);
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    /// A list the predicate references and the projection does not is still decoded, so the read stays nested.
+    /// `tags` is null on id 3 and empty on id 2; the two predicates keep those rows apart, and `tags` stays unexposed.
+    @Test
+    void testNestedFilterOnlyColumnStaysOnNestedRowReader() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            try (RowReader nullTags = reader.buildRowReader()
+                    .projection(ColumnProjection.columns("id"))
+                    .filter(FilterPredicate.isNull("tags"))
+                    .build()) {
+
+                assertThat(nullTags).isInstanceOf(NestedRowReader.class);
+                assertTagsUnexposed(nullTags);
+                assertThat(readIds(nullTags)).containsExactly(3);
+            }
+
+            try (RowReader presentTags = reader.buildRowReader()
+                    .projection(ColumnProjection.columns("id"))
+                    .filter(FilterPredicate.isNotNull("tags"))
+                    .build()) {
+
+                assertThat(presentTags).isInstanceOf(NestedRowReader.class);
+                assertTagsUnexposed(presentTags);
+                assertThat(readIds(presentTags)).containsExactly(1, 2, 4);
+            }
         }
     }
 
@@ -605,6 +791,8 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("account.id")).build()) {
 
+            // Repetition level zero is not enough: `account` is a group, so the nested reader stays.
+            assertThat(rows).isInstanceOf(NestedRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
 
             // Row 0: Alice — account.id = "ACC-001"
@@ -643,6 +831,7 @@ public class ColumnProjectionTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("value")).build()) {
 
+            assertThat(rows).isInstanceOf(FlatRowReader.class);
             assertThat(rows.getFieldCount()).isEqualTo(1);
             assertThat(rows.getFieldName(0)).isEqualTo("value");
 
@@ -672,5 +861,22 @@ public class ColumnProjectionTest {
             // Accessing via projected index
             assertThat(rows.isNull(0)).isFalse();
         }
+    }
+
+    private static List<Integer> readIds(RowReader rows) throws Exception {
+        List<Integer> ids = new ArrayList<>();
+        while (rows.hasNext()) {
+            rows.next();
+            ids.add(rows.getInt("id"));
+        }
+        return ids;
+    }
+
+    private static void assertTagsUnexposed(RowReader rows) {
+        assertThat(rows.getFieldCount()).isEqualTo(1);
+        assertThat(rows.getFieldName(0)).isEqualTo("id");
+        assertThatThrownBy(() -> rows.getList("tags"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field 'tags' not in projection");
     }
 }
