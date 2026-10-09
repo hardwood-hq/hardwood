@@ -29,8 +29,8 @@ class RowGroupMappingTest {
     private ParquetModel model;
 
     @BeforeEach
-    void open() throws IOException {
-        Path path = Path.of(RowGroupMappingTest.class.getResource("/" + FIXTURE).getPath());
+    void open() throws Exception {
+        Path path = Path.of(RowGroupMappingTest.class.getResource("/" + FIXTURE).toURI());
         model = ParquetModel.open(InputFile.of(path), FIXTURE);
     }
 

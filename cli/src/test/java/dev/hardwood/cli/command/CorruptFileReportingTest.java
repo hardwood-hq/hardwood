@@ -10,7 +10,6 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -39,8 +38,7 @@ class CorruptFileReportingTest {
     static void writeCorruptFile() throws IOException {
         // A valid file with its trailing magic overwritten: the smallest corruption every
         // command meets at the same place, when it opens the file.
-        Path source = Paths.get(
-                CorruptFileReportingTest.class.getResource("/plain_uncompressed.parquet").getPath());
+        Path source = Path.of(Cli.resourcePath("/plain_uncompressed.parquet"));
         byte[] bytes = Files.readAllBytes(source);
         for (int i = bytes.length - 4; i < bytes.length; i++) {
             bytes[i] = 'X';

@@ -33,7 +33,7 @@ class NativeBinarySmokeIT {
     private static final Pattern VERSION_LINE = Pattern.compile("hardwood \\d+\\.\\d+\\.\\d+\\S* \\(\\S+\\)");
 
     private final String nativeBinary = System.getProperty("native.image.path");
-    private final String plainFile = getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String plainFile = Cli.resourcePath("/plain_uncompressed.parquet");
 
     @Test
     void readsLocalFile() throws IOException, InterruptedException {
@@ -69,7 +69,7 @@ class NativeBinarySmokeIT {
     /// they would print in the JDK's two-line fallback format instead of the CLI's.
     @Test
     void printsAHardwoodWarningAsOneLine() throws IOException, InterruptedException {
-        String annotated = getClass().getResource("/annotated_repeated_group_test.parquet").getPath();
+        String annotated = Cli.resourcePath("/annotated_repeated_group_test.parquet");
 
         NativeResult result = exec(nativeBinary, "schema", "-f", annotated);
 

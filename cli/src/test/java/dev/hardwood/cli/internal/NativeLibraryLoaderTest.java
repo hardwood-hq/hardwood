@@ -20,6 +20,9 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -130,6 +133,7 @@ class NativeLibraryLoaderTest {
     }
 
     @Test
+    @DisabledOnOs(OS.WINDOWS)
     void ensurePrivateDirectoryCreatesOwnerOnlyDirectory(@TempDir Path root) throws IOException {
         Path dir = root.resolve("hardwood-test");
 
@@ -138,6 +142,16 @@ class NativeLibraryLoaderTest {
     }
 
     @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void ensurePrivateDirectoryCreatesDirectoryOnWindows(@TempDir Path root) {
+        Path dir = root.resolve("hardwood-test");
+
+        assertThat(NativeLibraryLoader.ensurePrivateDirectory(dir)).isTrue();
+        assertThat(Files.isDirectory(dir)).isTrue();
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
     void ensurePrivateDirectoryRejectsDirectoryWritableByOthers(@TempDir Path root) throws IOException {
         Path dir = Files.createDirectory(root.resolve("shared"));
         Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxrwxrwx"));
@@ -146,6 +160,7 @@ class NativeLibraryLoaderTest {
     }
 
     @Test
+    @DisabledOnOs(OS.WINDOWS)
     void ensurePrivateDirectoryRejectsSymbolicLink(@TempDir Path root) throws IOException {
         Path target = Files.createDirectory(root.resolve("target"),
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
@@ -222,8 +237,8 @@ class NativeLibraryLoaderTest {
     @Test
     void loadEmbeddedPrefersDirectoryHoldingAnEarlierCopy(@TempDir Path root) throws IOException {
         Path tmp = root.resolve("tmp");
-        Path home = Files.createDirectory(root.resolve("home"),
-                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        Path home = root.resolve("home");
+        assertThat(NativeLibraryLoader.ensurePrivateDirectory(home)).isTrue();
         Files.write(home.resolve(cacheFileName()), LIB_BYTES);
         List<Path> loaded = new ArrayList<>();
         List<String> problems = new ArrayList<>();
@@ -238,6 +253,7 @@ class NativeLibraryLoaderTest {
     }
 
     @Test
+    @DisabledOnOs(OS.WINDOWS)
     void loadEmbeddedSkipsDirectoryWritableByOthers(@TempDir Path root) throws IOException {
         Path shared = Files.createDirectory(root.resolve("shared"));
         Files.setPosixFilePermissions(shared, PosixFilePermissions.fromString("rwxrwxrwx"));

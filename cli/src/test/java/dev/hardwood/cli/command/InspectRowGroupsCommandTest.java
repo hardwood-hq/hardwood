@@ -15,7 +15,7 @@ class InspectRowGroupsCommandTest implements InspectRowGroupsCommandContract {
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
@@ -26,7 +26,7 @@ class InspectRowGroupsCommandTest implements InspectRowGroupsCommandContract {
     @Test
     void groupsTheRowCount() {
         Cli.Result result = Cli.launch("inspect", "rowgroups", "-f",
-                getClass().getResource("/misaligned_pages.parquet").getPath());
+                Cli.resourcePath("/misaligned_pages.parquet"));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).startsWith("Row Group 0  (10,000 rows, ");

@@ -27,7 +27,7 @@ class DiveCommandTest {
 
     @Test
     void smokeRenderExitsZero() {
-        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+        Path fixture = Path.of(Cli.resourcePath("/compat_plain_int64.parquet"));
 
         Cli.Result result = Cli.launch("dive", "-f", fixture.toString(), "--smoke-render");
 
@@ -49,7 +49,7 @@ class DiveCommandTest {
     /// `-it` hits.
     @Test
     void failsFastWithoutTty() {
-        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+        Path fixture = Path.of(Cli.resourcePath("/compat_plain_int64.parquet"));
 
         Cli.Result result = Cli.launch("dive", "-f", fixture.toString());
 
@@ -60,7 +60,7 @@ class DiveCommandTest {
     /// A log file that cannot be opened fails `dive` before the session starts, naming the file.
     @Test
     void failsWhenTheLogFileCannotBeOpened(@TempDir Path tempDir) {
-        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+        Path fixture = Path.of(Cli.resourcePath("/compat_plain_int64.parquet"));
         Path logFile = tempDir.resolve("missing").resolve("dive.log");
 
         Cli.Result result = Cli.launch("dive", "-f", fixture.toString(), "--smoke-render",
@@ -75,7 +75,7 @@ class DiveCommandTest {
     /// command prints its warnings to stderr again.
     @Test
     void logFileTakesTheSessionsRecordsAndStderrResumesAfter(@TempDir Path tempDir) throws IOException {
-        String fixture = getClass().getResource("/annotated_repeated_group_test.parquet").getPath();
+        String fixture = Cli.resourcePath("/annotated_repeated_group_test.parquet");
         Path logFile = tempDir.resolve("dive.log");
 
         Cli.Result dive = Cli.launch("dive", "-f", fixture, "--smoke-render", "--log-file", logFile.toString());

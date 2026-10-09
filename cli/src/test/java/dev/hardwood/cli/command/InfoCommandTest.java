@@ -15,7 +15,7 @@ class InfoCommandTest implements InfoCommandContract {
 
     @Override
     public String plainFile() {
-        return getClass().getResource("/plain_uncompressed.parquet").getPath();
+        return Cli.resourcePath("/plain_uncompressed.parquet");
     }
 
     @Override
@@ -25,7 +25,7 @@ class InfoCommandTest implements InfoCommandContract {
 
     @Override
     public String kvMetadataFile() {
-        return getClass().getResource("/cli_info_kv_metadata_test.parquet").getPath();
+        return Cli.resourcePath("/cli_info_kv_metadata_test.parquet");
     }
 
     /// Local-only: the file has no file-level key-value metadata at all (it carries
@@ -36,7 +36,7 @@ class InfoCommandTest implements InfoCommandContract {
     @Test
     void omitsKeyValueMetadataSectionWhenAbsent() {
         Cli.Result result = Cli.launch("info", "-f",
-                getClass().getResource("/column_kv_metadata_test.parquet").getPath());
+                Cli.resourcePath("/column_kv_metadata_test.parquet"));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).doesNotContain("Key/Value Metadata");
@@ -45,7 +45,7 @@ class InfoCommandTest implements InfoCommandContract {
     @Test
     void groupsTheTotalRowCount() {
         Cli.Result result = Cli.launch("info", "-f",
-                getClass().getResource("/misaligned_pages.parquet").getPath());
+                Cli.resourcePath("/misaligned_pages.parquet"));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).contains("Total Rows:        10,000\n");
@@ -56,7 +56,7 @@ class InfoCommandTest implements InfoCommandContract {
     @Test
     void replacesControlCharactersInKeys() {
         Cli.Result result = Cli.launch("info", "-f",
-                getClass().getResource("/cli_wide_value_test.parquet").getPath());
+                Cli.resourcePath("/cli_wide_value_test.parquet"));
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).contains("  ctl·[31m.key").doesNotContain("\u001b");
