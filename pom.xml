@@ -521,6 +521,10 @@
                     <exclude>docs/site/**</exclude>
                     <exclude>hardwood-cli-early-access-*/**</exclude>
                     <exclude>japicmp-report/**</exclude>
+                    <!-- Vendored asciinema-player; carries its upstream licence. -->
+                    <exclude>docs/content/javascripts/asciinema-player.min.js</exclude>
+                    <exclude>docs/content/stylesheets/asciinema-player.css</exclude>
+                    <exclude>**/*.cast</exclude>
                   </excludes>
                 </licenseSet>
               </licenseSets>

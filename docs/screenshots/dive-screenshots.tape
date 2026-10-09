@@ -17,30 +17,14 @@
 Sleep 700ms
 Screenshot ../../docs/content/assets/cli/01-landing-overview.svg
 
-# 02: Schema
-Enter
-Type "e"
-Down
-Down
-Down
-Left
-Down
-Left
-Sleep 350ms
-Screenshot ../../docs/content/assets/cli/02-schema-tree.svg
-
-# 03: Row groups
-Escape
+# Row groups -> first row group -> Column chunks -> the eighth chunk's detail
 Down
 Enter
 Sleep 350ms
-Screenshot ../../docs/content/assets/cli/03-1-rg.svg
 Enter
 Sleep 350ms
-Screenshot ../../docs/content/assets/cli/03-2-rg-detail.svg
 Enter
 Sleep 350ms
-Screenshot ../../docs/content/assets/cli/03-3-rg-column-chunks.svg
 Down
 Down
 Down
@@ -49,26 +33,12 @@ Down
 Down
 Down
 Enter
-Sleep 350ms
-Screenshot ../../docs/content/assets/cli/03-4-rg-column-chunk-detail.svg
-# `l` expands the repetition / definition level histograms; toggle it back off
-# so the Pages capture below starts from the same state as before.
-Type "l"
-Sleep 350ms
-Screenshot ../../docs/content/assets/cli/03-5-rg-column-chunk-levels.svg
-Type "l"
 Sleep 350ms
 
-# 04: Pages (with page-header modal)
-Enter
+# 05: Dictionary with inline search (the cursor stops on the Column index and
+# Offset index entries on its way down the drill menu)
 Down
-Enter
-Sleep 350ms
-Screenshot ../../docs/content/assets/cli/04-pages-header-modal.svg
-Escape
-Escape
-
-# 05: Dictionary with inline search
+Down
 Down
 Enter
 Type "/"

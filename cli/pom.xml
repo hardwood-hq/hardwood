@@ -16,6 +16,9 @@
       <screenshots.parquetFile>${maven.multiModuleProjectDirectory}/cli/src/test/resources/dive_screenshots_fixture.parquet</screenshots.parquetFile>
       <screenshots.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-screenshots.tape</screenshots.tapeFile>
       <screenshots.castFile>${project.build.directory}/dive-screenshots.cast</screenshots.castFile>
+      <demo.parquetFile>${maven.multiModuleProjectDirectory}/performance-testing/test-data-setup/target/overture-maps-data/overture_places.zstd.parquet</demo.parquetFile>
+      <demo.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-demo.tape</demo.tapeFile>
+      <demo.castFile>${maven.multiModuleProjectDirectory}/docs/content/assets/cli/dive-demo.cast</demo.castFile>
       <aesh.version>3.16.6</aesh.version>
       <aesh-readline.version>3.16.2</aesh-readline.version>
       <!-- Both test phases run CLI code in the test JVM — the S3 ITs drive the same
@@ -346,6 +349,91 @@
                          recording inherits the terminal's $COLORTERM, so regenerating from a
                          non-truecolor terminal silently rewrites every checked-in screenshot
                          to the named-ANSI fallback. -->
+                    <property>
+                      <key>hardwood.dive.truecolor</key>
+                      <value>true</value>
+                    </property>
+                  </systemProperties>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>dive-demo</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>require-demo-inputs</id>
+                <phase>validate</phase>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
+                <configuration>
+                  <rules>
+                    <requireFilesExist>
+                      <files>
+                        <file>${demo.parquetFile}</file>
+                        <file>${demo.tapeFile}</file>
+                      </files>
+                      <message>Recording the dive demo requires the Overture Maps places file; download it with ./mvnw -Pperformance-test -pl performance-testing/test-data-setup generate-test-resources, or point -Ddemo.parquetFile at a copy.</message>
+                    </requireFilesExist>
+                  </rules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>record-dive-demo</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>java</goal>
+                </goals>
+                <configuration>
+                  <includeProjectDependencies>true</includeProjectDependencies>
+                  <mainClass>dev.hardwood.cli.Main</mainClass>
+                  <arguments>
+                    <argument>dive</argument>
+                    <argument>-f</argument>
+                    <argument>${demo.parquetFile}</argument>
+                  </arguments>
+                  <systemProperties>
+                    <property>
+                      <key>tamboui.record</key>
+                      <value>${demo.castFile}</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.config</key>
+                      <value>${demo.tapeFile}</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.width</key>
+                      <value>120</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.height</key>
+                      <value>35</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.fps</key>
+                      <value>30</value>
+                    </property>
+                    <!-- The recorder stops after 10 s unless told otherwise; the walk
+                         takes about 75 s. -->
+                    <property>
+                      <key>tamboui.record.duration</key>
+                      <value>120000</value>
+                    </property>
                     <property>
                       <key>hardwood.dive.truecolor</key>
                       <value>true</value>

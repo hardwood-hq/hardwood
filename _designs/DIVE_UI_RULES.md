@@ -54,7 +54,7 @@ The three hued methods use truecolor RGB pinned to Solarized's accent slots when
 
 `dim()` uses the faint attribute rather than a grey. Solarized's named greys are traps: `Color.GRAY` maps to `base2`, brighter than the foreground, and `Color.DARK_GRAY` to `base03`, the Solarized Dark background. A terminal that ignores faint renders the text at default fg.
 
-Truecolor support is read on every call, from `$COLORTERM` (`truecolor` or `24bit`). It is never cached in a `static final` field: a native-image build can run a static initialiser at build time and would freeze the build runner's environment into the binary. The system property `hardwood.dive.truecolor` forces the truecolor branch for all three hued methods regardless of `$COLORTERM`. The `screenshots` Maven profile in `cli/pom.xml` sets it, so the checked-in SVGs under `docs/content/assets/cli/` carry the Solarized palette whatever terminal recorded them. It exists for reproducible captures and is not an end-user option.
+Truecolor support is read on every call, from `$COLORTERM` (`truecolor` or `24bit`). It is never cached in a `static final` field: a native-image build can run a static initialiser at build time and would freeze the build runner's environment into the binary. The system property `hardwood.dive.truecolor` forces the truecolor branch for all three hued methods regardless of `$COLORTERM`. The `screenshots` and `dive-demo` Maven profiles in `cli/pom.xml` set it, so the checked-in SVGs and the demo recording under `docs/content/assets/cli/` carry the Solarized palette whatever terminal recorded them. It exists for reproducible captures and is not an end-user option.
 
 ### What is a smell
 
