@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
@@ -19,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -37,7 +39,7 @@ import dev.hardwood.schema.FileSchema;
 /// the scheduler computes from page headers, so there is no per-column drain, no page-to-batch
 /// copy, and one hand-off per batch for all columns.
 ///
-/// Scope: one memory-resident file, flat `INT32`/`INT64`/`FLOAT`/`DOUBLE` columns (`PLAIN` or
+/// Scope: one file, read one column chunk at a time through [InputFile#readRange]; flat `INT32`/`INT64`/`FLOAT`/`DOUBLE` columns (`PLAIN` or
 /// dictionary) and dictionary-encoded binary columns (exposed as dictionary ids), V1 data pages. No filter, no row cap. Batches never span row groups.
 public final class ScatterScan implements AutoCloseable {
 
@@ -100,7 +102,7 @@ public final class ScatterScan implements AutoCloseable {
 
     private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
 
-    private final ByteBuffer file;
+    private final InputFile file;
     private final FileMetaData metaData;
     private final ColumnSchema[] columns;
     private final int[] fileColumns;
@@ -124,14 +126,15 @@ public final class ScatterScan implements AutoCloseable {
     private volatile Thread schedulerThread;
     private Batch current;
 
-    public ScatterScan(ByteBuffer file, FileMetaData metaData, List<String> projection, int batchSize,
+    /// `file` must be open; it stays owned by the caller.
+    public ScatterScan(InputFile file, FileMetaData metaData, List<String> projection, int batchSize,
                        int window, HardwoodContextImpl context) {
         this(file, metaData, projection, batchSize, window, context, null);
     }
 
     /// With a `sink`, every batch is handed to it on the pool thread that completes it, in no
     /// particular order, and released when it returns; [#awaitCompletion()] waits for the end.
-    public ScatterScan(ByteBuffer file, FileMetaData metaData, List<String> projection, int batchSize,
+    public ScatterScan(InputFile file, FileMetaData metaData, List<String> projection, int batchSize,
                        int window, HardwoodContextImpl context, Consumer<Batch> sink) {
         this.sink = sink;
         this.file = file;
@@ -198,11 +201,10 @@ public final class ScatterScan implements AutoCloseable {
         long nextRow;
         Dictionary dictionary;
 
-        ChunkCursor(int column, ColumnChunk cc) {
+        ChunkCursor(int column, ColumnChunk cc) throws IOException {
             this.column = column;
             this.meta = cc.metaData();
-            int start = Math.toIntExact(cc.chunkStartOffset());
-            this.chunk = file.slice(start, Math.toIntExact(meta.totalCompressedSize()));
+            this.chunk = file.readRange(cc.chunkStartOffset(), Math.toIntExact(meta.totalCompressedSize()));
         }
 
         boolean exhausted(long rgRows) {

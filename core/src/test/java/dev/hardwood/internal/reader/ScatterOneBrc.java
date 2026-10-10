@@ -9,13 +9,10 @@ package dev.hardwood.internal.reader;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
@@ -169,13 +166,9 @@ public final class ScatterOneBrc {
 
     static StationTable scatter(Path path, int window, HardwoodContextImpl context) throws Exception {
         StationTable table = new StationTable();
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer file = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size());
-            FileMetaData md;
-            try (InputFile in = InputFile.of(file)) {
-                in.open();
-                md = ParquetMetadataReader.readMetadata(in);
-            }
+        try (InputFile file = InputFile.of(path)) {
+            file.open();
+            FileMetaData md = ParquetMetadataReader.readMetadata(file);
             try (ScatterScan scan = new ScatterScan(file, md, List.of("station", "measurement"), 131066,
                     window, context)) {
                 Object current = null;
@@ -206,13 +199,9 @@ public final class ScatterOneBrc {
             tables.add(t);
             return t;
         });
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer file = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size());
-            FileMetaData md;
-            try (InputFile in = InputFile.of(file)) {
-                in.open();
-                md = ParquetMetadataReader.readMetadata(in);
-            }
+        try (InputFile file = InputFile.of(path)) {
+            file.open();
+            FileMetaData md = ParquetMetadataReader.readMetadata(file);
             if (FOOTER_NANOS == 0) {
                 FOOTER_NANOS = System.nanoTime();
                 System.err.printf("EVENT %-26s %d ms after main%n", "footer read", (FOOTER_NANOS - MAIN_NANOS) / 1_000_000);

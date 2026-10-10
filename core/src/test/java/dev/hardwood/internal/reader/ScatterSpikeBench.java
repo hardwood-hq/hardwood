@@ -8,10 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -133,9 +130,9 @@ public final class ScatterSpikeBench {
     static long scatter(Path path, List<String> names, int batchSize, int window, HardwoodContextImpl context)
             throws Exception {
         long sum = 0;
-        try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ)) {
-            ByteBuffer file = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size());
-            FileMetaData md = footer(InputFile.of(file));
+        try (InputFile file = InputFile.of(path)) {
+            file.open();
+            FileMetaData md = ParquetMetadataReader.readMetadata(file);
             try (ScatterScan scan = new ScatterScan(file, md, names, batchSize, window, context)) {
                 int n = names.size();
                 ScatterScan.Batch b;
