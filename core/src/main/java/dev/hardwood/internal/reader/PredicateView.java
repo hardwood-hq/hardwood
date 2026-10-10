@@ -14,9 +14,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.util.BitSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.IntPredicate;
 
@@ -101,7 +100,7 @@ public final class PredicateView implements StructAccessor {
     public static PredicateView create(FileSchema schema, ProjectedSchema decoded,
                                        ResolvedPredicate resolved, IntPredicate nestedAt,
                                        boolean deriveElementValidity) {
-        Set<Integer> columns = predicateColumns(resolved);
+        int[] columns = predicateColumns(resolved);
 
         List<Integer> flatColumns = new ArrayList<>();
         List<Integer> nestedColumns = new ArrayList<>();
@@ -157,17 +156,47 @@ public final class PredicateView implements StructAccessor {
     }
 
     /// The file leaf columns `resolved` references, in first-seen order.
-    public static Set<Integer> predicateColumns(ResolvedPredicate resolved) {
-        Set<Integer> columns = new LinkedHashSet<>();
+    public static int[] predicateColumns(ResolvedPredicate resolved) {
+        OrderedColumns columns = new OrderedColumns();
         collectColumnIndices(resolved, columns);
-        return columns;
+        return columns.toArray();
     }
 
-    private static void collectColumnIndices(ResolvedPredicate p, Set<Integer> out) {
+    private static void collectColumnIndices(ResolvedPredicate p, OrderedColumns out) {
         switch (p) {
-            case ResolvedPredicate.And a -> a.children().forEach(c -> collectColumnIndices(c, out));
-            case ResolvedPredicate.Or o -> o.children().forEach(c -> collectColumnIndices(c, out));
+            case ResolvedPredicate.And a -> {
+                for (ResolvedPredicate child : a.children()) {
+                    collectColumnIndices(child, out);
+                }
+            }
+            case ResolvedPredicate.Or o -> {
+                for (ResolvedPredicate child : o.children()) {
+                    collectColumnIndices(child, out);
+                }
+            }
             default -> out.add(leafColumnIndex(p));
+        }
+    }
+
+    /// Distinct column indices in the order they were first added.
+    private static final class OrderedColumns {
+        private final BitSet seen = new BitSet();
+        private int[] columns = new int[4];
+        private int count;
+
+        void add(int column) {
+            if (seen.get(column)) {
+                return;
+            }
+            seen.set(column);
+            if (count == columns.length) {
+                columns = Arrays.copyOf(columns, count * 2);
+            }
+            columns[count++] = column;
+        }
+
+        int[] toArray() {
+            return Arrays.copyOf(columns, count);
         }
     }
 

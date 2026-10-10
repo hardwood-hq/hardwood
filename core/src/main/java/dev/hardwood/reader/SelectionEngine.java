@@ -183,6 +183,6 @@ final class SelectionEngine {
     /// File leaf columns referenced by `resolved`, in first-seen order.
     /// Used to extend the decoded projection so the predicate columns are decoded.
     static int[] predicateColumns(ResolvedPredicate resolved) {
-        return PredicateView.predicateColumns(resolved).stream().mapToInt(Integer::intValue).toArray();
+        return PredicateView.predicateColumns(resolved);
     }
 }
