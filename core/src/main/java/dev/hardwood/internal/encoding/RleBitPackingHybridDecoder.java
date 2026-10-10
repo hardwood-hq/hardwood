@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.encoding;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -20,6 +22,9 @@ import dev.hardwood.reader.ParquetReadException;
 public class RleBitPackingHybridDecoder {
 
     private static final SimdOperations SIMD_OPS = VectorSupport.operations();
+    private static final VarHandle LONG_LE = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    /// SPIKE experiment: unrolled two-word extraction for widths 9-16; `HW_WIDE_UNPACK=0` turns it off.
+    private static final boolean WIDE_UNPACK = !"0".equals(System.getenv("HW_WIDE_UNPACK"));
 
     // Thread-local reusable buffer for temporary index arrays in dictionary decoding.
     // Safe because the executor is a fixed platform thread pool, so buffers persist
@@ -262,6 +267,142 @@ public class RleBitPackingHybridDecoder {
         return SIMD_OPS.countNonNulls(defLevels, length, maxDef);
     }
 
+    private static int unpack9(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 9, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x1ff);
+            out[o + 1] = (int) ((lo >>> 9) & 0x1ff);
+            out[o + 2] = (int) ((lo >>> 18) & 0x1ff);
+            out[o + 3] = (int) ((lo >>> 27) & 0x1ff);
+            out[o + 4] = (int) ((lo >>> 36) & 0x1ff);
+            out[o + 5] = (int) ((lo >>> 45) & 0x1ff);
+            out[o + 6] = (int) ((lo >>> 54) & 0x1ff);
+            out[o + 7] = (int) (((lo >>> 63) | (hi << 1)) & 0x1ff);
+        }
+        return g;
+    }
+
+    private static int unpack10(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 10, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x3ff);
+            out[o + 1] = (int) ((lo >>> 10) & 0x3ff);
+            out[o + 2] = (int) ((lo >>> 20) & 0x3ff);
+            out[o + 3] = (int) ((lo >>> 30) & 0x3ff);
+            out[o + 4] = (int) ((lo >>> 40) & 0x3ff);
+            out[o + 5] = (int) ((lo >>> 50) & 0x3ff);
+            out[o + 6] = (int) (((lo >>> 60) | (hi << 4)) & 0x3ff);
+            out[o + 7] = (int) ((hi >>> 6) & 0x3ff);
+        }
+        return g;
+    }
+
+    private static int unpack11(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 11, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x7ff);
+            out[o + 1] = (int) ((lo >>> 11) & 0x7ff);
+            out[o + 2] = (int) ((lo >>> 22) & 0x7ff);
+            out[o + 3] = (int) ((lo >>> 33) & 0x7ff);
+            out[o + 4] = (int) ((lo >>> 44) & 0x7ff);
+            out[o + 5] = (int) (((lo >>> 55) | (hi << 9)) & 0x7ff);
+            out[o + 6] = (int) ((hi >>> 2) & 0x7ff);
+            out[o + 7] = (int) ((hi >>> 13) & 0x7ff);
+        }
+        return g;
+    }
+
+    private static int unpack12(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 12, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0xfff);
+            out[o + 1] = (int) ((lo >>> 12) & 0xfff);
+            out[o + 2] = (int) ((lo >>> 24) & 0xfff);
+            out[o + 3] = (int) ((lo >>> 36) & 0xfff);
+            out[o + 4] = (int) ((lo >>> 48) & 0xfff);
+            out[o + 5] = (int) (((lo >>> 60) | (hi << 4)) & 0xfff);
+            out[o + 6] = (int) ((hi >>> 8) & 0xfff);
+            out[o + 7] = (int) ((hi >>> 20) & 0xfff);
+        }
+        return g;
+    }
+
+    private static int unpack13(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 13, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x1fff);
+            out[o + 1] = (int) ((lo >>> 13) & 0x1fff);
+            out[o + 2] = (int) ((lo >>> 26) & 0x1fff);
+            out[o + 3] = (int) ((lo >>> 39) & 0x1fff);
+            out[o + 4] = (int) (((lo >>> 52) | (hi << 12)) & 0x1fff);
+            out[o + 5] = (int) ((hi >>> 1) & 0x1fff);
+            out[o + 6] = (int) ((hi >>> 14) & 0x1fff);
+            out[o + 7] = (int) ((hi >>> 27) & 0x1fff);
+        }
+        return g;
+    }
+
+    private static int unpack14(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 14, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x3fff);
+            out[o + 1] = (int) ((lo >>> 14) & 0x3fff);
+            out[o + 2] = (int) ((lo >>> 28) & 0x3fff);
+            out[o + 3] = (int) ((lo >>> 42) & 0x3fff);
+            out[o + 4] = (int) (((lo >>> 56) | (hi << 8)) & 0x3fff);
+            out[o + 5] = (int) ((hi >>> 6) & 0x3fff);
+            out[o + 6] = (int) ((hi >>> 20) & 0x3fff);
+            out[o + 7] = (int) ((hi >>> 34) & 0x3fff);
+        }
+        return g;
+    }
+
+    private static int unpack15(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 15, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0x7fff);
+            out[o + 1] = (int) ((lo >>> 15) & 0x7fff);
+            out[o + 2] = (int) ((lo >>> 30) & 0x7fff);
+            out[o + 3] = (int) ((lo >>> 45) & 0x7fff);
+            out[o + 4] = (int) (((lo >>> 60) | (hi << 4)) & 0x7fff);
+            out[o + 5] = (int) ((hi >>> 11) & 0x7fff);
+            out[o + 6] = (int) ((hi >>> 26) & 0x7fff);
+            out[o + 7] = (int) ((hi >>> 41) & 0x7fff);
+        }
+        return g;
+    }
+
+    private static int unpack16(byte[] data, int pos, int dataEnd, int[] out, int o, int groups) {
+        int g = 0;
+        for (; g < groups && pos + 16 <= dataEnd; g++, pos += 16, o += 8) {
+            long lo = (long) LONG_LE.get(data, pos);
+            long hi = (long) LONG_LE.get(data, pos + 8);
+            out[o] = (int) (lo & 0xffff);
+            out[o + 1] = (int) ((lo >>> 16) & 0xffff);
+            out[o + 2] = (int) ((lo >>> 32) & 0xffff);
+            out[o + 3] = (int) ((lo >>> 48) & 0xffff);
+            out[o + 4] = (int) (hi & 0xffff);
+            out[o + 5] = (int) ((hi >>> 16) & 0xffff);
+            out[o + 6] = (int) ((hi >>> 32) & 0xffff);
+            out[o + 7] = (int) ((hi >>> 48) & 0xffff);
+        }
+        return g;
+    }
+
     private void readNextRun() {
         if (pos >= dataEnd) {
             remainingInRun = 0;
@@ -373,6 +514,25 @@ public class RleBitPackingHybridDecoder {
         // Only while the buffer is empty, because this bypasses it, and only while the reads stay
         // inside the data: they run past the bytes the group owns, though `pos` advances by just
         // those, so over-reading would leave the cursor inside the next run's header.
+        // 9-16: eight values span `width` bytes, so two little-endian longs read from the group
+        // start cover all of them; each width has its own unrolled extractor with constant shifts.
+        // The second read runs up to 7 bytes past the group, hence the 16-byte bound.
+        else if (width <= 16 && WIDE_UNPACK && bitsInBuffer == 0) {
+            int groups = count >>> 3;
+            int done = switch (width) {
+                case 9 -> unpack9(data, pos, dataEnd, output, outPos, groups);
+                case 10 -> unpack10(data, pos, dataEnd, output, outPos, groups);
+                case 11 -> unpack11(data, pos, dataEnd, output, outPos, groups);
+                case 12 -> unpack12(data, pos, dataEnd, output, outPos, groups);
+                case 13 -> unpack13(data, pos, dataEnd, output, outPos, groups);
+                case 14 -> unpack14(data, pos, dataEnd, output, outPos, groups);
+                case 15 -> unpack15(data, pos, dataEnd, output, outPos, groups);
+                default -> unpack16(data, pos, dataEnd, output, outPos, groups);
+            };
+            pos += done * width;
+            outPos += done * 8;
+            count -= done * 8;
+        }
         else if (width <= 32) {
             int groupSpan = ((7 * width) >>> 3) + Long.BYTES;
             while (count >= 8 && bitsInBuffer == 0 && pos + groupSpan <= dataEnd) {
