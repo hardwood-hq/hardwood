@@ -98,6 +98,17 @@ public final class ParquetMetadataReader {
         return FileSchema.fromSchemaElements(BareRepeatedGroups.dropAnnotations(metaData.schema()));
     }
 
+    /// Opens `inputFile` for a read whose footers come from `source`. For [#FROM_FILE] no reader
+    /// asks for the file's identity, so a local file defers reading it until something does.
+    public static void open(InputFile inputFile, MetadataSource source) throws IOException {
+        if (source == FROM_FILE && inputFile instanceof MappedInputFile mapped) {
+            mapped.openDeferringIdentity();
+        }
+        else {
+            inputFile.open();
+        }
+    }
+
     /// The footer of an opened file: read from the file for [#FROM_FILE], otherwise taken from
     /// `source` and checked against the file.
     ///

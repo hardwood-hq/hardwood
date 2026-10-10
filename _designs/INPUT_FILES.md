@@ -41,12 +41,14 @@ Tests: `ByteBufferInputFileTest`, `MappedInputFileLargeFileTest`, `FileNameInExc
 
 | Backend | Identity | Cost |
 |---|---|---|
-| `MappedInputFile` | `size:mtime:fileKey` from `BasicFileAttributes`, the modification time at the file system's full precision; the absolute path takes the file key's place where the file system has none, since size and modification time alone can be shared by two different files | one stat in `open()` |
+| `MappedInputFile` | `size:mtime:fileKey` from `BasicFileAttributes`, the modification time at the file system's full precision; the absolute path takes the file key's place where the file system has none, since size and modification time alone can be shared by two different files | one stat in `open()`, none when a reader without a `MetadataSource` opens it |
 | `S3InputFile` | the object's `ETag` ([S3_STORAGE.md](S3_STORAGE.md#object-identity)) | none |
 | `ByteBufferInputFile` | empty | none |
 | `RangeBackedInputFile` | its wrapped file's | none |
 
 The identity is resolved by `open()` and fixed for the file's lifetime: it names what the file holds for its reader, not what its location holds by the time it is asked, and so stays true when the location changes underneath an open reader. The built-in backends that resolve it in `open()` throw `IllegalStateException` when asked before it. `MappedInputFile` stats the path before it opens the channel. A replacement racing with `open()` then leaves the identity naming the content the path held before, which no later open finds again, so a footer recorded against it is never served for the replacement under that identity; stating after the channel opened would label the mapped bytes with the replacement's identity instead.
+
+A reader whose context has no `MetadataSource` never asks for an identity, so it opens a `MappedInputFile` through `openDeferringIdentity()`, which skips the stat (`ParquetMetadataReader.open`): a read whose filters drop every row group costs little more than its open, of which the stat is a share. An `identity()` call on such a file stats the path when it is made. Only a caller that uses a file it handed to a reader can make that call, against the ownership rule below, and a replacement between the open and the call then labels the mapped bytes with the replacement's identity.
 
 Tests: `MappedInputFileIdentityTest`, `S3InputFileIdentityTest`.
 

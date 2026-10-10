@@ -78,7 +78,7 @@ public interface InputFile extends Closeable {
     ///
     /// | Backend | Identity |
     /// |---|---|
-    /// | Local file ([#of(Path)]) | the file's size, modification time and file key (or absolute path where the file system has no file keys), read when it is opened |
+    /// | Local file ([#of(Path)]) | the file's size, modification time and file key (or absolute path where the file system has no file keys), read when it is opened; when a reader whose context has no [MetadataSource] opened it, read when first asked for |
     /// | S3 | the object's `ETag` |
     /// | In-memory ([#of(ByteBuffer)]) | empty |
     ///

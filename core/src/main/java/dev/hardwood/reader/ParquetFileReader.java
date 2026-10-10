@@ -267,7 +267,7 @@ public class ParquetFileReader implements Closeable {
         InputFile first = files.get(0);
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
-        first.open();
+        ParquetMetadataReader.open(first, context.metadataSource());
         FileFooter firstFileFooter = ParquetMetadataReader.load(first, context.metadataSource());
 
         fileOpenedEvent.file = first.name();
