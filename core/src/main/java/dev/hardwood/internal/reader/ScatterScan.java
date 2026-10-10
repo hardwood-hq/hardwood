@@ -52,6 +52,9 @@ public final class ScatterScan implements AutoCloseable {
     /// instead of allocating fresh ones. A released batch's arrays are overwritten, so this is only
     /// valid for consumers that keep no array beyond the sink call / the next `next()`.
     private static final boolean RECYCLE = "1".equals(System.getenv("HW_RECYCLE"));
+    /// SPIKE experiment: dictionary ids of a binary column without nulls are unpacked straight
+    /// into the batch instead of into scratch followed by a copy; `HW_DIRECT_IDS=0` turns it off.
+    private static final boolean DIRECT_IDS = !"0".equals(System.getenv("HW_DIRECT_IDS"));
 
     /// One row-aligned batch over every projected column.
     public static final class Batch {
@@ -379,17 +382,36 @@ public final class ScatterScan implements AutoCloseable {
             offset += len;
         }
 
-        // Value source: either PLAIN bytes at `offset`, or dictionary indices in scratch.
+        // Value source: PLAIN bytes at `offset`, dictionary indices in scratch, or (binary ids
+        // without nulls) a decoder that unpacks straight into each batch segment below.
         int[] indices = null;
+        RleBitPackingHybridDecoder directIds = null;
+        boolean zeroWidthIds = false;
         Encoding enc = dph.encoding();
         switch (enc) {
             case PLAIN -> {
             }
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
                 int bitWidth = data[offset++] & 0xFF;
-                indices = scratch.indices(nonNull);
-                new RleBitPackingHybridDecoder(data, offset, uncompressed - offset, bitWidth)
-                        .readInts(indices, 0, nonNull);
+                RleBitPackingHybridDecoder decoder =
+                        new RleBitPackingHybridDecoder(data, offset, uncompressed - offset, bitWidth);
+                PhysicalType type = schema.type();
+                if (DIRECT_IDS && defs == null
+                        && (type == PhysicalType.BYTE_ARRAY || type == PhysicalType.FIXED_LEN_BYTE_ARRAY)) {
+                    directIds = decoder;
+                    zeroWidthIds = bitWidth == 0;
+                }
+                else {
+                    indices = scratch.indices(nonNull);
+                    if (bitWidth == 0) {
+                        // A zero bit width (single-entry dictionary) decodes nothing, and the
+                        // thread's scratch still holds the ids of an earlier page.
+                        Arrays.fill(indices, 0, nonNull, 0);
+                    }
+                    else {
+                        decoder.readInts(indices, 0, nonNull);
+                    }
+                }
             }
             default -> throw new UnsupportedOperationException("spike: encoding " + enc);
         }
@@ -404,12 +426,36 @@ public final class ScatterScan implements AutoCloseable {
             int dest = Math.toIntExact(row % batchSize);
             Batch batch = ring.get(b & (RING - 1));
             int len = Math.min(numRows - pageRow, batch.rowCount - dest);
-            src = scatter(batch, column, schema.type(), data, offset, indices, dictionary, defs, maxDef,
-                    pageRow, dest, len, src);
+            if (directIds != null) {
+                unpackIds(batch, column, directIds, zeroWidthIds, dictionary, maxDef, pageRow, dest, len);
+            }
+            else {
+                src = scatter(batch, column, schema.type(), data, offset, indices, dictionary, defs, maxDef,
+                        pageRow, dest, len, src);
+            }
             if (batch.pendingRows.addAndGet(-len) == 0) {
                 complete(batch, b);
             }
             pageRow += len;
+        }
+    }
+
+    /// Unpacks the next `len` dictionary ids of a page without nulls straight into `batch` at
+    /// `dest`. A zero bit width (single-entry dictionary) decodes nothing, so the ids are written
+    /// here: a recycled batch still holds the ids of an earlier batch.
+    private static void unpackIds(Batch batch, int column, RleBitPackingHybridDecoder decoder, boolean zeroWidth,
+                                  Dictionary dictionary, int maxDef, int pageRow, int dest, int len) {
+        long[] validity = batch.validity[column];
+        if (validity != null) {
+            markValidity(validity, null, maxDef, pageRow, dest, len);
+        }
+        batch.dictionaries[column] = dictionary;
+        int[] out = (int[]) batch.values[column];
+        if (zeroWidth) {
+            Arrays.fill(out, dest, dest + len, 0);
+        }
+        else {
+            decoder.readInts(out, dest, len);
         }
     }
 
