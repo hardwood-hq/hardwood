@@ -12,7 +12,9 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,10 +48,15 @@ public final class ScatterScan implements AutoCloseable {
     private static final VarHandle LONGS = MethodHandles.arrayElementVarHandle(long[].class);
     private static final int RING = 1 << 14;
     private static final long PARK_NANOS = 1_000_000L;
+    /// SPIKE experiment: `HW_RECYCLE=1` reuses the arrays of released batches for later batches
+    /// instead of allocating fresh ones. A released batch's arrays are overwritten, so this is only
+    /// valid for consumers that keep no array beyond the sink call / the next `next()`.
+    private static final boolean RECYCLE = "1".equals(System.getenv("HW_RECYCLE"));
 
     /// One row-aligned batch over every projected column.
     public static final class Batch {
-        public final int rowCount;
+        /// Rows in this batch; the arrays may be longer (a recycled batch keeps its capacity).
+        public int rowCount;
         /// `long[]`, `double[]`, `int[]` or `float[]` per column.
         public final Object[] values;
         /// Presence bitmap per column (set bit = present); `null` for a required column.
@@ -58,9 +65,25 @@ public final class ScatterScan implements AutoCloseable {
         public final Object[] dictionaries;
         final AtomicInteger pendingRows;
         volatile boolean ready;
+        private final int columnCount;
+
+        /// Prepares a released batch for `rows` new rows: value arrays are fully overwritten by
+        /// the decode tasks, so only the OR-merged validity bits and the dictionaries are cleared.
+        void reset(int rows) {
+            rowCount = rows;
+            Arrays.fill(dictionaries, null);
+            for (long[] bits : validity) {
+                if (bits != null) {
+                    Arrays.fill(bits, 0L);
+                }
+            }
+            ready = false;
+            pendingRows.set(rows * columnCount);
+        }
 
         Batch(int rowCount, ColumnSchema[] columns) {
             this.rowCount = rowCount;
+            this.columnCount = columns.length;
             this.values = new Object[columns.length];
             this.validity = new long[columns.length][];
             this.dictionaries = new Object[columns.length];
@@ -112,6 +135,8 @@ public final class ScatterScan implements AutoCloseable {
     private final HardwoodContextImpl context;
 
     private final AtomicReferenceArray<Batch> ring = new AtomicReferenceArray<>(RING);
+    /// Released full-capacity batches waiting for reuse (`RECYCLE` only).
+    private final ConcurrentLinkedQueue<Batch> pool = new ConcurrentLinkedQueue<>();
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     private final AtomicInteger tasksInFlight = new AtomicInteger();
     /// Batches handed back: by [#next()] in row order, or by [#sink] as each completes.
@@ -159,6 +184,7 @@ public final class ScatterScan implements AutoCloseable {
     /// Returns the next batch in row order, or `null` at the end. The previous batch is released.
     public Batch next() {
         if (current != null) {
+            recycle(current);
             current = null;
             consumed++;
             released.incrementAndGet();
@@ -295,7 +321,7 @@ public final class ScatterScan implements AutoCloseable {
             if (ring.get(slot) == null) {
                 long rowInRg = (long) (b - batchBase) * batchSize;
                 int rows = Math.toIntExact(Math.min(batchSize, rgRows - rowInRg));
-                ring.set(slot, new Batch(rows, columns));
+                ring.set(slot, newBatch(rows));
             }
         }
 
@@ -531,6 +557,28 @@ public final class ScatterScan implements AutoCloseable {
         }
     }
 
+    /// A batch for `rows` rows: a recycled one when `RECYCLE` is on and one is free, else a
+    /// fresh one, allocated at full batch size under `RECYCLE` so it can be reused for any batch.
+    private Batch newBatch(int rows) {
+        if (!RECYCLE) {
+            return new Batch(rows, columns);
+        }
+        Batch recycled = pool.poll();
+        if (recycled != null) {
+            recycled.reset(rows);
+            return recycled;
+        }
+        Batch fresh = new Batch(batchSize, columns);
+        fresh.reset(rows);
+        return fresh;
+    }
+
+    private void recycle(Batch batch) {
+        if (RECYCLE) {
+            pool.offer(batch);
+        }
+    }
+
     private void complete(Batch batch, int b) {
         mark(6);
         if (sink == null) {
@@ -540,6 +588,7 @@ public final class ScatterScan implements AutoCloseable {
         }
         sink.accept(batch);
         ring.set(b & (RING - 1), null);
+        recycle(batch);
         released.incrementAndGet();
         LockSupport.unpark(schedulerThread);
         LockSupport.unpark(consumerThread);
