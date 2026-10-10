@@ -165,7 +165,7 @@ The cursor is an integer rather than an `Iterator` because the list grows behind
 | May the drain hold the row cap under a filter? | Per page, from the same flag ([row limits](#row-limits)) |
 | Drain-side or per-row filter evaluation? | From the predicate's shape alone (`BatchFilterCompiler.tryCompile`) |
 | Batch size | From the first file ([batch sizing](#batch-sizing)) |
-| Does the read have any work? | `workItemAt(0) == null`, which plans only as far as the first surviving row group |
+| Does the read have any work? | `hasLiveWorkItem()`, asked by every reader before it starts its workers: walks the work list until the first row group its bloom filters and dictionaries do not drop, so it plans and probes only as far as that row group, and leaves that row group's page index to the workers |
 
 Two questions concern the whole read and plan only as far as they must. `firstRowGroupSkip()` answers `0` without planning when there is no physical skip, and otherwise plans through the first work item, where the value is written. `canFastSkipAllRowGroups()`, asked by the tail-read path, needs every row group; that path is single-file, so a full plan is one footer. `getWorkItems()` plans the whole read and serves tests only.
 

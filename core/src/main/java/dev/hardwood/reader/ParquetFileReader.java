@@ -692,7 +692,7 @@ public class ParquetFileReader implements Closeable {
             // Every row group pruned (e.g. a byte-range row-group filter dropped
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
-            if (iterator.workItemAt(0) == null) {
+            if (!iterator.hasLiveWorkItem()) {
                 return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected);
             }
             ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
@@ -710,13 +710,15 @@ public class ParquetFileReader implements Closeable {
         RowGroupIterator iterator = trackedIterator(0, 0, 0);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
-        // Statistics/bloom pruning dropped every row group — no record can match.
+        // Statistics dropped every row group while planning, or bloom filters and
+        // dictionaries drop each one the read reaches — no record can match.
         // Skip building the cursors (worker threads + ~batch-sized buffers) and the
         // selection engine entirely: the scan has no cursors and is exhausted from
         // the start. Closing the reader or the group closes the scan, which
         // releases the fetch plans and the parent's tracking entry.
-        // Asked of the first work item, so a read that has one plans no further.
-        if (iterator.workItemAt(0) == null) {
+        // Decided up to the first row group that survives, so a read that has one
+        // consults and plans no further.
+        if (!iterator.hasLiveWorkItem()) {
             return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), readProjection.payload());
         }
         // Size against the decoded columns — the predicate columns allocate

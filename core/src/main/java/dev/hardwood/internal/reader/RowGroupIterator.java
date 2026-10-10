@@ -141,6 +141,11 @@ public class RowGroupIterator implements Closeable {
     // Per-row-group shared metadata cache (keyed by work item index)
     private final ConcurrentHashMap<Integer, SharedRowGroupMetadata> metadataCache = new ConcurrentHashMap<>();
 
+    /// What each row group's bloom filters and dictionaries decided once the read reached it,
+    /// keyed by work item index, so the decision [#hasLiveWorkItem] takes on the calling thread
+    /// is the one [#getSharedMetadata] finds on a worker.
+    private final ConcurrentHashMap<Integer, Arrival> arrivalCache = new ConcurrentHashMap<>();
+
     // Per-row-group fetch plans cache (keyed by work item index).
     private final ConcurrentHashMap<Integer, FetchPlan[]> fetchPlanCache = new ConcurrentHashMap<>();
 
@@ -476,34 +481,11 @@ public class RowGroupIterator implements Closeable {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 requireSameFile(workItem);
-                RowGroupDictionaryFilterSource dictionaries = null;
-                // A row group statistics proved to match in full is not probed: neither a bloom
-                // filter nor a dictionary can contradict them, and a filter-only column is not
-                // read there at all.
-                if (workItem.leafDecisions() != null && !workItem.filterAlwaysMatches()) {
-                    RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
-                    if (!workItem.bloomFilterColumns().isEmpty()) {
-                        RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
-                        if (refineWithBloomFilters(workItem, refined) == FilterDecision.CANNOT_MATCH) {
-                            emitBloomFilterDropEvent(workItem);
-                            return droppedMetadata();
-                        }
-                        leafDecisions = refined;
-                    }
-                    dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
-                            workItem.rowGroup(), workItem.fileSchema(), context);
-                    FilterDecision decision;
-                    try (FetchReason.Scope pruning = FetchReason.set(
-                            "rg=" + workItem.rowGroupIndex() + " pruning")) {
-                        decision = RowGroupFilterEvaluator.refineWithDictionaries(
-                                workItem.columnOrdinals().filter(), workItem.rowGroup(),
-                                leafDecisions, dictionaries);
-                    }
-                    if (decision == FilterDecision.CANNOT_MATCH) {
-                        emitDictionaryDropEvent(workItem);
-                        return droppedMetadata();
-                    }
+                Arrival arrival = arrival(workItem);
+                if (arrival.dropped()) {
+                    return droppedMetadata();
                 }
+                RowGroupDictionaryFilterSource dictionaries = arrival.dictionaries();
                 // After the bloom filters and dictionaries: a row group they drop alone in its
                 // window costs no index read. The fetch runs under this entry's bin lock and takes
                 // no further lock but the window's own monitor.
@@ -532,6 +514,98 @@ public class RowGroupIterator implements Closeable {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// Whether `workItem`'s bloom filters and dictionaries may still drop it once the read reaches
+    /// it: under a filter, in a row group statistics left undecided. One they proved to match in
+    /// full is not probed, since neither a bloom filter nor a dictionary can contradict them, and a
+    /// filter-only column is not read there at all.
+    private static boolean droppableOnArrival(WorkItem workItem) {
+        return workItem.leafDecisions() != null && !workItem.filterAlwaysMatches();
+    }
+
+    /// Whether the read has a row group left once it reaches them: walks the work list from the
+    /// first item and probes the bloom filters and dictionaries of each item they may drop, until
+    /// one is not dropped. An item they cannot drop is live without a read, and a live item's
+    /// page index is left to the workers.
+    ///
+    /// A reader asks this before it builds its pipeline, so a read whose every row group is
+    /// dropped on arrival starts no column worker and allocates no batch. The decisions are
+    /// cached, so the workers reuse those of the items walked here.
+    public boolean hasLiveWorkItem() throws IOException {
+        for (int i = 0; ; i++) {
+            WorkItem workItem = workItemAt(i);
+            if (workItem == null) {
+                return false;
+            }
+            try {
+                if (!arrival(workItem).dropped()) {
+                    return true;
+                }
+            }
+            catch (UncheckedIOException e) {
+                throw ExceptionContext.unwrap(e);
+            }
+            catch (RuntimeException e) {
+                throw ExceptionContext.addReadContext(workItem.inputFile().name(), workItem.rowGroupIndex(), null, e);
+            }
+        }
+    }
+
+    /// What `workItem`'s bloom filters and dictionaries decide, probed on first request; a row
+    /// group they cannot drop is kept without a read.
+    private Arrival arrival(WorkItem workItem) {
+        if (!droppableOnArrival(workItem)) {
+            return Arrival.KEPT;
+        }
+        return arrivalCache.computeIfAbsent(workItem.workItemIndex(), idx -> {
+            try {
+                requireSameFile(workItem);
+                return probeOnArrival(workItem);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(
+                        ExceptionContext.filePrefix(workItem.inputFile().name())
+                        + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
+            }
+        });
+    }
+
+    /// Sharpens the decisions planning recorded with the row group's bloom filters, then with its
+    /// dictionaries for every leaf they leave undecided.
+    private Arrival probeOnArrival(WorkItem workItem) throws IOException {
+        RowGroupFilterEvaluator.LeafDecisions leafDecisions = workItem.leafDecisions();
+        if (!workItem.bloomFilterColumns().isEmpty()) {
+            RowGroupFilterEvaluator.LeafDecisions refined = new RowGroupFilterEvaluator.LeafDecisions();
+            if (refineWithBloomFilters(workItem, refined) == FilterDecision.CANNOT_MATCH) {
+                emitBloomFilterDropEvent(workItem);
+                return Arrival.DROPPED;
+            }
+            leafDecisions = refined;
+        }
+        RowGroupDictionaryFilterSource dictionaries = new RowGroupDictionaryFilterSource(workItem.inputFile(),
+                workItem.rowGroup(), workItem.fileSchema(), context);
+        FilterDecision decision;
+        try (FetchReason.Scope pruning = FetchReason.set("rg=" + workItem.rowGroupIndex() + " pruning")) {
+            decision = RowGroupFilterEvaluator.refineWithDictionaries(
+                    workItem.columnOrdinals().filter(), workItem.rowGroup(), leafDecisions, dictionaries);
+        }
+        if (decision == FilterDecision.CANNOT_MATCH) {
+            emitDictionaryDropEvent(workItem);
+            return Arrival.DROPPED;
+        }
+        return new Arrival(false, dictionaries);
+    }
+
+    /// What a row group's bloom filters and dictionaries decided once the read reached it.
+    ///
+    /// @param dropped whether they proved the row group holds no match
+    /// @param dictionaries the dictionaries the probe read, for the fetch plans to decode with, or
+    ///        `null` when it read none
+    private record Arrival(boolean dropped, RowGroupDictionaryFilterSource dictionaries) {
+
+        static final Arrival KEPT = new Arrival(false, null);
+        static final Arrival DROPPED = new Arrival(true, null);
     }
 
     /// Whether the read narrows `workItem`'s rows by the ColumnIndex: under a filter with metadata
@@ -757,6 +831,7 @@ public class RowGroupIterator implements Closeable {
         int remaining = counter.decrementAndGet();
         if (remaining == 0) {
             metadataCache.remove(idx);
+            arrivalCache.remove(idx);
             fetchPlanCache.remove(idx);
             nextRowGroupPrefetched.remove(idx);
             workItem.indexWindow().release(idx);
@@ -1380,6 +1455,7 @@ public class RowGroupIterator implements Closeable {
         // for as long as it plans, and the files are closed only after this returns.
         prefetchTasks.awaitAll();
         metadataCache.clear();
+        arrivalCache.clear();
         fetchPlanCache.clear();
         nextRowGroupPrefetched.clear();
         releaseIndexWindows();

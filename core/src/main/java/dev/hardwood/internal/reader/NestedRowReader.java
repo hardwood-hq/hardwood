@@ -176,6 +176,20 @@ public final class NestedRowReader implements FileAwareRowReader {
         RowMatcher recordMatcher = predicateView != null
                 ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
                 : null;
+        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+        long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
+
+        // No row group left once the leading row groups' bloom filters and dictionaries are
+        // probed: the reader starts no worker and is exhausted from the start.
+        if (!rowGroupIterator.hasLiveWorkItem()) {
+            @SuppressWarnings("unchecked")
+            BatchExchange<NestedBatch>[] none = new BatchExchange[0];
+            NestedRowReader reader = new NestedRowReader(none, new NestedColumnWorker[0], schema,
+                    projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally,
+                    rowGroupIterator);
+            reader.exhausted = true;
+            return reader;
+        }
 
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
         // workers still take it — they hold it only while statistics prove every row
@@ -218,8 +232,6 @@ public final class NestedRowReader implements FileAwareRowReader {
             worker.start();
         }
 
-        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
-        long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
         NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projection.payload(), dataView,
                 readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();
