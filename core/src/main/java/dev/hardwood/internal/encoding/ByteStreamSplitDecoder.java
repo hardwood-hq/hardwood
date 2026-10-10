@@ -188,6 +188,20 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
+    /// Move to non-null value `index` without decoding.
+    ///
+    /// A page that straddles a batch rebuilds this decoder at the start of the
+    /// streams; seeking here is what keeps that resume linear. `index` is a
+    /// non-null index, not a slot index, and may equal [#numValues] when every
+    /// value has already been consumed.
+    public void positionAt(int index) {
+        if (index < 0 || index > numValues) {
+            throw new ParquetReadException(
+                    "BYTE_STREAM_SPLIT position " + index + " is outside 0.." + numValues);
+        }
+        currentIndex = index;
+    }
+
     /// Gather bytes for the current value from byte streams and advance the index.
     private void gatherBytes(byte[] valueBytes) {
         if (currentIndex >= numValues) {
@@ -198,5 +212,118 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
             valueBytes[k] = data[baseOffset + streamOffset + currentIndex];
         }
         currentIndex++;
+    }
+
+    // -----------------------------------------------------------------------
+    // Unified direct-into-batch overloads
+    //
+    // defLevels == null  →  all-present: decode `count` values via gatherBytes;
+    //                       returns count.
+    // defLevels != null  →  nullable: call gatherBytes only for non-null slots;
+    //                       returns non-null count.
+    // -----------------------------------------------------------------------
+
+    /// Decode up to `count` DOUBLE values into dest[destOffset+i].
+    @Override
+    public int readDoubles(double[] dest, int destOffset, int count,
+                           int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        byte[] valueBytes = new byte[8];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        if (defLevels == null) {
+            for (int i = 0; i < count; i++) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getDouble();
+            }
+            return count;
+        }
+        int decoded = 0;
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getDouble();
+                decoded++;
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` INT64 values into dest[destOffset+i].
+    @Override
+    public int readLongs(long[] dest, int destOffset, int count,
+                         int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        byte[] valueBytes = new byte[8];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        if (defLevels == null) {
+            for (int i = 0; i < count; i++) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getLong();
+            }
+            return count;
+        }
+        int decoded = 0;
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getLong();
+                decoded++;
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` INT32 values into dest[destOffset+i].
+    @Override
+    public int readInts(int[] dest, int destOffset, int count,
+                        int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        byte[] valueBytes = new byte[4];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        if (defLevels == null) {
+            for (int i = 0; i < count; i++) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getInt();
+            }
+            return count;
+        }
+        int decoded = 0;
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getInt();
+                decoded++;
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` FLOAT values into dest[destOffset+i].
+    @Override
+    public int readFloats(float[] dest, int destOffset, int count,
+                          int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        byte[] valueBytes = new byte[4];
+        ByteBuffer buffer = ByteBuffer.wrap(valueBytes).order(ByteOrder.LITTLE_ENDIAN);
+        if (defLevels == null) {
+            for (int i = 0; i < count; i++) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getFloat();
+            }
+            return count;
+        }
+        int decoded = 0;
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                gatherBytes(valueBytes);
+                buffer.rewind();
+                dest[destOffset + i] = buffer.getFloat();
+                decoded++;
+            }
+        }
+        return decoded;
     }
 }

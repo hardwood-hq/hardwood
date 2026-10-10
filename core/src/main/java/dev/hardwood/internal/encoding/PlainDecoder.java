@@ -286,4 +286,145 @@ public class PlainDecoder implements ValueDecoder {
         pos += length;
         return result;
     }
+
+    // -----------------------------------------------------------------------
+    // Unified direct-into-batch overloads
+    //
+    // defLevels == null  →  all-present: decode `count` values via a bulk
+    //                       LE ByteBuffer copy (vectorisable); returns count.
+    // defLevels != null  →  nullable: iterate `count` def-level slots, read
+    //                       from the byte stream only for non-null positions;
+    //                       returns the non-null count.
+    // -----------------------------------------------------------------------
+
+    /// Decode up to `count` DOUBLE values into dest[destOffset+i].
+    /// All-present (defLevels == null): bulk LE copy; returns count.
+    /// Nullable: skips null slots; returns non-null count.
+    @Override
+    public int readDoubles(double[] dest, int destOffset, int count,
+                           int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        if (defLevels == null) {
+            int numBytes = count * Double.BYTES;
+            if (pos + numBytes > limit) {
+                throw new ParquetReadException("Unexpected EOF while reading DOUBLE values (direct path)");
+            }
+            ByteBuffer.wrap(data, pos, numBytes)
+                      .order(ByteOrder.LITTLE_ENDIAN)
+                      .asDoubleBuffer()
+                      .get(dest, destOffset, count);
+            pos += numBytes;
+            return count;
+        }
+        int decoded = countPresent(defLevels, defLevelOffset, count, maxDefLevel);
+        DoubleBuffer doubles = presentBytes(decoded, Double.BYTES, "DOUBLE").asDoubleBuffer();
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                dest[destOffset + i] = doubles.get();
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` INT64 values into dest[destOffset+i].
+    /// All-present (defLevels == null): bulk LE copy; returns count.
+    @Override
+    public int readLongs(long[] dest, int destOffset, int count,
+                         int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        if (defLevels == null) {
+            int numBytes = count * Long.BYTES;
+            if (pos + numBytes > limit) {
+                throw new ParquetReadException("Unexpected EOF while reading INT64 values (direct path)");
+            }
+            ByteBuffer.wrap(data, pos, numBytes)
+                      .order(ByteOrder.LITTLE_ENDIAN)
+                      .asLongBuffer()
+                      .get(dest, destOffset, count);
+            pos += numBytes;
+            return count;
+        }
+        int decoded = countPresent(defLevels, defLevelOffset, count, maxDefLevel);
+        LongBuffer longs = presentBytes(decoded, Long.BYTES, "INT64").asLongBuffer();
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                dest[destOffset + i] = longs.get();
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` INT32 values into dest[destOffset+i].
+    /// All-present (defLevels == null): bulk LE copy; returns count.
+    @Override
+    public int readInts(int[] dest, int destOffset, int count,
+                        int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        if (defLevels == null) {
+            int numBytes = count * Integer.BYTES;
+            if (pos + numBytes > limit) {
+                throw new ParquetReadException("Unexpected EOF while reading INT32 values (direct path)");
+            }
+            ByteBuffer.wrap(data, pos, numBytes)
+                      .order(ByteOrder.LITTLE_ENDIAN)
+                      .asIntBuffer()
+                      .get(dest, destOffset, count);
+            pos += numBytes;
+            return count;
+        }
+        int decoded = countPresent(defLevels, defLevelOffset, count, maxDefLevel);
+        IntBuffer ints = presentBytes(decoded, Integer.BYTES, "INT32").asIntBuffer();
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                dest[destOffset + i] = ints.get();
+            }
+        }
+        return decoded;
+    }
+
+    /// Decode up to `count` FLOAT values into dest[destOffset+i].
+    /// All-present (defLevels == null): bulk LE copy; returns count.
+    @Override
+    public int readFloats(float[] dest, int destOffset, int count,
+                          int[] defLevels, int defLevelOffset, int maxDefLevel) {
+        if (defLevels == null) {
+            int numBytes = count * Float.BYTES;
+            if (pos + numBytes > limit) {
+                throw new ParquetReadException("Unexpected EOF while reading FLOAT values (direct path)");
+            }
+            ByteBuffer.wrap(data, pos, numBytes)
+                      .order(ByteOrder.LITTLE_ENDIAN)
+                      .asFloatBuffer()
+                      .get(dest, destOffset, count);
+            pos += numBytes;
+            return count;
+        }
+        int decoded = countPresent(defLevels, defLevelOffset, count, maxDefLevel);
+        FloatBuffer floats = presentBytes(decoded, Float.BYTES, "FLOAT").asFloatBuffer();
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                dest[destOffset + i] = floats.get();
+            }
+        }
+        return decoded;
+    }
+
+    /// How many slots in `[defLevelOffset, defLevelOffset + count)` are present.
+    private static int countPresent(int[] defLevels, int defLevelOffset, int count, int maxDefLevel) {
+        int decoded = 0;
+        for (int i = 0; i < count; i++) {
+            if (defLevels[defLevelOffset + i] == maxDefLevel) {
+                decoded++;
+            }
+        }
+        return decoded;
+    }
+
+    /// One little-endian view of the next `decoded` present values. Advances [#pos].
+    private ByteBuffer presentBytes(int decoded, int width, String type) {
+        int numBytes = decoded * width;
+        if (numBytes > limit - pos) {
+            throw new ParquetReadException("Unexpected EOF while reading " + type + " values (nullable direct path)");
+        }
+        ByteBuffer bytes = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN);
+        pos += numBytes;
+        return bytes;
+    }
 }

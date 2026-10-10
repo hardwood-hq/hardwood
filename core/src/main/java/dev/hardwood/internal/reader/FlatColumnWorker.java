@@ -11,7 +11,11 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
+import dev.hardwood.internal.encoding.PlainDecoder;
+import dev.hardwood.internal.encoding.ValueDecoder;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
@@ -80,6 +84,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         currentBatch.capacity = currentCapacity;
     }
 
+    @Override
+    boolean supportsCursorPath() {
+        return true;
+    }
+
     /// Writes the mask a matcher would produce when every record matches: all-ones
     /// for `[0, recordCount)` bits, tail bits of the last active word zeroed, words
     /// beyond the active range untouched.
@@ -105,6 +114,131 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             }
             copyPageRange(page, mask.start(i), mask.end(i));
         }
+    }
+
+    /// Direct-into-batch cursor drain loop.
+    ///
+    /// Decodes values from the cursor directly into the batch array, handling
+    /// straddle (a page that spans two or more batches) by keeping the cursor
+    /// alive across publish boundaries. Only PLAIN and BYTE_STREAM_SPLIT pages
+    /// of a flat numeric column arrive here; a partial row mask or any other
+    /// encoding is assembled through [#assemblePage] instead.
+    @Override
+    void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
+        // cursor.valuesLeft is the total page size; drain it into the batch(es)
+        while (cursor.valuesLeft > 0 && !done) {
+            if (currentBatch.values == null) {
+                allocateValues();
+            }
+            int spaceInBatch = currentCapacity - rowsInCurrentBatch;
+            int count = Math.min(spaceInBatch, cursor.valuesLeft);
+
+            // Respect the active row cap
+            if (activeMaxRows > 0) {
+                long remaining = activeMaxRows - totalRowsAssembled;
+                if (remaining <= 0) {
+                    finishDrain();
+                    return;
+                }
+                count = (int) Math.min(count, remaining);
+            }
+
+            // Decode `count` values directly into the batch at the right offset
+            decodeDirectly(cursor, count);
+
+            // Advance cursors and batch counters
+            cursor.valuesLeft -= count;
+            rowsInCurrentBatch += count;
+            totalRowsAssembled += count;
+
+            if (rowsInCurrentBatch >= currentCapacity) {
+                publishCurrentBatch();
+                if (done) {
+                    return;
+                }
+            }
+
+            // Check row cap after publish
+            if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
+                if (rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                finishDrain();
+                return;
+            }
+        }
+    }
+
+    /// Decode `count` slots from the cursor into the current batch at
+    /// `rowsInCurrentBatch`, then advance cursor position state.
+    ///
+    /// Required and nullable pages share one call. `definitionLevels == null`
+    /// is the all-present path: the decoder writes `count` dense values and returns
+    /// `count`. Otherwise it reads a value only where the def level equals
+    /// `maxDefinitionLevel` and returns the non-null count. That count is what
+    /// advances the byte-stream cursor; null slots consume no bytes.
+    private void decodeDirectly(PageValueCursor cursor, int count) {
+        int destOffset = rowsInCurrentBatch;
+        int[] defLevels = cursor.definitionLevelsActive ? cursor.definitionLevels : null;
+        int dlPos = cursor.defLevelPos;
+        int nonNullCount = switch (cursor.encoding) {
+            case PLAIN -> {
+                PlainDecoder dec = new PlainDecoder(
+                        cursor.data, cursor.srcPos, cursor.srcLimit,
+                        physicalType, column.typeLength());
+                int decoded = readDirect(dec, destOffset, count, defLevels, dlPos);
+                cursor.srcPos += decoded * elementBytes();
+                yield decoded;
+            }
+            case BYTE_STREAM_SPLIT -> {
+                ByteStreamSplitDecoder dec = new ByteStreamSplitDecoder(
+                        cursor.data, cursor.bssBaseOffset,
+                        cursor.srcLimit, cursor.bssTotalValues,
+                        physicalType, column.typeLength());
+                if (cursor.bssCurrentIndex > 0) {
+                    dec.positionAt(cursor.bssCurrentIndex);
+                }
+                int decoded = readDirect(dec, destOffset, count, defLevels, dlPos);
+                cursor.bssCurrentIndex += decoded;
+                yield decoded;
+            }
+            default -> throw new ParquetReadException(
+                    "Unsupported encoding for direct decode: " + cursor.encoding);
+        };
+        if (defLevels != null) {
+            cursor.defLevelPos += count;
+            cursor.nonNullsLeft -= nonNullCount;
+        }
+        markNulls(defLevels, dlPos, destOffset, count);
+    }
+
+    /// Dispatch the unified direct-into-batch read for this column's physical type.
+    /// `defLevels == null` selects the all-present path inside the decoder.
+    private int readDirect(ValueDecoder decoder, int destOffset, int count,
+                           int[] defLevels, int defLevelOffset) {
+        Object values = currentBatch.values;
+        return switch (physicalType) {
+            case DOUBLE -> decoder.readDoubles((double[]) values, destOffset, count,
+                    defLevels, defLevelOffset, maxDefinitionLevel);
+            case INT64 -> decoder.readLongs((long[]) values, destOffset, count,
+                    defLevels, defLevelOffset, maxDefinitionLevel);
+            case INT32 -> decoder.readInts((int[]) values, destOffset, count,
+                    defLevels, defLevelOffset, maxDefinitionLevel);
+            case FLOAT -> decoder.readFloats((float[]) values, destOffset, count,
+                    defLevels, defLevelOffset, maxDefinitionLevel);
+            default -> throw new ParquetReadException(
+                    "Unsupported type for direct decode: " + physicalType);
+        };
+    }
+
+    /// Byte width of one element for the column's physical type.
+    private int elementBytes() {
+        return switch (physicalType) {
+            case DOUBLE, INT64 -> 8;
+            case FLOAT, INT32  -> 4;
+            default -> throw new ParquetReadException(
+                    "elementBytes not defined for " + physicalType);
+        };
     }
 
     /// Copies values at page-relative offsets `[rangeStart, rangeEnd)` into
