@@ -164,7 +164,9 @@ Tests: `ProjectionOrderTest`.
 
 `ColumnScan.advance()` polls every payload cursor once, then every filter-only cursor unless the first cursor's batch is proven by statistics (see [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)). It checks that the polled cursors agree: every one produced a batch, all with the same record count. A cursor exhausted early or a differing record count throws `IllegalStateException`. When the first cursor reaches the end, `advance()` drains every other cursor, and one that still produces a batch throws `IllegalStateException`. With a filter, it then computes the selection and compacts each payload cursor's batch to the matching records.
 
-A read in which pruning dropped every row group gets a scan with no cursors (`ColumnScan.empty`), whose first `advance()` returns `false` and starts no worker.
+A read with no row group left gets a scan with no cursors (`ColumnScan.empty`), whose first `advance()` returns `false` and starts no worker. Before it builds its cursors, the read probes the bloom filters and dictionaries of its leading row groups on the calling thread (`RowGroupIterator.hasLiveWorkItem`, which the row readers ask as well), up to the first one they do not drop, so a read that every probe drops, such as a point lookup of an absent key, starts no worker and allocates no batch. The decisions are cached per work item, and the workers reuse them; the surviving row group's page index is still read by a worker, so a failure there carries the column it was read for.
+
+Tests: `LiveWorkItemTest`, `EmptyOffsetIndexTest`.
 
 **View advance.** Only the owner advances a scan. `ColumnReaders.nextBatch()` advances it and has every member take up the new step; a single `ColumnReader`'s `nextBatch()` does the same for itself. A member's `nextBatch()` throws `IllegalStateException`. A member therefore always shows the group's current step, and no member can pair rows from a different step or drop one.
 

@@ -212,7 +212,9 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// Creates a flat v3 pipeline and returns a [RowReader].
     ///
     /// Wires up `RowGroupIterator → PageSource → ColumnWorker → BatchExchange → FlatRowReader`,
-    /// starts all column workers and initializes the reader. A filter is installed on
+    /// starts all column workers and initializes the reader. A read with no row group left once
+    /// its leading row groups' bloom filters and dictionaries are probed
+    /// ([RowGroupIterator#hasLiveWorkItem]) starts no worker and is exhausted from the start. A filter is installed on
     /// whichever path can carry it — per batch on the drain side, per record otherwise —
     /// which is decided by the predicate's shape alone, never by what a file holds.
     ///
@@ -256,6 +258,32 @@ public final class FlatRowReader implements FileAwareRowReader {
         ColumnBatchMatcher[] columnBatchMatchers = compiledFilter != null ? compiledFilter.columnMatchers() : null;
         final boolean drainSide = compiledFilter != null;
         final int wordsLen = (batchSize + 63) >>> 6;
+
+        // Whatever the drain side could not compile, the reader evaluates a record at a
+        // time, against a view of the predicate columns rather than the reader itself,
+        // whose accessors reach the projected columns alone.
+        PredicateView predicateView = !drainSide && filter != null
+                ? PredicateView.create(schema, decoded, filter, p -> false, false)
+                : null;
+        RowMatcher recordMatcher = predicateView != null
+                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
+                : null;
+        // Filtering happens in the reader on both paths, so the reader caps matched
+        // rows. Without a filter the worker already capped scanned == matched rows.
+        long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
+        // The tally spans both filtered paths: the drain side feeds it whole batches,
+        // the record matcher single records, and either way the reader marks the file
+        // boundaries as it loads batches.
+        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+
+        if (!rowGroupIterator.hasLiveWorkItem()) {
+            @SuppressWarnings("unchecked")
+            BatchExchange<BatchExchange.Batch>[] none = new BatchExchange[0];
+            FlatRowReader reader = new FlatRowReader(none, new FlatColumnWorker[0], schema, projection.payload(),
+                    null, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
+            reader.exhausted = true;
+            return reader;
+        }
 
         boolean endBatchesAtRowGroupBoundaries =
                 ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
@@ -303,22 +331,6 @@ public final class FlatRowReader implements FileAwareRowReader {
                 ? BatchMatchMerger.aliasing(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
                 : null;
 
-        // Whatever the drain side could not compile, the reader evaluates a record at a
-        // time, against a view of the predicate columns rather than the reader itself,
-        // whose accessors reach the projected columns alone.
-        PredicateView predicateView = !drainSide && filter != null
-                ? PredicateView.create(schema, decoded, filter, p -> false, false)
-                : null;
-        RowMatcher recordMatcher = predicateView != null
-                ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
-                : null;
-        // Filtering happens in the reader on both paths, so the reader caps matched
-        // rows. Without a filter the worker already capped scanned == matched rows.
-        long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
-        // The tally spans both filtered paths: the drain side feeds it whole batches,
-        // the record matcher single records, and either way the reader marks the file
-        // boundaries as it loads batches.
-        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
         FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projection.payload(),
                 matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();

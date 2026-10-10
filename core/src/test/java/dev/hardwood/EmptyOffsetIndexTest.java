@@ -115,4 +115,23 @@ class EmptyOffsetIndexTest {
                         + " column 0: Malformed Parquet metadata: OffsetIndex.page_locations is empty"
                         + " but the column chunk has 1000 values");
     }
+
+    /// The same through a filtered column read, which probes its leading row groups on the
+    /// calling thread before it starts its workers: the page index is still read by a worker,
+    /// and the failure names where the read stopped.
+    @Test
+    void aFilteredColumnReadRejectsTheIndex() throws Exception {
+        ByteBuffer file = withEmptyOffsetIndex(true);
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                 ColumnReader column = reader.buildColumnReader("id").filter(FilterPredicate.lt("id", 500L)).build()) {
+                while (column.nextBatch()) {
+                    // read every row group
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class)
+                .hasMessage("[<memory>: row group 0, column 'id'] Failed to parse the page index of"
+                        + " column 0: Malformed Parquet metadata: OffsetIndex.page_locations is empty"
+                        + " but the column chunk has 1000 values");
+    }
 }

@@ -21,13 +21,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.metadata.ParsedFooter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /// A local file's identity is its size, modification time and file key (or absolute path where
-/// the file system has no file keys), read when it is opened and kept for the file's lifetime.
+/// the file system has no file keys), read when it is opened (or, when a reader without a
+/// `MetadataSource` opened it, when first asked for) and kept for the file's lifetime.
 class MappedInputFileIdentityTest {
 
     private static final Path FILE = Path.of("src/test/resources/plain_uncompressed.parquet");
@@ -112,11 +114,56 @@ class MappedInputFileIdentityTest {
     }
 
     @Test
+    void aReaderWithoutAMetadataSourceDefersTheIdentityToTheFirstCall() throws Exception {
+        Path path = Files.copy(FILE, tempDir.resolve("file.parquet"));
+        assumeTrue(Files.readAttributes(path, BasicFileAttributes.class).fileKey() != null,
+                "the file system has file keys");
+        try (InputFile file = InputFile.of(path)) {
+            ParquetMetadataReader.open(file, ParquetMetadataReader.FROM_FILE);
+            replace(path);
+            Optional<String> replacement = identityOf(path);
+
+            assertThat(file.identity()).isEqualTo(replacement);
+            replace(path);
+            assertThat(file.identity()).isEqualTo(replacement);
+        }
+    }
+
+    @Test
+    void aReaderWithAMetadataSourceResolvesTheIdentityAtOpen() throws Exception {
+        Path path = Files.copy(FILE, tempDir.resolve("file.parquet"));
+        assumeTrue(Files.readAttributes(path, BasicFileAttributes.class).fileKey() != null,
+                "the file system has file keys");
+        Optional<String> beforeOpen = identityOf(path);
+        try (InputFile file = InputFile.of(path)) {
+            ParquetMetadataReader.open(file, ParsedFooter::readFrom);
+            replace(path);
+
+            assertThat(file.identity()).isEqualTo(beforeOpen);
+        }
+    }
+
+    @Test
+    void aDeferredIdentityIsNotResolvedBeforeOpen() throws Exception {
+        try (MappedInputFile file = new MappedInputFile(FILE)) {
+            assertThatThrownBy(file::identity)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("File not opened: plain_uncompressed.parquet");
+        }
+    }
+
+    @Test
     void anInMemoryFileHasNoIdentity() throws Exception {
         try (InputFile file = InputFile.of(ByteBuffer.wrap(Files.readAllBytes(FILE)))) {
             file.open();
             assertThat(file.identity()).isEmpty();
         }
+    }
+
+    /// Replaces the file at `path` by an atomic rename, which gives it a new file key.
+    private void replace(Path path) throws IOException {
+        Path replacement = Files.copy(FILE, tempDir.resolve("replacement.parquet"));
+        Files.move(replacement, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
     private static Optional<String> identityOf(Path path) throws IOException {

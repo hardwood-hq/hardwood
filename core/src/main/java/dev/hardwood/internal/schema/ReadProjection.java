@@ -58,7 +58,7 @@ public record ReadProjection(ProjectedSchema payload, ProjectedSchema decoded) {
     public static ReadProjection withPredicateColumns(FileSchema schema, ColumnRequests requests,
             int[] predicateColumns, boolean completeContainers) {
         ProjectedSchema payload = ProjectedSchema.create(schema, requests, completeContainers);
-        if (requests.requestsAll() || predicateColumns.length == 0) {
+        if (requests.requestsAll() || projectsAll(payload, predicateColumns)) {
             return of(payload);
         }
         ProjectedSchema all = ProjectedSchema.create(schema, requests.plusColumns(predicateColumns),
@@ -67,6 +67,17 @@ public record ReadProjection(ProjectedSchema payload, ProjectedSchema decoded) {
             return of(payload);
         }
         return new ReadProjection(payload, ProjectedSchema.leadingThenRest(payload, all));
+    }
+
+    /// Whether every one of `columns` is a payload column already, as when a read filters on a
+    /// column it projects, so the predicate adds no column to decode.
+    private static boolean projectsAll(ProjectedSchema payload, int[] columns) {
+        for (int column : columns) {
+            if (payload.toProjectedIndex(column) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// The number of payload columns; the decoded columns at and past it are filter-only.

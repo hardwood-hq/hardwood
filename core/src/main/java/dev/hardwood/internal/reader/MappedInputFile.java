@@ -55,8 +55,13 @@ public class MappedInputFile implements InputFile {
     private FileChannel channel;
     private long size;
 
-    /// Resolved by [#open()]; `null` before it.
-    private Optional<String> identity;
+    /// The file's attributes, from which [#identity()] is spelled when it is asked for: read by
+    /// [#open()], or by the first [#identity()] call after [#openDeferringIdentity()]; `null`
+    /// before either.
+    private volatile BasicFileAttributes openedAttributes;
+
+    /// Whether [#open()] or [#openDeferringIdentity()] succeeded; stays set after [#close()].
+    private volatile boolean opened;
 
     public MappedInputFile(Path path) {
         this.path = path;
@@ -65,13 +70,24 @@ public class MappedInputFile implements InputFile {
 
     @Override
     public void open() throws IOException {
-        if (wholeFile != null || channel != null) {
+        open(true);
+    }
+
+    /// Opens the file without reading its attributes, for a reader whose context has no
+    /// [dev.hardwood.MetadataSource] and so never asks for the identity. A later
+    /// [#identity()] call reads them then.
+    public void openDeferringIdentity() throws IOException {
+        open(false);
+    }
+
+    private void open(boolean resolveIdentity) throws IOException {
+        if (isOpen()) {
             return;
         }
         // Stat before opening: should the file be replaced in between, the identity names the
         // content the path held before, which no later open finds again, so a footer recorded
         // against it is never taken for the content that was mapped.
-        Optional<String> resolvedIdentity = identityOf(path, Files.readAttributes(path, BasicFileAttributes.class));
+        BasicFileAttributes attributes = resolveIdentity ? readAttributes() : null;
         FileChannel ch = FileChannel.open(path, StandardOpenOption.READ);
         boolean keepOpen = false;
         try {
@@ -84,7 +100,8 @@ public class MappedInputFile implements InputFile {
             else {
                 wholeFile = map(ch, 0L, fileSize);
             }
-            identity = resolvedIdentity;
+            openedAttributes = attributes;
+            opened = true;
         }
         finally {
             if (!keepOpen) {
@@ -134,22 +151,40 @@ public class MappedInputFile implements InputFile {
         return name;
     }
 
-    /// The file's size, modification time and file key, as read when it was opened. The
-    /// modification time carries the file system's full precision. Where the file system has no
-    /// file key, the file's absolute path takes its place, so that two files of the same size
-    /// and modification time do not share an identity.
+    /// The file's size, modification time and file key, as read when it was opened, or when it
+    /// is first asked for after [#openDeferringIdentity()]. The modification time carries the
+    /// file system's full precision. Where the file system has no file key, the file's absolute
+    /// path takes its place, so that two files of the same size and modification time do not
+    /// share an identity.
     @Override
-    public Optional<String> identity() {
-        if (identity == null) {
-            throw new IllegalStateException("File not opened: " + name);
+    public Optional<String> identity() throws IOException {
+        BasicFileAttributes attributes = openedAttributes;
+        if (attributes == null) {
+            if (!opened) {
+                throw new IllegalStateException("File not opened: " + name);
+            }
+            attributes = resolveDeferredAttributes();
         }
-        return identity;
-    }
-
-    private static Optional<String> identityOf(Path path, BasicFileAttributes attributes) {
         Object fileKey = attributes.fileKey();
         return Optional.of(attributes.size() + ":" + attributes.lastModifiedTime().toInstant() + ":"
                 + (fileKey != null ? fileKey : path.toAbsolutePath().normalize()));
+    }
+
+    private synchronized BasicFileAttributes resolveDeferredAttributes() throws IOException {
+        BasicFileAttributes attributes = openedAttributes;
+        if (attributes == null) {
+            attributes = readAttributes();
+            openedAttributes = attributes;
+        }
+        return attributes;
+    }
+
+    private BasicFileAttributes readAttributes() throws IOException {
+        return Files.readAttributes(path, BasicFileAttributes.class);
+    }
+
+    private boolean isOpen() {
+        return wholeFile != null || channel != null;
     }
 
     @Override

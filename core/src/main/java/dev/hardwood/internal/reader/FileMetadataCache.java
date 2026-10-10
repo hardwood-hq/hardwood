@@ -166,7 +166,7 @@ public final class FileMetadataCache {
         FileOpenedEvent event = new FileOpenedEvent();
         event.begin();
         try {
-            inputFile.open();
+            ParquetMetadataReader.open(inputFile, metadataSource);
         }
         catch (IOException e) {
             throw new UncheckedIOException(
