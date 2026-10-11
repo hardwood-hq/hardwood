@@ -28,6 +28,7 @@ RUN microdnf install -y --nodocs \
       util-linux-script \
       procps-ng \
       time \
+      hyperfine \
       fontconfig \
       dejavu-sans-fonts \
       google-noto-sans-vf-fonts \

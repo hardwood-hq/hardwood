@@ -1,6 +1,7 @@
 # Plan: the fastest 1BRC-over-Parquet scan with landed code
 
-Tracking issue: #1476. Stage issues: #1471, #1474, #1472, #1287, #1475.
+Tracking issue: #1476. Stage issues: #1471, #1474, hardwood-hq/hardwood-benchmarks#19 and
+hardwood-hq/hardwood-benchmarks#20, #1287, #1475.
 
 The One Billion Row Challenge over Parquet reads a `station` string column and a
 `measurement` double column and computes min, mean and max per station. This plan orders
@@ -9,10 +10,14 @@ be, using only code that lands on `main` and the public API.
 
 ## Measure
 
-#1472 adds the workload to hardwood-benchmarks: 100M rows in its regression preset, 1B
-rows for local runs, consumers by dictionary id on one thread and on row-group byte-range
-splits. The flat regression benchmark guards against slowing other scans. Numbers are taken
-on the Intel N300 pinned at 1.50 GHz, with the DuckDB 1.5.6 CLI as the reference.
+Two scripts in hardwood-benchmarks measure the workload. `run-1brc.sh`
+(hardwood-hq/hardwood-benchmarks#19) is a JMH regression benchmark of Hardwood alone: 100M
+rows in its regression preset, 1B rows for local runs, consumers by dictionary id on one
+thread and on row-group byte-range splits, and the row reader. `run-1brc-engines.sh`
+(hardwood-hq/hardwood-benchmarks#20) times the same file as one process per engine with
+hyperfine: Hardwood, the DuckDB CLI, Polars and PyArrow. The flat regression benchmark
+guards against slowing other scans. Numbers are taken on the Intel N300 pinned at
+1.50 GHz, with the DuckDB 1.5.6 CLI as the reference.
 
 | 1B rows, N300 pinned | Wall |
 | --- | --- |
@@ -27,7 +32,7 @@ API #737 rejected in another form, and batch recycling #737 has not accepted.
 | # | Stage | Issues | Gate before the next stage |
 | --- | --- | --- | --- |
 | 1 | Land the decoder fixes | #1471, #1474 | merged |
-| 2 | The 1BRC benchmark | #1472 | baseline numbers for `main` |
+| 2 | The 1BRC benchmarks | hardwood-hq/hardwood-benchmarks#19, hardwood-hq/hardwood-benchmarks#20 | baseline numbers for `main` |
 | 3 | Decode pages straight into batch arrays | #1287 | 1BRC and flat faster, no regression benchmark slower |
 | 4 | Parallel consumption | #1475 (callback), #737 | decided by measurement, see below |
 | 5 | One scheduler per read | #1475 | only if a gap remains that stage 3 and 4 cannot close |
