@@ -304,17 +304,19 @@ public class RleBitPackingHybridDecoder {
         final int width = bitWidth;
         final int mask = bitMask;
 
-        // Drain leftover bits first
-        while (bitsInBuffer >= width && count > 0) {
-            output[outPos++] = (int) (bitBuffer & mask);
-            bitBuffer >>>= width;
-            bitsInBuffer -= width;
-            count--;
-        }
+        // The bulk paths below read whole groups of eight straight from `pos`, so they run only
+        // while the bit buffer is empty. A call that ends inside a group leaves the group's
+        // remaining bits buffered, and the next call must take those first: reading from `pos`
+        // instead would skip them and shift every value after. Finishing that group through the
+        // buffer empties it again, at the latest at the group's end, where the bits taken reach
+        // a byte boundary.
+        int buffered = decodeBuffered(output, outPos, count, true);
+        outPos += buffered;
+        count -= buffered;
 
         // Fast path for bit width 1 (common for definition levels)
         if (width == 1) {
-            while (count >= 8 && pos < dataEnd) {
+            while (count >= 8 && bitsInBuffer == 0 && pos < dataEnd) {
                 int b = data[pos++] & 0xFF;
                 output[outPos]     = b & 1;
                 output[outPos + 1] = (b >> 1) & 1;
@@ -331,7 +333,7 @@ public class RleBitPackingHybridDecoder {
         // For widths 2-8: read 8 bytes at once when possible, extract 8 values
         else if (width <= 8) {
             // Process 8 values at a time using bulk long reads when we have enough data
-            while (count >= 8 && pos + 8 <= dataEnd) {
+            while (count >= 8 && bitsInBuffer == 0 && pos + 8 <= dataEnd) {
                 long bits = dataBuffer.getLong(pos);
                 pos += width; // Only consume 'width' bytes for 8 values
 
@@ -347,7 +349,7 @@ public class RleBitPackingHybridDecoder {
                 count -= 8;
             }
             // Fallback when near end of buffer
-            while (count >= 8 && pos + width <= dataEnd) {
+            while (count >= 8 && bitsInBuffer == 0 && pos + width <= dataEnd) {
                 long bits = 0;
                 for (int i = 0; i < width; i++) {
                     bits |= ((long) (data[pos++] & 0xFF)) << (i * 8);
@@ -388,7 +390,19 @@ public class RleBitPackingHybridDecoder {
         }
 
         // Handle remaining values
-        while (count > 0) {
+        count -= decodeBuffered(output, outPos, count, false);
+        return requested - count;
+    }
+
+    /// Decodes up to `count` values a value at a time through the bit buffer, stopping early
+    /// where the stream ends or, if `untilEmpty`, where the buffer runs empty.
+    ///
+    /// @return the number of values decoded
+    private int decodeBuffered(int[] output, int outPos, int count, boolean untilEmpty) {
+        final int width = bitWidth;
+        final int mask = bitMask;
+        int decoded = 0;
+        while (decoded < count && !(untilEmpty && bitsInBuffer == 0)) {
             while (bitsInBuffer < width && pos < dataEnd) {
                 bitBuffer |= ((long) (data[pos++] & 0xFF)) << bitsInBuffer;
                 bitsInBuffer += 8;
@@ -396,12 +410,11 @@ public class RleBitPackingHybridDecoder {
             if (bitsInBuffer < width) {
                 break;
             }
-            output[outPos++] = (int) (bitBuffer & mask);
+            output[outPos + decoded++] = (int) (bitBuffer & mask);
             bitBuffer >>>= width;
             bitsInBuffer -= width;
-            count--;
         }
-        return requested - count;
+        return decoded;
     }
 
     /// Returns `true` if the first `count` values of this stream are all equal
