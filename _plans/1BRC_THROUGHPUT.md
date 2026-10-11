@@ -40,13 +40,10 @@ Today a decode task writes each page into a fresh array and the drain copies it 
 batch. On the flat file, whose pages hold about 870K values each, that is about 30% of the
 scan's CPU in zeroing and copying arrays, most of them above G1's humongous threshold. A
 prototype that skipped the page array for dictionary-encoded numeric pages cut the flat
-scan from 306 to 209 ms on eight threads; its design constraints are on #1287.
+scan from 306 to 209 ms on eight threads.
 
-The production change keeps decode on the pool: the retriever places each page at submit
-time, running the drain's placement rules with its own cursor, and the decode task fills
-the batch segments it was given. A page usually spans many batches, which is why #1474 has
-to land first. Pages with multi-interval row masks, a page straddling the row cap, nested
-columns and plain `BYTE_ARRAY` keep the copy path. The change updates `READ_PIPELINE.md`.
+The design, for every column kind and read, and its own stages are in
+[DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md).
 
 ### Stage 4: parallel consumption
 

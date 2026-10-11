@@ -188,7 +188,7 @@ the reader merge is the last thing that should meet two copies of a decode.
 | 3 | Choose the reader from the projection | Finding 1 | #1335 | 2 for numbers |
 | 4 | Non-repeated structs on the flat path | — | #475, #631 | 1, 3 |
 | 5 | One reader, worker chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
-| 6 | Cut the nested worker's per-batch cost | Finding 6 | #1024, #750, #1045 | — |
+| 6 | Cut the nested worker's per-batch cost (superseded, see below) | Finding 6 | #1024, #750, #1045 | — |
 
 Stages 3 and 5 both decide which worker serves a column, at different granularity:
 stage 3 chooses one reader per read from the projection, stage 5 chooses one worker per
@@ -316,21 +316,9 @@ specialization; #732 requires the same. Judged on both stage 2 workloads plus
 
 ### Stage 6 — cut the nested worker's per-batch cost
 
-Closes finding 6. Issues: #1024, #750, #1045.
-
-Scoped to the columns `NestedColumnWorker` still drains once stage 5 lands — the
-repeated ones. Nothing in it is written to be deleted later, and it depends on no other
-stage, so it can proceed in parallel.
-
-1. On `IndexMode.ALL_ITEMS`, swap the accumulator with the recycled batch's array
-   instead of copying — the shape `publishCurrentBatch` already uses for a full
-   fixed-width batch. This is finding 6, and the per-batch allocation behind #1024 and
-   a share of #1045's staging garbage.
-2. #750, bulk-copy present runs, so the regular path assembles a run of present values
-   by `arraycopy` rather than walking per element.
-
-Judged on `NestedScanBenchmark`'s existing full-record workload, which reads Overture
-Maps places in full and so drains repeated columns already.
+Superseded by [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md), whose stage 3 decodes nested values,
+levels and bytes straight into batch arrays allocated at their exact size, so there is no
+accumulator left to swap or copy. Closes finding 6. Issues: #1024, #750, #1045.
 
 ## Completion
 
