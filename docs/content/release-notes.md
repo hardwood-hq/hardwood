@@ -15,6 +15,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0.Beta2 (2026-10-11)
 
+[Announcement blog post](https://www.morling.dev/blog/row-group-control-faster-s3-reads-footer-caching-hardwood-1-1-0-beta2/) ·
 [API changes](/api-changes/1.1.0.Beta2/)
 
 Highlights of this release:
