@@ -60,6 +60,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// failed: the drain assembles every page before it, then reports [#retrieverFailure].
     private static final DecodedPage FAILURE_SENTINEL = new DecodedPage(null, PageRowMask.ALL);
 
+    /// Stored in the reorder buffer when the decode task chose the direct-into-batch
+    /// path: the page was decompressed and its values are held in the slot's [PageValueCursor].
+    /// The drain handles this sentinel by calling [#assembleCursor] instead of [#assemblePage].
+    static final DecodedPage CURSOR_SENTINEL = new DecodedPage(null, PageRowMask.ALL);
+
     private final PageSource pageSource;
     private final DecompressorFactory decompressorFactory;
     private final Executor decodeExecutor;
@@ -81,6 +86,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // Level buffers share the lifecycle of their reorder-buffer slot. The
     // retriever throttle prevents reuse until the drain has consumed the page.
     private final PageDecoder.LevelScratch[] levelScratchBuffer;
+
+    // Per-slot cursor for the direct-into-batch fast path.
+    // Parallel lifecycle to levelScratchBuffer: one per slot, owned by the
+    // drain thread once the decode task hands it in (the slot's reorder-buffer
+    // write provides the happens-before).
+    final PageValueCursor[] cursorBuffer;
 
     // === File name per reorder-buffer slot (retriever writes, drain reads) ===
     // Visibility: retriever writes fileNameBuffer[slot] before submitting the
@@ -222,6 +233,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         for (int i = 0; i < levelScratchBuffer.length; i++) {
             levelScratchBuffer[i] = new PageDecoder.LevelScratch();
         }
+        this.cursorBuffer = new PageValueCursor[MAX_INFLIGHT_PAGES];
+        for (int i = 0; i < cursorBuffer.length; i++) {
+            cursorBuffer[i] = new PageValueCursor();
+        }
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
         this.rowGroupBuffer = new int[MAX_INFLIGHT_PAGES];
         this.workItemBuffer = new int[MAX_INFLIGHT_PAGES];
@@ -245,6 +260,25 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// when filter pushdown is inactive (or matched the whole page), otherwise
     /// a tighter per-page mask.
     abstract void assemblePage(Page page, PageRowMask mask);
+
+    /// Assembles values from a direct-into-batch cursor into the current batch.
+    ///
+    /// Called in place of [#assemblePage] when the decode task succeeded via the
+    /// fast path and stored a [PageValueCursor] in the slot's cursor buffer.
+    /// [FlatColumnWorker] overrides to decode values directly into the batch;
+    /// [NestedColumnWorker] throws [UnsupportedOperationException].
+    ///
+    /// `mask` behaves identically to [#assemblePage(Page,PageRowMask)].
+    abstract void assembleCursor(PageValueCursor cursor, PageRowMask mask);
+
+    /// Whether this worker can consume pages via the direct-into-batch cursor path.
+    ///
+    /// Returns `false` by default; [FlatColumnWorker] overrides to `true`.
+    /// The guard exists because [ColumnWorker] is agnostic to whether its concrete
+    /// subclass implements [#assembleCursor] non-trivially.
+    boolean supportsCursorPath() {
+        return false;
+    }
 
     /// Publishes the current batch to the [BatchExchange] and takes a new free batch.
     abstract void publishCurrentBatch();
@@ -498,15 +532,39 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     }
 
     /// Decode task: decodes one page, stores result in reorder buffer, unparks drain.
+    ///
+    /// The path is chosen before any value decode. A null placeholder, a worker
+    /// that cannot consume a cursor, a non-numeric column, or a partial row mask
+    /// goes straight to [PageDecoder#decodePage]. Otherwise the header is read
+    /// once: a PLAIN or BYTE_STREAM_SPLIT page fills the slot's cursor, and any
+    /// other encoding materializes a [Page] from that same header.
     private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder) {
         if (done || error.get() != null) {
             return;
         }
         try {
-            Page page = pageInfo.isNullPlaceholder()
-                    ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
-                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), levelScratchBuffer[slot]);
-            reorderBuffer.set(slot, prepareDecodedPage(page, pageInfo.mask()));
+            PageValueCursor cursor = cursorBuffer[slot];
+            cursor.reset();
+            if (pageInfo.isNullPlaceholder()) {
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.nullPage(pageInfo.placeholderNumValues()), pageInfo.mask()));
+            } else if (useCursorPath(pageInfo)) {
+                PageDecoder.OpenedPage opened = pageDecoder.open(pageInfo.pageData());
+                if (pageDecoder.directEncoding(opened)) {
+                    pageDecoder.fillCursor(opened, cursor);
+                    reorderBuffer.set(slot, CURSOR_SENTINEL);
+                    LockSupport.unpark(drainThread);
+                    return;
+                }
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.decodeOpened(opened, pageInfo.dictionary(), levelScratchBuffer[slot]),
+                        pageInfo.mask()));
+            } else {
+                reorderBuffer.set(slot, prepareDecodedPage(
+                        pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(),
+                                levelScratchBuffer[slot]),
+                        pageInfo.mask()));
+            }
         }
         catch (Exception e) {
             signalError(enrichWithPlace(e, fileNameBuffer[slot], rowGroupBuffer[slot],
@@ -521,6 +579,15 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             throw err;
         }
         LockSupport.unpark(drainThread);
+    }
+
+    /// Whether this page may take the cursor path. Encoding is not known yet —
+    /// that is read from the page header — but the worker, the column type and
+    /// a partial row mask are, and any of those rules the path out.
+    private boolean useCursorPath(PageInfo pageInfo) {
+        return supportsCursorPath()
+                && pageInfo.mask().isAll()
+                && PageDecoder.isDirectlyDecodableType(physicalType);
     }
 
     /// Stores `sentinel` in the slot after the last page submitted, for the drain to take
@@ -667,7 +734,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             // A boundary marker stands for a row group this column is not read in:
             // no consumer takes this column's batches for it, so there are no rows
             // to assemble.
-            if (decoded != BOUNDARY_MARKER) {
+            if (decoded == CURSOR_SENTINEL) {
+                assembleCursor(cursorBuffer[slot], PageRowMask.ALL);
+            } else if (decoded != BOUNDARY_MARKER) {
                 assemblePage(decoded.page(), decoded.mask());
             }
             consumePosition++;

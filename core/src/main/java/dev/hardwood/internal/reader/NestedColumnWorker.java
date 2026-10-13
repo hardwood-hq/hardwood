@@ -168,6 +168,16 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
     }
 
+    /// The direct-into-batch cursor path is not applicable to nested columns:
+    /// nested assembly is driven by repetition/definition level traversal and
+    /// cannot bulk-copy into a flat array. [#supportsCursorPath] stays false,
+    /// so the decode task never selects this path; the method is a safety net.
+    @Override
+    void assembleCursor(PageValueCursor cursor, PageRowMask mask) {
+        throw new UnsupportedOperationException(
+                "assembleCursor called on NestedColumnWorker — this is a bug");
+    }
+
     /// Converts the open fixed-width fast-path batch to the regular representation
     /// by synthesizing the levels it omitted: every element is present (definition
     /// level `maxDefinitionLevel`) and each record of `k` elements starts a new
