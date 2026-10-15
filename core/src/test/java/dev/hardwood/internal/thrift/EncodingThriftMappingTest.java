@@ -65,10 +65,16 @@ class EncodingThriftMappingTest {
 
     /// Thrift value 1 is `GROUP_VAR_INT`, withdrawn by the format and never written. The table
     /// carries it as an explicit hole, which must read as unrecognized rather than as whatever
-    /// member happens to sit beside it. A value past the table's end is the same question one step
-    /// further out, and `UnknownEncodingReadTest` settles that one on a real file.
+    /// member happens to sit beside it.
     @Test
     void theWithdrawnGroupVarIntValueIsUnrecognized() {
         assertThat(ThriftEnumLookup.encoding(1)).isEqualTo(Encoding.UNKNOWN);
+    }
+
+    /// A value past the table's end, as a file from a later format release may declare, reads as
+    /// unrecognized rather than failing the footer.
+    @Test
+    void aValuePastTheTableIsUnrecognized() {
+        assertThat(ThriftEnumLookup.encoding(11)).isEqualTo(Encoding.UNKNOWN);
     }
 }

@@ -106,6 +106,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Encoder implementation
 - [x] Decoder implementation
 
+### 2.6 Adaptive Lossless floating-Point (ALP)
+- [x] Decoder implementation (FLOAT, DOUBLE; all vector sizes)
+- [ ] Encoder implementation
+
 ---
 
 ## Phase 3: Page Structure
@@ -507,6 +511,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] DELTA_LENGTH_BYTE_ARRAY
 - [x] DELTA_BYTE_ARRAY
 - [x] BYTE_STREAM_SPLIT
+- [x] ALP (read)
 - [x] **Validate**: Read files using these encodings
 
 ### Milestone 6: Optimization Features (partial)

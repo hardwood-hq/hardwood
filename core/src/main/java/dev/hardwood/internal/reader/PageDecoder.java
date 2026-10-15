@@ -12,6 +12,7 @@ import java.nio.ByteOrder;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.encoding.AlpDecoder;
 import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
 import dev.hardwood.internal.encoding.DeltaByteArrayDecoder;
@@ -551,6 +552,21 @@ public class PageDecoder {
                     default -> throw byteStreamSplitUndefinedOverType(type);
                 };
             }
+            case ALP -> {
+                if (type != PhysicalType.FLOAT && type != PhysicalType.DOUBLE) {
+                    throw undefinedOverType(Encoding.ALP, type, PhysicalType.FLOAT, PhysicalType.DOUBLE);
+                }
+                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
+                AlpDecoder decoder = new AlpDecoder(data, offset, limit, numNonNullValues, type);
+                if (type == PhysicalType.DOUBLE) {
+                    double[] values = new double[numValues];
+                    decoder.readDoubles(values, definitionLevels, maxDefLevel);
+                    yield new Page.DoublePage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
+                }
+                float[] values = new float[numValues];
+                decoder.readFloats(values, definitionLevels, maxDefLevel);
+                yield new Page.FloatPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            }
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
                 if (dictionary == null) {
                     throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
@@ -618,9 +634,9 @@ public class PageDecoder {
             case BIT_PACKED -> throw new ParquetReadException(
                     "BIT_PACKED encodes levels and is not valid for a data page's values");
             // UNKNOWN stands for every Thrift value this release cannot name, so on its own it
-            // does not say which encoding was met; the raw value does. This is the one refusal
-            // here that is a gap in this release rather than a malformed file, so it is the one
-            // that keeps UnsupportedOperationException.
+            // does not say which encoding was met; the raw value does. Like an ALP variant
+            // AlpDecoder does not know, it is a gap in this release rather than a malformed file,
+            // so it keeps UnsupportedOperationException.
             case UNKNOWN -> throw new UnsupportedOperationException(
                     "Encoding not yet supported: UNKNOWN (Thrift encoding value " + encodingValue + ")");
         };

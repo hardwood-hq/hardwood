@@ -94,8 +94,8 @@ public class Utils {
             // PageEncodingStats.encoding field is indistinguishable from an absent field, so
             // parquet-java rejects the footer with "Required field 'encoding' was not present!".
             // A parquet-java that knew the constant still could not decode ALP pages, so there
-            // is no reference reader to compare against. Hardwood reads the footer, column index
-            // and page index, and rejects the pages themselves until #581 adds ALP support.
+            // is no reference reader to compare against. AlpReadTest compares the file's ALP
+            // columns against its PLAIN ones instead.
             "alp_extended.zstd.parquet", // No parquet-java oracle: ALP encoding
 
             // The fixture annotates an INT32 with UUID on purpose, to exercise how a reader

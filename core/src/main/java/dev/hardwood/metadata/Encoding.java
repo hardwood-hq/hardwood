@@ -30,6 +30,12 @@ public enum Encoding {
     RLE_DICTIONARY,
     /// Byte-stream split encoding for floating-point data.
     BYTE_STREAM_SPLIT,
+    /// Adaptive lossless floating-point encoding for `FLOAT` and `DOUBLE` data: values scaled to
+    /// integers by a power of ten, frame-of-reference encoded and bit-packed, with the values
+    /// that do not scale exactly stored as they are. In Preview in the format specification.
+    ///
+    /// @see <a href="https://github.com/apache/parquet-format/blob/master/AlpEncoding.md">ALP Encoding</a>
+    ALP,
     /// Placeholder for unknown/unsupported encodings found in metadata.
     /// This allows reading files that list encodings we don't recognize
     /// in the column metadata, as long as the actual pages use supported encodings.

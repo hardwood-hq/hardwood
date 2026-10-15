@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
@@ -112,6 +114,41 @@ class PageDecoderEncodingTest {
         assertThatThrownBy(() -> decode(Encoding.BIT_PACKED, PhysicalType.INT32))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("BIT_PACKED encodes levels and is not valid for a data page's values");
+    }
+
+    /// `ALP` turns decimal-scaled integers back into floating-point values, so it is defined over
+    /// `FLOAT` and `DOUBLE` only.
+    @Test
+    void rejectsAlpOnALongColumn() {
+        assertThatThrownBy(() -> decode(Encoding.ALP, PhysicalType.INT64))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ALP is not defined over INT64; the format defines it over FLOAT, DOUBLE only");
+    }
+
+    /// An ALP page of one vector holding 1.5, 2.25, 3.0 and 0.75 at (exponent 2, factor 0): the
+    /// integers 150, 225, 300 and 75, a frame of reference of 75 and 8-bit deltas.
+    @Test
+    void decodesAlpOnADoubleColumn() throws Exception {
+        ByteBuffer body = ByteBuffer.allocate(7 + 4 + 13 + 4).order(ByteOrder.LITTLE_ENDIAN);
+        body.put((byte) 0).put((byte) 0).put((byte) 10).putInt(NUM_VALUES);
+        body.putInt(4);
+        body.put((byte) 2).put((byte) 0).putShort((short) 0).putLong(75).put((byte) 8);
+        body.put((byte) 75).put((byte) 150).put((byte) 225).put((byte) 0);
+
+        Page page = decode(Encoding.ALP, PhysicalType.DOUBLE, body.array());
+
+        assertThat(page).isInstanceOf(Page.DoublePage.class);
+        assertThat(((Page.DoublePage) page).values()).containsExactly(1.5, 2.25, 3.0, 0.75);
+    }
+
+    /// A Thrift value no member of [Encoding] names reads as [Encoding#UNKNOWN], and the refusal
+    /// names the raw value, since `UNKNOWN` alone does not say which encoding the page declared.
+    /// This is a gap in this release rather than a malformed file.
+    @Test
+    void rejectsAnUnrecognizedEncodingByItsThriftValue() {
+        assertThatThrownBy(() -> DataPages.decodeRequired(42, PhysicalType.INT32, NUM_VALUES, new byte[16]))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Encoding not yet supported: UNKNOWN (Thrift encoding value 42)");
     }
 
     /// `DELTA_BYTE_ARRAY` for `values`, each of [#FIXED_LENGTH] bytes, in the layout the encoder

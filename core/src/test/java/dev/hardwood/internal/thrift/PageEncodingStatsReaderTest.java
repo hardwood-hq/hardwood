@@ -111,11 +111,11 @@ class PageEncodingStatsReaderTest {
 
     @Test
     void unrecognizedEncodingIsCarriedThroughAsUnknown() throws IOException {
-        // encoding = 10, which no released version of the format defines. Like an unrecognized
+        // encoding = 11, which no released version of the format defines. Like an unrecognized
         // page type, it must not make the footer unreadable.
         ColumnMetaData metaData = ColumnMetaDataReader.read(reader(
                 ENCODING_STATS_FIELD, listHeader(1, ElementType.STRUCT),
-                NEXT_I32, 0x00, NEXT_I32, 0x14, NEXT_I32, 0x02, STOP,
+                NEXT_I32, 0x00, NEXT_I32, 0x16, NEXT_I32, 0x02, STOP,
                 STOP));
 
         assertThat(metaData.encodingStats())
