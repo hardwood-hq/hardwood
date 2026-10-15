@@ -15,6 +15,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntUnaryOperator;
 
+import dev.hardwood.reader.FilterPredicate.Operator;
+
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryGtEqBatchMatcher;
@@ -362,6 +364,15 @@ public final class BatchFilterCompiler {
                 case EQ -> new LongEqBatchMatcher(p.value());
                 case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
             };
+            case ResolvedPredicate.BinaryPredicate p when SPIKE_SORTED_DICTIONARIES
+                    && p.op() != Operator.EQ && p.op() != Operator.NOT_EQ ->
+                    new SortedDictionaryRangeBatchMatcher(switch (p.op()) {
+                        case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
+                        case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
+                        case LT_EQ -> new BinaryLtEqBatchMatcher(p.value(), p.comparison());
+                        case GT_EQ -> new BinaryGtEqBatchMatcher(p.value(), p.comparison());
+                        default -> throw new IllegalStateException(p.op().toString());
+                    }, p.op() == Operator.LT || p.op() == Operator.LT_EQ);
             case ResolvedPredicate.BinaryPredicate p -> dictionaryAware(switch (p.op()) {
                 case GT -> new BinaryGtBatchMatcher(p.value(), p.comparison());
                 case LT -> new BinaryLtBatchMatcher(p.value(), p.comparison());
@@ -393,6 +404,9 @@ public final class BatchFilterCompiler {
                             + " — isSupported should have rejected this");
         };
     }
+
+    /// SPIKE (#1258): trust every dictionary to be sorted in the predicate's comparison order.
+    private static final boolean SPIKE_SORTED_DICTIONARIES = Boolean.getBoolean("hardwood.spike.sortedDictionaries");
 
     private static BinaryBatchMatcher dictionaryAware(BinaryBatchMatcher matcher) {
         return new DictionaryBinaryBatchMatcher(matcher);

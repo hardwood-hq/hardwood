@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 
 import org.openjdk.jmh.annotations.Benchmark;
@@ -29,6 +30,7 @@ import org.openjdk.jmh.annotations.Warmup;
 import dev.hardwood.internal.predicate.BinaryBatchMatcher;
 import dev.hardwood.internal.predicate.DictionaryBinaryBatchMatcher;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.predicate.SortedDictionaryRangeBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.binaries.BinaryLtBatchMatcher;
@@ -56,7 +58,8 @@ public class DictionarySpacePredicateBenchmark {
 
     public enum Access {
         SPARSE,
-        FULL
+        FULL,
+        RANDOM
     }
 
     public enum PredicateKind {
@@ -70,7 +73,7 @@ public class DictionarySpacePredicateBenchmark {
         LONG
     }
 
-    @Param({"16", "100", "4096"})
+    @Param({"16", "100", "4096", "65536", "1048576"})
     private int cardinality;
 
     @Param
@@ -89,6 +92,8 @@ public class DictionarySpacePredicateBenchmark {
     private BinaryBatchMatcher packedMatcher;
     private BinaryBatchMatcher coldDictionaryMatcher;
     private BinaryBatchMatcher hotDictionaryMatcher;
+    private BinaryBatchMatcher coldIntervalMatcher;
+    private BinaryBatchMatcher hotIntervalMatcher;
     private long[] outWords;
 
     @Setup(Level.Trial)
@@ -97,8 +102,8 @@ public class DictionarySpacePredicateBenchmark {
         int encodedSize = 0;
         for (int i = 0; i < cardinality; i++) {
             String value = switch (valueWidth) {
-                case SHORT -> String.format("c%05d", i);
-                case LONG -> String.format("https://example.com/items/category-%05d", i);
+                case SHORT -> String.format("c%07d", i);
+                case LONG -> String.format("https://example.com/items/category-%07d", i);
             };
             entries[i] = value.getBytes(StandardCharsets.UTF_8);
             encodedSize += Integer.BYTES + entries[i].length;
@@ -115,16 +120,21 @@ public class DictionarySpacePredicateBenchmark {
                         entries.length, PhysicalType.BYTE_ARRAY, null);
 
         int referencedEntries = access == Access.SPARSE ? Math.min(4, cardinality) : cardinality;
+        int[] ids = new int[rows];
+        SplittableRandom random = new SplittableRandom(42);
+        for (int row = 0; row < rows; row++) {
+            ids[row] = access == Access.RANDOM ? random.nextInt(cardinality) : row % referencedEntries;
+        }
         int packedSize = 0;
         for (int row = 0; row < rows; row++) {
-            packedSize += entries[row % referencedEntries].length;
+            packedSize += entries[ids[row]].length;
         }
         byte[] bytes = new byte[packedSize];
         int[] offsets = new int[rows + 1];
         int[] dictionaryIndices = new int[rows];
         int position = 0;
         for (int row = 0; row < rows; row++) {
-            int dictionaryIndex = row % referencedEntries;
+            int dictionaryIndex = ids[row];
             byte[] entry = entries[dictionaryIndex];
             System.arraycopy(entry, 0, bytes, position, entry.length);
             position += entry.length;
@@ -156,11 +166,30 @@ public class DictionarySpacePredicateBenchmark {
         verifyEquivalentResults();
         hotDictionaryMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
         hotDictionaryMatcher.test(batch, outWords);
+        if (predicateKind == PredicateKind.LT) {
+            hotIntervalMatcher = new SortedDictionaryRangeBatchMatcher(packedMatcher, true);
+            long[] expected = new long[outWords.length];
+            packedMatcher.test(batch, expected);
+            verifyEquivalentResults(hotIntervalMatcher, expected);
+        }
     }
 
     @Setup(Level.Invocation)
     public void setupInvocation() {
         coldDictionaryMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
+        coldIntervalMatcher = new SortedDictionaryRangeBatchMatcher(packedMatcher, true);
+    }
+
+    @Benchmark
+    public long intervalCold() {
+        coldIntervalMatcher.test(batch, outWords);
+        return checksum();
+    }
+
+    @Benchmark
+    public long intervalHot() {
+        hotIntervalMatcher.test(batch, outWords);
+        return checksum();
     }
 
     @Benchmark

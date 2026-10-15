@@ -28,6 +28,8 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     private static final byte NO_MATCH = 1;
     private static final byte MATCH = 2;
 
+    private static final boolean SPIKE_EAGER_ENTRIES = Boolean.getBoolean("hardwood.spike.eagerEntries");
+
     private final BinaryBatchMatcher delegate;
     private Dictionary.ByteArrayDictionary cachedDictionary;
     private byte[] entryStates;
@@ -74,6 +76,15 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         }
         else {
             Arrays.fill(entryStates, 0, size, UNKNOWN);
+        }
+        if (SPIKE_EAGER_ENTRIES) {
+            // SPIKE (#1258): decide every entry up front, in dictionary order.
+            byte[] entryBytes = dictionary.entryBytes();
+            int[] entryOffsets = dictionary.entryOffsets();
+            for (int i = 0; i < size; i++) {
+                entryStates[i] = delegate.testValue(entryBytes, entryOffsets[i], entryOffsets[i + 1])
+                        ? MATCH : NO_MATCH;
+            }
         }
     }
 
