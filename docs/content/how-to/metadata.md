@@ -48,7 +48,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
     // The statistics ordering for each leaf column, in schema order. Empty when the file omits
     // column_orders, in which case the type-defined ordering applies to every column. The value is
-    // one of ColumnOrder.TYPE_DEFINED_ORDER, IEEE754_TOTAL_ORDER, or UNKNOWN.
+    // one of ColumnOrder.TYPE_DEFINED_ORDER, IEEE754_TOTAL_ORDER, INT96_TIMESTAMP_ORDER, or UNKNOWN.
     List<ColumnOrder> columnOrders = metadata.columnOrders();
 
     // Schema inspection

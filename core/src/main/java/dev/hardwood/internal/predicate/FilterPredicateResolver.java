@@ -641,7 +641,8 @@ public class FilterPredicateResolver {
     ///
     /// Those bytes denote one value of the column, so a row storing them holds that value: the
     /// comparison of the value reads the column's bounds, in the order they are written in, and
-    /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none. A `FIXED_LEN_BYTE_ARRAY(12)`
+    /// the comparison of the bytes, [Comparison#STORED_BYTES], reads none, except on an `INT96` whose
+    /// file declares `INT96_TIMESTAMP_ORDER`. A `FIXED_LEN_BYTE_ARRAY(12)`
     /// `TIMESTAMP` and a fixed-width `DECIMAL` hold each value under one encoding, so there the value
     /// alone decides.
     private static ResolvedPredicate storedBytesEqual(String columnName, ColumnSchema columnSchema, byte[] value) {

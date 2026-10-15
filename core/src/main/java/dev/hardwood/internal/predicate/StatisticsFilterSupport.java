@@ -7,7 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
-import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import java.util.Comparator;
+
 import dev.hardwood.reader.FilterPredicate;
 
 /// What each [dev.hardwood.reader.FilterPredicate.Operator] proves over an interval, as pure
@@ -291,9 +292,9 @@ final class StatisticsFilterSupport {
         return false;
     }
 
-    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, Comparison comparison) {
+    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max, Comparator<byte[]> order) {
         for (byte[] value : values) {
-            if (comparison.compare(value, min) >= 0 && comparison.compare(value, max) <= 0) {
+            if (order.compare(value, min) >= 0 && order.compare(value, max) <= 0) {
                 return false;
             }
         }
@@ -359,12 +360,12 @@ final class StatisticsFilterSupport {
         return false;
     }
 
-    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max, Comparison comparison) {
-        if (comparison.compare(min, max) != 0) {
+    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max, Comparator<byte[]> order) {
+        if (order.compare(min, max) != 0) {
             return false;
         }
         for (byte[] value : values) {
-            if (comparison.compare(value, min) == 0) {
+            if (order.compare(value, min) == 0) {
                 return true;
             }
         }

@@ -17,6 +17,8 @@ public class ColumnOrderWriter {
     private static final int TYPE_ORDER = 1;
     /// Thrift union field id of the `IEEE_754_TOTAL_ORDER` (`IEEE754TotalOrder`) member.
     private static final int IEEE_754_TOTAL_ORDER = 2;
+    /// Thrift union field id of the `INT96_TIMESTAMP_ORDER` (`Int96TimestampOrder`) member.
+    private static final int INT96_TIMESTAMP_ORDER = 3;
 
     /// @throws IllegalArgumentException if the order is [ColumnOrder#UNKNOWN], which names no
     ///         union member and so cannot be written
@@ -38,6 +40,7 @@ public class ColumnOrderWriter {
         return switch (order) {
             case TYPE_DEFINED_ORDER -> TYPE_ORDER;
             case IEEE754_TOTAL_ORDER -> IEEE_754_TOTAL_ORDER;
+            case INT96_TIMESTAMP_ORDER -> INT96_TIMESTAMP_ORDER;
             case UNKNOWN -> throw new IllegalArgumentException(
                     "An unrecognized column order names no union member and cannot be written");
         };

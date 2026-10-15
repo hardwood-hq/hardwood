@@ -105,17 +105,19 @@ public final class PageDropPredicates {
     ///
     /// @param leaves the AND-necessary leaves testing this page's column, empty where the file
     ///        this page belongs to records the column's bounds in an order this reader cannot
-    ///        read (see [BoundsReadability]), which is why the unit reads them as readable
+    ///        read (see [BoundsReadability]), which is why `readability` reads them as readable
     /// @param stats the page's inline statistics, or `null` if it carries none
     /// @param rowCount the page's rows, or [#UNKNOWN_ROW_COUNT] where its header does not give
     ///        them, which leaves every proof resting on a row count undecided
+    /// @param readability the readability of the leaves' column, [BoundsReadability#ALL] or one
+    ///        that reads its `INT96` bounds ([BoundsReadability#ofOneColumn])
     /// @param logContext the page these statistics came from, for a discard to name
     public static boolean canDropPage(List<ResolvedPredicate> leaves, Statistics stats,
-            long rowCount, LogContext logContext) {
+            long rowCount, BoundsReadability readability, LogContext logContext) {
         if (leaves == null || leaves.isEmpty() || stats == null) {
             return false;
         }
-        UnitStats page = new UnitStats.InlinePageStats(stats, rowCount, BoundsReadability.ALL);
+        UnitStats page = new UnitStats.InlinePageStats(stats, rowCount, readability);
         for (ResolvedPredicate leaf : leaves) {
             if (page.decide(leaf, logContext) == FilterDecision.CANNOT_MATCH) {
                 return true;

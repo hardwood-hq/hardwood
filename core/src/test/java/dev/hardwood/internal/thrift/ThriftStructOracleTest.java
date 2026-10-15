@@ -55,6 +55,7 @@ class ThriftStructOracleTest {
     /// one is a deliberate act.
     private static final Set<String> AHEAD_OF_THE_ORACLE = Set.of(
             "ColumnOrder field 2",  // IEEE754TotalOrder, parsed by ColumnOrderReader
+            "ColumnOrder field 3",  // Int96TimestampOrder, parsed by ColumnOrderReader
             "ColumnIndex field 8",  // nan_counts, parsed by ColumnIndexReader
             "Statistics field 9");  // nan_count, parsed by StatisticsReader
 

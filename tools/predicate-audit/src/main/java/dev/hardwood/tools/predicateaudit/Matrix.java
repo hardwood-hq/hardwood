@@ -55,6 +55,8 @@ final class Matrix {
         exoticCases.addAll(Cases.intersects());
         groups.add(new Group("exotic", flatRows(Columns.exotic()), exoticCases, flatLayouts));
         groups.add(new Group("ts12", flatRows(Columns.ts12()), Cases.forColumns(Columns.ts12()), flatLayouts));
+        groups.add(new Group("int96order", flatRows(Columns.int96Order()), Cases.forColumns(Columns.int96Order()),
+                flatLayouts));
         groups.add(new Group("legacy", flatRows(Columns.legacy()), Cases.forColumns(Columns.legacy()), flatLayouts));
         groups.add(new Group("dropped", flatRows(Columns.dropped()), Cases.forColumns(Columns.dropped()), flatLayouts));
         groups.add(new Group("lowcard", flatRows(Columns.lowCardinality()), Cases.forColumns(Columns.lowCardinality()),

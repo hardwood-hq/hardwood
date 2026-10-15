@@ -227,7 +227,8 @@ one by one. Results are the same either way; only the I/O saved is lost. Bounds 
 | One of them is `NaN` | A `FLOAT`, `DOUBLE` or `FLOAT16` bound. `TYPE_ORDER` forbids it; under `IEEE_754_TOTAL_ORDER` it marks a unit whose every non-null value is `NaN` |
 | They come from the deprecated `min` / `max` fields | Superseded by `min_value` / `max_value`; the deprecated pair is ordered by signed comparison whatever the column's type is, so its order is wrong for every unsigned integer and byte string |
 | The column's annotation defines no order | An `INTERVAL`, `GEOMETRY`, `GEOGRAPHY`, `VARIANT`, `LIST` or `MAP` column, for which the Parquet spec defines no sort order, or a `NULL` column |
-| The column is `INT96` | The order the Parquet spec gives `INT96` bounds compares the day before the nanoseconds of the day, which does not follow the instant when the nanoseconds run past one day |
+| The column is `INT96` under `TYPE_ORDER` | The Parquet spec defines no order for `INT96` bounds under `TYPE_ORDER`; `INT96` bounds are read under `INT96_TIMESTAMP_ORDER` only |
+| An `INT96` bound holds nanoseconds of the day outside one day | Under `INT96_TIMESTAMP_ORDER`, which orders the day before the nanoseconds of the day, such a bound does not sort by the instant it encodes |
 | The column's annotation is dropped | An annotation the column's physical type cannot carry, or one this release does not recognize, so the column is read as its physical type while its bounds were recorded in the annotation's order |
 | The file declares a `ColumnOrder` this release does not recognize | The Parquet spec directs a reader to ignore `min` / `max` under a column order it does not support; this applies to every column type |
 
@@ -262,8 +263,8 @@ and `notEq` are left to statistics alone. Some equality probes skip one or both:
 | any comparison with an `Instant` on an `INT96` column | not used | not used |
 | `eq` or `in` with the stored 12 bytes on an `INT96` column | used | used |
 
-An `INT96` comparison with an `Instant` therefore reads every row group and page and filters the
-rows one by one.
+An `INT96` comparison with an `Instant` therefore skips a row group or page only on its
+`min` / `max` bounds (see [When statistics are ignored](#when-statistics-are-ignored)).
 
 ## Column projection forms
 

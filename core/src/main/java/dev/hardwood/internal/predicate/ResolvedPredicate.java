@@ -9,6 +9,7 @@ package dev.hardwood.internal.predicate;
 
 import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.Comparator;
 import java.util.List;
 
 import dev.hardwood.reader.FilterPredicate;
@@ -77,7 +78,7 @@ public sealed interface ResolvedPredicate {
 
         /// The order a binary column's values compare in, and whether a value has one encoding
         /// in it.
-        public enum Comparison {
+        public enum Comparison implements Comparator<byte[]> {
 
             /// Unsigned lexicographic — the type-defined order of a byte string compared as
             /// itself. A value is exactly the bytes it was written as.
@@ -164,7 +165,8 @@ public sealed interface ResolvedPredicate {
             /// Each pair holds one value under two byte strings, and a literal matches the one it
             /// spells. No bounds are read in this order, since the column's bounds are written in
             /// the order of its values; the resolver pairs this with the value's own comparison
-            /// where that one reads them.
+            /// where that one reads them. The exception is an `INT96` whose file declares
+            /// `INT96_TIMESTAMP_ORDER`, an order of the stored bytes themselves.
             STORED_BYTES(true);
 
             private final boolean byteExact;
@@ -177,6 +179,7 @@ public sealed interface ResolvedPredicate {
             ///
             /// @return negative if `left` sorts first, zero if the two are the same value,
             ///         positive if `right` sorts first
+            @Override
             public int compare(byte[] left, byte[] right) {
                 return BinaryComparator.compare(left, 0, left.length, right,
                         BinaryComparator.order(this));

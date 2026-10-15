@@ -44,11 +44,12 @@ reader.
 All fields ❌ — Parquet Modular Encryption is unsupported; encrypted files fail
 fast. Tracked by **#128** (support), #600 (graceful failure).
 
-### ColumnOrder (TypeDefinedOrder, IEEE754TotalOrder)
+### ColumnOrder (TypeDefinedOrder, IEEE754TotalOrder, Int96TimestampOrder)
 ✅ — decoded onto `FileMetaData.columnOrders` as `ColumnOrder`; an unrecognized union member maps to
 `ColumnOrder.UNKNOWN`. The order drives float/double statistics pruning: type-defined (and absent)
 orders widen `±0` bounds for correct signed-zero handling, while `IEEE754TotalOrder` prunes exactly;
-#595.
+#595. `Int96TimestampOrder` is the only order `INT96` bounds are read in, as instants, trusting the
+writer to keep every value's nanoseconds within one day; #1417.
 
 ---
 

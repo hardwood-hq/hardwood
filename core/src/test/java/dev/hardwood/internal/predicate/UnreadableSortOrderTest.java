@@ -125,12 +125,12 @@ class UnreadableSortOrderTest {
     }
 
     /// An `INT96` compares as the instant it encodes. `parquet.thrift` leaves its type-defined
-    /// order undefined, and no order bounds are recorded in follows the instant on every value,
-    /// so its bounds prune nothing under any column order. Read as instants, this pair ends
-    /// before the literal, which is what must not be acted on. The file is not at fault, so
-    /// nothing is reported either.
+    /// order undefined, so under `TYPE_ORDER` its bounds prune nothing. Read as instants, this
+    /// pair ends before the literal, which is what must not be acted on. The file is not at
+    /// fault, so nothing is reported either. `INT96_TIMESTAMP_ORDER` bounds are
+    /// [Int96TimestampOrderPruningTest]'s.
     @Test
-    void int96BoundsAreNotReadAndReportNothing() {
+    void int96BoundsUnderTheTypeDefinedOrderAreNotReadAndReportNothing() {
         FileSchema int96 = FileSchema.builder("s")
                 .addColumn("ts", PhysicalType.INT96, RepetitionType.REQUIRED)
                 .build();
@@ -215,6 +215,21 @@ class UnreadableSortOrderTest {
 
         assertThat(MinMaxStats.of(stats, leaf,
                 readability(ints, List.of(ColumnOrder.IEEE754_TOTAL_ORDER))).canDrop(leaf)).isFalse();
+    }
+
+    /// `INT96_TIMESTAMP_ORDER` orders the twelve bytes of an `INT96` and no other column's values.
+    @Test
+    void boundsUnderTheInt96TimestampOrderOfAnotherColumnDoNotPrune() {
+        FileSchema ints = intSchema();
+        ResolvedPredicate leaf = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("v", 100), ints);
+        Statistics stats = new Statistics(intBytes(0), intBytes(50), 0L, null, false);
+
+        MinMaxStats minMax = MinMaxStats.of(stats, leaf,
+                readability(ints, List.of(ColumnOrder.INT96_TIMESTAMP_ORDER)));
+
+        assertThat(minMax.canDrop(leaf)).isFalse();
+        assertThat(minMax.discardReason()).isEqualTo(MinMaxStats.UNKNOWN_SORT_ORDER);
     }
 
     @Test

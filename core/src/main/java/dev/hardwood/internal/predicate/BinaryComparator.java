@@ -17,8 +17,9 @@ import dev.hardwood.internal.schema.ByteColumnOrder;
 
 /// Byte array comparison in the orders a binary column sorts in: unsigned lexicographic (for
 /// BYTE_ARRAY), big-endian signed two's complement (for DECIMAL columns of either byte-array type),
-/// little-endian signed two's complement (for a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`), and the
-/// instant a legacy `INT96` timestamp encodes.
+/// little-endian signed two's complement (for a `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP`), the
+/// instant a legacy `INT96` timestamp encodes, and the day-then-nanoseconds order of
+/// `INT96_TIMESTAMP_ORDER`.
 ///
 /// Both the reader's predicate evaluation and the writer's statistics collection compare through
 /// here, so a chunk's bounds and a predicate over them cannot come to disagree.
@@ -213,6 +214,35 @@ public final class BinaryComparator {
         return byDay != 0
                 ? byDay
                 : Long.compare(Math.floorMod(aNanos, NANOS_PER_DAY), Math.floorMod(bNanos, NANOS_PER_DAY));
+    }
+
+    /// Compare two legacy `INT96` timestamps in `INT96_TIMESTAMP_ORDER`, the order a writer
+    /// declaring it records bounds in: the Julian day as a signed 32-bit integer, then the
+    /// nanoseconds of the day as a signed 64-bit integer, each as stored.
+    ///
+    /// Neither field is normalized, so this orders by instant only where both nanoseconds fields
+    /// lie within one day ([#int96NanosWithinDay]); [#compareInt96(byte[], byte[])] orders by
+    /// instant throughout. Two values compare equal exactly when their bytes are equal.
+    ///
+    /// @return negative if a < b, zero if both hold the same bytes, positive if a > b
+    /// @throws IllegalArgumentException if either value is not twelve bytes
+    public static int compareInt96TimestampOrder(byte[] a, byte[] b) {
+        requireInt96(a.length);
+        requireInt96(b.length);
+        int byDay = Integer.compare((int) INT_LE.get(a, Long.BYTES), (int) INT_LE.get(b, Long.BYTES));
+        return byDay != 0
+                ? byDay
+                : Long.compare((long) LONG_LE.get(a, 0), (long) LONG_LE.get(b, 0));
+    }
+
+    /// Whether a twelve-byte legacy `INT96` timestamp holds nanoseconds of the day in
+    /// `[0, 1 day)`, where its day and nanoseconds order as the instant they encode.
+    ///
+    /// @throws IllegalArgumentException if the value is not twelve bytes
+    public static boolean int96NanosWithinDay(byte[] value) {
+        requireInt96(value.length);
+        long nanos = (long) LONG_LE.get(value, 0);
+        return nanos >= 0 && nanos < NANOS_PER_DAY;
     }
 
     private static void requireInt96(int width) {

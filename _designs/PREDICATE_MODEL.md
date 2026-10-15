@@ -84,7 +84,7 @@ Tests: `FilterPredicateResolverTest`.
 | `GEOMETRY`, `GEOGRAPHY` | `byte[]`; `intersects` | `eq`, `notEq`, `in`; `intersects` | the WKB bytes; bounding boxes |
 | `NULL` | the physical type's literal | `eq`, `notEq`, `in` | the stored value |
 
-- **`INT96`** is a Julian day and a signed count of nanoseconds of that day, which the format does not bound to one day, so one instant has several encodings. An `Instant` matches every encoding of it. The order parquet-format gives `INT96` bounds (day, then nanoseconds) disagrees with the instant on such encodings, so statistics are never read for an `INT96` column ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)).
+- **`INT96`** is a Julian day and a signed count of nanoseconds of that day, which the format does not bound to one day, so one instant has several encodings. An `Instant` matches every encoding of it. Statistics are read only under `INT96_TIMESTAMP_ORDER` (day, then nanoseconds), whose writer keeps every value's nanoseconds within one day, and not at all under `TYPE_ORDER` ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#int96-and-stored-byte-comparisons)).
 - **`TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)`** is a signed 96-bit little-endian count of the unit, from parquet-format after 2.14.0 ([apache/parquet-format#601](https://github.com/apache/parquet-format/pull/601)). The width is fixed, so each value has one encoding.
 - **`NULL`.** A conforming file stores only nulls there, so no comparison matches, and no order is defined over values that do not exist. A file that stores values anyway is compared by what it stores under equality. A footer that gives `UNKNOWN` beside a `converted_type` annotates the column with the converted type, so parquet-java's `INTERVAL` columns take the `INTERVAL` row.
 - **`intersects`** decides row groups, not rows. It drops a row group whose bounding box does not overlap the query box and returns every row of the others, nulls included, so its answer depends on the file's bounding boxes and on whether metadata filtering is on. A box with `xmin > xmax` wraps across the antimeridian on either type. It has no inverse, so `not` over any tree holding one is refused.
@@ -135,7 +135,7 @@ The rule holds because `not` is lowered to the leaves at resolution (see [Resolu
 
 **Floating point.** `FLOAT`, `DOUBLE` and `FLOAT16` compare by `Float.compare` / `Double.compare`: every `NaN` equals every other and sorts above `+Infinity`, and `-0.0` sorts below `+0.0`. So `eq(d, 0.0)` matches `+0.0` only, `eq(d, NaN)` matches every `NaN` payload, and `gt(d, v)` for a number `v` matches `NaN` rows.
 
-**Column order.** The `ColumnOrder` a file declares (`TYPE_ORDER` or `IEEE_754_TOTAL_ORDER`) decides only how that file's bounds are read, never which rows match: the same values select the same rows whatever the file declares. The resolver does not read `column_orders`; its use in bounds is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md).
+**Column order.** The `ColumnOrder` a file declares (`TYPE_ORDER`, `IEEE_754_TOTAL_ORDER` or `INT96_TIMESTAMP_ORDER`) decides only how that file's bounds are read, never which rows match: the same values select the same rows whatever the file declares. The resolver does not read `column_orders`; its use in bounds is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md).
 
 Tests: `PredicatePathAgreementTest`, `FilterPredicateResolverTest`, `NullFilterSemanticsComparisonTest` (parquet-testing-runner), `TotalOrderFloatReadTest` (parquet-testing-runner), `MixedColumnOrderPruningTest`.
 
@@ -196,7 +196,7 @@ A `byte[]` literal goes through `orderingLiteral`, which names the typed literal
 | `INT96` | `STORED_BYTES` |
 | `TIMESTAMP` over `FIXED_LEN_BYTE_ARRAY(12)` | `FIXED_TIMESTAMP` (one encoding per value) |
 
-`STORED_BYTES` reads no bounds, since the column's bounds are written in the order of its values; the value comparison beside it prunes on them, which is sound because a row storing those bytes holds that value. `notEq` is the negation of the pair, so it matches a row holding the same value under another encoding.
+`STORED_BYTES` reads no bounds, since the column's bounds are written in the order of its values; the value comparison beside it prunes on them, which is sound because a row storing those bytes holds that value. The exception is an `INT96` whose file declares `INT96_TIMESTAMP_ORDER`, an order of the stored bytes themselves ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#int96-and-stored-byte-comparisons)). `notEq` is the negation of the pair, so it matches a row holding the same value under another encoding.
 
 Tests: `BinaryDecimalFilterTest`, `tools/predicate-audit`, `FilterPredicateResolverTest`.
 
@@ -281,8 +281,8 @@ Two oracles of the rule check every read path, each independent of `FilterPredic
 |---|---|---|
 | Runs | every unit-test build | PR build, on changes to the paths its README lists |
 | Stored values from | the reader, held first to `<corpus>.values.tsv.gz` from `tools/simple-datagen.py` | the fixture generator (`Columns.java`), never Hardwood's accessors |
-| Fixtures | PyArrow corpora: single, multi, dictionary, Bloom, page index, nested, `INT96`, 12-byte timestamps | parquet-java writes, plus footer rewrites (converted-type-only, dropped annotations, annotated 12-byte timestamps) |
-| Also checks | | resolver matrix, Bloom and dictionary consultation, accessor round-trip, parquet-java and DuckDB comparison |
+| Fixtures | PyArrow corpora: single, multi, dictionary, Bloom, page index, nested, `INT96` (also in `INT96_TIMESTAMP_ORDER`), 12-byte timestamps | parquet-java writes, plus footer rewrites (converted-type-only, dropped annotations, annotated 12-byte timestamps, `INT96` in `INT96_TIMESTAMP_ORDER`) |
+| Also checks | | resolver matrix, Bloom, dictionary and `INT96_TIMESTAMP_ORDER` consultation, accessor round-trip, parquet-java and DuckDB comparison |
 
 Both answer each case through the `RowReader` (default, forced onto its record-level path, and without metadata filtering) and the `ColumnReader` (with and without metadata filtering), so bounds, page index, dictionary and Bloom filter each decide a predicate that the record-level comparison decides again. The audit's `run.sh` fails when its findings differ from `tools/predicate-audit/baseline.tsv` in either direction. The baseline holds accepted engine differences, logical reads that throw on a stored value the type cannot represent, and engine read failures, each with a comment naming its cause; a disagreement between Hardwood and the rule is fixed, not baselined. `tools/predicate-audit/README.md` describes running and extending it. Neither checks `intersects` row by row, since it decides row groups: the audit reports its answers without judging them, and `GeospatialEndToEndTest` covers it.
 

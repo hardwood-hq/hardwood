@@ -1000,13 +1000,17 @@ public class RowGroupIterator implements Closeable {
                 // happen inside SequentialFetchPlan. Inline page statistics are bounds
                 // like any other, so a column whose bounds this file records in an order
                 // this reader cannot read hands over no leaves to drop pages with (#1179).
-                List<ResolvedPredicate> leaves = workItem.columnOrdinals().boundsReadability().readable(fileOrdinal)
+                // The leaves are in the reference file's ordinals, so the column's order
+                // travels with them rather than as the file's readability.
+                BoundsReadability readability = workItem.columnOrdinals().boundsReadability();
+                List<ResolvedPredicate> leaves = readability.readable(fileOrdinal)
                         ? dropLeavesByColumn.getOrDefault(originalIndex, List.of())
                         : List.of();
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows(), preloadedDictionary,
+                        perRgMaxRows, leaves, BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
+                        matchingRows, rowGroup.numRows(), preloadedDictionary,
                         shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
                         prefetchTasks);
                 continue;

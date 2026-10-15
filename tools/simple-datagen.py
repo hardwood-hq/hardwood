@@ -46,6 +46,7 @@ from parquet_annotators import (
     corrupt_data_page_offset_negative,
     falsify_int64_row_group_minmax,
     set_row_group_min_max,
+    set_column_order,
     remove_map_value_field,
     drop_dictionary_page_offset,
     drop_page_index,
@@ -6975,11 +6976,9 @@ pred_int96_table = pa.table({
                    for r in _pred_range],
                   pa.struct([('ts96', pa.timestamp('ns', tz='UTC'))])),
 }, schema=pred_int96_schema)
-for pred_name, pred_rg_size, pred_dictionary in [
-        ('predicate_int96_single', PRED_ROWS, False),
-        ('predicate_int96_multi', 100, False),
-        ('predicate_int96_dict', 100, True)]:
-    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+
+
+def _pred_write_int96(pred_path, pred_rg_size, pred_dictionary):
     pq.write_table(
         pred_int96_table,
         pred_path,
@@ -6992,6 +6991,14 @@ for pred_name, pred_rg_size, pred_dictionary in [
         write_statistics=True,
         use_deprecated_int96_timestamps=True,
     )
+
+
+for pred_name, pred_rg_size, pred_dictionary in [
+        ('predicate_int96_single', PRED_ROWS, False),
+        ('predicate_int96_multi', 100, False),
+        ('predicate_int96_dict', 100, True)]:
+    pred_path = f'core/src/test/resources/predicate/{pred_name}.parquet'
+    _pred_write_int96(pred_path, pred_rg_size, pred_dictionary)
     with open(pred_path, 'rb') as f:
         pred_raw = f.read()
     canonical = _pred_int96_canonical(_pred_ts96_ns(_PRED_NON_CANONICAL_ROW))
@@ -7009,18 +7016,40 @@ for pred_name, pred_rg_size, pred_dictionary in [
             set_row_group_min_max(pred_path, 'ts96', rg, by_bytes[0], by_bytes[-1])
 
 
-
-def _pv_int96(present):
+def _pv_int96(present, stored):
     def render(r):
         if not present(r):
             return None
-        return _pv_instant('instant', _pred_ts96_ns(r)), f'bytes:{_pv_hex(_pred_int96_stored(r))}'
+        return _pv_instant('instant', _pred_ts96_ns(r)), f'bytes:{_pv_hex(stored(r))}'
     return render
 
 
 _pv_write('predicate_int96', {
-    'ts96': _pv_int96(lambda r: not _pred_null(r)),
-    's.ts96': _pv_int96(lambda r: r % 41 != 7 and r % 43 != 9),
+    'ts96': _pv_int96(lambda r: not _pred_null(r), _pred_int96_stored),
+    's.ts96': _pv_int96(lambda r: r % 41 != 7 and r % 43 != 9, _pred_int96_stored),
+})
+
+# The same INT96 values in a corpus of their own, every one stored canonically, under
+# INT96_TIMESTAMP_ORDER (#1417) on both INT96 leaves. Its writers keep each value's nanoseconds of
+# the day within one day, which is what makes the order chronological, so this corpus holds no
+# re-encoded row. Each ten-row row group's bounds on both leaves are its earliest and latest
+# instants, with its null count, so a null-free row group can be decided in full.
+pred_path = 'core/src/test/resources/predicate/predicate_int96_ordered_multi.parquet'
+_pred_write_int96(pred_path, 10, False)
+for leaf, present in (('ts96', lambda r: not _pred_null(r)), ('s.ts96', lambda r: r % 41 != 7 and r % 43 != 9)):
+    for rg in range(PRED_ROWS // 10):
+        rows = range(rg * 10, (rg + 1) * 10)
+        held = [_pred_ts96_ns(r) for r in rows if present(r)]
+        set_row_group_min_max(pred_path, leaf, rg,
+                              _pred_int96_canonical(min(held)), _pred_int96_canonical(max(held)),
+                              null_count=len(rows) - len(held))
+for leaf in (['ts96'], ['s', 'ts96']):
+    set_column_order(pred_path, leaf, 'INT96_TIMESTAMP_ORDER')
+
+_pv_write('predicate_int96_ordered', {
+    'ts96': _pv_int96(lambda r: not _pred_null(r), lambda r: _pred_int96_canonical(_pred_ts96_ns(r))),
+    's.ts96': _pv_int96(lambda r: r % 41 != 7 and r % 43 != 9,
+                        lambda r: _pred_int96_canonical(_pred_ts96_ns(r))),
 })
 
 # TIMESTAMP over FIXED_LEN_BYTE_ARRAY(12) in a corpus of its own: a signed two's complement

@@ -206,8 +206,9 @@ class AnnotationPairingsTest {
                 .isEqualTo(ByteColumnOrder.INT96_INSTANT);
     }
 
-    /// `IEEE_754_TOTAL_ORDER` is defined for a `FLOAT`, a `DOUBLE` and a `FLOAT16` alone, the type
-    /// order is the annotation's, and an order this release does not recognize names nothing.
+    /// `IEEE_754_TOTAL_ORDER` is defined for a `FLOAT`, a `DOUBLE` and a `FLOAT16` alone,
+    /// `INT96_TIMESTAMP_ORDER` for an unannotated `INT96` alone, the type order is the
+    /// annotation's, and an order this release does not recognize names nothing.
     @Test
     void aColumnOrderNamesAnOrderOnlyOverTheColumnsItIsDefinedFor() {
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.IEEE754_TOTAL_ORDER, PhysicalType.FLOAT, null))
@@ -227,6 +228,14 @@ class AnnotationPairingsTest {
                 .isTrue();
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.TYPE_DEFINED_ORDER,
                 PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.interval())).isFalse();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.INT96_TIMESTAMP_ORDER, PhysicalType.INT96, null))
+                .isTrue();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.INT96_TIMESTAMP_ORDER, PhysicalType.INT64, null))
+                .isFalse();
+        assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.INT96_TIMESTAMP_ORDER,
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, LogicalType.timestamp(true, LogicalType.TimeUnit.NANOS)))
+                .isFalse();
+
         assertThat(AnnotationPairings.namesAnOrder(ColumnOrder.UNKNOWN, PhysicalType.INT32, null)).isFalse();
     }
 

@@ -274,6 +274,17 @@ final class Columns {
         return c;
     }
 
+    /// The `INT96` column with every value in canonical encoding, as a file declaring
+    /// `INT96_TIMESTAMP_ORDER` holds it: `derive_fixtures.py` declares the order and bounds each row
+    /// group by instant. Row 5 still holds row 6's instant.
+    static List<Col> int96Order() {
+        List<Col> c = new ArrayList<>();
+        c.add(new Col("__row__", Sem.I64, 0, 0, row -> (long) row, false));
+        c.add(new Col("zz", Sem.ZZ, 0, 0, row -> utf8("z"), false));
+        c.add(new Col("ts96", Sem.INT96, 0, 12, row -> int96(int96Nanos(row), true), true));
+        return c;
+    }
+
     /// Columns DuckDB cannot read in the same file as the flat ones.
     static List<Col> exotic() {
         List<Col> c = new ArrayList<>();

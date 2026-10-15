@@ -10,6 +10,8 @@ package dev.hardwood.internal.thrift;
 import java.nio.ByteBuffer;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType;
 import dev.hardwood.metadata.ColumnOrder;
@@ -49,10 +51,28 @@ class ColumnOrderReaderTest {
     }
 
     @Test
-    void decodesUnknownUnionMemberAsUnknown() throws Exception {
-        // field id 3 — a future union member Hardwood does not recognize
+    void decodesInt96TimestampOrder() throws Exception {
+        // field id 3 (INT96_TIMESTAMP_ORDER)
         assertThat(decode(member(3), STOP, STOP))
+                .isEqualTo(ColumnOrder.INT96_TIMESTAMP_ORDER);
+    }
+
+    @Test
+    void decodesUnknownUnionMemberAsUnknown() throws Exception {
+        // field id 4 — a future union member Hardwood does not recognize
+        assertThat(decode(member(4), STOP, STOP))
                 .isEqualTo(ColumnOrder.UNKNOWN);
+    }
+
+    /// [ColumnOrderWriter] is the inverse: every order it can write reads back equal.
+    @ParameterizedTest
+    @EnumSource(value = ColumnOrder.class, names = "UNKNOWN", mode = EnumSource.Mode.EXCLUDE)
+    void readsBackWhatTheWriterWrote(ColumnOrder order) throws Exception {
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        ColumnOrderWriter.write(writer, order);
+
+        assertThat(ColumnOrderReader.read(new ThriftCompactReader(ByteBuffer.wrap(writer.toByteArray()))))
+                .isEqualTo(order);
     }
 
     @Test

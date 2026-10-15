@@ -21,6 +21,11 @@ public enum ColumnOrder {
     TYPE_DEFINED_ORDER,
     /// The IEEE 754 total order (the `IEEE_754_TOTAL_ORDER` union member).
     IEEE754_TOTAL_ORDER,
+    /// The order of a legacy `INT96` timestamp's stored fields (the `INT96_TIMESTAMP_ORDER` union
+    /// member): the Julian day in the last four bytes compared as a signed 32-bit integer, then the
+    /// nanoseconds of the day in the first eight compared as a signed 64-bit integer, both
+    /// little-endian. It is chronological only for values whose nanoseconds lie within one day.
+    INT96_TIMESTAMP_ORDER,
     /// A `ColumnOrder` union member that this version of Hardwood does not recognize, e.g. an
     /// ordering added to the Parquet format after this release.
     UNKNOWN

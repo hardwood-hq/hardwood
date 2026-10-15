@@ -91,8 +91,9 @@ public final class AnnotationPairings {
     /// physical type and annotation have, so that the bounds recorded in it can be read.
     ///
     /// `TYPE_ORDER` is the order [AnnotationKind#namesAnOrder(LogicalType)] answers for. `IEEE_754_TOTAL_ORDER` is defined
-    /// for "columns of physical type FLOAT or DOUBLE, or logical type FLOAT16" alone, and an
-    /// order this release does not recognize names nothing it can read.
+    /// for "columns of physical type FLOAT or DOUBLE, or logical type FLOAT16" alone,
+    /// `INT96_TIMESTAMP_ORDER` for an `INT96` alone, which carries no annotation, and an order this
+    /// release does not recognize names nothing it can read.
     ///
     /// @param order the column's entry, [ColumnOrder#TYPE_DEFINED_ORDER] where the file has none
     public static boolean namesAnOrder(ColumnOrder order, PhysicalType type, LogicalType annotation) {
@@ -101,6 +102,7 @@ public final class AnnotationPairings {
             case IEEE754_TOTAL_ORDER -> annotation == null
                     ? type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
                     : annotation instanceof LogicalType.Float16Type;
+            case INT96_TIMESTAMP_ORDER -> type == PhysicalType.INT96 && annotation == null;
             case UNKNOWN -> false;
         };
     }

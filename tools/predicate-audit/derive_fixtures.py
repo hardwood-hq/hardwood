@@ -12,6 +12,8 @@ Run after `PredicateAudit fixtures <dir>`, with the fixture directory as the onl
 - legacy_*: flat_* with every modern logicalType removed where a converted_type is set
 - dropped_*: flat_* with annotations the physical type cannot carry
 - ts12_*: the FIXED_LEN_BYTE_ARRAY(12) columns annotated TIMESTAMP, with bounds in the order of the values
+- int96order_*: the INT96 column declared in INT96_TIMESTAMP_ORDER, with bounds in that order;
+  int96outofday_multi: int96order_multi with each bound holding its instant under nanoseconds past one day
 - zerobloom_bloom: flat_bloom with every Bloom filter bitset zeroed
 - unindexed_*: flat_* with the Page Index of `__row__` unlinked, so it is read without one while the predicate columns
   are page-filtered
@@ -111,6 +113,58 @@ def ts12(directory):
         annotators._write_parquet_footer(path, before, footer)
 
 
+NANOS_PER_DAY = 86_400_000_000_000
+JULIAN_EPOCH_DAY = 2_440_588
+
+
+def int96(epoch_nanos, canonical=True):
+    """The twelve bytes of an INT96 instant: nanoseconds of the day, then the Julian day. A non-canonical
+    encoding takes the day before and a nanoseconds-of-day field one day longer."""
+    day, nanos = divmod(epoch_nanos, NANOS_PER_DAY)
+    if not canonical:
+        day, nanos = day - 1, nanos + NANOS_PER_DAY
+    return nanos.to_bytes(8, 'little', signed=True) + (day + JULIAN_EPOCH_DAY).to_bytes(4, 'little', signed=True)
+
+
+def int96_order(directory):
+    """Declares the ts96 column in INT96_TIMESTAMP_ORDER and gives each row group bounds in that order.
+
+    parquet-java up to 1.18.1 writes INT96 in the type-defined order, whose bounds and page index are not
+    the declared order's. The chunk bounds are replaced by the earliest and latest instant of the row group,
+    canonically encoded, with the null count, and the page index is unlinked. int96outofday_multi then stores each bound's instant
+    with nanoseconds past one day, which a reader must not prune by.
+    """
+    for layout in LAYOUTS:
+        path = str(directory / f'int96order_{layout}.parquet')
+        stored = pq.ParquetFile(path)
+        bounds = []
+        for row_group in range(stored.num_row_groups):
+            instants = stored.read_row_group(row_group, columns=['ts96']).column('ts96').cast(pa.int64()).to_pylist()
+            present = [v for v in instants if v is not None]
+            bounds.append((min(present), max(present), len(instants) - len(present)))
+        annotators.set_column_order(path, ['ts96'], 'INT96_TIMESTAMP_ORDER')
+        _bound_int96(path, path, bounds, canonical=True)
+        if layout == 'multi':
+            _bound_int96(path, str(directory / 'int96outofday_multi.parquet'), bounds, canonical=False)
+
+
+def _bound_int96(source, target, bounds, canonical):
+    before, footer = annotators._read_parquet_footer(source)
+    for row_group, (low, high, nulls) in zip(footer.row_groups, bounds):
+        for chunk in row_group.columns:
+            if chunk.meta_data.path_in_schema != ['ts96']:
+                continue
+            if chunk.meta_data.statistics is None:
+                chunk.meta_data.statistics = P.Statistics()
+            statistics = chunk.meta_data.statistics
+            statistics.min = statistics.max = None
+            statistics.min_value = int96(low, canonical)
+            statistics.max_value = int96(high, canonical)
+            statistics.null_count = nulls
+            chunk.column_index_offset = chunk.column_index_length = None
+    annotators._write_parquet_footer(target, before, footer)
+
+
 def zeroed_bloom(directory):
     source = directory / 'flat_bloom.parquet'
     data = bytearray(source.read_bytes())
@@ -161,6 +215,7 @@ if __name__ == '__main__':
     legacy(target)
     dropped(target)
     ts12(target)
+    int96_order(target)
     zeroed_bloom(target)
     unindexed(target)
     shapes(target)

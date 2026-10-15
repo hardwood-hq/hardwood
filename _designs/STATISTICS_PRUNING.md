@@ -49,18 +49,19 @@ Tests: `UnitStatsTest`, `PageDropPredicatesTest`.
 
 ### Min/max
 
-`MinMaxStats` holds a unit's bounds decoded once, as the primitives the comparisons use: `IntStats`, `LongStats`, `UnsignedIntStats`, `UnsignedLongStats`, `BooleanStats`, `FloatStats` (which also carries `FLOAT16`), `DoubleStats` and `BinaryStats`. `MinMaxStats.of(Statistics, …)` sources a chunk or inline page, `MinMaxStats.ofPage(ColumnIndex, …)` a column-index page.
+`MinMaxStats` holds a unit's bounds decoded once, as the primitives the comparisons use: `IntStats`, `LongStats`, `UnsignedIntStats`, `UnsignedLongStats`, `BooleanStats`, `FloatStats` (which also carries `FLOAT16`), `DoubleStats`, `BinaryStats` and `Int96Stats`, which carries an `INT96` column under `INT96_TIMESTAMP_ORDER`. `MinMaxStats.of(Statistics, …)` sources a chunk or inline page, `MinMaxStats.ofPage(ColumnIndex, …)` a column-index page.
 
 A pair the filter layer cannot compare against never becomes a typed variant. It becomes `NoBounds`, which drops nothing and promises nothing, and carries the reason:
 
 | Reason | When |
 |---|---|
-| none | the file wrote no pair, or only one half; the leaf reads no bounds; an `INT96` column; a `STORED_BYTES` comparison |
+| none | the file wrote no pair, or only one half; the leaf reads no bounds; an `INT96` column under `TYPE_ORDER`; a `STORED_BYTES` comparison on any other column |
 | `DEPRECATED_SORT_ORDER` | only the deprecated `min`/`max` fields (1, 2) are present, which compare signed |
 | `UNKNOWN_SORT_ORDER` | `BoundsReadability` marks the column unreadable (see below) |
 | `NOT_A_NUMBER` | a floating-point bound is `NaN` |
 | `INVERTED` | `min` sorts above `max` in the column's order |
-| `NOT_THE_COLUMN_WIDTH` | a `FIXED_LEN_BYTE_ARRAY(12)` timestamp bound of another width |
+| `NOT_THE_COLUMN_WIDTH` | a `FIXED_LEN_BYTE_ARRAY(12)` timestamp or `INT96` bound of another width |
+| `NANOS_OUTSIDE_A_DAY` | an `INT96` bound whose nanoseconds of the day lie outside `[0, 1 day)` |
 
 A discard is reported through `reportIfDiscarded`. A pair discarded for a fault of its own is reported per unit, naming the file, row group, column and page. `UNKNOWN_SORT_ORDER` holds for the column throughout the file, so it is reported once per column and read, naming the file and column (see below). Deciding usability where the bounds are sourced keeps every comparator free of the question.
 
@@ -159,14 +160,14 @@ Tests: `FilterDecisionTest`, `UnitStatsTest`, `RowGroupDecideTest`.
 Comparing a literal against `min`/`max` is sound only in the order the bounds were written in. `BoundsReadability` answers, per leaf ordinal, whether that order is known. A column's bounds are unreadable when:
 
 - its annotation names no order: `INTERVAL`, `NULL`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST`, `MAP`;
-- the file's `column_orders` entry is a union member this build does not recognize (`ColumnOrder.UNKNOWN`), which `parquet.thrift` says to treat as "ignore min and max", or `IEEE_754_TOTAL_ORDER` on a column other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for;
+- the file's `column_orders` entry is a union member this build does not recognize (`ColumnOrder.UNKNOWN`), which `parquet.thrift` says to treat as "ignore min and max", `IEEE_754_TOTAL_ORDER` on a column other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for, or `INT96_TIMESTAMP_ORDER` on a column other than an `INT96`;
 - the reader dropped the column's annotation, because this build does not recognize it or the physical type cannot carry it. The column reads as its physical type, but the writer ordered the bounds by the annotation.
 
 Readability is a property of the file that wrote the bounds. `BoundsReadability.of(schema, footer)` is built once per file when the file is prepared (`FileMetadataCache`), indexed by that file's own leaf ordinals, and carried on `FileColumnOrdinals` beside the predicate translated to the same ordinals. An ordinal outside the file's schema is a wiring error and throws `IllegalStateException`.
 
 The readability also records which unreadable columns have been reported. `claimReport` grants one report per column, so an opened file names each unreadable column once, however many row groups and pages its reads prune.
 
-`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` then passes `BoundsReadability.ALL`. Untested.
+`MinMaxStats` consults readability after establishing that a pair exists and before decoding it, so an unordered column whose writer recorded no bounds reports no discard. Only the min/max half is withheld on the chunk and column-index paths: the null count needs no order, and bloom filters and dictionaries test exact stored values. The inline page path withholds every AND-necessary leaf of such a column instead (`RowGroupIterator` hands `SequentialFetchPlan` an empty list), and `PageDropPredicates.canDropPage` reads the remaining leaves as readable, under the column's `INT96` order where it has one ([INT96 and stored-byte comparisons](#int96-and-stored-byte-comparisons)). Untested.
 
 Whether an annotation names an order at all is `AnnotationKind.namesAnOrder`, a fact of the annotation's constant ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#annotation-model)); `AnnotationPairings.namesAnOrder`, which takes the file's `ColumnOrder` and the physical type too, decides the first and second conditions above together. Bounds readability here reads it, as do the writer's `StatisticsOrder.supportsBounds` and `FilterPredicateResolver`'s refusal of ordered operators. A column whose values have no order has no bounds worth recording or trusting, which is why one answer serves all three.
 
@@ -176,9 +177,9 @@ Tests: `UnreadableSortOrderTest`, `UnitStatsTest`.
 
 ### Column order and signed zeros
 
-`FileMetaData.column_orders` names each leaf's order as `TYPE_DEFINED_ORDER` or `IEEE754_TOTAL_ORDER`; an absent list means the type-defined order throughout. The order describes the statistics only. Matchers compare floating-point values with `Float.compare` / `Double.compare` whatever a file declares, so the order decides how bounds are read, never which rows match.
+`FileMetaData.column_orders` names each leaf's order as `TYPE_DEFINED_ORDER`, `IEEE754_TOTAL_ORDER` or `INT96_TIMESTAMP_ORDER`; an absent list means the type-defined order throughout. The order describes the statistics only. Matchers compare floating-point values with `Float.compare` / `Double.compare` whatever a file declares, so the order decides how bounds are read, never which rows match.
 
-The two orders differ for pruning at `NaN` and at `±0`. Under the type-defined order the spec leaves zeroes interchangeable: a `+0` minimum may hide `-0`, a `-0` maximum may hide `+0`. `StatisticsFilterSupport.canDropFloat`, `canDropDouble` and the `IN` variants widen a zero minimum to `-0.0` and a zero maximum to `+0.0` before comparing, and `MinMaxStats` applies the same widening before its inversion test so that `(+0, -0)` is not read as inverted.
+For floating-point columns, `TYPE_DEFINED_ORDER` and `IEEE754_TOTAL_ORDER` differ for pruning at `NaN` and at `±0`. Under the type-defined order the spec leaves zeroes interchangeable: a `+0` minimum may hide `-0`, a `-0` maximum may hide `+0`. `StatisticsFilterSupport.canDropFloat`, `canDropDouble` and the `IN` variants widen a zero minimum to `-0.0` and a zero maximum to `+0.0` before comparing, and `MinMaxStats` applies the same widening before its inversion test so that `(+0, -0)` is not read as inverted.
 
 The widening applies under **every** declared order. A predicate is resolved once per read and applied to every file's row groups, and the files of one read may declare different orders (PyArrow writes the type-defined order, parquet-java from 1.18.0 the total order for floating-point columns); a flag taken from one file would skip the widening on a sibling that needs it. On a total-order column the widening costs at most a unit the record filter then empties, never a matching row.
 
@@ -203,9 +204,22 @@ Tests: `NaNStatisticsFilterTest`, `PageFilterEvaluatorTest`.
 
 ### INT96 and stored-byte comparisons
 
-`parquet.thrift` leaves the type-defined order of `INT96` undefined, and the `INT96_TIMESTAMP_ORDER` it adds (day, then nanoseconds) does not follow the instant, since the nanoseconds of the day are not bounded by one day. `INT96` bounds are never read and nothing is reported as discarded. The same holds for a `STORED_BYTES` comparison, which tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md#per-column-type).
+`parquet.thrift` leaves the type-defined order of `INT96` undefined, so under `TYPE_ORDER` an `INT96` column's bounds are never read and nothing is reported as discarded.
 
-Tests: `UnreadableSortOrderTest`.
+A file may declare `INT96_TIMESTAMP_ORDER` instead, which `BoundsReadability.int96TimestampOrder` carries per column: the Julian day, then the nanoseconds of the day, each compared signed as stored (`BinaryComparator.compareInt96TimestampOrder`). `parquet.thrift` calls the column "ordered chronologically", and day-then-nanoseconds is chronological exactly where every value's nanoseconds lie in `[0, 1 day)`. A file declaring the order therefore vouches for that, and `MinMaxStats.Int96Stats` reads its bounds on that promise, as every column's bounds are read on its writer's:
+
+| Comparison | Literal compared in |
+|---|---|
+| `INT96_INSTANT` (`Instant`, every operator) | the instant (`compareInt96`), on any span of days |
+| `STORED_BYTES` (`byte[]` `eq`, `notEq`, `in`) | the bounds' own order, in which two values are equal exactly when their bytes are |
+
+A pair whose own nanoseconds lie outside `[0, 1 day)` shows the promise broken and is discarded (`NANOS_OUTSIDE_A_DAY`), reported as any faulty pair is. A value inside the unit that breaks it cannot be seen from the bounds: such a file can lose rows the way a file whose `INT64` maximum sits below a value it holds does. Decoding stays lenient regardless: a value with nanoseconds past one day reads as the instant it encodes.
+
+Inline page statistics are decided by leaves numbered in the reference file's ordinals rather than the page's file's, so `RowGroupIterator` hands `SequentialFetchPlan` the column's order alone (`BoundsReadability.ofOneColumn`).
+
+On any other column a `STORED_BYTES` comparison reads no bounds and reports nothing, since it tests equality on raw bytes of a column whose bounds are in value order. Type-specific comparison rules are in [PREDICATE_MODEL.md](PREDICATE_MODEL.md#per-column-type).
+
+Tests: `Int96TimestampOrderPruningTest`, `UnreadableSortOrderTest`, `PageDropPredicatesTest`, `PredicatePathAgreementTest` and `tools/predicate-audit` (row-group bounds), `Int96TimestampOrderTest` in parquet-testing-runner (row-group bounds and the column index of a parquet-java file, one page). The inline page path reading `INT96` bounds, and a column index of several pages, are untested end to end.
 
 ## Statistic sources
 

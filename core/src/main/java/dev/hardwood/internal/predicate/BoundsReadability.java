@@ -28,13 +28,19 @@ import dev.hardwood.schema.FileSchema;
 ///   `GEOGRAPHY`, `VARIANT`, `LIST` and `MAP`, and asks that `INTERVAL` record no bounds at all,
 ///   and a `NULL` column stores no values to order;
 /// - the file names an order this build does not recognize, which `parquet.thrift` says to treat
-///   as a column whose `min` / `max` are to be ignored, or `IEEE_754_TOTAL_ORDER` on a column
-///   other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for;
+///   as a column whose `min` / `max` are to be ignored, `IEEE_754_TOTAL_ORDER` on a column other
+///   than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for, or
+///   `INT96_TIMESTAMP_ORDER` on a column other than an `INT96`;
 /// - the reader dropped the column's annotation, either because this build does not recognize
 ///   it or because the column's physical type cannot carry it. The column reads as its physical
 ///   type, but its writer recorded the bounds in the order of the annotation, which the
 ///   physical type's order need not agree with. The "Unsupported Logical Types" section of
 ///   `LogicalTypes.md` has readers ignore the column order of such a column.
+///
+/// A readable `INT96` column's bounds are in one order only, `INT96_TIMESTAMP_ORDER`, which is
+/// also carried here: under `TYPE_ORDER` the format leaves an `INT96`'s order undefined, so only a
+/// column declaring the chronological order has bounds a predicate can read
+/// ([#int96TimestampOrder]).
 ///
 /// Bloom filters and dictionaries are unaffected: both test exact stored values, which does not
 /// depend on how those values order.
@@ -42,17 +48,29 @@ public final class BoundsReadability {
 
     /// Every column readable, for a caller whose leaves were already checked against their file —
     /// [PageDropPredicates#canDropPage], whose leaves are withheld per file before they reach
-    /// it — and for the pruning helpers' own tests.
-    public static final BoundsReadability ALL = new BoundsReadability(null);
+    /// it — and for the pruning helpers' own tests. It names no column's order, so no `INT96`
+    /// column's bounds are read under it.
+    public static final BoundsReadability ALL = new BoundsReadability(null, null, false);
+
+    /// [#ALL], with every `INT96` column's bounds in `INT96_TIMESTAMP_ORDER`.
+    private static final BoundsReadability ALL_IN_INT96_TIMESTAMP_ORDER = new BoundsReadability(null, null, true);
 
     /// Per leaf ordinal, or `null` for every column readable.
     private final boolean[] readable;
+    /// Per leaf ordinal, whether the column is an `INT96` whose bounds are recorded in
+    /// `INT96_TIMESTAMP_ORDER`; `null` where [#everyInt96InTimestampOrder] answers for every
+    /// column.
+    private final boolean[] int96TimestampOrder;
+    /// The answer of [#int96TimestampOrder] where no per-column answer is held.
+    private final boolean everyInt96InTimestampOrder;
     /// Per leaf ordinal, whether the discard of the column's bounds has been reported; `null`
     /// where every column is readable and so nothing is discarded.
     private final boolean[] reported;
 
-    private BoundsReadability(boolean[] readable) {
+    private BoundsReadability(boolean[] readable, boolean[] int96TimestampOrder, boolean everyInt96InTimestampOrder) {
         this.readable = readable;
+        this.int96TimestampOrder = int96TimestampOrder;
+        this.everyInt96InTimestampOrder = everyInt96InTimestampOrder;
         this.reported = readable == null ? null : new boolean[readable.length];
     }
 
@@ -69,6 +87,17 @@ public final class BoundsReadability {
                     + readable.length + " leaf columns of this file");
         }
         return readable[columnIndex];
+    }
+
+    /// Whether the leaf column at `columnIndex` is an `INT96` whose bounds the file records in
+    /// `INT96_TIMESTAMP_ORDER`, the one order its bounds can be read in.
+    ///
+    /// @throws IllegalStateException if `columnIndex` is not one of the file's leaf columns
+    public boolean int96TimestampOrder(int columnIndex) {
+        if (!readable(columnIndex)) {
+            return false;
+        }
+        return int96TimestampOrder == null ? everyInt96InTimestampOrder : int96TimestampOrder[columnIndex];
     }
 
     /// Whether the discard of the unreadable column at `columnIndex` is yet to be reported:
@@ -97,6 +126,17 @@ public final class BoundsReadability {
             reported[columnIndex] = true;
             return true;
         }
+    }
+
+    /// [#ALL] for the leaves of one readable column, which decide pages in a numbering other than
+    /// the file's: such a column's `INT96` bounds are read where its file records them in
+    /// `INT96_TIMESTAMP_ORDER`, which the caller takes from the file's own readability.
+    ///
+    /// @param int96TimestampOrder the file's [#int96TimestampOrder] for the column; `true` only
+    ///        for an `INT96` column, since a leaf of any other column compared under it would be
+    ///        decided in an `INT96` order
+    public static BoundsReadability ofOneColumn(boolean int96TimestampOrder) {
+        return int96TimestampOrder ? ALL_IN_INT96_TIMESTAMP_ORDER : ALL;
     }
 
     /// The readability of every leaf of one file, indexed by that file's own leaf ordinals.
@@ -130,13 +170,15 @@ public final class BoundsReadability {
     static BoundsReadability of(FileSchema schema, List<ColumnOrder> columnOrders,
             IntPredicate annotationDropped) {
         boolean[] readable = new boolean[schema.getColumnCount()];
+        boolean[] int96TimestampOrder = new boolean[readable.length];
         for (int i = 0; i < readable.length; i++) {
             ColumnSchema column = schema.getColumn(i);
             ColumnOrder order = columnOrders.size() <= i ? ColumnOrder.TYPE_DEFINED_ORDER : columnOrders.get(i);
             readable[i] = !annotationDropped.test(i)
                     && AnnotationPairings.namesAnOrder(order, column.type(), column.logicalType());
+            int96TimestampOrder[i] = readable[i] && order == ColumnOrder.INT96_TIMESTAMP_ORDER;
         }
-        return new BoundsReadability(readable);
+        return new BoundsReadability(readable, int96TimestampOrder, false);
     }
 
 }

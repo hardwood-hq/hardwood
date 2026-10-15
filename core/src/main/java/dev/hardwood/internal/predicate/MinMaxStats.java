@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.util.Comparator;
+
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.ColumnIndex;
@@ -48,8 +50,14 @@ sealed interface MinMaxStats {
     /// pruning directions at once (#1172).
     String INVERTED = "the minimum sorts above the maximum";
 
-    /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` bound of another width is no value the column
-    /// stores, so there is no position in the column's order to read it at.
+    /// An `INT96` bound under `INT96_TIMESTAMP_ORDER` holds nanoseconds of the day below zero or
+    /// past one day, so the file breaks the chronological order it declares and its bounds bound
+    /// no instant.
+    String NANOS_OUTSIDE_A_DAY =
+            "one of them holds nanoseconds of the day outside one day, which INT96_TIMESTAMP_ORDER does not order";
+
+    /// A `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` or `INT96` bound of another width is no value the
+    /// column stores, so there is no position in the column's order to read it at.
     String NOT_THE_COLUMN_WIDTH = "one of them is not the width of the column's values";
 
     /// The column's annotation names no ordering, the file names one this build does not
@@ -200,8 +208,10 @@ sealed interface MinMaxStats {
                     StatisticsDecoder.decodeFloat16(min), StatisticsDecoder.decodeFloat16(max), nanFree);
             case ResolvedPredicate.DoublePredicate p -> DoubleStats.of(
                     StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max), nanFree);
-            case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.comparison());
-            case ResolvedPredicate.BinaryInPredicate p -> BinaryStats.of(min, max, p.comparison());
+            case ResolvedPredicate.BinaryPredicate p -> binary(min, max, p.comparison(),
+                    readability.int96TimestampOrder(p.columnIndex()));
+            case ResolvedPredicate.BinaryInPredicate p -> binary(min, max, p.comparison(),
+                    readability.int96TimestampOrder(p.columnIndex()));
             // An IN list reads the bounds of its column's own width, so it lands on the same
             // variant the comparison of that width does.
             case ResolvedPredicate.Float16InPredicate p -> FloatStats.of(
@@ -220,6 +230,15 @@ sealed interface MinMaxStats {
             case ResolvedPredicate.And ignored -> new NoBounds(null);
             case ResolvedPredicate.Or ignored -> new NoBounds(null);
         };
+    }
+
+    /// Byte-string bounds, or `INT96` ones where the file records them in the one order they can
+    /// be read in.
+    private static MinMaxStats binary(byte[] min, byte[] max, Comparison comparison,
+            boolean int96TimestampOrder) {
+        return int96TimestampOrder
+                ? Int96Stats.of(min, max, comparison)
+                : BinaryStats.of(min, max, comparison);
     }
 
     /// Reports a leaf reaching bounds of a width that cannot decide it. A unit is decoded for
@@ -527,12 +546,11 @@ sealed interface MinMaxStats {
             // Which comparisons read bounds at all, answered for every constant so that one added
             // later states its own answer rather than inheriting "readable".
             //
-            // An INT96's type-defined order is one parquet.thrift leaves undefined, and no order
-            // its bounds are recorded in follows the instant on every value, since the nanoseconds
-            // of the day are not bounded by one day. Bounds compared as the column's stored bytes
-            // say nothing about the order of its values, which the value's own comparison, paired
-            // with this one by the resolver, reads instead. Neither is a flaw in the file, so
-            // nothing is reported as discarded.
+            // An INT96's type-defined order is one parquet.thrift leaves undefined; bounds in
+            // INT96_TIMESTAMP_ORDER, the one order it does define, are read by Int96Stats. Bounds
+            // compared as the column's stored bytes say nothing about the order of its values,
+            // which the value's own comparison, paired with this one by the resolver, reads
+            // instead. Neither is a flaw in the file, so nothing is reported as discarded.
             boolean readsBounds = switch (comparison) {
                 case BYTE_STRING, FIXED_DECIMAL, VARIABLE_DECIMAL, FIXED_TIMESTAMP -> true;
                 case INT96_INSTANT, STORED_BYTES -> false;
@@ -576,6 +594,62 @@ sealed interface MinMaxStats {
 
         private int compare(byte[] left, byte[] right) {
             return comparison.compare(left, right);
+        }
+    }
+
+    /// `INT96` bounds recorded in `INT96_TIMESTAMP_ORDER`: the Julian day, then the nanoseconds of
+    /// the day, each compared signed as stored ([BinaryComparator#compareInt96TimestampOrder]).
+    ///
+    /// `parquet.thrift` calls the order chronological, which it is where every value's
+    /// nanoseconds lie within one day, so a file declaring it vouches for that; parquet-java's
+    /// writer refuses a value outside. The bounds are read on that promise, as every column's
+    /// bounds are read on its writer's: [Comparison#INT96_INSTANT] compares a literal by instant
+    /// ([BinaryComparator#compareInt96]), and [Comparison#STORED_BYTES] compares the literal's
+    /// bytes in the bounds' own order, in which two values are equal exactly when their bytes are.
+    /// A pair whose own nanoseconds lie outside one day breaks the promise where it can be seen,
+    /// and is discarded.
+    ///
+    /// @param order the comparison the literal is compared to the bounds in
+    record Int96Stats(byte[] min, byte[] max, Comparator<byte[]> order) implements MinMaxStats {
+
+        static MinMaxStats of(byte[] min, byte[] max, Comparison comparison) {
+            if (min.length != FixedWidths.INT96 || max.length != FixedWidths.INT96) {
+                return new NoBounds(NOT_THE_COLUMN_WIDTH);
+            }
+            if (!BinaryComparator.int96NanosWithinDay(min) || !BinaryComparator.int96NanosWithinDay(max)) {
+                return new NoBounds(NANOS_OUTSIDE_A_DAY);
+            }
+            if (BinaryComparator.compareInt96TimestampOrder(min, max) > 0) {
+                return new NoBounds(INVERTED);
+            }
+            return switch (comparison) {
+                case STORED_BYTES -> new Int96Stats(min, max, BinaryComparator::compareInt96TimestampOrder);
+                case INT96_INSTANT -> new Int96Stats(min, max, BinaryComparator::compareInt96);
+                case BYTE_STRING, FIXED_DECIMAL, VARIABLE_DECIMAL, FIXED_TIMESTAMP ->
+                        throw new IllegalArgumentException("An INT96 column is not compared as " + comparison);
+            };
+        }
+
+        @Override
+        public boolean canDrop(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.canDropCompared(
+                        p.op(), order.compare(p.value(), min), order.compare(p.value(), max), order.compare(min, max));
+                case ResolvedPredicate.BinaryInPredicate p ->
+                        StatisticsFilterSupport.canDropBinaryIn(p.values(), min, max, order);
+                default -> throw wrongWidth("INT96", leaf);
+            };
+        }
+
+        @Override
+        public boolean alwaysMatches(ResolvedPredicate leaf) {
+            return switch (leaf) {
+                case ResolvedPredicate.BinaryPredicate p -> StatisticsFilterSupport.alwaysMatchesCompared(
+                        p.op(), order.compare(p.value(), min), order.compare(p.value(), max), order.compare(min, max));
+                case ResolvedPredicate.BinaryInPredicate p ->
+                        StatisticsFilterSupport.alwaysMatchesBinaryIn(p.values(), min, max, order);
+                default -> throw wrongWidth("INT96", leaf);
+            };
         }
     }
 }

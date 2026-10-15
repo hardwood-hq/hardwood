@@ -84,9 +84,9 @@ class PageDropPredicatesTest {
     @Test
     void noLeavesKeepThePage() {
         assertThat(PageDropPredicates.canDropPage(List.of(), stats(intBytes(20), intBytes(30)),
-                ROWS, PAGE)).isFalse();
+                ROWS, BoundsReadability.ALL, PAGE)).isFalse();
         assertThat(PageDropPredicates.canDropPage(null, stats(intBytes(20), intBytes(30)),
-                ROWS, PAGE)).isFalse();
+                ROWS, BoundsReadability.ALL, PAGE)).isFalse();
     }
 
     @Test
@@ -97,7 +97,7 @@ class PageDropPredicatesTest {
                 new ResolvedPredicate.IntPredicate(COLUMN, Operator.GT, 25));
 
         assertThat(PageDropPredicates.canDropPage(leaves, stats(intBytes(10), intBytes(20)),
-                ROWS, PAGE)).isTrue();
+                ROWS, BoundsReadability.ALL, PAGE)).isTrue();
     }
 
     // ==================== A page null on every row ====================
@@ -130,10 +130,10 @@ class PageDropPredicatesTest {
         Statistics allNull = new Statistics(null, null, (long) ROWS, null, false);
 
         assertThat(PageDropPredicates.canDropPage(List.of(intEq(15)), allNull,
-                PageDropPredicates.UNKNOWN_ROW_COUNT, PAGE)).isFalse();
+                PageDropPredicates.UNKNOWN_ROW_COUNT, BoundsReadability.ALL, PAGE)).isFalse();
         assertThat(PageDropPredicates.canDropPage(
                 List.of(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1)), allNull,
-                PageDropPredicates.UNKNOWN_ROW_COUNT, PAGE)).isFalse();
+                PageDropPredicates.UNKNOWN_ROW_COUNT, BoundsReadability.ALL, PAGE)).isFalse();
     }
 
     @Test
@@ -146,10 +146,26 @@ class PageDropPredicatesTest {
                 .isFalse();
     }
 
+    // ==================== An INT96 column ====================
+
+    /// An `INT96` page's bounds are read only where its column's file records them in
+    /// `INT96_TIMESTAMP_ORDER`, which the readability handed over says.
+    @Test
+    void anInt96PageDropsOnlyUnderTheTimestampOrder() {
+        ResolvedPredicate storedBytes = new ResolvedPredicate.BinaryPredicate(COLUMN, Operator.EQ,
+                int96(2_460_587, 0L), ResolvedPredicate.BinaryPredicate.Comparison.STORED_BYTES);
+        Statistics oneDay = stats(int96(2_460_585, 0L), int96(2_460_585, 1_000L));
+
+        assertThat(PageDropPredicates.canDropPage(List.of(storedBytes), oneDay, ROWS,
+                BoundsReadability.ofOneColumn(true), PAGE)).isTrue();
+        assertThat(PageDropPredicates.canDropPage(List.of(storedBytes), oneDay, ROWS,
+                BoundsReadability.ofOneColumn(false), PAGE)).isFalse();
+    }
+
     // ==================== Fixtures ====================
 
     private static boolean canDropPage(ResolvedPredicate leaf, Statistics stats) {
-        return PageDropPredicates.canDropPage(List.of(leaf), stats, ROWS, PAGE);
+        return PageDropPredicates.canDropPage(List.of(leaf), stats, ROWS, BoundsReadability.ALL, PAGE);
     }
 
     private static ResolvedPredicate intEq(int value) {
@@ -158,6 +174,10 @@ class PageDropPredicatesTest {
 
     private static Statistics stats(byte[] min, byte[] max) {
         return new Statistics(min, max, 0L, null, false);
+    }
+
+    private static byte[] int96(int julianDay, long nanosOfDay) {
+        return ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putLong(nanosOfDay).putInt(julianDay).array();
     }
 
     private static byte[] intBytes(int value) {

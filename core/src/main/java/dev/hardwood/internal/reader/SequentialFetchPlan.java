@@ -19,6 +19,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.LogContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -124,6 +125,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final int rowGroupIndex;
     private final String fileName;
     private final List<ResolvedPredicate> dropLeaves;
+    /// The readability [#dropLeaves] decide inline page statistics under.
+    private final BoundsReadability dropReadability;
     /// Row ranges this column should keep. [RowRanges#ALL] means no per-page
     /// row mask is applied; a non-trivial range is paired with [#rowGroupRowCount]
     /// so the iterator can compute `pageLastRow` for the final page.
@@ -152,7 +155,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  int chunkSize, ColumnSchema columnSchema,
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
                                  long maxRows, int rowGroupIndex, String fileName,
-                                 List<ResolvedPredicate> dropLeaves,
+                                 List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                  RowRanges matchingRows, long rowGroupRowCount,
                                  Dictionary preloadedDictionary, PrefetchTasks prefetchTasks) {
         if (matchingRows == null) {
@@ -174,6 +177,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.dropLeaves = dropLeaves;
+        this.dropReadability = dropReadability;
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
@@ -318,9 +322,12 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       List<ResolvedPredicate> dropLeaves,
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, matchingRows, rowGroupRowCount, null, 0, new PrefetchTasks());
+                maxRows, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount, null, 0,
+                new PrefetchTasks());
     }
 
+    /// @param dropReadability the readability `dropLeaves` decide inline page statistics under
+    ///        (see [PageDropPredicates#canDropPage])
     /// @param preloadedDictionary the column's dictionary if pruning has read it, which the plan
     ///        decodes with instead of fetching and parsing the dictionary page again; `null`
     ///        otherwise
@@ -331,7 +338,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves,
+                                      List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                       RowRanges matchingRows, long rowGroupRowCount,
                                       Dictionary preloadedDictionary, long preloadedDictionaryEnd,
                                       PrefetchTasks prefetchTasks) {
@@ -357,7 +364,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
-                dropLeaves == null ? List.of() : dropLeaves,
+                dropLeaves == null ? List.of() : dropLeaves, dropReadability,
                 matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
                 preloadedDictionary, prefetchTasks);
     }
@@ -888,7 +895,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     rowCount = PageDropPredicates.UNKNOWN_ROW_COUNT;
                 }
             }
-            return PageDropPredicates.canDropPage(dropLeaves, inline, rowCount,
+            return PageDropPredicates.canDropPage(dropLeaves, inline, rowCount, dropReadability,
                     logContext.withPageIndex(currentPage));
         }
 

@@ -31,6 +31,9 @@ import jdk.jfr.consumer.RecordingStream;
 ///   A comparison that is not byte-exact must leave the filter unread.
 /// - **Dictionaries:** row-group decisions recorded through the `dev.hardwood.RowGroupFilter` and
 ///   `dev.hardwood.RowGroupDictionaryFilter` JFR events on `lowcard_dict`. An absent literal inside the bounds can only be dropped by the dictionary.
+/// - **`INT96` bounds:** row-group decisions on `int96order_multi`, whose bounds are recorded in
+///   `INT96_TIMESTAMP_ORDER`, and on `int96outofday_multi`, whose bounds hold the same instants
+///   with nanoseconds past one day. The first prunes; the second must not.
 ///
 /// Every check states the outcome the rule expects, and a check whose outcome differs is counted.
 final class ConsultationChecks {
@@ -49,6 +52,11 @@ final class ConsultationChecks {
     private static final String ALL_KEPT = "kept 3 of 3";
     private static final String NONE_KEPT = "kept 0 of 3";
 
+    /// `int96order_multi` and `int96outofday_multi` hold six row groups of 100 rows each, in instant order.
+    private static final String ONE_OF_SIX_KEPT = "kept 1 of 6";
+    private static final String TWO_OF_SIX_KEPT = "kept 2 of 6";
+    private static final String SIX_OF_SIX_KEPT = "kept 6 of 6";
+
     private ConsultationChecks() {
     }
 
@@ -58,6 +66,8 @@ final class ConsultationChecks {
         lines.add("check\tpredicate\texpected\tresult\tverdict");
         List<Check> bloomChecks = bloomChecks();
         List<Check> dictionaryChecks = dictionaryChecks();
+        List<Check> int96Checks = int96OrderChecks();
+        List<Check> outOfDayChecks = int96OutOfDayChecks();
         for (Check check : bloomChecks) {
             long intact = count(fixtures.resolve("flat_bloom.parquet"), check.filter());
             long zeroed = count(fixtures.resolve("zerobloom_bloom.parquet"), check.filter());
@@ -66,15 +76,27 @@ final class ConsultationChecks {
                     "rows " + intact + " with the filter intact, " + zeroed + " with it zeroed: " + outcome);
         }
         for (Check check : dictionaryChecks) {
-            RowGroupTally tally = new RowGroupTally();
-            long rows = rowGroupDecisions(fixtures.resolve("lowcard_dict.parquet"), check.filter(), tally);
-            String outcome = tally.toString();
-            record(lines, unexpected, "dictionary", check, outcome, "rows " + rows + ", row groups " + outcome);
+            rowGroupCheck(lines, unexpected, "dictionary", check, fixtures.resolve("lowcard_dict.parquet"));
+        }
+        for (Check check : int96Checks) {
+            rowGroupCheck(lines, unexpected, "int96-order", check, fixtures.resolve("int96order_multi.parquet"));
+        }
+        for (Check check : outOfDayChecks) {
+            rowGroupCheck(lines, unexpected, "int96-order", check, fixtures.resolve("int96outofday_multi.parquet"));
         }
         try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("consultation.tsv")))) {
             lines.forEach(out::println);
         }
-        return new Result(bloomChecks.size() + dictionaryChecks.size(), unexpected, lines);
+        return new Result(bloomChecks.size() + dictionaryChecks.size() + int96Checks.size() + outOfDayChecks.size(),
+                unexpected, lines);
+    }
+
+    private static void rowGroupCheck(List<String> lines, List<String> unexpected, String kind, Check check, Path file)
+            throws Exception {
+        RowGroupTally tally = new RowGroupTally();
+        long rows = rowGroupDecisions(file, check.filter(), tally);
+        String outcome = tally.toString();
+        record(lines, unexpected, kind, check, outcome, "rows " + rows + ", row groups " + outcome);
     }
 
     private static void record(List<String> lines, List<String> unexpected, String kind, Check check, String outcome, String result) {
@@ -120,6 +142,21 @@ final class ConsultationChecks {
                 new Check("eq(dec_ba, bytes 00 02), present", FilterPredicate.eq("dec_ba", new byte[] { 0x00, 0x02 }), ALL_KEPT),
                 new Check("eq(dec_flba, bytes of 0.40), present",
                         FilterPredicate.eq("dec_flba", Columns.fixedDecimal(BigInteger.valueOf(40), 9)), ALL_KEPT));
+    }
+
+    private static List<Check> int96OrderChecks() {
+        Instant probe = Instant.EPOCH.plusNanos(Columns.int96Nanos(Columns.PROBE_ROW));
+        return List.of(
+                new Check("eq(ts96, Instant of row 310)", FilterPredicate.eq("ts96", probe), ONE_OF_SIX_KEPT),
+                new Check("gt(ts96, Instant of row 450)",
+                        FilterPredicate.gt("ts96", Instant.EPOCH.plusNanos(Columns.int96Nanos(450))), TWO_OF_SIX_KEPT),
+                new Check("eq(ts96, the 12 bytes of row 310)",
+                        FilterPredicate.eq("ts96", Columns.int96(Columns.int96Nanos(Columns.PROBE_ROW), true)), ONE_OF_SIX_KEPT));
+    }
+
+    private static List<Check> int96OutOfDayChecks() {
+        return List.of(new Check("eq(ts96, Instant of row 310), bounds past one day",
+                FilterPredicate.eq("ts96", Instant.EPOCH.plusNanos(Columns.int96Nanos(Columns.PROBE_ROW))), SIX_OF_SIX_KEPT));
     }
 
     private static long count(Path file, FilterPredicate filter) throws Exception {

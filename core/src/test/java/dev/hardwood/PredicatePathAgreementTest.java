@@ -103,6 +103,9 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 /// column and `GEOMETRY`.
 /// `predicate_int96` carries `INT96` columns in the same three layouts, one value stored under a
 /// non-canonical encoding, and bounds recorded in byte order rather than in time order.
+/// `predicate_int96_ordered` holds the same values, every one canonical, in ten-row row groups
+/// under `INT96_TIMESTAMP_ORDER`, with bounds and null counts on both leaves, so a row group can be
+/// dropped or decided in full by them.
 /// `predicate_ts12` carries `TIMESTAMP` columns over `FIXED_LEN_BYTE_ARRAY(12)` of every unit, in the
 /// single, multi, dictionary and Bloom layouts, with values past the `INT64` nanosecond range on both
 /// sides of the epoch and bounds recorded in the order of the values. Its `pages` layout holds one
@@ -174,6 +177,8 @@ class PredicatePathAgreementTest {
             RES.resolve("predicate_int96_multi.parquet"));
     private static final Layout INT96_DICTIONARY = new Layout("int96-dictionary",
             RES.resolve("predicate_int96_dict.parquet"));
+    private static final Layout INT96_ORDERED = new Layout("int96-ordered",
+            RES.resolve("predicate_int96_ordered_multi.parquet"));
 
     private static final Layout TS12_SINGLE = new Layout("ts12", RES.resolve("predicate_ts12_single.parquet"));
     private static final Layout TS12_MULTI = new Layout("ts12-multi-rg", RES.resolve("predicate_ts12_multi.parquet"));
@@ -184,7 +189,7 @@ class PredicatePathAgreementTest {
 
     private static final List<Layout> LAYOUTS = List.of(SINGLE, MULTI, DICTIONARY, BLOOM, NESTED, NESTED_MULTI,
             OPAQUE, OPAQUE_DICTIONARY, OPAQUE_BLOOM, INT96_SINGLE, INT96_MULTI, INT96_DICTIONARY,
-            TS12_SINGLE, TS12_MULTI, TS12_DICTIONARY, TS12_BLOOM, TS12_PAGES);
+            INT96_ORDERED, TS12_SINGLE, TS12_MULTI, TS12_DICTIONARY, TS12_BLOOM, TS12_PAGES);
 
     // ==================== Read paths ====================
 

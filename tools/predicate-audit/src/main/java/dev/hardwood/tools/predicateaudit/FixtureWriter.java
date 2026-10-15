@@ -60,6 +60,7 @@ final class FixtureWriter {
             write(directory.resolve("flat_" + layout.name() + ".parquet"), Columns.flat(), layout);
             write(directory.resolve("exotic_" + layout.name() + ".parquet"), Columns.exotic(), layout);
             write(directory.resolve("ts12_" + layout.name() + ".parquet"), Columns.ts12(), layout);
+            write(directory.resolve("int96order_" + layout.name() + ".parquet"), Columns.int96Order(), layout);
             Layout dictionaryEverywhere = layout.name().equals("dict") || layout.name().equals("bloom")
                     ? new Layout(layout.name(), layout.rowGroupRows(), layout.pageRows(), true, layout.bloom(),
                             WriterVersion.PARQUET_2_0)

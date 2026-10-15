@@ -26,6 +26,10 @@ Supported annotations:
 Modern-only fixture helpers (strip legacy annotations so only `logicalType` remains):
 - `strip_converted_type` — for LIST / MAP outer groups.
 
+File-level metadata helpers for statistics:
+- `set_column_order` — declare one leaf's `column_orders` entry, such as the
+  `INT96_TIMESTAMP_ORDER` no writer checked emits yet.
+
 Column chunk layout helpers:
 - `drop_dictionary_page_offset` — omit the optional `dictionary_page_offset`, as
   parquet-mr 1.12 and Trino <427 do.
@@ -222,7 +226,11 @@ struct RowGroup {
 }
 struct TypeDefinedOrder {}
 struct IEEE754TotalOrder {}
-union ColumnOrder { 1: TypeDefinedOrder TYPE_ORDER; 2: IEEE754TotalOrder IEEE_754_TOTAL_ORDER }
+struct Int96TimestampOrder {}
+union ColumnOrder {
+  1: TypeDefinedOrder TYPE_ORDER; 2: IEEE754TotalOrder IEEE_754_TOTAL_ORDER;
+  3: Int96TimestampOrder INT96_TIMESTAMP_ORDER
+}
 struct EncryptionAlgorithm {}
 struct FileMetaData {
   1: required i32 version;
@@ -377,9 +385,10 @@ def falsify_int64_row_group_minmax(path: str, column_name: str, row_group_index:
 
 
 def set_row_group_min_max(path: str, column_name: str, row_group_index: int,
-                          min_value: bytes, max_value: bytes) -> None:
-    """Rewrite `path` so the named column's statistics in one row group record
-    `min_value` and `max_value`, adding the statistics where the writer wrote none.
+                          min_value: bytes, max_value: bytes, null_count: int = None) -> None:
+    """Rewrite `path` so the statistics of the column at dotted path `column_name`
+    in one row group record `min_value` and `max_value`, and `null_count` where
+    given, adding the statistics where the writer wrote none.
 
     Supplies bounds PyArrow does not write, such as bounds on an `INT96`
     column. The values are stored as given, already encoded as the column's
@@ -391,7 +400,7 @@ def set_row_group_min_max(path: str, column_name: str, row_group_index: int,
         raise ValueError(f"{path} has no row group at index {row_group_index}")
     columns = file_metadata.row_groups[row_group_index].columns
     chunk = next((c for c in columns
-                  if c.meta_data is not None and c.meta_data.path_in_schema == [column_name]), None)
+                  if c.meta_data is not None and c.meta_data.path_in_schema == column_name.split('.')), None)
     if chunk is None:
         raise ValueError(f"Column {column_name!r} not found in row group {row_group_index} of {path}")
     if chunk.meta_data.statistics is None:
@@ -401,6 +410,35 @@ def set_row_group_min_max(path: str, column_name: str, row_group_index: int,
     stats.max_value = max_value
     stats.is_min_value_exact = True
     stats.is_max_value_exact = True
+    if null_count is not None:
+        stats.null_count = null_count
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def set_column_order(path: str, leaf_path, order: str) -> None:
+    """Rewrite `path` so the `column_orders` entry of the leaf at `leaf_path`
+    (a list of names) is the union member `order`: `TYPE_ORDER`,
+    `IEEE_754_TOTAL_ORDER` or `INT96_TIMESTAMP_ORDER`.
+
+    Every other leaf keeps its entry; a file without `column_orders` gets the
+    type-defined order on every other leaf.
+    """
+    members = {
+        'TYPE_ORDER': lambda: _parquet.ColumnOrder(TYPE_ORDER=_parquet.TypeDefinedOrder()),
+        'IEEE_754_TOTAL_ORDER': lambda: _parquet.ColumnOrder(IEEE_754_TOTAL_ORDER=_parquet.IEEE754TotalOrder()),
+        'INT96_TIMESTAMP_ORDER': lambda: _parquet.ColumnOrder(INT96_TIMESTAMP_ORDER=_parquet.Int96TimestampOrder()),
+    }
+    if order not in members:
+        raise ValueError(f"Unknown column order {order!r}")
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    leaves = [c.meta_data.path_in_schema for c in file_metadata.row_groups[0].columns]
+    if list(leaf_path) not in leaves:
+        raise ValueError(f"{path} has no leaf column {'.'.join(leaf_path)}")
+    if file_metadata.column_orders is None:
+        file_metadata.column_orders = [members['TYPE_ORDER']() for _ in leaves]
+    file_metadata.column_orders[leaves.index(list(leaf_path))] = members[order]()
 
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
