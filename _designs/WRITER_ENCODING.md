@@ -314,7 +314,7 @@ Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloom
 
 ## Boundaries
 
-- **Level histograms.** The `ColumnIndex` level histograms and the `OffsetIndex` `unencoded_byte_array_data_bytes` are not written, nor is `SizeStatistics`, which carries the same counts per chunk (#894).
+- **Level histograms.** The `ColumnIndex` level histograms and the `OffsetIndex` `unencoded_byte_array_data_bytes` are not written, nor is `SizeStatistics`, which carries the same counts per chunk (#1499).
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
 - **Data page V2** is not produced; every data page is V1.
