@@ -158,7 +158,7 @@ public interface FieldAccessor {
     /// `String` for STRING / ENUM / JSON, [LocalDate] for DATE, [LocalTime] for TIME,
     /// [Instant] for UTC-adjusted TIMESTAMP, [LocalDateTime] for local-wall-clock
     /// TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID, [PqInterval] for
-    /// INTERVAL, [PqVariant] for VARIANT, and `byte[]` for BYTE_ARRAY /
+    /// INTERVAL, [PqVariant] for VARIANT, [PqFile] for FILE, and `byte[]` for BYTE_ARRAY /
     /// FIXED_LEN_BYTE_ARRAY with no logical-type annotation. Nested groups
     /// surface as [PqStruct] / [PqList] / [PqMap].
     ///
@@ -174,7 +174,8 @@ public interface FieldAccessor {
     /// TIMESTAMP returns the underlying `Long` rather than an [Instant], and a
     /// DECIMAL returns the underlying `byte[]` / `Integer` / `Long`. Nested
     /// groups (struct / list / map / variant) are still returned as their
-    /// typed flyweights since they have no useful "raw" form.
+    /// typed flyweights since they have no useful "raw" form; a FILE group is
+    /// returned as the [PqStruct] of its children, whatever values they hold.
     ///
     /// @param name the field name
     /// @return the raw value, or null if the field is null

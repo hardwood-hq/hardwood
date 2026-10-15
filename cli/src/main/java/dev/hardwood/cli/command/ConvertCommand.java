@@ -159,7 +159,8 @@ public class ConvertCommand implements Command<CommandInvocation> {
             List<String> flatValues = new ArrayList<>();
             for (int i = 0; i < fields.size(); i++) {
                 SchemaNode field = fields.get(i);
-                flattenValues(rowReader.getValue(i), field, field.name(), childrenOf, flatValues, nullString);
+                flattenValues(ValueFormatter.valueOf(rowReader, i, field), field, field.name(), childrenOf,
+                        flatValues, nullString);
             }
             out.println(csvRow(flatValues.toArray(new String[0])));
         }
@@ -188,8 +189,8 @@ public class ConvertCommand implements Command<CommandInvocation> {
             }
             else if (value instanceof PqStruct struct) {
                 for (SchemaNode child : childrenOf.apply(group)) {
-                    flattenValues(struct.getValue(child.name()), child, path + "." + child.name(), childrenOf,
-                            values, nullString);
+                    flattenValues(ValueFormatter.valueOf(struct, child.name(), child), child,
+                            path + "." + child.name(), childrenOf, values, nullString);
                 }
             }
             else {

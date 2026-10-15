@@ -17,6 +17,7 @@ import java.util.UUID;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -62,6 +63,24 @@ final class PqStructImpl implements PqStruct {
 
     private int resolveValueIndex(int projCol) {
         return valueIndex >= 0 ? valueIndex : batch.getValueIndex(projCol, rowIndex);
+    }
+
+    /// The batch values of the binary field at `fieldIndex`, with their views built so that later
+    /// reads write nothing, or `null` for a null value. [#binaryIndexAt] gives the value's
+    /// position in them. For a reader that copies the value only when it is asked for.
+    BinaryBatchValues binaryValuesAt(int fieldIndex) {
+        int projCol = primitiveAt(fieldIndex).projectedCol();
+        if (batch.isElementNull(projCol, resolveValueIndex(projCol))) {
+            return null;
+        }
+        BinaryBatchValues values = (BinaryBatchValues) batch.valueArrays[projCol];
+        values.ensureViews();
+        return values;
+    }
+
+    /// The position of the binary field at `fieldIndex` in [#binaryValuesAt].
+    int binaryIndexAt(int fieldIndex) {
+        return resolveValueIndex(primitiveAt(fieldIndex).projectedCol());
     }
 
     // ==================== Primitive Types ====================
@@ -252,6 +271,16 @@ final class PqStructImpl implements PqStruct {
     }
 
     @Override
+    public PqFile getFile(String name) {
+        return readFile(FileValues.fileDesc(lookupChild(name)));
+    }
+
+    @Override
+    public PqFile getFile(int fieldIndex) {
+        return readFile(FileValues.fileDesc(childAt(fieldIndex)));
+    }
+
+    @Override
     public PqVariant getVariant(String name) {
         return readVariant(variantAt(lookupChild(name), name), name);
     }
@@ -433,10 +462,21 @@ final class PqStructImpl implements PqStruct {
         if (isStructNull(structDesc)) {
             return null;
         }
+        return structFlyweight(structDesc);
+    }
+
+    private PqStructImpl structFlyweight(TopLevelFieldMap.FieldDesc.Struct structDesc) {
         if (valueIndex >= 0) {
             return PqStructImpl.atPosition(batch, structDesc, valueIndex);
         }
         return new PqStructImpl(batch, structDesc, rowIndex);
+    }
+
+    private PqFile readFile(TopLevelFieldMap.FieldDesc.Struct structDesc) {
+        if (isStructNull(structDesc)) {
+            return null;
+        }
+        return FileValues.read(structFlyweight(structDesc), structDesc, batch);
     }
 
     private PqVariant readVariant(TopLevelFieldMap.FieldDesc.Variant variantDesc, String fieldName) {
@@ -610,9 +650,9 @@ final class PqStructImpl implements PqStruct {
                 if (isStructNull(s)) {
                     yield null;
                 }
-                yield valueIndex >= 0
-                        ? PqStructImpl.atPosition(batch, s, valueIndex)
-                        : new PqStructImpl(batch, s, rowIndex);
+                yield decode && s.schema().isFile()
+                        ? FileValues.read(structFlyweight(s), s, batch)
+                        : structFlyweight(s);
             }
             case TopLevelFieldMap.FieldDesc.ListOf l ->
                     PqListImpl.createGenericList(batch, l, rowIndex, valueIndex);
@@ -630,7 +670,9 @@ final class PqStructImpl implements PqStruct {
         for (int i = 0; i < n; i++) {
             if (i > 0) sb.append(", ");
             sb.append(getFieldName(i)).append('=');
-            FlyweightFormatter.appendValue(sb, getValue(i));
+            // A FILE child renders as its stored fields, so an invalid reference does not throw.
+            boolean file = childAt(i) instanceof TopLevelFieldMap.FieldDesc.Struct s && s.schema().isFile();
+            FlyweightFormatter.appendValue(sb, file ? getRawValue(i) : getValue(i));
         }
         sb.append('}');
         return sb.toString();

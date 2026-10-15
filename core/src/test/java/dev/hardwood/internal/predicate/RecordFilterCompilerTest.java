@@ -27,6 +27,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -551,6 +552,7 @@ class RecordFilterCompilerTest {
             @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
             @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
             @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
+            @Override public PqFile getFile(String name) { throw new UnsupportedOperationException(); }
             @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
             @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
             @Override public int getFieldCount() { return 2; }
@@ -573,6 +575,7 @@ class RecordFilterCompilerTest {
             @Override public PqList getList(int i) { throw new UnsupportedOperationException(); }
             @Override public PqMap getMap(int i) { throw new UnsupportedOperationException(); }
             @Override public PqVariant getVariant(int i) { throw new UnsupportedOperationException(); }
+            @Override public PqFile getFile(int i) { throw new UnsupportedOperationException(); }
             @Override public Object getValue(int i) { throw new UnsupportedOperationException(); }
             @Override public Object getRawValue(int i) { throw new UnsupportedOperationException(); }
             @Override public boolean isNull(int i) { throw new UnsupportedOperationException(); }
@@ -612,6 +615,7 @@ class RecordFilterCompilerTest {
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
+        @Override public PqFile getFile(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 1; }
@@ -634,6 +638,7 @@ class RecordFilterCompilerTest {
         @Override public PqList getList(int i) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(int i) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqFile getFile(int i) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(int i) { throw new UnsupportedOperationException(); }
         @Override public Object getRawValue(int i) { throw new UnsupportedOperationException(); }
         @Override public boolean isNull(int i) { throw new UnsupportedOperationException(); }

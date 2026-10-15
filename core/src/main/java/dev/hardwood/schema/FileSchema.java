@@ -14,6 +14,7 @@ import java.util.function.Consumer;
 
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.schema.AnnotationPairings;
+import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
@@ -341,6 +342,9 @@ public class FileSchema {
                 if (groupNode.isVariant()) {
                     validateVariantGroup(groupNode);
                 }
+                else if (groupNode.isFile()) {
+                    FileReferences.validateGroup(groupNode, String.join(".", currentPath));
+                }
                 children.add(groupNode);
             }
         }
@@ -618,6 +622,20 @@ public class FileSchema {
             return this;
         }
 
+        /// Append a `FILE` group, a reference to a range of bytes stored inline or in an external
+        /// file. The group declares all six children the format defines, each `OPTIONAL`:
+        /// `uri` and `content_type` and `checksum` (`BYTE_ARRAY` annotated `STRING`), `offset`
+        /// and `size` (`INT64`), and `inline` (`BYTE_ARRAY`). A row writes it through
+        /// [dev.hardwood.writer.StructBuilder#setFile(String, dev.hardwood.row.PqFile)].
+        ///
+        /// @param fileName the group name
+        /// @param repetition `REQUIRED` or `OPTIONAL`
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        public Builder file(String fileName, RepetitionType repetition) {
+            content.file(fileName, repetition);
+            return this;
+        }
+
         /// Append a `LIST` group whose element is declared by `element`.
         ///
         /// @param listName the list group name
@@ -773,6 +791,18 @@ public class FileSchema {
             return this;
         }
 
+        /// Append a nested `FILE` field, as [Builder#file(String, RepetitionType)] describes.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        public StructBuilder file(String fileName, RepetitionType repetition) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated groups are not yet supported by the writer: " + fileName);
+            }
+            children.add(new BuilderFile(fileName, repetition));
+            return this;
+        }
+
         /// Append a nested `LIST` field.
         ///
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
@@ -895,6 +925,11 @@ public class FileSchema {
             set(new BuilderStruct(childName, repetition, nested.children));
         }
 
+        /// Declare a `FILE` element, as [Builder#file(String, RepetitionType)] describes.
+        public void file(RepetitionType repetition) {
+            set(new BuilderFile(childName, repetition));
+        }
+
         /// Declare a nested `LIST` element.
         public void list(RepetitionType repetition, Consumer<ElementBuilder> element) {
             ElementBuilder inner = new ElementBuilder();
@@ -995,6 +1030,8 @@ public class FileSchema {
     private record BuilderStruct(String name, RepetitionType repetition, List<BuilderNode> children)
             implements BuilderNode {}
 
+    private record BuilderFile(String name, RepetitionType repetition) implements BuilderNode {}
+
     private record BuilderList(String name, RepetitionType repetition, BuilderNode element) implements BuilderNode {}
 
     private record BuilderMap(String name, RepetitionType repetition, BuilderLeaf key, BuilderNode value)
@@ -1013,6 +1050,15 @@ public class FileSchema {
                 case BuilderStruct group -> {
                     out.add(SchemaElement.group(group.name(), group.repetition(), group.children().size()));
                     flatten(group.children(), out);
+                }
+                case BuilderFile file -> {
+                    FileReferences.Child[] fileChildren = FileReferences.Child.values();
+                    out.add(SchemaElement.group(file.name(), file.repetition(), fileChildren.length,
+                            LogicalType.file()));
+                    for (FileReferences.Child child : fileChildren) {
+                        out.add(leafElement(leaf(child.fieldName(), child.type(), RepetitionType.OPTIONAL, null,
+                                child.annotation())));
+                    }
                 }
                 case BuilderList list -> {
                     out.add(new SchemaElement(list.name(), null, null, list.repetition(), 1,

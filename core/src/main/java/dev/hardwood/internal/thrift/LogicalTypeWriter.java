@@ -68,7 +68,7 @@ public class LogicalTypeWriter {
             case VARIANT -> writeVariant(writer, (LogicalType.VariantType) logicalType);
             case GEOMETRY -> writeCrs(writer, ((LogicalType.GeometryType) logicalType).crs());
             case GEOGRAPHY -> writeGeography(writer, (LogicalType.GeographyType) logicalType);
-            case STRING, MAP, LIST, ENUM, DATE, NULL, JSON, BSON, UUID, FLOAT16 -> {
+            case STRING, MAP, LIST, ENUM, DATE, NULL, JSON, BSON, UUID, FLOAT16, FILE -> {
             }
             case INTERVAL -> throw new IllegalStateException(kind + " has no union member to write");
         }

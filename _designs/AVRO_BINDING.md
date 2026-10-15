@@ -77,7 +77,7 @@ Values keep Avro's raw representation: temporal values are the stored number, an
 
 Synthetic levels (`list`, `key_value`) are collapsed during conversion and appear in no schema or name. Error messages name value paths without them, except the two rejections core raises: the `FIXED_LEN_BYTE_ARRAY` width rejection (`FixedWidthValidator`) and the bare repeated `VARIANT` refusal, which name the full Parquet path.
 
-A group that is neither a list, a map nor a Variant is a record, as the row reader serves it as a struct; that includes a group carrying an annotation other than `LIST`, `MAP` or `VARIANT`. Conversion also rejects a `LIST` group with no discoverable element and a `MAP` group with no discoverable key.
+A group that is neither a list, a map nor a Variant is a record, as the row reader serves it as a struct; that includes a group carrying an annotation other than `LIST`, `MAP` or `VARIANT`, such as `FILE`, whose record holds the group's stored children. Conversion also rejects a `LIST` group with no discoverable element and a `MAP` group with no discoverable key.
 
 Core drops any annotation other than `VARIANT` from a bare repeated group when the file is opened, so such a group converts as an unannotated one ([NESTED_DECODE.md](NESTED_DECODE.md#unannotated-repeated-fields)). A projected bare repeated `VARIANT` group is refused with core's own `UnsupportedOperationException` (`BareRepeatedGroups.refuseTouchedVariants`), since conversion meets it before the row reader does; a projection that excludes it converts.
 
@@ -110,7 +110,7 @@ The decision is recorded in a tree of `AvroPlanNode`, one node per value positio
 | `STRING` | string accessor | `String` |
 | `UUID` | UUID accessor | canonical `String` |
 | `DECIMAL` | decimal accessor | `ByteBuffer` of the unscaled bytes |
-| `STRUCT` | struct accessor | nested `GenericRecord` |
+| `STRUCT` | struct accessor; the raw route for a list element, where a `FILE` group's decoded form is a `PqFile` | nested `GenericRecord` |
 | `VARIANT` | Variant accessor | two-field `GenericRecord` of the canonical bytes |
 | `LIST` | list accessor | `java.util.List` |
 | `MAP` | map accessor | `java.util.Map` with `String` keys |

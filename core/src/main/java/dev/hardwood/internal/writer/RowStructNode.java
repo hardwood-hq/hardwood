@@ -17,7 +17,10 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import dev.hardwood.Validity;
+import dev.hardwood.internal.reader.PqFileImpl;
+import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
@@ -52,11 +55,15 @@ final class RowStructNode extends RowNode implements StructBuilder {
     /// field set twice is rejected.
     private final boolean[] set;
 
+    /// Whether this is a `FILE` group, which only [#setFile] fills.
+    private final boolean file;
+
     private boolean active;
 
-    RowStructNode(String path, RowNode[] children, String[] fieldNames, boolean nullable) {
+    RowStructNode(String path, RowNode[] children, String[] fieldNames, boolean nullable, boolean file) {
         super(path);
         this.children = children;
+        this.file = file;
         this.fieldNames = fieldNames;
         this.byName = new StringToIntMap(fieldNames.length);
         for (int i = 0; i < fieldNames.length; i++) {
@@ -151,7 +158,85 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     @Override
     String kind() {
-        return "struct group";
+        return file ? "FILE group" : "struct group";
+    }
+
+    boolean isFile() {
+        return file;
+    }
+
+    /// Writes one present instance of this `FILE` group: each field `value` sets to its child,
+    /// every other child null. `value` may be any [PqFile] implementation, so it is checked
+    /// against the format's rules here, and every child it needs is resolved before the scope
+    /// opens, so a value this group cannot hold leaves nothing appended. Each accessor is read
+    /// once, an empty string counting as not set.
+    void writeFile(PqFile value) {
+        String uriValue = textOrNull(value.uri());
+        boolean offsetSet = value.hasOffset();
+        long offsetValue = offsetSet ? value.offset() : 0;
+        boolean sizeSet = value.hasSize();
+        long sizeValue = sizeSet ? value.size() : 0;
+        String contentTypeValue = textOrNull(value.contentType());
+        String checksumValue = textOrNull(value.checksum());
+        // The stage keeps a reference until the record is written; a PqFileImpl never modifies its
+        // bytes, so they need no copy.
+        byte[] inlineBytes = value instanceof PqFileImpl impl ? impl.sharedInline() : value.inline();
+        String violation = FileReferences.violation(inlineBytes != null, uriValue != null, offsetSet, offsetValue,
+                sizeSet, sizeValue);
+        if (violation == null && checksumValue != null) {
+            violation = FileReferences.checksumViolation(checksumValue);
+        }
+        if (violation != null) {
+            throw new RejectedRecordException(path, "FILE group " + path + " value is invalid: " + violation);
+        }
+        int uri = fileChild(FileReferences.Child.URI, uriValue != null);
+        int offset = fileChild(FileReferences.Child.OFFSET, offsetSet);
+        int size = fileChild(FileReferences.Child.SIZE, sizeSet);
+        int contentType = fileChild(FileReferences.Child.CONTENT_TYPE, contentTypeValue != null);
+        int checksum = fileChild(FileReferences.Child.CHECKSUM, checksumValue != null);
+        int inline = fileChild(FileReferences.Child.INLINE, inlineBytes != null);
+        beginScope();
+        if (uri >= 0) {
+            fileLeaf(uri).setString(uriValue);
+        }
+        if (offset >= 0) {
+            fileLeaf(offset).setLong(offsetValue);
+        }
+        if (size >= 0) {
+            fileLeaf(size).setLong(sizeValue);
+        }
+        if (contentType >= 0) {
+            fileLeaf(contentType).setString(contentTypeValue);
+        }
+        if (checksum >= 0) {
+            fileLeaf(checksum).setString(checksumValue);
+        }
+        if (inline >= 0) {
+            fileLeaf(inline).setBinary(inlineBytes);
+        }
+        endScope();
+    }
+
+    private static String textOrNull(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
+
+    /// The index of the child holding `child`, `-1` when the value leaves it unset.
+    private int fileChild(FileReferences.Child child, boolean valueSets) {
+        if (!valueSets) {
+            return -1;
+        }
+        int index = byName.get(child.fieldName());
+        if (index < 0) {
+            throw new RejectedRecordException(path, "FILE group " + path + " has no '" + child.fieldName()
+                    + "' child, which the value sets");
+        }
+        return index;
+    }
+
+    private RowLeafNode fileLeaf(int childIndex) {
+        set[childIndex] = true;
+        return (RowLeafNode) children[childIndex];
     }
 
     // ==================== StructBuilder ====================
@@ -249,6 +334,11 @@ final class RowStructNode extends RowNode implements StructBuilder {
     @Override
     public StructBuilder setStruct(String name, Consumer<StructBuilder> filler) {
         return fillStruct(claim(name), filler);
+    }
+
+    @Override
+    public StructBuilder setFile(String name, PqFile value) {
+        return fillFile(claim(name), value);
     }
 
     @Override
@@ -371,6 +461,11 @@ final class RowStructNode extends RowNode implements StructBuilder {
     }
 
     @Override
+    public StructBuilder setFile(int fieldIndex, PqFile value) {
+        return fillFile(claim(fieldIndex), value);
+    }
+
+    @Override
     public StructBuilder setList(int fieldIndex, Consumer<ListBuilder> filler) {
         return fillList(claim(fieldIndex), filler);
     }
@@ -384,12 +479,26 @@ final class RowStructNode extends RowNode implements StructBuilder {
 
     private StructBuilder fillStruct(int childIndex, Consumer<StructBuilder> filler) {
         RowNode child = children[childIndex];
-        if (!(child instanceof RowStructNode struct)) {
+        if (!(child instanceof RowStructNode struct) || struct.file) {
             throw wrongVerb(child, "setStruct", "a struct group");
         }
         struct.beginScope();
         filler.accept(struct);
         struct.endScope();
+        return this;
+    }
+
+    private StructBuilder fillFile(int childIndex, PqFile value) {
+        RowNode child = children[childIndex];
+        if (!(child instanceof RowStructNode group) || !group.file) {
+            throw wrongVerb(child, "setFile", "a FILE group");
+        }
+        if (value == null) {
+            group.appendNullInstance();
+        }
+        else {
+            group.writeFile(value);
+        }
         return this;
     }
 

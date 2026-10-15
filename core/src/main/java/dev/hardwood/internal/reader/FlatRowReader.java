@@ -30,6 +30,7 @@ import dev.hardwood.internal.schema.TextColumns;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -861,6 +862,8 @@ public final class FlatRowReader implements FileAwareRowReader {
     @Override public PqMap getMap(int i) { throw nestedUnsupported(); }
     @Override public PqVariant getVariant(String name) { throw nestedUnsupported(); }
     @Override public PqVariant getVariant(int i) { throw nestedUnsupported(); }
+    @Override public PqFile getFile(String name) { throw nestedUnsupported(); }
+    @Override public PqFile getFile(int i) { throw nestedUnsupported(); }
 
     // ==================== Metadata ====================
 

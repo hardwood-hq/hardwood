@@ -121,8 +121,14 @@ public class LogicalTypeValidator {
     }
 
     private static IllegalArgumentException groupAnnotation(String columnName, LogicalType logicalType) {
+        String remedy = switch (logicalType) {
+            case LogicalType.ListType ignored -> "declare it with the list builder verb instead";
+            case LogicalType.MapType ignored -> "declare it with the map builder verb instead";
+            case LogicalType.FileType ignored -> "declare it with the file builder verb instead";
+            default -> "the writer does not build " + logicalType + " groups";
+        };
         return new IllegalArgumentException(logicalType + " annotates a group, not a primitive column: "
-                + columnName + "; declare it with the list or map builder verb instead");
+                + columnName + "; " + remedy);
     }
 
     private LogicalTypeValidator() {

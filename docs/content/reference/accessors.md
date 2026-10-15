@@ -39,10 +39,11 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getDecimal` | `INT32`<br>`INT64`<br>`BYTE_ARRAY`<br>`FIXED_LEN_BYTE_ARRAY` | `DECIMAL` | `BigDecimal` |
 | `getUuid` | `FIXED_LEN_BYTE_ARRAY(16)` | `UUID` | `UUID` |
 | `getInterval` | `FIXED_LEN_BYTE_ARRAY(12)` | `INTERVAL` | `PqInterval` |
-| `getStruct` | group | none | `PqStruct` |
+| `getStruct` | group | none, or `FILE` | `PqStruct` |
 | `getList` | group | `LIST` | `PqList` |
 | `getMap` | group | `MAP` | `PqMap` |
 | `getVariant` | group of two `BYTE_ARRAY` | `VARIANT` | `PqVariant` |
+| `getFile` | group of up to six children (see [FILE groups](#file-groups)) | `FILE` | `PqFile` |
 | `isNull` | any | any | `boolean` |
 
 `PqInterval` is a record with three `long` components, `months()`, `days()` and `milliseconds()`,
@@ -72,8 +73,9 @@ When the column type is not known ahead of time, the generic accessors return va
 their logical-type representation:
 
 - `RowReader.getValue(name)` / `getValue(index)`: `Integer` / `Long` / `String` / `LocalDate` /
-  `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` /
-  `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
+  `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / `PqFile` / nested
+  `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` /
+  `FIXED_LEN_BYTE_ARRAY` columns.
 - `PqStruct.getValue(name)`: same decoded mapping for nested struct fields.
 - `PqMap.Entry.getKey()` / `getValue()`: same decoded mapping for map keys and values.
 - `PqList.get(index)` / `PqList.values()`: same decoded mapping for list elements.
@@ -86,14 +88,16 @@ The generic accessors, `PqList.iterator` included, return an un-annotated `BYTE_
 A parallel `getRawValue` family (`RowReader.getRawValue`, `PqStruct.getRawValue`,
 `PqMap.Entry.getRawKey` / `getRawValue`, `PqList.getRaw` / `rawValues`) returns the boxed physical
 value. Nested groups (struct / list / map / variant) have no distinct raw form and are returned
-through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
+through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes. The
+raw form of a `FILE` group is the `PqStruct` of its children, which `getStruct` also returns and
+which reads whatever values they hold.
 
 ## Typed accessors on PqList and PqMap.Entry
 
 `PqList` has `strings()` / `dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` /
-`intervals()` / `floats()` / `booleans()`, each returning `List<T>`, and `PqMap.Entry` the matching
-`getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc., which avoid the boxed `Object`
-return of `getValue()`.
+`intervals()` / `floats()` / `booleans()` / `files()`, each returning `List<T>`, and `PqMap.Entry`
+the matching `getStringValue()` / `getDateValue()` / `getIntervalValue()` / `getFileValue()` /
+etc., which avoid the boxed `Object` return of `getValue()`.
 
 `PqMap.Entry`'s typed key accessors are `getStringKey()` / `getIntKey()` / `getLongKey()` /
 `getBinaryKey()`. Other key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) are read through
@@ -103,6 +107,50 @@ return of `getValue()`.
 expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()`
 without boxing. For nested `list<list<int>>` (or `<long>` / `<double>`), iterate the outer list via
 `lists()` and call `ints()` / `longs()` / `doubles()` on each inner `PqList`.
+
+## FILE groups
+
+A group annotated `FILE` holds a reference to a range of bytes. Its children are matched by name;
+a group may define any of them, in any order, or none, and each is `OPTIONAL`:
+
+| Child | Physical type | Annotation | `PqFile` accessor |
+|---|---|---|---|
+| `uri` | `BYTE_ARRAY` | `STRING` | `uri()` |
+| `offset` | `INT64` | none, or `INT(64, signed)` | `hasOffset()`, `offset()` |
+| `size` | `INT64` | none, or `INT(64, signed)` | `hasSize()`, `size()` |
+| `content_type` | `BYTE_ARRAY` | `STRING` | `contentType()` |
+| `checksum` | `BYTE_ARRAY` | `STRING` | `checksum()` |
+| `inline` | `BYTE_ARRAY` | none | `inline()` |
+
+A field is set when its child is present and non-null; a string child holding the empty string is
+not set. `offset()` returns `0` when no offset is set; `size()` throws `IllegalStateException` when
+no size is set. A `PqFile` the reader returns can be held after the reader moves on; while it is
+reachable, the inline bytes of every value in the batch it was read from stay in memory.
+
+A value is valid when:
+
+- `inline` or `uri` is set;
+- `offset` is set only together with `uri` and `size`;
+- `size` is set only together with `uri`;
+- `offset` and `size` are not negative.
+
+The bytes a valid value refers to:
+
+| Set fields | Bytes | Built by |
+|---|---|---|
+| `inline`, with or without a locator | the inline bytes; any locator fields record where they came from | `PqFile.inline(bytes)`, or `withInline` on a locator |
+| `uri` | the whole object at `uri` | `PqFile.external(uri)` |
+| `uri`, `size` | bytes `[0, size)` of the object at `uri` | `PqFile.external(uri, size)` |
+| `uri`, `offset`, `size` | bytes `[offset, offset + size)` of the object at `uri` | `PqFile.external(uri, offset, size)` |
+
+Every value of a group with no children is invalid. `getFile`, `files()`, `getFileValue()` and the
+generic accessors throw `ParquetReadException` for an invalid value. A group whose children do not
+match the table fails when the file is opened.
+
+`checksum` holds a token `<algorithm>:<digest>`. For `MD5`, `CRC32`, `CRC32C` and `SHA-256` the
+digest is lowercase hex of 32, 8, 8 and 64 characters; an `ETAG` digest, and the digest of any other
+algorithm, is taken as given. The reader returns the stored token whatever it holds; the writer
+refuses one that does not follow these rules.
 
 ## Text columns
 

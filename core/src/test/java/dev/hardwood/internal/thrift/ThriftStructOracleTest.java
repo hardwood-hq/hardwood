@@ -57,6 +57,7 @@ class ThriftStructOracleTest {
             "ColumnOrder field 2",  // IEEE754TotalOrder, parsed by ColumnOrderReader
             "ColumnOrder field 3",  // Int96TimestampOrder, parsed by ColumnOrderReader
             "ColumnIndex field 8",  // nan_counts, parsed by ColumnIndexReader
+            "LogicalType field 19", // FILE, parsed by LogicalTypeReader
             "Statistics field 9");  // nan_count, parsed by StatisticsReader
 
     @Test

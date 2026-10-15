@@ -99,14 +99,14 @@ public final class ProjectedSchema {
     ///
     /// When `completeContainers` is true, special groups are expanded to the
     /// leaves they cannot be materialized without: a MAP's `key` column and every
-    /// leaf of a VARIANT (read atomically). Row assembly requires this; the
+    /// leaf of a VARIANT or a FILE group (each read atomically). Row assembly requires this; the
     /// columnar [ColumnReader] / [dev.hardwood.reader.ColumnReaders] paths read
     /// individual leaves and pass false to keep the projection literal.
     ///
     /// @param schema the file schema
     /// @param projection the requested columns
     /// @param completeContainers whether to pull in required sibling leaves of
-    ///        projected MAP / VARIANT groups
+    ///        projected MAP / VARIANT / FILE groups
     /// @return the resolved projection
     /// @throws IllegalArgumentException if a requested name is not found in the schema
     public static ProjectedSchema create(FileSchema schema, ColumnProjection projection,
@@ -159,7 +159,7 @@ public final class ProjectedSchema {
         }
 
         // Enforce structural invariants on special groups: a MAP cannot be
-        // assembled without its key column, and a VARIANT is read atomically.
+        // assembled without its key column, and a VARIANT or FILE group is read atomically.
         // Pull in the required sibling leaves whenever any part of such a group
         // is projected.
         if (completeContainers) {
@@ -360,7 +360,7 @@ public final class ProjectedSchema {
         if (request < 0) {
             return;
         }
-        if (group.isVariant()) {
+        if (group.isVariant() || group.isFile()) {
             addAllLeaves(group, request, requestByOriginal);
         }
         else if (group.isMap()) {

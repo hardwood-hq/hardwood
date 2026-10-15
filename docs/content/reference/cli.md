@@ -114,6 +114,9 @@ Nested values are native JSON: a struct is an object, a list or repeated field
 an array, and a map an object keyed by each map key's text. Values inside them
 follow the same rules as top-level fields. CSV has no nested structure, so a
 list, repeated field, map, or Variant in a CSV cell is the same JSON as text.
+A `FILE` group converts as a struct of its stored children (`uri`, `offset`,
+`size`, `content_type`, `checksum`, `inline`): a JSON object, or one CSV column
+per child such as `photo.uri`.
 
 Finite floating-point values are JSON numbers. `NaN`, `Infinity`, and
 `-Infinity` are JSON strings, because JSON has no non-finite number values.
@@ -154,7 +157,9 @@ Every command spells a value of a given logical type the same way:
 
 `print` and `dive` render nested and Variant values in one unquoted display
 grammar: structs and maps as `{ a : 1 }`, lists as `[1, 2]`, Variant objects
-and arrays in the same shape. `convert` follows [Convert output](#convert-output).
+and arrays in the same shape. A `FILE` group renders as the struct of its stored
+children, including a value that is not a valid reference. `convert` follows
+[Convert output](#convert-output).
 
 In `print`, `dive`, `inspect` and `info`, a control character in a string
 value or a key-value metadata key renders as `·`, and a value or key made

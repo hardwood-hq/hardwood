@@ -40,6 +40,7 @@ A schema the caller did not build, one read from an existing file through `FileS
 
 - **At least one column.** A schema with no leaf has no column chunk to write. Hardwood reads such a file (as a relation of no rows) and declines to produce one.
 - **No `INT96`.** The type is deprecated and is not written.
+- **A `FILE` group has a child.** One with none has no column to carry its definition levels, so a null instance cannot be stored and a present one has no field set, which is invalid ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#file-references)).
 - **Repetition is producible exactly where a `LIST` or `MAP` annotation accounts for it.** The annotated group is what gives the shredder a repetition layer and `ColumnBatch` a path to address its entry offsets under. An annotated group is `REQUIRED` or `OPTIONAL` and holds exactly one `REPEATED` field, which for a `MAP` is a group of `key` and `value`. Both legacy two-level lists satisfy that and are written: `LIST { repeated element }`, whose entry is the element, and `LIST { repeated group element { … } }`, whose entry is an element struct.
 
 Everything else repeated is refused with `UnsupportedOperationException`:
@@ -123,6 +124,8 @@ A `REPEATED` layer's offsets follow the reader's convention: length `parentCount
 
 Column 0 sets the record count; every other column must imply the same one, so a short or long column, flat or nested, is rejected naming the column. Because the count is threaded through the chain, `offsets[count(k)] == count(k+1)` holds for every layer by construction. A `Validity`'s length is not checked (it has none); only its null positions within the offsets' range are examined.
 
+Once the count is derived, every present value of each `FILE` group is checked against the format's rules, which span the group's sibling children rather than one column ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#file-references)).
+
 ### Shredding
 
 `RecordShredder` turns the per-layer input into each leaf's repetition and definition levels. It runs per leaf column, walking that leaf's layers, and is the write-side inverse of the reader's `NestedLevelComputer`.
@@ -192,6 +195,7 @@ An annotation is legal only on the physical types parquet-format permits. `Annot
 | `UNKNOWN` | any | not `REQUIRED` |
 | `LIST`, `MAP` | — | rejected on a primitive; declared by the `list` / `map` verbs |
 | `VARIANT` | — | rejected; the writer does not build the Variant group |
+| `FILE` | — | rejected on a primitive; declared by the `file` verb ([LOGICAL_TYPES.md](LOGICAL_TYPES.md#file-references)) |
 
 `DECIMAL`'s `scale <= precision` and positive precision are enforced by the `LogicalType.DecimalType` record itself. `UNKNOWN` is the one annotation constrained by repetition rather than by physical type: it describes a column whose every value is null, which a `REQUIRED` column can never be, and the reader throws on a non-null value under it.
 
@@ -330,7 +334,7 @@ A file writer serves one API or the other, never both: rows and batches would ot
 
 `RowWriter` is not `Closeable`. The file writer is the resource; a second closeable over the same file invites a double close that either discards a valid file or writes a second footer. `writeRow` after close, or after a failed write, throws through the same check the columnar path uses.
 
-Producibility is settled by `ParquetFileWriter.create` before either view exists. `RowPlan`, built when `rowWriter()` is first called, additionally rejects the shapes this layer alone cannot *address*: two sibling fields sharing a name, which leaves the by-name setters ambiguous, and the legacy two-level lists, whose entry is the element itself where the builders reach a list's values through an element node below the entry. The columnar API addresses by index and dotted path and writes both. A group carrying an annotation the row layer does not interpret, such as a `VARIANT` group read from an existing file, is written field by field like a struct (untested).
+Producibility is settled by `ParquetFileWriter.create` before either view exists. `RowPlan`, built when `rowWriter()` is first called, additionally rejects the shapes this layer alone cannot *address*: two sibling fields sharing a name, which leaves the by-name setters ambiguous, and the legacy two-level lists, whose entry is the element itself where the builders reach a list's values through an element node below the entry. The columnar API addresses by index and dotted path and writes both. A `FILE` group is written only through `setFile` / `addFile`. A group carrying an annotation the row layer does not interpret, such as a `VARIANT` group read from an existing file, is written field by field like a struct (untested).
 
 ### Reserved surface
 

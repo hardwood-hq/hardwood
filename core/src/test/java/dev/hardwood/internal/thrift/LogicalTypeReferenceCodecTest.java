@@ -142,6 +142,24 @@ class LogicalTypeReferenceCodecTest {
         assertThat(AnnotationKind.INTERVAL.hasUnionMember()).isFalse();
     }
 
+    /// `FILE` is union field 19, `struct FileType {}`, which no release of the reference has yet
+    /// (parquet-format-structures 1.18.1 predates parquet-format 2.14.0), so its bytes are pinned
+    /// by hand: a long-form compact field header (struct type `0x0C`, zigzag field id `0x26`), the
+    /// empty struct's stop byte, and the union's stop byte. Once the reference has the member,
+    /// the first assertion fails and `FILE` joins [#unionMembers].
+    @Test
+    void fileIsAnEmptyStructAtField19() throws Exception {
+        assertThat(LogicalType._Fields.findByThriftId(19)).isNull();
+        byte[] expected = {0x0C, 0x26, 0x00, 0x00};
+
+        ThriftCompactWriter writer = new ThriftCompactWriter();
+        LogicalTypeWriter.write(writer, dev.hardwood.metadata.LogicalType.file());
+
+        assertThat(writer.toByteArray()).isEqualTo(expected);
+        assertThat(LogicalTypeReader.read(new ThriftCompactReader(ByteBuffer.wrap(expected))))
+                .isEqualTo(dev.hardwood.metadata.LogicalType.file());
+    }
+
     private static Stream<dev.hardwood.metadata.LogicalType> samples(AnnotationKind kind) {
         return switch (kind) {
             case STRING -> Stream.of(dev.hardwood.metadata.LogicalType.string());
@@ -173,6 +191,8 @@ class LogicalTypeReferenceCodecTest {
             case GEOGRAPHY -> Stream.of(dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm.values())
                     .filter(algorithm -> algorithm != dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm.UNKNOWN)
                     .map(algorithm -> dev.hardwood.metadata.LogicalType.geography("EPSG:4326", algorithm));
+            // No reference member yet: see fileIsAnEmptyStructAtField19.
+            case FILE -> Stream.empty();
         };
     }
 
@@ -216,6 +236,8 @@ class LogicalTypeReferenceCodecTest {
                 member.setAlgorithm(EdgeInterpolationAlgorithm.valueOf(geography.edgeInterpolation().name()));
                 yield LogicalType.GEOGRAPHY(member);
             }
+            case dev.hardwood.metadata.LogicalType.FileType ignored ->
+                    throw new IllegalArgumentException("The reference has no FILE member");
         };
     }
 

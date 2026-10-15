@@ -155,6 +155,12 @@ public final class WriterSchemaShape {
             throw new UnsupportedOperationException("Group " + path + " is REPEATED but carries no LIST or MAP"
                     + " annotation, and is not the entry group of one; the writer cannot produce it");
         }
+        // Without a child there is no column to carry the group's nulls, so every instance reads
+        // back present, and a present FILE value with no field set is invalid.
+        if (group.isFile() && group.children().isEmpty()) {
+            throw new UnsupportedOperationException("Group " + path + " is annotated FILE but has no children;"
+                    + " none of its values could be read back as written");
+        }
     }
 
     /// Rejects a `LIST` or `MAP` group whose repetition the annotation does not account for: the

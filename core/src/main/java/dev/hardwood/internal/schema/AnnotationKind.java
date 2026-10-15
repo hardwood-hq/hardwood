@@ -28,9 +28,7 @@ import dev.hardwood.metadata.PhysicalType;
 ///
 /// [AnnotationPairings] answers the questions that combine these facts with a column's physical
 /// type, width or legacy converted type, and its pairing rules cite the specification: `LogicalTypes.md` and `parquet.thrift` at
-/// parquet-format `bf099392`. `FILE` (union field 19) has no constant because [LogicalType] does
-/// not model it (#1413); a footer carrying it decodes to an unrecognized union member and the
-/// annotation is dropped, which is what the format asks of a reader that does not recognize one.
+/// parquet-format `bf099392`.
 public enum AnnotationKind {
 
     STRING(1, Target.PRIMITIVE, Content.TEXT, ByteColumnOrder.BYTES,
@@ -160,6 +158,12 @@ public enum AnnotationKind {
             // "Allowed for physical type: BYTE_ARRAY.", the payload being WKB.
             (type, typeLength, annotation) -> AnnotationPairings.byteArray(type),
             annotation -> null,
+            annotation -> null),
+
+    /// "`FILE` annotates a group"; its children carry the statistics their own types define.
+    FILE(19, Target.GROUP, Content.OTHER, ByteColumnOrder.NONE,
+            (type, typeLength, annotation) -> AnnotationPairings.groupAnnotation(),
+            annotation -> null,
             annotation -> null);
 
     /// The [#unionField] of an annotation the `LogicalType` union has no member for.
@@ -265,6 +269,7 @@ public enum AnnotationKind {
             case LogicalType.VariantType ignored -> VARIANT;
             case LogicalType.GeometryType ignored -> GEOMETRY;
             case LogicalType.GeographyType ignored -> GEOGRAPHY;
+            case LogicalType.FileType ignored -> FILE;
         };
     }
 
@@ -290,7 +295,8 @@ public enum AnnotationKind {
     }
 
     /// Whether the format defines this annotation over a group: `LIST` and `MAP` annotate the
-    /// outer group of their structure and `VARIANT` "must annotate a group"; every other
+    /// outer group of their structure, `VARIANT` "must annotate a group" and `FILE` "annotates a
+    /// group"; every other
     /// annotation is defined over a primitive alone.
     public boolean annotatesGroup() {
         return target == Target.GROUP;
@@ -303,7 +309,7 @@ public enum AnnotationKind {
 
     /// Whether parquet-format defines an order over the values of a column carrying this
     /// annotation. It defines none for `INTERVAL`, `UNKNOWN`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`,
-    /// `LIST` and `MAP`.
+    /// `FILE`, `LIST` and `MAP`.
     public boolean namesAnOrder() {
         return byteOrder != ByteColumnOrder.NONE;
     }

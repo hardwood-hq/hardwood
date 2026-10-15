@@ -240,7 +240,9 @@ public class AvroRowReader implements Closeable {
             case UUID -> uuidString(requireValueType(pqList.get(index), UUID.class, node, location));
             case DECIMAL -> decimalBytes(requireValueType(pqList.get(index), BigDecimal.class, node, location));
             case STRING -> requireValueType(pqList.get(index), String.class, node, location);
-            case STRUCT -> materializeRecord(requireValueType(pqList.get(index), PqStruct.class, node, location),
+            // Raw: a FILE element is a record of its children, which only the raw route returns
+            // as a struct.
+            case STRUCT -> materializeRecord(requireValueType(pqList.getRaw(index), PqStruct.class, node, location),
                     node, RecordPosition.STRUCT);
             case VARIANT -> materializeVariant(requireValueType(pqList.get(index), PqVariant.class, node, location),
                     node.avro());

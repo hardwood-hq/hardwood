@@ -23,6 +23,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -66,6 +67,38 @@ class ConvertCommandTest implements ConvertCommandContract {
     @Override
     public String fidelityFile() {
         return Cli.file("/convert_fidelity_test.parquet");
+    }
+
+    /// A `FILE` group converts as its stored fields: CSV flattens them into one column per child,
+    /// and JSON writes an object of them.
+    @Test
+    void convertsAFileGroupAsItsStoredFields(@TempDir Path tempDir) throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .file("photo", RepetitionType.OPTIONAL)
+                .build();
+        Path file = tempDir.resolve("file_references.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setInt("id", 1)
+                    .setFile("photo", PqFile.external("s3://b/cat.jpg", 16, 4).withContentType("image/jpeg")));
+            writer.rowWriter().writeRow(row -> row.setInt("id", 2));
+        }
+
+        Cli.Result csv = Cli.launch("convert", "-f", file.toString(), "--format", "csv");
+        Cli.Result json = Cli.launch("convert", "-f", file.toString(), "--format", "json");
+
+        assertThat(csv.exitCode()).isZero();
+        assertThat(csv.output()).isEqualTo("""
+                id,photo.uri,photo.offset,photo.size,photo.content_type,photo.checksum,photo.inline
+                1,s3://b/cat.jpg,16,4,image/jpeg,,
+                2,,,,,,""");
+        assertThat(json.exitCode()).isZero();
+        assertThat(json.output()).isEqualTo("""
+                [
+                  {"id":1,"photo":{"uri": "s3://b/cat.jpg", "offset": 16, "size": 4, "content_type": "image/jpeg", \
+                "checksum": null, "inline": null}},
+                  {"id":2,"photo":null}
+                ]""");
     }
 
     @Test

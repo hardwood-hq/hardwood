@@ -19,6 +19,7 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -624,12 +625,31 @@ public final class NestedBatchDataView {
                 if (isStructNull(s)) {
                     yield null;
                 }
-                yield new PqStructImpl(batchIndex, s, rowIndex);
+                yield decode && s.schema().isFile() ? createFile(s) : new PqStructImpl(batchIndex, s, rowIndex);
             }
             case TopLevelFieldMap.FieldDesc.ListOf l -> createList(l);
             case TopLevelFieldMap.FieldDesc.MapOf m -> createMap(m);
             case TopLevelFieldMap.FieldDesc.Variant v -> createVariant(v);
         };
+    }
+
+    // ==================== FILE accessor ====================
+
+    public PqFile getFile(String name) {
+        return readFile(lookupField(name));
+    }
+
+    public PqFile getFile(int projectedIndex) {
+        return readFile(fieldDescs[projectedIndex]);
+    }
+
+    private PqFile readFile(TopLevelFieldMap.FieldDesc desc) {
+        TopLevelFieldMap.FieldDesc.Struct structDesc = FileValues.fileDesc(desc);
+        return isStructNull(structDesc) ? null : createFile(structDesc);
+    }
+
+    private PqFile createFile(TopLevelFieldMap.FieldDesc.Struct structDesc) {
+        return FileValues.read(new PqStructImpl(batchIndex, structDesc, rowIndex), structDesc, batchIndex);
     }
 
     // ==================== Variant accessor ====================

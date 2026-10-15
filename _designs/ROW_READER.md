@@ -57,7 +57,7 @@ A projected name resolves to exactly one schema node, the node at that path from
 
 The index is not `ColumnSchema.columnIndex()`, the leaf's position in the file schema. The two agree only for a flat file read with `ColumnProjection.all()`; under a projection or on a nested file they differ, and a leaf index passed to an accessor reads another field or fails.
 
-Names are single path segments. Dot notation belongs to `ColumnProjection`: `columns("address.city")` projects one leaf, and the row reaches it as `getStruct("address").getString("city")`; `getString("address.city")` on the row raises as an unprojected name. A struct reached through a narrowed projection reports only the children the projection reaches. Row assembly projects with `completeContainers = true`, so projecting any part of a `MAP` pulls in its key column and projecting any part of a `VARIANT` pulls in all its leaves.
+Names are single path segments. Dot notation belongs to `ColumnProjection`: `columns("address.city")` projects one leaf, and the row reaches it as `getStruct("address").getString("city")`; `getString("address.city")` on the row raises as an unprojected name. A struct reached through a narrowed projection reports only the children the projection reaches. Row assembly projects with `completeContainers = true`, so projecting any part of a `MAP` pulls in its key column and projecting any part of a `VARIANT` or a `FILE` group pulls in all its leaves.
 
 ### Values and nullness
 

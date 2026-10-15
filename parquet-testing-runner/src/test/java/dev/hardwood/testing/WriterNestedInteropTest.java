@@ -28,6 +28,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ParquetFileWriter;
@@ -638,6 +639,43 @@ class WriterNestedInteropTest {
         for (int r = 0; r < records; r++) {
             assertThat(readIntList(rows.get(r), "v")).as("record %d", r).hasSize(r % 7);
         }
+    }
+
+    // ==================== FILE references ====================
+
+    /// A `FILE` group read by a parquet-java release that predates the annotation. The format
+    /// makes a new annotation forward compatible, so the group reads as a plain group of its six
+    /// children, each holding what the writer stored. The group carries no annotation for
+    /// parquet-java, which is why [CoverageWaivers] waives the `FILE` group cell; a parquet-java
+    /// that reads the annotation fails the first assertion, and the waiver comes off.
+    @Test
+    void fileGroupReadsAsAPlainGroupOfItsChildren(@TempDir Path dir) throws IOException {
+        FileSchema schema = FileSchema.builder("nested")
+                .file("photo", RepetitionType.OPTIONAL)
+                .build();
+
+        List<Group> rows = writeRowsAndRead(dir, schema, writer -> {
+            writer.writeRow(row -> row.setFile("photo",
+                    PqFile.external("s3://bucket/bundle.tar", 4096, 51200).withContentType("image/png")));
+            writer.writeRow(row -> row.setFile("photo", PqFile.inline(new byte[] { 1, 2, 3 })));
+            writer.writeRow(row -> row.setFile("photo", null));
+        });
+
+        assertThat(rows.get(0).getType().getType("photo").getLogicalTypeAnnotation()).isNull();
+        assertThat(rows).hasSize(3);
+        Group external = rows.get(0).getGroup("photo", 0);
+        assertThat(external.getBinary("uri", 0).toStringUsingUTF8()).isEqualTo("s3://bucket/bundle.tar");
+        assertThat(external.getLong("offset", 0)).isEqualTo(4096);
+        assertThat(external.getLong("size", 0)).isEqualTo(51200);
+        assertThat(external.getBinary("content_type", 0).toStringUsingUTF8()).isEqualTo("image/png");
+        assertThat(count(external, "checksum")).isZero();
+        assertThat(count(external, "inline")).isZero();
+
+        Group inline = rows.get(1).getGroup("photo", 0);
+        assertThat(inline.getBinary("inline", 0).getBytes()).containsExactly(1, 2, 3);
+        assertThat(count(inline, "uri")).isZero();
+
+        assertThat(count(rows.get(2), "photo")).isZero();
     }
 
     // ==================== Helpers ====================

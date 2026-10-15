@@ -20,6 +20,7 @@
 - [**Read with the parquet-java API**](compat.md): drop-in `org.apache.parquet.*` replacement (experimental).
 - [**Read Variant Columns**](variant.md): `getVariant` and the `PqVariant` API.
 - [**Read Geospatial Columns**](geospatial.md): GEOMETRY / GEOGRAPHY columns, bounding-box filter pushdown.
+- [**Read and Write File References**](file-references.md): `FILE` columns, `getFile`, `setFile` and the `PqFile` API.
 - [**Write Row by Row**](write-row-by-row.md): `RowWriter`, typed setters, nested structs / lists / maps.
 - [**Write Column by Column**](write-column-by-column.md): `ColumnWriter`, typed arrays, nulls, per-layer offsets.
 - [**Handle Write Failures**](write-failures.md): what `close()` does after a failed write, and `abort()`.

@@ -7,11 +7,15 @@
  */
 package dev.hardwood.internal.writer;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.Validity;
+import dev.hardwood.internal.schema.FileReferences;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -119,6 +123,9 @@ public final class RecordShredder {
     private final int[] maxRep;
     private final String[] columnNames;
 
+    /// Every `FILE` group in the schema, whose values a bound batch must hold valid.
+    private final List<FileGroup> fileGroups = new ArrayList<>();
+
     // Per-batch binding.
     private Validity[] leafValidities;
     private Map<String, Validity> structValidities;
@@ -161,6 +168,9 @@ public final class RecordShredder {
                     if (added != null) {
                         layerStack.add(added);
                         collected.add(added);
+                    }
+                    if (nested.isFile()) {
+                        fileGroups.add(FileGroup.of(nested, String.join(".", path), layerStack));
                     }
                     walk(nested, path, layerStack, nested.isList() || nested.isMap(), collected);
                     if (added != null) {
@@ -213,6 +223,75 @@ public final class RecordShredder {
             layer.offsets = layer.kind == Layer.Kind.REPEATED ? listOffsets.get(layer.key) : null;
         }
         this.recordCount = validateAndDeriveRecordCount();
+        for (FileGroup group : fileGroups) {
+            checkFileValues(group);
+        }
+    }
+
+    /// Rejects the batch if a present value of `group` is not a valid reference. The group's
+    /// children are its direct leaves, so value `i` of each child belongs to instance `i` of the
+    /// group, which is present when no `STRUCT` layer between it and the nearest `REPEATED`
+    /// layer marks `i` null: a null ancestor above that layer leaves it no entries, which
+    /// [#validateAndDeriveRecordCount] has checked.
+    private void checkFileValues(FileGroup group) {
+        int count = sources[group.anyColumn()].size();
+        long[] offsets = new long[FILE_CHECK_CHUNK];
+        long[] sizes = new long[FILE_CHECK_CHUNK];
+        byte[][] checksums = new byte[FILE_CHECK_CHUNK][];
+        for (int from = 0; from < count; from += FILE_CHECK_CHUNK) {
+            int length = Math.min(FILE_CHECK_CHUNK, count - from);
+            copyLongs(group, FileReferences.Child.OFFSET, from, offsets, length);
+            copyLongs(group, FileReferences.Child.SIZE, from, sizes, length);
+            int checksumColumn = group.columns()[FileReferences.Child.CHECKSUM.ordinal()];
+            if (checksumColumn >= 0) {
+                ((BinaryColumnSource) sources[checksumColumn]).copyInto(from, checksums, 0, length);
+            }
+            for (int k = 0; k < length; k++) {
+                int i = from + k;
+                if (!isFilePresent(group, i)) {
+                    continue;
+                }
+                String violation = FileReferences.violation(
+                        isFileFieldSet(group, FileReferences.Child.INLINE, i),
+                        isFileFieldSet(group, FileReferences.Child.URI, i),
+                        isFileFieldSet(group, FileReferences.Child.OFFSET, i), offsets[k],
+                        isFileFieldSet(group, FileReferences.Child.SIZE, i), sizes[k]);
+                if (violation == null && isFileFieldSet(group, FileReferences.Child.CHECKSUM, i)) {
+                    violation = FileReferences.checksumViolation(new String(checksums[k], StandardCharsets.UTF_8));
+                }
+                if (violation != null) {
+                    throw new IllegalArgumentException("FILE group " + group.path() + " value " + i
+                            + " is invalid: " + violation);
+                }
+            }
+        }
+    }
+
+    private static boolean isFilePresent(FileGroup group, int index) {
+        for (Layer layer : group.presence()) {
+            if (isNull(layer.validity, index)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Whether `child` is set at `index`: present in the group and non-null, and for a string
+    /// field non-empty.
+    private boolean isFileFieldSet(FileGroup group, FileReferences.Child child, int index) {
+        int column = group.columns()[child.ordinal()];
+        if (column < 0 || isNull(leafValidities[column], index)) {
+            return false;
+        }
+        return !(child.annotation() instanceof LogicalType.StringType)
+                || ((BinaryColumnSource) sources[column]).valueBytesAt(index) > 0;
+    }
+
+    private void copyLongs(FileGroup group, FileReferences.Child child, int from, long[] dest, int length) {
+        int column = group.columns()[child.ordinal()];
+        if (column >= 0) {
+            ((LongColumnSource) sources[column]).copyInto(from, dest, 0, length);
+        }
     }
 
     public int recordCount() {
@@ -425,6 +504,45 @@ public final class RecordShredder {
 
     private static boolean isNull(Validity validity, int index) {
         return validity != null && validity.isNull(index);
+    }
+
+    /// The values of a `FILE` group's `INT64` children read at a time while its batch is checked.
+    private static final int FILE_CHECK_CHUNK = 1024;
+
+    /// A `FILE` group as the batch check reads it.
+    ///
+    /// @param path the group's dotted path
+    /// @param presence the nullable `STRUCT` layers from the nearest `REPEATED` layer down to the
+    ///        group itself, whose validities decide whether an instance is present
+    /// @param columns the leaf column of each [FileReferences.Child] by ordinal, `-1` for a child
+    ///        the group does not define
+    private record FileGroup(String path, Layer[] presence, int[] columns) {
+
+        static FileGroup of(SchemaNode.GroupNode group, String path, List<Layer> layerStack) {
+            int nearestRepeated = -1;
+            for (int i = 0; i < layerStack.size(); i++) {
+                if (layerStack.get(i).kind() == Layer.Kind.REPEATED) {
+                    nearestRepeated = i;
+                }
+            }
+            Layer[] presence = layerStack.subList(nearestRepeated + 1, layerStack.size()).toArray(new Layer[0]);
+            int[] columns = new int[FileReferences.Child.values().length];
+            Arrays.fill(columns, -1);
+            for (SchemaNode child : group.children()) {
+                columns[FileReferences.Child.named(child.name()).ordinal()] =
+                        ((SchemaNode.PrimitiveNode) child).columnIndex();
+            }
+            return new FileGroup(path, presence, columns);
+        }
+
+        int anyColumn() {
+            for (int column : columns) {
+                if (column >= 0) {
+                    return column;
+                }
+            }
+            throw new IllegalStateException("FILE group " + path + " has no children");
+        }
     }
 
     /// Per-column shred state, threaded through the recursion.

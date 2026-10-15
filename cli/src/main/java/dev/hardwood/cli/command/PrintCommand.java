@@ -99,7 +99,7 @@ public class PrintCommand implements Command<CommandInvocation> {
                         ? Math.max(0, reader.getFileMetaData().numRows() + window.limit())
                         : window.skip();
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong(rowIndexStart) : null;
-                Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, headers.length));
+                Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, fields));
                 if (transpose) {
                     printTransposed(stream, headers, fields, rowIndex);
                 } else {
@@ -186,9 +186,9 @@ public class PrintCommand implements Command<CommandInvocation> {
         return ColumnProjection.columns(names);
     }
 
-    private Object[] toData(RowReader rowReader, int fieldCount) {
-        return IntStream.range(0, fieldCount)
-                .mapToObj(rowReader::getValue)
+    private Object[] toData(RowReader rowReader, List<SchemaNode> fields) {
+        return IntStream.range(0, fields.size())
+                .mapToObj(i -> ValueFormatter.valueOf(rowReader, i, fields.get(i)))
                 .toArray(Object[]::new);
     }
 

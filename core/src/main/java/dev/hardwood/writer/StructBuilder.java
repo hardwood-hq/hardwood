@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 
 /// Sets the fields of one struct — a record being written, or a struct nested inside one.
@@ -188,9 +189,22 @@ public interface StructBuilder {
     /// @param filler populates the nested struct
     /// @return this builder, for chaining
     /// @throws IllegalArgumentException if the schema has no such field, the field is not a
-    ///         struct group, or the field is already set in this scope
+    ///         struct group (a `FILE` group is set through [#setFile(String, PqFile)]), or the
+    ///         field is already set in this scope
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setStruct(String name, Consumer<StructBuilder> filler);
+
+    /// Sets a `FILE` field to the reference `value`. A `null` value sets the field null.
+    ///
+    /// @param name the field name
+    /// @param value the reference
+    /// @return this builder, for chaining
+    /// @throws IllegalArgumentException if the schema has no such field, the field is not a
+    ///         group annotated `FILE`, the group has no child for a field `value` sets, `value`
+    ///         is not a valid reference or its `checksum` is not a well-formed token (see
+    ///         [PqFile#withChecksum(String)]), or the field is already set in this scope
+    /// @throws IllegalStateException if this builder's scope has ended
+    StructBuilder setFile(String name, PqFile value);
 
     /// Sets a `LIST` field, appending its entries through `filler`. An absent list — the
     /// field left unset, or [#setNull] — and an empty list, whose filler appends nothing,
@@ -343,6 +357,11 @@ public interface StructBuilder {
     ///         already set in this scope
     /// @throws IllegalStateException if this builder's scope has ended
     StructBuilder setStruct(int fieldIndex, Consumer<StructBuilder> filler);
+
+    /// Sets a `FILE` field to the reference `value`, by position.
+    ///
+    /// @see #setFile(String, PqFile)
+    StructBuilder setFile(int fieldIndex, PqFile value);
 
     /// Sets a `LIST` field by index. See [#setList(String, Consumer)].
     ///

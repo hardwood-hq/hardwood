@@ -78,6 +78,7 @@ final class LogicalTypeKey {
             case LogicalType.GeometryType ignored -> "GEOMETRY";
             case LogicalType.GeographyType ignored -> "GEOGRAPHY";
             case LogicalType.Float16Type ignored -> "FLOAT16";
+            case LogicalType.FileType ignored -> "FILE";
             case LogicalType.NullType ignored -> "UNKNOWN";
         };
     }

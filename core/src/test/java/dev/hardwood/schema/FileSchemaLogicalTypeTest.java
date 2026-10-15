@@ -426,7 +426,7 @@ class FileSchemaLogicalTypeTest {
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, LogicalType.list()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("LIST annotates a group, not a primitive column: annotated; declare it with "
-                         + "the list or map builder verb instead");
+                         + "the list builder verb instead");
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, LogicalType.map()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> withColumn(PhysicalType.BYTE_ARRAY, LogicalType.variant(1)))

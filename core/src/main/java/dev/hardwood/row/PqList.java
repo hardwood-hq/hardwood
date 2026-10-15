@@ -83,8 +83,8 @@ public interface PqList {
     /// `Integer` / `Long` / `Float` / `Double` / `Boolean` for primitives,
     /// `String` for STRING / ENUM / JSON, [LocalDate] for DATE, [LocalTime] for TIME,
     /// [Instant] for TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID,
-    /// [PqInterval] for INTERVAL, and `byte[]` for BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
-    /// with no logical-type annotation. Nested groups surface as
+    /// [PqInterval] for INTERVAL, [PqFile] for FILE, and `byte[]` for BYTE_ARRAY /
+    /// FIXED_LEN_BYTE_ARRAY with no logical-type annotation. Nested groups surface as
     /// [PqStruct] / [PqList] / [PqMap].
     ///
     /// @param index the element index (0-based)
@@ -115,7 +115,8 @@ public interface PqList {
     /// for TIMESTAMP(MICROS), unscaled `byte[]` instead of [BigDecimal] for
     /// DECIMAL, `byte[]` instead of `String` for STRING / ENUM / JSON, etc. Nested
     /// groups have no distinct raw form and surface as the same
-    /// [PqStruct] / [PqList] / [PqMap] flyweight returned by [#get].
+    /// [PqStruct] / [PqList] / [PqMap] flyweight returned by [#get]; a FILE element
+    /// surfaces as the [PqStruct] of its children.
     ///
     /// @param index the element index (0-based)
     /// @return the raw element value, or null if the element is null
@@ -202,4 +203,9 @@ public interface PqList {
     /// iterating a list of shredded variants throws
     /// [UnsupportedOperationException] on first access.
     List<PqVariant> variants();
+
+    /// View the elements as a [List] of [PqFile] references, for a list whose element is a
+    /// group annotated `FILE`. Reading an element that is not a valid reference throws
+    /// [dev.hardwood.reader.ParquetReadException], as [StructAccessor#getFile(String)] does.
+    List<PqFile> files();
 }

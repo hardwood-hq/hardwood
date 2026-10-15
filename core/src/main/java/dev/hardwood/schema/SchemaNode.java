@@ -82,14 +82,20 @@ public sealed interface SchemaNode {
                     || logicalType instanceof LogicalType.MapType;
         }
 
-    /// Returns true if this is a plain struct (no converted type and no modern logical-type annotation).
+    /// Returns true if this group is read and written field by field as a struct: it carries no
+    /// annotation, or the [LogicalType.FileType] annotation, whose children are ordinary fields.
         public boolean isStruct() {
-            return convertedType == null && logicalType == null;
+            return convertedType == null && (logicalType == null || logicalType instanceof LogicalType.FileType);
         }
 
     /// Returns true if this group carries the [LogicalType.VariantType] annotation.
         public boolean isVariant() {
             return logicalType instanceof LogicalType.VariantType;
+        }
+
+    /// Returns true if this group carries the [LogicalType.FileType] annotation.
+        public boolean isFile() {
+            return logicalType instanceof LogicalType.FileType;
         }
 
     /// For LIST groups, returns the list's element node — the logical element,

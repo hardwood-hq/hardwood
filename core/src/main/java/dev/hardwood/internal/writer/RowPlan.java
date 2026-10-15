@@ -207,7 +207,7 @@ public final class RowPlan {
         }
         // The node builds its own name-to-index map from these, and rejects a duplicate name
         // as it does so.
-        return new RowStructNode(path, nodes, fieldNames, nullable);
+        return new RowStructNode(path, nodes, fieldNames, nullable, group.isFile());
     }
 
     private static RowNode buildNode(SchemaNode node, String path, FileSchema schema,
@@ -250,8 +250,9 @@ public final class RowPlan {
             String elementPath = childPath(repeatedPath, element.name());
             return new RowListNode(path, optional, buildNode(element, elementPath, schema, policy));
         }
-        // Any other group — a plain struct, or one carrying an annotation the write path does
-        // not interpret, such as VARIANT — is written field by field like a struct.
+        // Any other group is written field by field like a struct: a plain struct, a FILE group,
+        // which only setFile fills, or one carrying an annotation the write path does not
+        // interpret, such as VARIANT.
         return buildStruct(group, path, schema, optional, policy);
     }
 

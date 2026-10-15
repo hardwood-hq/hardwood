@@ -24,6 +24,7 @@ import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -103,7 +104,7 @@ final class PqListImpl implements PqList {
         }
         // Leaf level: check if element is a nested type (struct/list/map/variant within a leaf-level list)
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            return createInnerGroup(group, index);
+            return createInnerGroup(group, index, true);
         }
         return getLeafValue(index);
     }
@@ -146,7 +147,7 @@ final class PqListImpl implements PqList {
             return getNestedElement(index);
         }
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            return createInnerGroup(group, index);
+            return createInnerGroup(group, index, false);
         }
         int projCol = listDesc.firstLeafProjCol();
         int valueIdx = start + index;
@@ -303,6 +304,12 @@ final class PqListImpl implements PqList {
         return new NestedList<>(this::createInnerVariant);
     }
 
+    @Override
+    public List<PqFile> files() {
+        FileValues.fileDesc(listDesc.elementDesc(), "The element of list '" + listDesc.schema().name() + "'");
+        return new NestedList<>(this::createInnerFile);
+    }
+
     // ==================== Internal: Range Computation ====================
 
     private record ListRange(int start, int end, int subLevel) {}
@@ -380,10 +387,12 @@ final class PqListImpl implements PqList {
     }
 
     /// The element flyweight for a group element, chosen as [TopLevelFieldMap] chose the
-    /// element's descriptor: a variant, list or map by the group's annotation, and a struct
-    /// for any other group.
-    private Object createInnerGroup(SchemaNode.GroupNode group, int index) {
-        if (group.isVariant()) {
+    /// element's descriptor: a variant, list or map by the group's annotation, a [PqFile] for
+    /// a `FILE` group when `decode`, and a struct for any other group.
+    private Object createInnerGroup(SchemaNode.GroupNode group, int index, boolean decode) {
+        if (decode && group.isFile()) {
+            return createInnerFile(index);
+        } else if (group.isVariant()) {
             return createInnerVariant(index);
         } else if (group.isList()) {
             return createInnerGenericList(index);
@@ -422,7 +431,7 @@ final class PqListImpl implements PqList {
 
     // ==================== Internal: Inner List/Struct Creation ====================
 
-    private PqStruct createInnerStruct(int index) {
+    private PqStructImpl createInnerStruct(int index) {
         int valueIdx = start + index;
         TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
         if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
@@ -432,6 +441,16 @@ final class PqListImpl implements PqList {
             return null;
         }
         return PqStructImpl.atPosition(batch, structDesc, valueIdx);
+    }
+
+    private boolean isFileElement() {
+        return elementSchema instanceof SchemaNode.GroupNode group && group.isFile();
+    }
+
+    private PqFile createInnerFile(int index) {
+        PqStructImpl group = createInnerStruct(index);
+        return group == null ? null
+                : FileValues.read(group, (TopLevelFieldMap.FieldDesc.Struct) listDesc.elementDesc(), batch);
     }
 
     private PqList createInnerGenericList(int index) {
@@ -552,7 +571,8 @@ final class PqListImpl implements PqList {
         int n = size();
         for (int i = 0; i < n; i++) {
             if (i > 0) sb.append(", ");
-            FlyweightFormatter.appendValue(sb, get(i));
+            // A FILE element renders as its stored fields, so an invalid reference does not throw.
+            FlyweightFormatter.appendValue(sb, isFileElement() ? getRaw(i) : get(i));
         }
         sb.append(']');
         return sb.toString();

@@ -23,6 +23,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -427,6 +428,8 @@ public final class PredicateView implements StructAccessor {
     @Override public PqInterval getInterval(int index) { throw unsupported(); }
     @Override public PqVariant getVariant(int index) { throw unsupported(); }
     @Override public PqStruct getStruct(int index) { throw unsupported(); }
+    @Override public PqFile getFile(String name) { throw unsupported(); }
+    @Override public PqFile getFile(int index) { throw unsupported(); }
     @Override public PqList getList(int index) { throw unsupported(); }
     @Override public PqMap getMap(int index) { throw unsupported(); }
     @Override public Object getValue(int index) { throw unsupported(); }

@@ -17,6 +17,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] INTERVAL
   - [x] FLOAT16, NULL (the format's `UNKNOWN`)
   - [x] VARIANT, GEOMETRY, GEOGRAPHY
+  - [x] FILE (read and written; references are not resolved)
 - [x] Define repetition types: `REQUIRED`, `OPTIONAL`, `REPEATED`
 
 ### 1.2 Schema Representation

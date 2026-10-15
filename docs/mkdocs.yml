@@ -37,6 +37,7 @@ nav:
     - Read with the parquet-java API: how-to/compat.md
     - Read Variant Columns: how-to/variant.md
     - Read Geospatial Columns: how-to/geospatial.md
+    - Read and Write File References: how-to/file-references.md
     - Write Row by Row: how-to/write-row-by-row.md
     - Write Column by Column: how-to/write-column-by-column.md
     - Handle Write Failures: how-to/write-failures.md

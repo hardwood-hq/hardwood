@@ -17,6 +17,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
@@ -153,6 +154,39 @@ class PrintCommandTest implements PrintCommandContract {
                 | 4  | 0x000000000000000000 |
                 |    | 00000000000000000000 |
                 +----+----------------------+""");
+    }
+
+    /// A `FILE` group prints as its stored fields.
+    @Test
+    void printsAFileGroupAsItsStoredFields(@TempDir Path tempDir) throws Exception {
+        Path file = writeFileReferencesFile(tempDir);
+        Cli.Result result = Cli.launch("print", "-f", file.toString());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+----------------------------------------------------+
+                | id | photo                                              |
+                +----+----------------------------------------------------+
+                | 1  | { uri : s3://b/cat.jpg, offset : 16, size : 4, co… |
+                | 2  | { uri : null, offset : null, size : null, content… |
+                | 3  | null                                               |
+                +----+----------------------------------------------------+""");
+    }
+
+    private static Path writeFileReferencesFile(Path tempDir) throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .file("photo", RepetitionType.OPTIONAL)
+                .build();
+        Path file = tempDir.resolve("file_references.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.rowWriter().writeRow(row -> row.setInt("id", 1)
+                    .setFile("photo", PqFile.external("s3://b/cat.jpg", 16, 4).withContentType("image/jpeg")));
+            writer.rowWriter().writeRow(row -> row.setInt("id", 2)
+                    .setFile("photo", PqFile.inline(new byte[] {1, 2})));
+            writer.rowWriter().writeRow(row -> row.setInt("id", 3));
+        }
+        return file;
     }
 
     /// One `STRING` column carrying an embedded `\u0001`, a horizontal tab, a

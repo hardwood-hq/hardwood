@@ -128,6 +128,7 @@ public final class LogicalTypeValueRange {
             case LogicalType.ListType ignored -> throw notOver(type, column.typeLength(), logicalType);
             case LogicalType.MapType ignored -> throw notOver(type, column.typeLength(), logicalType);
             case LogicalType.VariantType ignored -> throw notOver(type, column.typeLength(), logicalType);
+            case LogicalType.FileType ignored -> throw notOver(type, column.typeLength(), logicalType);
         };
     }
 

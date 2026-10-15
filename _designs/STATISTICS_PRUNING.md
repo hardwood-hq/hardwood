@@ -162,7 +162,7 @@ Tests: `FilterDecisionTest`, `UnitStatsTest`, `RowGroupDecideTest`.
 
 Comparing a literal against `min`/`max` is sound only in the order the bounds were written in. `BoundsReadability` answers, per leaf ordinal, whether that order is known. A column's bounds are unreadable when:
 
-- its annotation names no order: `INTERVAL`, `NULL`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `LIST`, `MAP`;
+- its annotation names no order: `INTERVAL`, `NULL`, `VARIANT`, `GEOMETRY`, `GEOGRAPHY`, `FILE`, `LIST`, `MAP`;
 - the file's `column_orders` entry is a union member this build does not recognize (`ColumnOrder.UNKNOWN`), which `parquet.thrift` says to treat as "ignore min and max", `IEEE_754_TOTAL_ORDER` on a column other than `FLOAT`, `DOUBLE` or `FLOAT16`, the only ones it is defined for, or `INT96_TIMESTAMP_ORDER` on a column other than an `INT96`;
 - the reader dropped the column's annotation, because this build does not recognize it or the physical type cannot carry it. The column reads as its physical type, but the writer ordered the bounds by the annotation.
 

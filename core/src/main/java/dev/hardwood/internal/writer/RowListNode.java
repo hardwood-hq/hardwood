@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import dev.hardwood.Validity;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.writer.ColumnBatch;
 import dev.hardwood.writer.ListBuilder;
@@ -152,12 +153,27 @@ final class RowListNode extends RowRepeatedNode implements ListBuilder {
     @Override
     public ListBuilder addStruct(Consumer<StructBuilder> filler) {
         ensureActive();
-        if (!(element instanceof RowStructNode struct)) {
+        if (!(element instanceof RowStructNode struct) || struct.isFile()) {
             throw wrongVerb("addStruct", "a struct element");
         }
         struct.beginScope();
         filler.accept(struct);
         struct.endScope();
+        return counted();
+    }
+
+    @Override
+    public ListBuilder addFile(PqFile value) {
+        ensureActive();
+        if (!(element instanceof RowStructNode group) || !group.isFile()) {
+            throw wrongVerb("addFile", "a FILE element");
+        }
+        if (value == null) {
+            group.appendNullInstance();
+        }
+        else {
+            group.writeFile(value);
+        }
         return counted();
     }
 

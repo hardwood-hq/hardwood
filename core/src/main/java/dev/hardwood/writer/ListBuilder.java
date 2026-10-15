@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 
 /// Appends the entries of one `LIST` instance.
@@ -139,9 +140,20 @@ public interface ListBuilder {
     ///
     /// @param filler populates the entry
     /// @return this builder, for chaining
-    /// @throws IllegalArgumentException if the list's element is not a struct group
+    /// @throws IllegalArgumentException if the list's element is not a struct group (a `FILE`
+    ///         element is appended through [#addFile(PqFile)])
     /// @throws IllegalStateException if this builder's scope has ended
     ListBuilder addStruct(Consumer<StructBuilder> filler);
+
+    /// Appends a `FILE` element, the reference `value`. A `null` value appends a null element.
+    ///
+    /// @param value the reference
+    /// @return this builder, for chaining
+    /// @throws IllegalArgumentException if the list's element is not a group annotated `FILE`,
+    ///         the group has no child for a field `value` sets, `value` is not a valid reference,
+    ///         or its `checksum` is not a well-formed token (see [PqFile#withChecksum(String)])
+    /// @throws IllegalStateException if this builder's scope has ended
+    ListBuilder addFile(PqFile value);
 
     /// Appends a nested list entry, populating it through `filler`.
     ///

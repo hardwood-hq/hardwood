@@ -17,6 +17,7 @@ import java.util.Set;
 import org.apache.parquet.column.Encoding;
 
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
 /// The cells no test produces, each with the reason it does not.
@@ -52,6 +53,7 @@ final class CoverageWaivers {
         List<Waiver> waivers = new ArrayList<>();
         brotli(waivers);
         fixedTimestamps(waivers);
+        fileGroups(waivers);
         return waivers;
     }
 
@@ -76,6 +78,21 @@ final class CoverageWaivers {
                                 + " Flba12TimestampTest.parquetJavaRejectsTheAnnotation"));
             }
         }
+    }
+
+    /// A `FILE` group reaches no cell of this module. The annotation comes from parquet-format
+    /// 2.14.0, and no parquet-java release up to 1.18.1 models it: the pinned one reads the group
+    /// as a plain group, so it observes no annotation to record.
+    ///
+    /// The group's children are read back by parquet-java in
+    /// `WriterNestedInteropTest.fileGroupReadsAsAPlainGroupOfItsChildren`, which pins the reason, and
+    /// the annotation by core's `FileLogicalTypeTest` and `LogicalTypeReferenceCodecTest`.
+    private static void fileGroups(List<Waiver> waivers) {
+        waivers.add(new Waiver(Coverage.annotationStorage(LogicalTypeKey.of(LogicalType.file()),
+                Coverage.StorageForm.GROUP.name(), Coverage.StorageForm.GROUP),
+                "no parquet-java release up to 1.18.1 models FILE; its children are read back by"
+                        + " WriterNestedInteropTest.fileGroupReadsAsAPlainGroupOfItsChildren, which pins the"
+                        + " reason"));
     }
 
     /// `BROTLI` reaches no cell of this module. parquet-java resolves a codec by name through

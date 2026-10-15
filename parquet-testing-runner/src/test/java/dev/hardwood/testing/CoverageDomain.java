@@ -223,7 +223,7 @@ final class CoverageDomain {
 
     /// The annotations that sit on a group node rather than on a column.
     static List<LogicalType> groupAnnotations() {
-        return List.of(LogicalType.list(), LogicalType.map());
+        return List.of(LogicalType.list(), LogicalType.map(), LogicalType.file());
     }
 
     /// One annotation the writer refuses outright, and the part of its refusal that names the

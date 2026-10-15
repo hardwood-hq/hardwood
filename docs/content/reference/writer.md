@@ -51,6 +51,7 @@ A file's schema is declared with `FileSchema.builder(String)` and built once; th
 | `addColumn(name, type, repetition, typeLength)` | a `FIXED_LEN_BYTE_ARRAY` column of the given byte length |
 | `addColumn(name, type, repetition, typeLength, logicalType)` | both of the above |
 | `struct(name, repetition, filler)` | a `struct` group whose fields `filler` declares |
+| `file(name, repetition)` | a `FILE` group with all six children, each `OPTIONAL`, in the order `uri`, `offset`, `size`, `content_type`, `checksum`, `inline` (see [FILE groups](accessors.md#file-groups)) |
 | `list(name, repetition, element)` | a `LIST` group whose element `element` declares |
 | `map(name, repetition, keyType[, keyTypeLength][, keyLogicalType], value)` | a `MAP` group with a `REQUIRED` key of `keyType` and a value `value` declares |
 | `build()` | the `FileSchema` |
@@ -79,7 +80,7 @@ FileSchema schema = FileSchema.builder("event")
         .build();
 ```
 
-Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, typeLength][, logicalType])`, `struct`, `list` and `map` carry no name, the surrounding layout supplying it.
+Inside a `struct` filler the same methods appear on `FileSchema.StructBuilder`; a list element and a map value are declared on `FileSchema.ElementBuilder`, whose `primitive(type, repetition[, typeLength][, logicalType])`, `struct`, `file`, `list` and `map` carry no name, the surrounding layout supplying it.
 
 ### Logical Type Factories
 
@@ -105,6 +106,7 @@ An annotation is built with the `LogicalType` static factory of the same name. T
 | `LogicalType.variant(specVersion)` | `VARIANT` — `specVersion` is `1`; the writer rejects a column carrying it |
 | `LogicalType.geometry(crs)` | `GEOMETRY` — `crs` defaults to `OGC:CRS84` when `null` |
 | `LogicalType.geography(crs, edgeInterpolation)` | `GEOGRAPHY` — `edgeInterpolation` is an `EdgeInterpolationAlgorithm` |
+| `LogicalType.file()` | `FILE` — annotates a group; declared with `file(name, repetition)`, and rejected on a column |
 
 Which Java value each annotation accepts is listed under [Logical Types and Row Setters](#logical-types-and-row-setters); a pairing of annotation and physical type the format does not define is rejected when the schema is built.
 
@@ -222,8 +224,11 @@ The row-oriented layer takes physical values through the setter named for the ty
 | `INTERVAL` | `FIXED_LEN_BYTE_ARRAY(12)` | `setInterval` | `PqInterval` |
 | any | any primitive | `setNull` | — |
 | none / `LIST` / `MAP` | group | `setStruct` / `setList` / `setMap` | a filler over `StructBuilder` / `ListBuilder` / `MapBuilder` |
+| `FILE` | group | `setFile` | `PqFile` |
 
-`ListBuilder` has the same set as `addInt`, `addString`, `addStruct`, `addNull`, … and `MapBuilder` has `addEntry`, whose entry struct declares the two fields `key` and `value`.
+`ListBuilder` has the same set as `addInt`, `addString`, `addStruct`, `addFile`, `addNull`, … and `MapBuilder` has `addEntry`, whose entry struct declares the two fields `key` and `value`.
+
+A `FILE` group is set only through `setFile` / `addFile`; `setStruct` / `addStruct` on one throws. A group read from an existing file may declare fewer children, and a value setting a field the group has no child for is rejected. The columnar API writes a `FILE` group's children as ordinary columns, addressed as `photo.uri`, `photo.offset` and so on, and rejects a batch holding a present value that is not valid under the rules in [FILE groups](accessors.md#file-groups).
 
 Timestamp columns split by `isAdjustedToUTC`, mirroring the reader's split between `getTimestamp` and `getLocalTimestamp`: using the wrong setter throws. Both APIs also accept every setter by field index; see [Addressing fields by index](../how-to/write-row-by-row.md#addressing-fields-by-index).
 
@@ -358,7 +363,7 @@ A failure while `close()` finishes or publishes the file discards the output as 
 | `Staged` | The record is in the batch. A later flush can still fail the writer. |
 | `Rejected(fieldPath, message)` | The record was not staged, and the staged batch is unchanged. `fieldPath` is the schema path the message names; `message` is the full text `writeRow` throws for the same rejection. |
 
-A rejection that depends on the value handed over becomes `Rejected`: a value outside the range its annotation declares, a value whose magnitude or precision the column cannot hold under the configured `PrecisionLossPolicy`, a `FIXED_LEN_BYTE_ARRAY` value of the wrong length, or a `REQUIRED` field left unset or set null.
+A rejection that depends on the value handed over becomes `Rejected`: a value outside the range its annotation declares, a value whose magnitude or precision the column cannot hold under the configured `PrecisionLossPolicy`, a `FIXED_LEN_BYTE_ARRAY` value of the wrong length, a `PqFile` that is not a valid reference, sets a field its `FILE` group has no child for, or holds a malformed `checksum`, or a `REQUIRED` field left unset or set null.
 
 Every other failure throws and fails the writer, as it does under `writeRow`: an unknown field name or index, a field set twice, a setter that does not fit the field (including any value setter on a column annotated `UNKNOWN`), an exception thrown by the filler, and a failure while a completed batch is written.
 
@@ -367,7 +372,7 @@ Every other failure throws and fails the writer, as it does under `writeRow`: an
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
-| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
+| `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
 | `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
@@ -383,6 +388,8 @@ Every other arrangement of repetition is rejected when the writer is created, si
 - a `LIST` or `MAP` group that is itself `REPEATED`;
 - a `LIST` or `MAP` group holding anything other than its single `REPEATED` entry;
 - a `MAP` whose entry is a leaf rather than a group.
+
+A `FILE` group with no children is rejected with `UnsupportedOperationException` when the writer is created.
 
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
 

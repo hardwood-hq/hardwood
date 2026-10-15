@@ -57,6 +57,16 @@ public interface StructAccessor extends FieldAccessor {
     /// @return the map, or null if the field is null
     PqMap getMap(String name);
 
+    /// Get a `FILE` field value by name: the reference its group's children store.
+    ///
+    /// @param name the field name
+    /// @return the reference, or null if the field is null
+    /// @throws IllegalArgumentException if the field is not a group annotated `FILE`
+    /// @throws dev.hardwood.reader.ParquetReadException if the stored value is not a valid
+    ///         reference: neither `inline` nor `uri` is set, `offset` or `size` is set without
+    ///         `uri`, `offset` without `size`, or either is negative
+    PqFile getFile(String name);
+
     // ==================== Accessors by Index ====================
     //
     // Index-based mirrors of the by-name accessors on [FieldAccessor] and the
@@ -113,6 +123,9 @@ public interface StructAccessor extends FieldAccessor {
 
     /// Get a nested struct field value by field index. See [#getStruct(String)].
     PqStruct getStruct(int fieldIndex);
+
+    /// Get a `FILE` field value by field index. See [#getFile(String)].
+    PqFile getFile(int fieldIndex);
 
     /// Get a LIST field value by field index. See [#getList(String)].
     PqList getList(int fieldIndex);

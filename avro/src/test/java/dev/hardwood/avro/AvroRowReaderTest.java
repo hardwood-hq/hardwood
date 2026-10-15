@@ -31,7 +31,9 @@ import org.apache.avro.io.Encoder;
 import org.apache.avro.io.EncoderFactory;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.avro.internal.AvroPlanNode;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
 import dev.hardwood.internal.reader.FileAwareRowReader;
@@ -41,6 +43,7 @@ import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
@@ -48,6 +51,7 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
 
 import static dev.hardwood.metadata.LogicalType.intType;
 import static dev.hardwood.metadata.LogicalType.list;
@@ -102,6 +106,38 @@ class AvroRowReaderTest {
                     .hasMessage("Map '" + column + "' key must be a BYTE_ARRAY annotated as STRING,"
                             + " ENUM or JSON \u2014 Avro map keys are strings \u2014 but is "
                             + keyType);
+        }
+    }
+
+    /// A `FILE` group materializes as a record of its stored fields, top-level and as a list
+    /// element alike.
+    @Test
+    void materializesAFileGroupAsARecordOfItsFields() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .file("photo", RepetitionType.OPTIONAL)
+                .list("attachments", RepetitionType.OPTIONAL, element -> element.file(RepetitionType.OPTIONAL))
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        PqFile photo = PqFile.external("s3://b/cat.jpg", 16, 4).withContentType("image/jpeg");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.rowWriter().writeRow(row -> row
+                    .setFile("photo", photo)
+                    .setList("attachments", list -> list.addFile(PqFile.inline(new byte[] {7}))));
+        }
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(out.buffer()));
+                AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+            GenericRecord record = reader.next();
+            GenericRecord stored = (GenericRecord) record.get("photo");
+            assertThat(stored.get("uri")).hasToString("s3://b/cat.jpg");
+            assertThat(stored.get("offset")).isEqualTo(16L);
+            assertThat(stored.get("size")).isEqualTo(4L);
+            assertThat(stored.get("content_type")).hasToString("image/jpeg");
+            assertThat(stored.get("inline")).isNull();
+
+            GenericRecord attachment = (GenericRecord) ((List<?>) record.get("attachments")).get(0);
+            assertThat(((ByteBuffer) attachment.get("inline")).array()).containsExactly(7);
+            assertThat(attachment.get("uri")).isNull();
         }
     }
 

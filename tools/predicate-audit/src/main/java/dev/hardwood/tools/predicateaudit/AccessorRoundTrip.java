@@ -169,6 +169,8 @@ final class AccessorRoundTrip {
             }
             case LogicalType.MapType ignored -> {
             }
+            case LogicalType.FileType ignored -> {
+            }
         }
     }
 

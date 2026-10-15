@@ -206,7 +206,7 @@ static void addTallies(BinaryDictionary dictionary, long[] rowsPerEntry, Map<Str
 
 Before opening a reader for a nested column, you usually need to walk the file's schema tree to find the leaf you want. `SchemaNode.GroupNode` exposes the structural primitives:
 
-- `isList()` / `isMap()` / `isStruct()` — disambiguate which kind of group a node is.
+- `isList()` / `isMap()` / `isVariant()` / `isStruct()` — disambiguate which kind of group a node is. A group annotated `FILE` answers both `isStruct()` and `isFile()`: its children are ordinary fields.
 - `getListElement()` — for LIST groups, returns the element node, applying Parquet's backward-compatibility rules for legacy 2-level encodings. Walk to the leaf uniformly by recursing while the result `isList()`; [Logical element versus physical encoding](../concepts/nested-columns.md#logical-element-versus-physical-encoding) describes the returned node under each encoding.
 - `getMapKey()` / `getMapValue()` — for MAP groups, returns the key and value nodes from the standard `map.key_value.key` / `map.key_value.value` encoding.
 - `children()` — for plain struct groups, iterate to get each field.

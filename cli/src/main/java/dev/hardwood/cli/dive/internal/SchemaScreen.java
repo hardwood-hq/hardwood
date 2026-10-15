@@ -379,6 +379,9 @@ public final class SchemaScreen {
         else if (g.isVariant()) {
             tag = "(VARIANT)";
         }
+        else if (g.isFile()) {
+            tag = "(FILE)";
+        }
         else {
             tag = "(group)";
         }

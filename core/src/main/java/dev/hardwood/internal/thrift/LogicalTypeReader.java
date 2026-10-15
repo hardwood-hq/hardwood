@@ -92,6 +92,7 @@ public class LogicalTypeReader {
             case VARIANT -> readVariantType(reader, header);
             case GEOMETRY -> readGeometryType(reader, header);
             case GEOGRAPHY -> readGeographyType(reader, header);
+            case FILE -> emptyArm(reader, header, LogicalType.file());
             case INTERVAL -> throw new IllegalStateException(kind + " has no union member to read");
         };
     }

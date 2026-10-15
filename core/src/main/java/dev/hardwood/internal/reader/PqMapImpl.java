@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -270,7 +271,7 @@ final class PqMapImpl implements PqMap {
     // ==================== Value Readers (by leaf index) ====================
 
     private Object valueAt(int valueIdx) {
-        Object group = groupValueAt(valueIdx);
+        Object group = groupValueAt(valueIdx, true);
         if (group != null) {
             return group;
         }
@@ -281,7 +282,7 @@ final class PqMapImpl implements PqMap {
     }
 
     private Object rawValueAt(int valueIdx) {
-        Object group = groupValueAt(valueIdx);
+        Object group = groupValueAt(valueIdx, false);
         if (group != null) {
             return group;
         }
@@ -291,10 +292,12 @@ final class PqMapImpl implements PqMap {
         return readValueAt(valueIdx);
     }
 
-    private Object groupValueAt(int valueIdx) {
+    /// The value of a group-valued map at `valueIdx`, `null` for a primitive value. A `FILE`
+    /// value is read as a [PqFile] when `decode`, and as the struct of its children otherwise.
+    private Object groupValueAt(int valueIdx, boolean decode) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-        if (vDesc instanceof TopLevelFieldMap.FieldDesc.Struct) {
-            return structValueAt(valueIdx);
+        if (vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            return decode && structDesc.schema().isFile() ? fileValueAt(valueIdx) : structValueAt(valueIdx);
         }
         if (vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf) {
             return listValueAt(valueIdx);
@@ -308,7 +311,7 @@ final class PqMapImpl implements PqMap {
         return null;
     }
 
-    private PqStruct structValueAt(int valueIdx) {
+    private PqStructImpl structValueAt(int valueIdx) {
         TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
         if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
             throw new IllegalArgumentException("Value is not a struct");
@@ -326,6 +329,17 @@ final class PqMapImpl implements PqMap {
             }
         }
         return PqStructImpl.atPosition(batch, structDesc, valueIdx);
+    }
+
+    private boolean isFileValued() {
+        return valueSchema instanceof SchemaNode.GroupNode group && group.isFile();
+    }
+
+    private PqFile fileValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc.Struct desc =
+                FileValues.fileDesc(mapDesc.valueDesc(), "The value of map '" + mapDesc.schema().name() + "'");
+        PqStructImpl group = structValueAt(valueIdx);
+        return group == null ? null : FileValues.read(group, desc, batch);
     }
 
     private PqList listValueAt(int valueIdx) {
@@ -499,7 +513,8 @@ final class PqMapImpl implements PqMap {
             first = false;
             FlyweightFormatter.appendValue(sb, e.getKey());
             sb.append('=');
-            FlyweightFormatter.appendValue(sb, e.getValue());
+            // A FILE value renders as its stored fields, so an invalid reference does not throw.
+            FlyweightFormatter.appendValue(sb, isFileValued() ? e.getRawValue() : e.getValue());
         }
         sb.append('}');
         return sb.toString();
@@ -696,6 +711,11 @@ final class PqMapImpl implements PqMap {
         }
 
         @Override
+        public PqFile getFileValue() {
+            return fileValueAt(valueIdx);
+        }
+
+        @Override
         public Object getValue() {
             return valueAt(valueIdx);
         }
@@ -725,7 +745,7 @@ final class PqMapImpl implements PqMap {
             StringBuilder sb = new StringBuilder();
             FlyweightFormatter.appendValue(sb, getKey());
             sb.append('=');
-            FlyweightFormatter.appendValue(sb, getValue());
+            FlyweightFormatter.appendValue(sb, isFileValued() ? getRawValue() : getValue());
             return sb.toString();
         }
     }

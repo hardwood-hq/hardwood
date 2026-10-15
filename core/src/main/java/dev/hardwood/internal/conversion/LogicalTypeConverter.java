@@ -163,6 +163,7 @@ public final class LogicalTypeConverter {
             case LogicalType.ListType l -> throw structuralReached(logicalType);
             case LogicalType.MapType m -> throw structuralReached(logicalType);
             case LogicalType.VariantType v -> throw structuralReached(logicalType);
+            case LogicalType.FileType f -> throw structuralReached(logicalType);
         };
     }
 

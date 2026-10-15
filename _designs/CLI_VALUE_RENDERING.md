@@ -70,7 +70,7 @@ The `LogicalType` switch in `formatReader` is exhaustive over the sealed hierarc
 
 ### Nested values
 
-`formatReader` and `formatValue` hand `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same from both. The walker resolves each child's schema node from its parent (struct fields by name, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: annotated byte arrays decode as strings, UUIDs, decimals, intervals and timestamps, and unsigned `INT` annotations render unsigned. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
+`formatReader` and `formatValue` hand `PqStruct`, `PqList`, `PqMap` and `PqVariant` values to one walker, so a nested value reads the same from both. A `FILE` group is read through the raw route at every level (`ValueFormatter.valueOf`), so it renders as the struct of its stored children and a file holding an invalid reference still renders. The walker resolves each child's schema node from its parent (struct fields by name, the list element, a repeated primitive as its own element, the map's key and value) and renders leaves against that node: annotated byte arrays decode as strings, UUIDs, decimals, intervals and timestamps, and unsigned `INT` annotations render unsigned. A value whose schema node does not resolve walks schema-less. A group schema paired with a scalar value throws.
 
 The display styles use the display grammar: `{ a : 1 }` for structs, maps and Variant objects, `[1, 2]` for lists and Variant arrays, unquoted Variant keys and strings, `{}` and `[]` when empty. `EXPANDED` writes `name: value` entries one per line.
 

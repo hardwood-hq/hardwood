@@ -22,7 +22,7 @@ package dev.hardwood.metadata;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
 interface LogicalType
-permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType,LogicalType.Float16Type,LogicalType.NullType
+permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType,LogicalType.Float16Type,LogicalType.FileType,LogicalType.NullType
 {
 
     /// The `STRING` annotation, for a UTF-8 encoded string.
@@ -118,6 +118,12 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
     /// @param specVersion spec version declared by the writer (currently always `1`)
     static VariantType variant(int specVersion) {
         return new VariantType(specVersion);
+    }
+
+    /// The `FILE` annotation, for a group holding a reference to a range of bytes, stored
+    /// inline in the value or in an external file.
+    static FileType file() {
+        return FileType.INSTANCE;
     }
 
     /// The `GEOMETRY` annotation, for planar geospatial values in a given CRS.
@@ -348,6 +354,17 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
         @Override
         public String toString() {
             return "VARIANT(" + specVersion + ")";
+        }
+    }
+
+    /// File reference logical type. Annotates a group whose children locate a range of bytes:
+    /// `uri`, `offset`, `size`, `content_type`, `checksum` and `inline`, each optional.
+    record FileType() implements LogicalType {
+        private static final FileType INSTANCE = new FileType();
+
+        @Override
+        public String toString() {
+            return "FILE";
         }
     }
 

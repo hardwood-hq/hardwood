@@ -48,6 +48,7 @@ import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqFile;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnProjection;
@@ -336,6 +337,7 @@ public class RecordFilterMicroBenchmark {
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
+        @Override public PqFile getFile(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 4; }
@@ -366,6 +368,7 @@ public class RecordFilterMicroBenchmark {
         @Override public PqList getList(int i) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(int i) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqFile getFile(int i) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(int i) { throw new UnsupportedOperationException(); }
         @Override public Object getRawValue(int i) { throw new UnsupportedOperationException(); }
         @Override public boolean isNull(int i) { throw new UnsupportedOperationException(); }

@@ -335,6 +335,8 @@ public final class AvroSchemaConverter {
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.VariantType v -> throw new IllegalStateException(
                     "VariantType is a group-level annotation; encountered on primitive column " + prim.name());
+            case LogicalType.FileType f -> throw new IllegalStateException(
+                    "FileType is a group-level annotation; encountered on primitive column " + prim.name());
             // Avro has no geospatial type — round-trip the raw WKB payload as bytes.
             case LogicalType.GeometryType g -> binary(prim);
             case LogicalType.GeographyType g -> binary(prim);

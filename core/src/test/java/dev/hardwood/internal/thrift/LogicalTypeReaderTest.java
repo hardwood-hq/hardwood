@@ -27,9 +27,9 @@ class LogicalTypeReaderTest {
     @Test
     void unknownUnionMemberDecodesToNull() throws Exception {
         ThriftCompactWriter writer = new ThriftCompactWriter();
-        // Unrecognized field id 19 carrying an empty marker struct, the shape
-        // most known logical types take.
-        writer.writeFieldBegin(19, FieldType.STRUCT);
+        // Unrecognized field id 20, one past the last member parquet-format defines,
+        // carrying an empty marker struct, the shape most known logical types take.
+        writer.writeFieldBegin(20, FieldType.STRUCT);
         writer.writeFieldStop(); // empty member struct
         writer.writeFieldStop(); // union STOP
 

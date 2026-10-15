@@ -295,11 +295,19 @@ public interface PqMap {
         /// @throws UnsupportedOperationException if the variant is shredded
         PqVariant getVariantValue();
 
+        /// Get the value as a `FILE` reference.
+        ///
+        /// @return the reference, or null if the value is null
+        /// @throws IllegalArgumentException if the value is not a group annotated `FILE`
+        /// @throws dev.hardwood.reader.ParquetReadException if the stored value is not a valid
+        ///         reference, as for [StructAccessor#getFile(String)]
+        PqFile getFileValue();
+
         /// Get the value, decoded to its logical-type representation.
         ///
         /// Returns the same form as the typed value accessors above
         /// (boxed primitive, `String`, [LocalDate], [LocalTime], [Instant],
-        /// [BigDecimal], [UUID], [PqInterval], [PqStruct], [PqList], [PqMap]),
+        /// [BigDecimal], [UUID], [PqInterval], [PqStruct], [PqList], [PqMap], [PqFile]),
         /// with `byte[]` for un-annotated BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
         /// columns.
         ///
@@ -312,7 +320,8 @@ public interface PqMap {
         /// decoding. Primitive values surface as the underlying `Integer` /
         /// `Long` / `Float` / `Double` / `Boolean` / `byte[]`. Nested values
         /// (struct / list / map) have no useful "raw" form and are still
-        /// returned as their typed flyweight ([PqStruct] / [PqList] / [PqMap]).
+        /// returned as their typed flyweight ([PqStruct] / [PqList] / [PqMap]); a FILE
+        /// value is returned as the [PqStruct] of its children.
         ///
         /// @return the raw value, or null if the value is null
         Object getRawValue();

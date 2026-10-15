@@ -32,6 +32,7 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -117,8 +118,9 @@ public final class ValueFormatter {
             return "null";
         }
         if (isNested(field)) {
-            // `getValue` and `getRawValue` return the same flyweight for a group or list.
-            return render(reader.getValue(fieldIndex), field, useLogicalType, style, 0, budget);
+            // `getValue` and `getRawValue` return the same flyweight for a group or list, apart
+            // from a FILE group, which renders from its stored fields.
+            return render(valueOf(reader, fieldIndex, field), field, useLogicalType, style, 0, budget);
         }
         SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
         if (!useLogicalType) {
@@ -158,6 +160,7 @@ public final class ValueFormatter {
             case LogicalType.ListType l -> throw structuralReached(field, lt);
             case LogicalType.MapType m -> throw structuralReached(field, lt);
             case LogicalType.VariantType v -> throw structuralReached(field, lt);
+            case LogicalType.FileType f -> throw structuralReached(field, lt);
         };
     }
 
@@ -227,6 +230,29 @@ public final class ValueFormatter {
         };
     }
 
+    /// The value of the field at `fieldIndex` as the formatter renders it: decoded, apart from a
+    /// `FILE` group, which renders as its stored fields so that a file holding an invalid
+    /// reference still prints.
+    public static Object valueOf(StructAccessor accessor, int fieldIndex, SchemaNode field) {
+        return isFile(field) ? accessor.getRawValue(fieldIndex) : accessor.getValue(fieldIndex);
+    }
+
+    /// The value of the field named `name`, as [#valueOf(StructAccessor, int, SchemaNode)] reads it.
+    public static Object valueOf(StructAccessor accessor, String name, SchemaNode field) {
+        return isFile(field) ? accessor.getRawValue(name) : accessor.getValue(name);
+    }
+
+    /// Whether a value is read through the raw accessors: every value when `useLogicalType` is
+    /// off, and a `FILE` group always, which renders as its stored fields so that a file holding
+    /// an invalid reference still prints.
+    private static boolean readsRaw(SchemaNode schema, boolean useLogicalType) {
+        return !useLogicalType || isFile(schema);
+    }
+
+    private static boolean isFile(SchemaNode schema) {
+        return schema instanceof SchemaNode.GroupNode group && group.isFile();
+    }
+
     private static String renderStruct(PqStruct struct, SchemaNode.GroupNode schema, boolean useLogicalType,
                                        Style style, int depth, int budget) {
         int count = struct.getFieldCount();
@@ -234,10 +260,11 @@ public final class ValueFormatter {
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
             String name = struct.getFieldName(i);
+            SchemaNode childSchema = findChildSchema(schema, name);
             Object fieldValue = struct.isNull(name) ? null
-                    : useLogicalType ? struct.getValue(name) : struct.getRawValue(name);
+                    : readsRaw(childSchema, useLogicalType) ? struct.getRawValue(name) : struct.getValue(name);
             entries.add(entry(style == Style.EXPORT ? jsonString(name) : text(name, style),
-                    render(fieldValue, findChildSchema(schema, name), useLogicalType, style, depth + 1, budget),
+                    render(fieldValue, childSchema, useLogicalType, style, depth + 1, budget),
                     style));
         }
         return enclose(true, entries, count, style, depth);
@@ -249,7 +276,8 @@ public final class ValueFormatter {
         int shown = shownEntries(size, style);
         List<String> entries = new ArrayList<>(shown);
         for (int i = 0; i < shown; i++) {
-            Object element = list.isNull(i) ? null : useLogicalType ? list.get(i) : list.getRaw(i);
+            Object element = list.isNull(i) ? null
+                    : readsRaw(elementSchema, useLogicalType) ? list.getRaw(i) : list.get(i);
             entries.add(render(element, elementSchema, useLogicalType, style, depth + 1, budget));
         }
         return enclose(false, entries, size, style, depth);
@@ -272,7 +300,7 @@ public final class ValueFormatter {
             PqMap.Entry entry = all.get(i);
             Object key = useLogicalType ? entry.getKey() : entry.getRawKey();
             Object value = entry.isValueNull() ? null
-                    : useLogicalType ? entry.getValue() : entry.getRawValue();
+                    : readsRaw(valueSchema, useLogicalType) ? entry.getRawValue() : entry.getValue();
             // A JSON object key is a string: the map key's text, whatever its type.
             String keyText = style == Style.EXPORT
                     ? jsonString(render(key, keySchema, useLogicalType, style, 0, budget))
