@@ -11,6 +11,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -30,6 +32,12 @@ public final class HadoopInputFile implements InputFile {
 
     private static final Set<String> S3_SCHEMES = Set.of("s3", "s3a", "s3n");
 
+    private static final String CREDENTIALS_PROVIDER = "fs.s3a.aws.credentials.provider";
+    /// S3A's anonymous provider, and the AWS SDK v1 class name S3A maps to it.
+    private static final Set<String> ANONYMOUS_PROVIDERS = Set.of(
+            "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider",
+            "com.amazonaws.auth.AnonymousAWSCredentials");
+
     private final dev.hardwood.InputFile delegate;
 
     private HadoopInputFile(dev.hardwood.InputFile delegate) {
@@ -42,6 +50,8 @@ public final class HadoopInputFile implements InputFile {
     /// For S3 paths, the Configuration is used to construct an S3 client with properties:
     ///
     /// - `fs.s3a.access.key` + `fs.s3a.secret.key` — static credentials
+    /// - `fs.s3a.aws.credentials.provider` set to `org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider`
+    ///   — unsigned requests, for public buckets; the static credentials are then not used
     /// - `fs.s3a.endpoint` — endpoint override (e.g. LocalStack, MinIO)
     /// - `fs.s3a.path.style.access` — force path-style access
     ///
@@ -95,10 +105,11 @@ public final class HadoopInputFile implements InputFile {
             Class<?> awsCredsClass = loadClass("dev.hardwood.s3.S3Credentials",
                     "dev.hardwood:hardwood-s3");
 
+            boolean anonymous = isAnonymous(conf.get(CREDENTIALS_PROVIDER));
             String accessKey = conf.get("fs.s3a.access.key");
             String secretKey = conf.get("fs.s3a.secret.key");
             Object credentials = null;
-            if (accessKey != null && secretKey != null) {
+            if (!anonymous && accessKey != null && secretKey != null) {
                 Method ofMethod = awsCredsClass.getMethod("of", String.class, String.class);
                 credentials = ofMethod.invoke(null, accessKey, secretKey);
             }
@@ -129,8 +140,11 @@ public final class HadoopInputFile implements InputFile {
                 pathStyleMethod.invoke(builder, true);
             }
 
-            // .credentials(credentials)
-            if (credentials != null) {
+            // .anonymous() or .credentials(credentials)
+            if (anonymous) {
+                builderClass.getMethod("anonymous").invoke(builder);
+            }
+            else if (credentials != null) {
                 Method credsMethod = builderClass.getMethod("credentials", awsCredsClass);
                 credsMethod.invoke(builder, credentials);
             }
@@ -153,6 +167,22 @@ public final class HadoopInputFile implements InputFile {
             throw new UnsupportedOperationException(
                     "Failed to create S3 input file for " + uri + ": " + e.getMessage(), e);
         }
+    }
+
+    /// Whether the S3A provider list selects anonymous access. A list naming the anonymous
+    /// provider among others is rejected: S3A tries such a list in order, which has no
+    /// counterpart in [dev.hardwood.s3.S3Source].
+    private static boolean isAnonymous(String providers) {
+        if (providers == null) {
+            return false;
+        }
+        List<String> names = Arrays.stream(providers.split(",")).map(String::strip).toList();
+        boolean anonymous = names.stream().anyMatch(ANONYMOUS_PROVIDERS::contains);
+        if (anonymous && names.size() > 1) {
+            throw new UnsupportedOperationException(CREDENTIALS_PROVIDER
+                    + " names the anonymous provider together with others, which is not supported: " + providers);
+        }
+        return anonymous;
     }
 
     private static Class<?> loadClass(String className, String dependency) {

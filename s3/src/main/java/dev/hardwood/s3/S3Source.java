@@ -21,7 +21,7 @@ import dev.hardwood.s3.internal.S3Api;
 
 /// A configured connection to an S3-compatible object store.
 ///
-/// Holds the region, endpoint, credentials, and HTTP client needed
+/// Holds the region, endpoint, credentials (or anonymous access), and HTTP client needed
 /// to create [S3InputFile] instances. Reuse a single `S3Source` across
 /// multiple files for connection pooling and credential reuse.
 ///
@@ -136,6 +136,7 @@ public final class S3Source implements Closeable {
         private String endpoint;
         private boolean pathStyle;
         private S3CredentialsProvider credentialsProvider;
+        private boolean anonymous;
         private Duration connectTimeout = DEFAULT_CONNECT_TIMEOUT;
         private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
         private int maxRetries = DEFAULT_MAX_RETRIES;
@@ -167,13 +168,21 @@ public final class S3Source implements Closeable {
 
         /// Sets the credential provider.
         public Builder credentials(S3CredentialsProvider provider) {
-            this.credentialsProvider = provider;
+            this.credentialsProvider = Objects.requireNonNull(provider, "provider must not be null");
             return this;
         }
 
         /// Sets static credentials (convenience shorthand).
         public Builder credentials(S3Credentials credentials) {
+            Objects.requireNonNull(credentials, "credentials must not be null");
             this.credentialsProvider = () -> credentials;
+            return this;
+        }
+
+        /// Sends requests unsigned, for buckets that allow public read access.
+        /// Mutually exclusive with [#credentials(S3CredentialsProvider)].
+        public Builder anonymous() {
+            this.anonymous = true;
             return this;
         }
 
@@ -236,8 +245,11 @@ public final class S3Source implements Closeable {
         /// When a custom endpoint is set, region is not used for routing
         /// and can be omitted — an arbitrary value is used for signing.
         public S3Source build() {
-            if (credentialsProvider == null) {
-                throw new IllegalStateException("credentials must be set");
+            if (anonymous && credentialsProvider != null) {
+                throw new IllegalStateException("anonymous access and credentials are mutually exclusive");
+            }
+            if (!anonymous && credentialsProvider == null) {
+                throw new IllegalStateException("credentials or anonymous access must be set");
             }
             URI endpointUri = endpoint != null ? URI.create(endpoint) : null;
             String effectiveRegion = region;

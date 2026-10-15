@@ -7,6 +7,7 @@
  */
 package org.apache.parquet.compat;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,11 +21,14 @@ import org.apache.parquet.io.InputFile;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.s3.S3Proxy;
 import dev.hardwood.s3.TestBucket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Tests S3 support via the parquet-java compatible API.
 class ParquetReaderS3CompatIT {
@@ -97,6 +101,58 @@ class ParquetReaderS3CompatIT {
             assertThat(records).hasSize(3);
             assertThat(records.get(0).getLong("id", 0)).isEqualTo(1L);
         }
+    }
+
+    /// The keys are wrong, so the read succeeds only if they are not used to sign.
+    @ParameterizedTest
+    @ValueSource(strings = { "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider",
+            " com.amazonaws.auth.AnonymousAWSCredentials " })
+    void readWithAnonymousCredentialsProvider(String provider) throws Exception {
+        Path path = new Path("s3a://" + bucket.name() + "/plain_uncompressed.parquet");
+        Configuration conf = new Configuration();
+        conf.set("fs.s3a.aws.credentials.provider", provider);
+        conf.set("fs.s3a.access.key", "wrong");
+        conf.set("fs.s3a.secret.key", "wrong");
+        conf.set("fs.s3a.endpoint", bucket.endpoint());
+        conf.setBoolean("fs.s3a.path.style.access", true);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withConf(conf)
+                .build()) {
+            Group record = reader.read();
+            assertThat(record).isNotNull();
+            assertThat(record.getLong("id", 0)).isEqualTo(1L);
+        }
+    }
+
+    @Test
+    void anonymousProviderAmongOthersIsRejected() {
+        Path path = new Path("s3a://" + bucket.name() + "/plain_uncompressed.parquet");
+        Configuration conf = new Configuration();
+        conf.set("fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider,"
+                + "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider");
+
+        assertThatThrownBy(() -> HadoopInputFile.fromPath(path, conf))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("fs.s3a.aws.credentials.provider names the anonymous provider together with others,"
+                        + " which is not supported: org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider,"
+                        + "org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider");
+    }
+
+    @Test
+    void wrongKeysAreUsedWithoutAnonymousProvider() {
+        Path path = new Path("s3a://" + bucket.name() + "/plain_uncompressed.parquet");
+        Configuration conf = new Configuration();
+        conf.set("fs.s3a.access.key", "wrong");
+        conf.set("fs.s3a.secret.key", "wrong");
+        conf.set("fs.s3a.endpoint", bucket.endpoint());
+        conf.setBoolean("fs.s3a.path.style.access", true);
+
+        assertThatThrownBy(() -> ParquetReader.builder(new GroupReadSupport(), path).withConf(conf).build())
+                .isInstanceOf(IOException.class)
+                .hasMessage("Failed to open s3://" + bucket.name() + "/plain_uncompressed.parquet: HTTP 403 "
+                        + "<?xml version='1.0' encoding='UTF-8'?><Error><Code>InvalidAccessKeyId</Code>"
+                        + "<Message>Forbidden</Message><RequestId>4442587FB7D0A2F9</RequestId></Error>");
     }
 
     @Test

@@ -8,10 +8,11 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -25,8 +26,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Smoke test for the native CLI binary against S3. Proves the AWS SDK baked
 /// into the native image can reach an S3 endpoint, authenticate, and read an
-/// object. AWS connection properties are passed as environment variables to
-/// the native binary subprocess.
+/// object, and that the binary falls back to unsigned requests when no
+/// credentials are configured. AWS connection properties are passed as
+/// environment variables to the native binary subprocess.
 @Tag("native")
 class NativeBinaryS3SmokeIT {
 
@@ -40,8 +42,12 @@ class NativeBinaryS3SmokeIT {
     @BeforeAll
     static void createBucket() throws IOException {
         bucket = S3Proxy.get().bucketFor(NativeBinaryS3SmokeIT.class)
-                .withObject("plain_uncompressed.parquet", TEST_RESOURCES.resolve("plain_uncompressed.parquet"));
+                .withObject("plain_uncompressed.parquet",
+                        Files.readAllBytes(TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
         bucket.create();
+        // s3proxy serves unsigned requests for files readable by others
+        Files.setPosixFilePermissions(bucket.objectPath("plain_uncompressed.parquet"),
+                PosixFilePermissions.fromString("rw-r--r--"));
         emptyFile = Files.createTempFile("hardwood-test-aws", "").toString();
     }
 
@@ -54,30 +60,38 @@ class NativeBinaryS3SmokeIT {
 
     @Test
     void readsFileFromS3() throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder(
-                nativeBinary,
-                "schema", "-f", bucket.uri("plain_uncompressed.parquet"))
-                .redirectErrorStream(false);
+        Map<String, String> environment = connection();
+        environment.put("AWS_ACCESS_KEY_ID", S3Proxy.ACCESS_KEY);
+        environment.put("AWS_SECRET_ACCESS_KEY", S3Proxy.SECRET_KEY);
 
-        // Pass AWS connection properties as environment variables
-        pb.environment().put("AWS_ACCESS_KEY_ID", S3Proxy.ACCESS_KEY);
-        pb.environment().put("AWS_SECRET_ACCESS_KEY", S3Proxy.SECRET_KEY);
-        pb.environment().put("AWS_REGION", "us-east-1");
-        pb.environment().put("AWS_ENDPOINT_URL", bucket.endpoint());
-        pb.environment().put("AWS_PATH_STYLE", "true");
-        pb.environment().put("AWS_CONFIG_FILE", emptyFile);
-        pb.environment().put("AWS_SHARED_CREDENTIALS_FILE", emptyFile);
+        assertReadsSchema(environment);
+    }
 
-        Process process = pb.start();
-        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-        assertThat(finished).withFailMessage("Process timed out after 30s").isTrue();
+    @Test
+    void readsPublicFileUnsigned() throws IOException, InterruptedException {
+        Map<String, String> environment = connection();
+        environment.put("AWS_EC2_METADATA_DISABLED", "true");
 
-        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
-        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+        assertReadsSchema(environment);
+    }
 
-        assertThat(process.exitValue())
-                .withFailMessage("S3 read failed: stdout=%s stderr=%s", stdout, stderr)
+    private static Map<String, String> connection() {
+        Map<String, String> environment = new HashMap<>();
+        environment.put("AWS_REGION", "us-east-1");
+        environment.put("AWS_ENDPOINT_URL", bucket.endpoint());
+        environment.put("AWS_PATH_STYLE", "true");
+        environment.put("AWS_CONFIG_FILE", emptyFile);
+        environment.put("AWS_SHARED_CREDENTIALS_FILE", emptyFile);
+        return environment;
+    }
+
+    private static void assertReadsSchema(Map<String, String> environment) throws IOException, InterruptedException {
+        Cli.Result result = CliProcess.runNative(nativeBinary, environment,
+                "schema", "-f", bucket.uri("plain_uncompressed.parquet"));
+
+        assertThat(result.exitCode())
+                .withFailMessage("S3 read failed: stdout=%s stderr=%s", result.output(), result.errorOutput())
                 .isZero();
-        assertThat(stdout).contains("message schema");
+        assertThat(result.output()).contains("message schema");
     }
 }

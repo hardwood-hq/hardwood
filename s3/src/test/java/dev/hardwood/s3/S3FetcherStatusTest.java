@@ -14,6 +14,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
 
@@ -32,15 +33,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// Checks how [S3Fetcher] treats the HTTP status of its range GETs, against
 /// a local endpoint that ignores the `Range` header and answers `200` with
 /// the whole object. Unless told to ignore it as well, the endpoint answers
-/// the open-time suffix range with `206`.
+/// the open-time suffix range with `206`. It denies `private.parquet` with `403`, and
+/// `tail-only.parquet` likewise except for the suffix range.
 class S3FetcherStatusTest {
 
     private static final int OBJECT_SIZE = 200 * 1024;
+    private static final String ACCESS_DENIED = "<Error><Code>AccessDenied</Code></Error>";
 
     private final byte[] object = new byte[OBJECT_SIZE];
     private volatile boolean ignoreSuffixRange;
     private HttpServer server;
     private HttpClient httpClient;
+    private S3Api signedApi;
+    private S3Api anonymousApi;
     private S3Fetcher fetcher;
 
     @BeforeEach
@@ -55,9 +60,11 @@ class S3FetcherStatusTest {
         httpClient = HttpClient.newHttpClient();
         URI endpoint = URI.create("http://localhost:" + server.getAddress().getPort());
         S3Credentials credentials = S3Credentials.of("access", "secret");
-        S3Api api = new S3Api(httpClient, () -> credentials,
+        signedApi = new S3Api(httpClient, () -> credentials,
                 "us-east-1", endpoint, true, Duration.ofSeconds(10), 0);
-        fetcher = new S3Fetcher(api, "bucket", "object.parquet");
+        anonymousApi = new S3Api(httpClient, null,
+                "us-east-1", endpoint, true, Duration.ofSeconds(10), 0);
+        fetcher = new S3Fetcher(signedApi, "bucket", "object.parquet");
     }
 
     @AfterEach
@@ -67,6 +74,16 @@ class S3FetcherStatusTest {
     }
 
     private void respond(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getPath();
+        boolean suffixRange = exchange.getRequestHeaders().getFirst("Range").startsWith("bytes=-");
+        if (path.endsWith("/private.parquet") || (path.endsWith("/tail-only.parquet") && !suffixRange)) {
+            byte[] denied = ACCESS_DENIED.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(403, denied.length);
+            try (OutputStream body = exchange.getResponseBody()) {
+                body.write(denied);
+            }
+            return;
+        }
         String range = exchange.getRequestHeaders().getFirst("Range");
         int from = 0;
         int status = 200;
@@ -92,6 +109,36 @@ class S3FetcherStatusTest {
                 .hasMessage("Failed to read range [100000, 100100) from s3://bucket/object.parquet:"
                         + " HTTP 200, expected 206; the endpoint ignored the Range header");
         assertThat(fetcher.networkRequestCount()).isEqualTo(requestsAfterOpen + 1);
+    }
+
+    @Test
+    void deniedAnonymousOpenNamesUnsignedRequest() throws IOException {
+        S3Fetcher anonymousFetcher = new S3Fetcher(anonymousApi, "bucket", "private.parquet");
+
+        assertThatThrownBy(anonymousFetcher::open)
+                .isInstanceOf(IOException.class)
+                .hasMessage("Failed to open s3://bucket/private.parquet: HTTP 403 " + ACCESS_DENIED
+                        + " (the request was sent unsigned, without credentials)");
+    }
+
+    @Test
+    void deniedAnonymousRangeReadNamesUnsignedRequest() throws IOException {
+        S3Fetcher anonymousFetcher = new S3Fetcher(anonymousApi, "bucket", "tail-only.parquet");
+        anonymousFetcher.open();
+
+        assertThatThrownBy(() -> anonymousFetcher.readRange(100, 100))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Failed to read range [100, 200) from s3://bucket/tail-only.parquet: HTTP 403 "
+                        + ACCESS_DENIED + " (the request was sent unsigned, without credentials)");
+    }
+
+    @Test
+    void deniedSignedOpenHasNoUnsignedHint() {
+        S3Fetcher signedFetcher = new S3Fetcher(signedApi, "bucket", "private.parquet");
+
+        assertThatThrownBy(signedFetcher::open)
+                .isInstanceOf(IOException.class)
+                .hasMessage("Failed to open s3://bucket/private.parquet: HTTP 403 " + ACCESS_DENIED);
     }
 
     @Test

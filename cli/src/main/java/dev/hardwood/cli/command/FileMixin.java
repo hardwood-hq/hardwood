@@ -16,8 +16,11 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.aws.auth.SdkCredentialsProviders;
+import dev.hardwood.aws.auth.internal.CredentialSources;
 import dev.hardwood.s3.RangeBacking;
+import dev.hardwood.s3.S3CredentialsProvider;
 import dev.hardwood.s3.S3Source;
+import software.amazon.awssdk.core.exception.SdkClientException;
 
 public class FileMixin {
 
@@ -26,6 +29,9 @@ public class FileMixin {
 
     @Option(shortName = 'f', name = "file", required = true, description = "Path to the Parquet file.")
     String file;
+
+    private S3Source s3Source;
+    private RangeBacking s3RangeBacking;
 
     boolean isRemoteUri() {
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
@@ -63,11 +69,32 @@ public class FileMixin {
         return InputFile.of(Path.of(file));
     }
 
+    /// Opens the `s3://` file, or reports why it cannot be opened and returns `null`. The
+    /// source behind it is built on the first call and shared by later ones, so a command that
+    /// opens the file twice resolves credentials once.
+    ///
+    /// Requests are signed with the AWS default credential chain. When the chain finds no
+    /// credentials and no local credential source is configured, they are sent unsigned, for
+    /// public buckets. A configured source that fails is reported instead, so a broken profile
+    /// or an expired token does not turn into a denied unsigned request.
     private InputFile createS3InputFile(RangeBacking rangeBacking) {
+        if (s3Source == null) {
+            s3Source = createS3Source(rangeBacking);
+            if (s3Source == null) {
+                return null;
+            }
+        }
+        else if (s3RangeBacking != rangeBacking) {
+            throw new IllegalStateException("S3 source opened with " + s3RangeBacking + ", requested " + rangeBacking);
+        }
+        s3RangeBacking = rangeBacking;
+        return s3Source.inputFile(file);
+    }
+
+    private static S3Source createS3Source(RangeBacking rangeBacking) {
         String endpointUrl = resolveEndpoint();
 
         S3Source.Builder builder = S3Source.builder()
-                .credentials(SdkCredentialsProviders.defaultChain())
                 .rangeBacking(rangeBacking);
 
         if (endpointUrl != null) {
@@ -84,12 +111,27 @@ public class FileMixin {
             builder.region(region);
         }
         else if (endpointUrl == null) {
-            throw new IllegalArgumentException(
+            System.err.println(
                     "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config.");
+            return null;
         }
 
-        S3Source source = builder.build();
-        return source.inputFile(file);
+        boolean sourceConfigured = CredentialSources.anyConfigured();
+        S3CredentialsProvider chain = SdkCredentialsProviders.defaultChain();
+        try {
+            chain.credentials();
+            builder.credentials(chain);
+        }
+        catch (SdkClientException e) {
+            if (sourceConfigured) {
+                System.err.println("Unable to load AWS credentials:");
+                System.err.println(e.getMessage());
+                return null;
+            }
+            builder.anonymous();
+        }
+
+        return builder.build();
     }
 
     /// Resolves the S3 endpoint URL from system property or env var.

@@ -45,14 +45,14 @@ The JVM `*CommandTest` and `*S3CommandIT` classes in `cli` carry the behavioural
 | Test | What it runs |
 |------|--------------|
 | `NativeBinarySmokeIT` | The binary against a local Parquet file, including `dive --smoke-render`; pins the reported build version against the JVM it was compiled from. |
-| `NativeBinaryS3SmokeIT` | The binary against a file served by s3proxy. |
+| `NativeBinaryS3SmokeIT` | The binary against a file served by s3proxy, with credentials and with unsigned requests. |
 | `NativeCompressionCodecIT` | One fixture per supported compression codec, with `LZ4` and `LZ4_RAW` separately because they use different decompressors. |
 
-The ITs run on the JVM and drive the binary through `ProcessBuilder`, so configuration flows one way: fixture files are resolved as classpath resources and passed as absolute paths, and settings reach the subprocess as environment variables. The JVM S3 command tests configure AWS through `System.setProperty()` instead, which works only because they run the CLI in the test's own JVM.
+The ITs run on the JVM and drive the binary through `ProcessBuilder`, so configuration flows one way: fixture files are resolved as classpath resources and passed as absolute paths, and settings reach the subprocess as environment variables. The JVM S3 command tests configure AWS through `System.setProperty()` instead, which works only because they run the CLI in the test's own JVM. `S3CredentialResolutionCommandIT` additionally runs the CLI on a separate JVM through `CliProcess`, to check configuration through environment variables.
 
 ### S3 tests
 
-Every S3 test works in a `TestBucket` from `S3Proxy.get().bucketFor(...)`, served by s3proxy's `filesystem` provider: an object is the file `<data dir>/<bucket>/<key>`, and s3proxy serves what is on disk at request time. Each test class owns a bucket named after the class plus a random suffix, created before its first test and deleted after its last; the CLI S3 command tests share one bucket per JVM (`AbstractS3CommandIT`), deleted at JVM exit. `S3Proxy.get()` returns one server per JVM, chosen by the environment:
+Every S3 test works in a `TestBucket` from `S3Proxy.get().bucketFor(...)`, served by s3proxy's `filesystem` provider: an object is the file `<data dir>/<bucket>/<key>`, and s3proxy serves what is on disk at request time. s3proxy also serves unsigned requests for an object whose file is readable by others and denies them otherwise, so tests of unsigned reads set the permissions of their files explicitly. Each test class owns a bucket named after the class plus a random suffix, created before its first test and deleted after its last; the CLI S3 command tests share one bucket per JVM (`AbstractS3CommandIT`), deleted at JVM exit. `S3Proxy.get()` returns one server per JVM, chosen by the environment:
 
 | Environment | Server | Data dir |
 |-------------|--------|----------|

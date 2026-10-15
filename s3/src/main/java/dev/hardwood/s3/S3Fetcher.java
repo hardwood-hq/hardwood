@@ -20,7 +20,7 @@ import dev.hardwood.internal.reader.ReadRanges;
 import dev.hardwood.s3.internal.S3Api;
 
 /// The network path behind [S3InputFile]: every non-empty [#readRange] call issues
-/// a signed HTTP `GET` with a byte-range header against one S3 object.
+/// an HTTP `GET` with a byte-range header against one S3 object.
 ///
 /// [#open()] uses a suffix-range GET instead of a HEAD request. This
 /// discovers the file length from the `Content-Range` response header
@@ -51,6 +51,9 @@ final class S3Fetcher implements InputFile {
     /// contained in the fetched tail and goes to the network otherwise.
     static final int TAIL_SIZE = 64 * 1024;
 
+    private static final int HTTP_UNAUTHORIZED = 401;
+    private static final int HTTP_FORBIDDEN = 403;
+
     private final S3Api api;
     private final String bucket;
     private final String key;
@@ -78,7 +81,7 @@ final class S3Fetcher implements InputFile {
         int status = response.statusCode();
         if (status != 206 && status != 200) {
             throw new IOException("Failed to open " + name()
-                    + ": HTTP " + status + " " + new String(response.body()));
+                    + ": HTTP " + status + " " + new String(response.body()) + unsignedHint(status));
         }
         fileLength = parseFileLength(response);
         identity = response.headers().firstValue("ETag");
@@ -127,7 +130,7 @@ final class S3Fetcher implements InputFile {
             try (InputStream body = response.body()) {
                 String detail = status == 200
                         ? ", expected 206; the endpoint ignored the Range header"
-                        : " " + new String(body.readAllBytes());
+                        : " " + new String(body.readAllBytes()) + unsignedHint(status);
                 throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
                         + ") from " + name() + ": HTTP " + status + detail);
             }
@@ -180,6 +183,14 @@ final class S3Fetcher implements InputFile {
     /// individual files.
     @Override
     public void close() {
+    }
+
+    /// Points out that a request the object store denied carried no credentials.
+    private String unsignedHint(int status) {
+        boolean denied = status == HTTP_UNAUTHORIZED || status == HTTP_FORBIDDEN;
+        return denied && api.anonymous()
+                ? " (the request was sent unsigned, without credentials)"
+                : "";
     }
 
     /// Number of HTTP requests issued against the object since [#open()].

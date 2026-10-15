@@ -431,6 +431,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] `S3InputFile` implementation with suffix-range GET for footer pre-fetch
 - [x] Tail caching (64 KB) for Parquet footer locality
 - [x] Range backing (`RangeBacking.SPARSE_TEMPFILE`) — mmap-backed whole-file range cache for repeat reads
+- [x] Anonymous (unsigned) requests for public buckets (#1464)
 - [x] Client ownership model (caller-owned vs self-owned `S3Client`)
 - [x] LocalStack integration tests
 

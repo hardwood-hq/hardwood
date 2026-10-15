@@ -50,7 +50,7 @@ public final class S3Api {
     /// Creates an S3Api instance.
     ///
     /// @param httpClient          the HTTP client to use
-    /// @param credentialsProvider provides credentials for signing
+    /// @param credentialsProvider provides credentials for signing, or `null` to send requests unsigned
     /// @param region              the AWS region (e.g. "us-east-1")
     /// @param endpoint            custom endpoint URI, or `null` for AWS virtual-hosted style
     /// @param pathStyle           if `true`, use path-style access (`endpoint/bucket/key`)
@@ -66,6 +66,11 @@ public final class S3Api {
         this.pathStyle = pathStyle;
         this.requestTimeout = requestTimeout;
         this.maxRetries = maxRetries;
+    }
+
+    /// Whether requests are sent unsigned, without credentials.
+    public boolean anonymous() {
+        return credentialsProvider == null;
     }
 
     /// Sends a GET request with a `Range` header and returns the full response body as bytes.
@@ -217,8 +222,24 @@ public final class S3Api {
 
     // ==================== Signing and sending ====================
 
+    /// Builds a request, signed with SigV4 unless the API is [#anonymous()].
     private HttpRequest signRequest(String method, URI uri, String payloadHash,
             HttpRequest.BodyPublisher bodyPublisher, String... extraHeaders) {
+
+        HttpRequest.Builder jdkBuilder = HttpRequest.newBuilder()
+                .uri(uri)
+                .method(method, bodyPublisher);
+
+        if (requestTimeout != null) {
+            jdkBuilder.timeout(requestTimeout);
+        }
+
+        if (anonymous()) {
+            for (int i = 0; i < extraHeaders.length; i += 2) {
+                jdkBuilder.header(extraHeaders[i], extraHeaders[i + 1]);
+            }
+            return jdkBuilder.build();
+        }
 
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("Host", hostHeader(uri));
@@ -234,14 +255,6 @@ public final class S3Api {
                 credentials.sessionToken(),
                 region, SERVICE,
                 ZonedDateTime.now(ZoneOffset.UTC));
-
-        HttpRequest.Builder jdkBuilder = HttpRequest.newBuilder()
-                .uri(uri)
-                .method(method, bodyPublisher);
-
-        if (requestTimeout != null) {
-            jdkBuilder.timeout(requestTimeout);
-        }
 
         for (Map.Entry<String, String> entry : signed.headers().entrySet()) {
             if (!"host".equals(entry.getKey())) {

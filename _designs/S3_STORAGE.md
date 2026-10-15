@@ -1,6 +1,6 @@
 # S3 Storage
 
-Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and the optional `hardwood-aws-auth` bridge, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and anonymous access, the optional `hardwood-aws-auth` bridge and the CLI's credential fallback, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
 
 Related documents:
 
@@ -33,7 +33,8 @@ Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): creden
 | `region` | none | Required when no endpoint is set; `build()` throws otherwise. With a custom endpoint and no region, the source signs with `"auto"`. |
 | `endpoint` | AWS | Base URI of an S3-compatible service. Setting it does not imply path-style. |
 | `pathStyle` | `false` | Selects path-style addressing (below). |
-| `credentials` | none | An `S3CredentialsProvider`, or static `S3Credentials` wrapped as one. Required; `build()` throws otherwise. |
+| `credentials` | none | An `S3CredentialsProvider`, or static `S3Credentials` wrapped as one. Required unless `anonymous` is set; `build()` throws otherwise. |
+| `anonymous` | off | Sends every request unsigned. Mutually exclusive with `credentials`; `build()` throws when both are set. |
 | `connectTimeout` | 10 s | Applied to the `HttpClient` the source builds; ignored with a caller-supplied client. |
 | `requestTimeout` | 30 s | Per HTTP request, applied by `S3Api` to every request. |
 | `maxRetries` | 3 | Retries per `GET` (see [Errors and retries](#errors-and-retries)); negative values are rejected. |
@@ -52,7 +53,7 @@ URI construction lives in `S3Api.objectUri`:
 
 The key is URI-encoded per path segment with the SigV4 rules, keeping `/` as the separator. `s3://` URIs are split at the first `/` after the bucket; a URI without a key is rejected.
 
-Tests: `S3SourceNullValidationTest` (s3), `S3SourceTempDirValidationTest` (s3). Region defaulting, the credentials requirement and virtual-hosted URI construction are untested; the ITs run path-style against s3proxy ([TESTING.md](../TESTING.md#s3-tests)).
+Tests: `S3SourceNullValidationTest` (s3), `S3SourceTempDirValidationTest` (s3), `S3SourceCredentialsValidationTest` (s3). Region defaulting and virtual-hosted URI construction are untested; the ITs run path-style against s3proxy ([TESTING.md](../TESTING.md#s3-tests)).
 
 ## Credentials
 
@@ -60,9 +61,13 @@ Hardwood never resolves credentials itself. The caller supplies an `S3Credential
 
 `SdkCredentialsProviders` in `hardwood-aws-auth` adapts the AWS SDK: `defaultChain()` wraps `DefaultCredentialsProvider` (environment, profile files, container and instance metadata; its SSO and web-identity sources need the SDK's `sso`, `ssooidc` and `sts` modules, which `hardwood-aws-auth` does not bring, so the CLI does not resolve them), and `fromProfile(name)` wraps one named profile. Session credentials from the SDK map to `S3Credentials` with their token; other credentials map without one. Callers who already have the SDK can write the same few-line adapter themselves.
 
+An anonymous source has no provider. `S3Api` then sends each request with its `Range` header alone: no `Authorization`, no `x-amz-*` headers, on retries as on first attempts. S3 serves such requests for objects that allow public read and denies the rest with `401` or `403`; since the server's error does not say the request was unsigned, `S3Fetcher` appends that to the message of a `401` or `403` on an anonymous source.
+
+The CLI decides between signing and unsigned requests once per command, in `FileMixin`, and shares the resulting source across every open of the file. It signs with `defaultChain()` when the chain resolves credentials. When the chain fails, it sends unsigned requests only if no local credential source is configured, so that a broken profile, an expired token or an `AWS_PROFILE` naming no profile fails with the chain's error instead of a denied unsigned request; otherwise it reports the chain's error. The SDK's chain reports every failure as the same `SdkClientException`, whether no source is configured or a configured one failed, so `CredentialSources` (`hardwood-aws-auth`, internal) tells the two apart by inspecting configuration before the chain runs. It counts a source as configured when any of the access-key, secret-key, session-token, web-identity token file or container credentials settings is set, so a half-configured source also reports the chain's error, when `AWS_PROFILE` is set, or when the `default` profile carries a property the SDK derives credentials from. Instance metadata has no local configuration; it is consulted through the chain, so on EC2 an instance role is used and an instance without one reads unsigned. A credential source that a later SDK version adds to the chain is not seen by `CredentialSources` until it is added there, and until then a failure of that source leads to unsigned requests.
+
 Region is not part of the credential contract. The CLI resolves it without the SDK's region chain, which may block on the instance metadata endpoint: `aws.region` system property, then `AWS_REGION`, then `AWS_DEFAULT_REGION`, then the `region` of the `AWS_PROFILE` (or `default`) profile in `~/.aws/config`. No region and no endpoint is an error; no region with an endpoint falls through to the source's `"auto"`. The CLI takes the endpoint from `aws.endpointUrl` or `AWS_ENDPOINT_URL` and path-style from `aws.pathStyle` or `AWS_PATH_STYLE` (`FileMixin`); the user-facing list is in the [CLI reference](../docs/content/reference/cli.md).
 
-Tests: `SdkCredentialsProvidersTest` (aws-auth), and the `*S3CommandIT` classes (cli), which set the `aws.region`, `aws.endpointUrl` and `aws.pathStyle` system properties. The environment-variable and `~/.aws/config` fallbacks and the no-region error are untested.
+Tests: `SdkCredentialsProvidersTest` (aws-auth), `CredentialSourcesTest` (aws-auth), `S3ApiAnonymousTest` (s3), `S3AnonymousIT` (s3), `S3CredentialResolutionCommandIT` (cli), which covers the unsigned fallback, a broken profile, an instance role served by a local metadata endpoint, the no-region error, and configuration through environment variables, and the `*S3CommandIT` classes (cli), which set the `aws.region`, `aws.endpointUrl` and `aws.pathStyle` system properties. The `~/.aws/config` region fallback is untested.
 
 ## Request signing
 
@@ -157,16 +162,16 @@ Every failure from the network path is an `IOException`, the checked type the `I
 
 | Where | Failure | Result |
 |---|---|---|
-| `open()` | status other than `200`/`206` | `IOException` "Failed to open {name}: HTTP {status} {body}" |
+| `open()` | status other than `200`/`206` | `IOException` "Failed to open {name}: HTTP {status} {body}", plus the unsigned-request note for a `401`/`403` on an anonymous source |
 | `open()` | neither `Content-Range` nor `Content-Length`, or an unparseable `Content-Range` | `IOException` |
 | `readRange()` | before `open()`; a range outside `[0, length)` | `IllegalStateException`; `IndexOutOfBoundsException`, before any request |
 | `readRange()` | `200`, from a server that ignored `Range` | `IOException` naming the range, the object and the status, saying the endpoint ignored the `Range` header |
-| `readRange()` | any other status except `206` | `IOException` naming the range, the object, the status and the body |
+| `readRange()` | any other status except `206` | `IOException` naming the range, the object, the status and the body, plus the unsigned-request note for a `401`/`403` on an anonymous source |
 | `readRange()` | body ends before `length` bytes | `IOException` "Short read" |
 | any request | interrupt | `IOException` with the interrupt flag restored |
-| `S3Source.Builder.build()` | missing credentials, missing region without endpoint, unusable `tempDir` | `IllegalStateException` |
+| `S3Source.Builder.build()` | neither credentials nor anonymous, both, missing region without endpoint, unusable `tempDir` | `IllegalStateException` |
 
-`S3Api.sendWithRetry` retries a `GET` up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh, so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
+`S3Api.sendWithRetry` retries a `GET` up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
 
 The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. `PUT` requests (test fixtures only) are never retried.
 
@@ -174,7 +179,7 @@ Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3). 
 
 ## Hadoop configuration bridge
 
-`HadoopInputFile` in `parquet-java-compat` opens `s3://`, `s3a://` and `s3n://` paths through `S3Source`, configured from `fs.s3a.access.key`, `fs.s3a.secret.key`, `fs.s3a.endpoint`, `fs.s3a.endpoint.region` (default `us-east-1`) and `fs.s3a.path.style.access`. It declares `hardwood-s3` as an optional dependency and reaches it by reflection, so it need not be on the runtime classpath; when it is absent, opening an `s3://` path fails with an `UnsupportedOperationException` naming the missing artifact. A failure to build the source, such as missing credentials, is raised as `UnsupportedOperationException` too. Because each such file has a source of its own, the returned file closes that source, and with it the `HttpClient`, when the file is closed.
+`HadoopInputFile` in `parquet-java-compat` opens `s3://`, `s3a://` and `s3n://` paths through `S3Source`, configured from `fs.s3a.access.key`, `fs.s3a.secret.key`, `fs.s3a.aws.credentials.provider` (S3A's anonymous provider, or the AWS SDK v1 name S3A maps to it, selects an anonymous source and the keys are not used; a list naming the anonymous provider among others is rejected, since S3A's in-order fallback has no counterpart in `S3Source`; any other value is ignored), `fs.s3a.endpoint`, `fs.s3a.endpoint.region` (default `us-east-1`) and `fs.s3a.path.style.access`. It declares `hardwood-s3` as an optional dependency and reaches it by reflection, so it need not be on the runtime classpath; when it is absent, opening an `s3://` path fails with an `UnsupportedOperationException` naming the missing artifact. A failure to build the source, such as missing credentials, is raised as `UnsupportedOperationException` too. Because each such file has a source of its own, the returned file closes that source, and with it the `HttpClient`, when the file is closed.
 
 Tests: `ParquetReaderS3CompatIT` (parquet-java-compat).
 
@@ -184,4 +189,4 @@ Tests: `ParquetReaderS3CompatIT` (parquet-java-compat).
 - **Latency-aware coalescing (#763).** The gap policy does not adapt to the latency of the remote backend ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
 - **Other remote backends (#519).** Only S3 is a remote backend; there is no plain HTTP(S) `InputFile`.
 - **Range-backed files over 2 GB (#501).** See [INPUT_FILES.md](INPUT_FILES.md#boundaries).
-- **Not tracked.** Anonymous (unsigned) requests, requester-pays buckets, SigV4a, writing to S3, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.
+- **Not tracked.** Requester-pays buckets, SigV4a, writing to S3, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.

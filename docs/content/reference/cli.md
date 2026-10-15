@@ -465,6 +465,12 @@ hardwood print -n 10 -f s3://my-bucket/data.parquet
 
 The CLI resolves credentials through the AWS SDK's default credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, profile files, container and instance metadata), which decides the order in which those sources are tried. SSO and web-identity profiles are not supported. See [Read from S3](../how-to/s3.md#credentials) for the credential options available to the library.
 
+When no credential source is configured, the CLI sends unsigned requests, which read buckets that allow public access. A source counts as configured when any of these is set: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_PROFILE`, or credentials in the `default` profile of `~/.aws/credentials` or `~/.aws/config`. Credentials from instance metadata are used when present; outside EC2, `AWS_EC2_METADATA_DISABLED=true` skips the instance metadata lookup. A configured source that yields no credentials makes the command fail with an error.
+
+```shell
+AWS_REGION=us-west-2 hardwood info -f s3://public-bucket/data.parquet
+```
+
 The CLI additionally reads these environment variables:
 
 | Environment Variable | Description |

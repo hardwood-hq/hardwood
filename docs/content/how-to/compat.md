@@ -62,7 +62,7 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 }
 ```
 
-`HadoopInputFile` reads the same `fs.s3a.*` configuration properties as parquet-java. S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection; if it is missing, the error message names the dependency to add.
+`HadoopInputFile` reads the same `fs.s3a.*` configuration properties as parquet-java. To read a public bucket with unsigned requests, set `fs.s3a.aws.credentials.provider` to `org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider`; the access and secret keys are then not used. S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection; if it is missing, the error message names the dependency to add.
 
 ## Filter Pushdown
 
