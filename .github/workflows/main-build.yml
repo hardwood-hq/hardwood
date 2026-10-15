@@ -247,9 +247,9 @@ jobs:
       - name: 'Build Native Image'
         # -DskipSurefire=true skips the JVM unit test suite, which the `build-modules` job
         # runs. -Dnative clears the `native` tag exclusion so the ITs that spawn the
-        # binary run at all; -Dgroups=native then holds failsafe to those eleven, since
-        # the other 87 are the JVM S3 command ITs `build-modules` has already run, and
-        # running them again here cost ten seconds for no additional coverage.
+        # binary run at all; -Dgroups=native then holds failsafe to those, since the
+        # others are the JVM S3 command ITs `build-modules` has already run, and running
+        # them again here would add time for no additional coverage.
         #
         # Nothing here tunes native-image itself. Across eight runs of identical input
         # the image build took between 68 s and 124 s, so an option has to be worth
