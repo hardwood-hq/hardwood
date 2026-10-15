@@ -13,6 +13,7 @@ import java.util.Arrays;
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 
 /// Typed dictionary for dictionary-encoded Parquet columns.
 /// Each variant holds a primitive array of dictionary values.
@@ -38,7 +39,7 @@ public sealed interface Dictionary {
     static Dictionary parse(byte[] data, int length, int numValues, PhysicalType type, Integer typeLength) {
         PlainDecoder decoder = new PlainDecoder(data, 0, length, type, typeLength);
 
-        return switch (type) {
+        Dictionary dictionary = switch (type) {
             case INT32 -> {
                 int[] values = new int[numValues];
                 decoder.readInts(values, null, 0);
@@ -67,6 +68,12 @@ public sealed interface Dictionary {
             case BOOLEAN -> throw new UnsupportedOperationException(
                     "Dictionary encoding not supported for BOOLEAN type");
         };
+        // Entries read at the wrong boundaries would decode into wrong values, not an EOF
+        if (decoder.remaining() != 0) {
+            throw new ParquetReadException("Dictionary page does not end with its " + numValues + " " + type
+                    + " values; leftover bytes: " + decoder.remaining());
+        }
+        return dictionary;
     }
 
     record IntDictionary(int[] values) implements Dictionary {

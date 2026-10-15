@@ -125,6 +125,7 @@ public class Utils {
             "PARQUET-1481.parquet",
             "ARROW-RS-GH-6229-DICTHEADER.parquet",
             "ARROW-RS-GH-6229-LEVELS.parquet",
+            "ARROW-RS-GH-11261-FLBA-DICT.parquet",
             "ARROW-GH-41317.parquet",
             "ARROW-GH-41321.parquet",
             "ARROW-GH-45185.parquet",

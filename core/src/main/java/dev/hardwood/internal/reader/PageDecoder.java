@@ -454,7 +454,7 @@ public class PageDecoder {
         return switch (encoding) {
             case PLAIN -> {
                 PlainDecoder decoder = new PlainDecoder(data, offset, limit, type, column.typeLength());
-                yield switch (type) {
+                Page page = switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
                         decoder.readLongs(values, definitionLevels, maxDefLevel);
@@ -486,6 +486,13 @@ public class PageDecoder {
                         yield new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
                     }
                 };
+                // Values read at the wrong boundaries would decode into wrong values, not an EOF
+                if (decoder.remaining() != 0) {
+                    throw new ParquetReadException("PLAIN value section does not end with its "
+                            + countNonNullValues(numValues, definitionLevels) + " " + type
+                            + " values; leftover bytes: " + decoder.remaining());
+                }
+                yield page;
             }
             case DELTA_BINARY_PACKED -> {
                 DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(data, offset, limit);

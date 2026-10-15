@@ -54,6 +54,12 @@ public class PlainDecoder implements ValueDecoder {
         this.typeLength = typeLength;
     }
 
+    /// Number of bytes between the read position and the end of the page's values. Once every
+    /// value of a well-formed page is read, this is zero.
+    public int remaining() {
+        return limit - pos;
+    }
+
     /// Read a fixed-length byte array value.
     public byte[] readFixedLenByteArray(int length) {
         if (length > limit - pos) {

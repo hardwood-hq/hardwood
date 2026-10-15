@@ -10,6 +10,8 @@ package dev.hardwood.testing;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,6 +26,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /// Verifies how Hardwood handles corrupted and intentionally-malformed Parquet files from
 /// the `apache/parquet-testing` suite (the `bad_data/` directory plus a handful of files
@@ -104,6 +107,39 @@ class BadDataHandlingTest {
         assertBadDataRejectedMatching("ARROW-GH-47662.parquet",
                 "\\[ARROW-GH-47662\\.parquet: row group 0, column 'flba_field', page \\d+\\]"
                         + " Unexpected EOF while reading fixed-length byte array");
+    }
+
+    @Test
+    void rejectArrowRsGH11261() throws IOException {
+        // Both fixed_len_byte_array(4) columns carry values written with BYTE_ARRAY encodings:
+        // length-prefixed PLAIN dictionaries and data pages, whose sections do not end with their
+        // values, and DELTA_LENGTH_BYTE_ARRAY data pages, an encoding not defined over
+        // FIXED_LEN_BYTE_ARRAY. Which page is decoded first varies between runs, so the pattern
+        // accepts any of the three refusals at any position and pins everything else.
+        String fileName = "ARROW-RS-GH-11261-FLBA-DICT.parquet";
+        String pattern = """
+                \\[%s: row group \\d+, column '(flat|nested\\.list\\.item)', (\
+                dictionary page\\] Failed to parse dictionary \\(type=FIXED_LEN_BYTE_ARRAY, numValues=\\d+, \
+                uncompressedSize=\\d+, compressedSize=\\d+, codec=(UNCOMPRESSED|SNAPPY)\\)\
+                |page \\d+\\] PLAIN value section does not end with its \\d+ FIXED_LEN_BYTE_ARRAY values; \
+                leftover bytes: \\d+\
+                |page \\d+\\] DELTA_LENGTH_BYTE_ARRAY is not defined over FIXED_LEN_BYTE_ARRAY; \
+                the format defines it over BYTE_ARRAY only)""".formatted(Pattern.quote(fileName));
+
+        Throwable thrown = catchThrowable(readAction(fileName));
+
+        assertThat(thrown).as("Expected %s to be rejected", fileName).hasMessageMatching(pattern);
+        // A dictionary refusal states the page's counts and leaves the reason to its cause. Each
+        // entry carries a 4-byte length prefix, so the page holds 4 bytes per entry beyond its values.
+        Matcher dictionary = Pattern.compile("numValues=(\\d+), uncompressedSize=(\\d+)")
+                .matcher(thrown.getMessage());
+        if (dictionary.find()) {
+            int numValues = Integer.parseInt(dictionary.group(1));
+            assertThat(Integer.parseInt(dictionary.group(2))).isEqualTo(numValues * 8);
+            assertThat(thrown).rootCause().hasMessage(
+                    "Dictionary page does not end with its %d FIXED_LEN_BYTE_ARRAY values; leftover bytes: %d"
+                            .formatted(numValues, numValues * 4));
+        }
     }
 
     @Test

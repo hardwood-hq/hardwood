@@ -7,26 +7,14 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.encoding.DeltaByteArrayEncoder;
-import dev.hardwood.internal.thrift.PageHeaderWriter;
-import dev.hardwood.internal.thrift.ThriftCompactWriter;
-import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
-import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetReadException;
-import dev.hardwood.schema.ColumnSchema;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -146,22 +134,7 @@ class PageDecoderEncodingTest {
     }
 
     private static Page decode(Encoding encoding, PhysicalType type, byte[] body) throws Exception {
-        ColumnSchema column = new ColumnSchema(FieldPath.of("c"), type, RepetitionType.REQUIRED,
-                type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? FIXED_LENGTH : null, 0, 0, 0, null);
-        ColumnMetaData metaData = new ColumnMetaData(type, List.of(encoding), FieldPath.of("c"),
-                CompressionCodec.UNCOMPRESSED, NUM_VALUES, 0, 0, Map.of(), 0, null, null, null,
-                null, null, List.of(), null);
-
-        CRC32 crc = new CRC32();
-        crc.update(body);
-        ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDataPageV1(header, NUM_VALUES, body.length, body.length,
-                (int) crc.getValue(), encoding);
-        byte[] headerBytes = header.toByteArray();
-
-        ByteBuffer page = ByteBuffer.allocate(headerBytes.length + body.length);
-        page.put(headerBytes).put(body).flip();
-
-        return new PageDecoder(metaData, column, new DecompressorFactory(null)).decodePage(page, null);
+        return DataPages.decodeRequired(encoding, type,
+                type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? FIXED_LENGTH : null, NUM_VALUES, body);
     }
 }

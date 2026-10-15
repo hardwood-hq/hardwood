@@ -12,8 +12,10 @@ import java.io.IOException;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DictionaryTest {
 
@@ -51,5 +53,51 @@ class DictionaryTest {
         };
         Dictionary dict = Dictionary.parse(data, data.length, 3, PhysicalType.INT32, null);
         assertThat(dict.size()).isEqualTo(3);
+    }
+
+    /// A FIXED_LEN_BYTE_ARRAY(4) dictionary written with BYTE_ARRAY length prefixes, as arrow-rs
+    /// did before apache/arrow-rs#11262: three entries in 24 bytes instead of 12.
+    @Test
+    void rejectsFixedLengthDictionaryWithLengthPrefixes() {
+        byte[] data = {
+            4, 0, 0, 0, 'A', 'B', 'C', 'D',
+            4, 0, 0, 0, 'W', 'X', 'Y', 'Z',
+            4, 0, 0, 0, 'w', 'x', 'y', 'z'
+        };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 3, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Dictionary page does not end with its 3 FIXED_LEN_BYTE_ARRAY values; leftover bytes: 12");
+    }
+
+    @Test
+    void rejectsIntDictionaryWithTrailingBytes() {
+        byte[] data = { 10, 0, 0, 0, 20, 0, 0, 0, 30 };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.INT32, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Dictionary page does not end with its 2 INT32 values; leftover bytes: 1");
+    }
+
+    @Test
+    void rejectsByteArrayDictionaryWithTrailingBytes() {
+        byte[] data = { 2, 0, 0, 0, 'A', 'B', 0 };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 1, PhysicalType.BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Dictionary page does not end with its 1 BYTE_ARRAY values; leftover bytes: 1");
+    }
+
+    @Test
+    void parseFixedLengthDictionary() throws IOException {
+        byte[] data = { 4, 0, 0, 0, 'A', 'B', 'C', 'D' };
+
+        Dictionary dict = Dictionary.parse(data, data.length, 2, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4);
+
+        // An entry may look like a length prefix; only the section's size tells the layouts apart
+        Dictionary.ByteArrayDictionary byteArrays = (Dictionary.ByteArrayDictionary) dict;
+        assertThat(byteArrays.size()).isEqualTo(2);
+        assertThat(byteArrays.entry(0)).containsExactly(4, 0, 0, 0);
+        assertThat(byteArrays.entry(1)).containsExactly('A', 'B', 'C', 'D');
     }
 }
