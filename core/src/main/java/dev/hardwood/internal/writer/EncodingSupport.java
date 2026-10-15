@@ -51,6 +51,7 @@ public final class EncodingSupport {
             case BYTE_STREAM_SPLIT -> type == PhysicalType.INT32 || type == PhysicalType.INT64
                     || type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
                     || type == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+            case ALP -> type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE;
         };
     }
 }

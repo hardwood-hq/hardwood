@@ -17,6 +17,7 @@ import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.InMemoryFiles;
@@ -187,6 +188,65 @@ class WriterLayoutTest {
             assertThat(countDataPages(file, meta.dataPageOffset(), meta.numValues()))
                     .as("pages over %d MiB of values", (rows * valueLength) >> 20)
                     .isEqualTo(33);
+        }
+    }
+
+    /// An ALP value that is an exception takes its width plus a two-byte position, more than the
+    /// `PLAIN` width, so a column of nothing but exceptions is where an ALP page would overshoot
+    /// the target if the cut charged it as `PLAIN`. A `REQUIRED` column is cut by arithmetic on
+    /// the per-value charge and an `OPTIONAL` one by walking its levels, so both are checked.
+    @ParameterizedTest(name = "{0} / {1}")
+    @CsvSource({ "FLOAT, REQUIRED", "FLOAT, OPTIONAL", "DOUBLE, REQUIRED", "DOUBLE, OPTIONAL" })
+    void anAlpPageOfExceptionsHoldsThePageTarget(PhysicalType type, RepetitionType repetition) throws Exception {
+        int pageTarget = 8 << 10;
+        int rows = 20_000;
+        Random random = new Random(9);
+        double[] doubles = new double[rows];
+        float[] floats = new float[rows];
+        boolean[] nulls = new boolean[rows];
+        for (int i = 0; i < rows; i++) {
+            doubles[i] = random.nextDouble();
+            floats[i] = random.nextFloat();
+            nulls[i] = i % 17 == 0;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", type, repetition)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .encoding(ColumnEncoding.ALP)
+                .pageTargetBytes(pageTarget)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .build();
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.columnWriter().writeBatch(batch -> {
+                boolean required = repetition == RepetitionType.REQUIRED;
+                if (type == PhysicalType.DOUBLE) {
+                    if (required) {
+                        batch.doubles("v", doubles);
+                    }
+                    else {
+                        batch.doubles("v", doubles, nulls);
+                    }
+                }
+                else if (required) {
+                    batch.floats("v", floats);
+                }
+                else {
+                    batch.floats("v", floats, nulls);
+                }
+            });
+        }
+
+        byte[] file = InMemoryFiles.toByteArray(out);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().getFirst().columns().getFirst().metaData();
+            assertThat(meta.encodings()).contains(Encoding.ALP);
+            assertThat(largestDataPage(file, meta.dataPageOffset(), meta.numValues()))
+                    .as("largest data page against a %d KiB target", pageTarget >> 10)
+                    .isLessThanOrEqualTo(pageTarget);
         }
     }
 

@@ -53,13 +53,13 @@ The dictionary page is a `DICTIONARY_PAGE` header with `num_values` equal to the
 
 Every page body, dictionary page included, is compressed with the file's codec before framing, and every page header carries a CRC-32 over the body as stored. No data page carries inline statistics: its bounds are in the page index.
 
-**Each page decodes without the page before it**, since a reader may seek to any page. A page encodes its value range standalone: its own `DELTA_BINARY_PACKED` header and first value, its own `DELTA_BYTE_ARRAY` prefix baseline (the page's first value has prefix length zero), its own byte streams for `BYTE_STREAM_SPLIT`. The only chunk-level state a page depends on is the encoding choice and, for `RLE_DICTIONARY`, the dictionary page.
+**Each page decodes without the page before it**, since a reader may seek to any page. A page encodes its value range standalone: its own `DELTA_BINARY_PACKED` header and first value, its own `DELTA_BYTE_ARRAY` prefix baseline (the page's first value has prefix length zero), its own byte streams for `BYTE_STREAM_SPLIT`, its own header, offset array and vectors for `ALP`. The only chunk-level state a page depends on is the encoding choice and, for `RLE_DICTIONARY`, the dictionary page.
 
 ### Page cut
 
 A page is cut at flush, on the bytes it encodes to and on the records it holds, at whichever of `pageTargetBytes` and `pageTargetRows` it reaches first. By then the chunk's encoding is settled, so each entry is charged what it will cost: a dictionary-encoded value the index width, a `PLAIN` fixed-width value its width, a `PLAIN` `BYTE_ARRAY` value its 4-byte prefix plus its length from the store's offsets. Levels are charged the width their stream encodes at, which RLE beats on any column whose levels run. The page takes records until the next would cross `pageTargetBytes`, and at least one, so the target is a ceiling that only a single record larger than the whole target can breach.
 
-The three delta encodings are the exception. Their width is a property of the values, which only encoding reveals, so the cut charges them the width the type would take `PLAIN`. No delta encoding exceeds that, so such pages land under the target. `AUTO` never chooses a delta encoding, so only a caller who named one reaches this.
+The three delta encodings and `ALP` are the exception. Their width is a property of the values, which only encoding reveals, so the cut charges each value an upper bound on what it can take. For the delta encodings that is the width the type would take `PLAIN`, which no delta encoding exceeds. `ALP` can exceed it: a value it stores as an exception takes its width plus a 2-byte position. The cut charges an `ALP` value that plus one bit, and each page a fixed amount for its header and its first vector's offset and header; the extra bit per value covers each further vector's offset and header, 17 bytes for `DOUBLE` and 13 for `FLOAT`. `AlpEncoder` keeps every vector within that bound by writing a vector as exceptions alone wherever packing it would cost more ([Encoders](#encoders)). Pages under these encodings land under the target. `AUTO` never chooses them, so only a caller who named one reaches this.
 
 **A page holds whole records.** The page index locates a page by its first record (`first_row_index`), and the format requires every page to start at a record boundary once an `OffsetIndex` is present. On a repeated column the cut therefore ends a page at the start of the record that would cross the byte target, and a record larger than the byte target is a page of its own. `pageTargetRows` counts records, not values, for the same reason.
 
@@ -87,6 +87,7 @@ Every leaf column carries an **encoding policy**, a `ColumnEncoding`, resolved a
 | `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` |
 | `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` |
 | `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` |
+| `ALP` | `FLOAT`, `DOUBLE` |
 
 `EncodingSupport` is the single table, read by validation and by anything enumerating the writer's capabilities. `AUTO` and `PLAIN` are universal: no data can make either impossible. `AUTO` on a `BOOLEAN` column resolves to `PLAIN`, since one bit per value is already smaller than any dictionary page plus index stream (`EncodingSupport.dictionaryCapable`).
 
@@ -153,7 +154,7 @@ Tests: `WriterDictionaryTest`, `WriterDictionaryProbeTest`, `RowGroupBufferStore
 
 A column under a named policy skips everything above: no interning, no index array, no probes, no `distinct_count` (except `BOOLEAN`, see [Statistics](#statistics)). Its values go straight to the value store. Statistics, level streams and page cuts are unaffected.
 
-The delta encodings and `BYTE_STREAM_SPLIT` are never chosen by `AUTO`. Its comparison works because both candidates' sizes follow from what the chunk already holds: the exact cardinality, the dictionary's plain bytes, and each value's plain width. Neither optional encoding has that property. `DELTA_BINARY_PACKED`'s size follows from the bit width of the deltas inside each miniblock, a property of value order nothing in the buffer measures. `BYTE_STREAM_SPLIT` changes no page's size at all; it reorders bytes so the codec afterwards finds structure, which makes its payoff a property of the codec. Choosing either automatically would take a trial encode per chunk or an uncalibrated heuristic, so the writer honours an explicit choice and does not guess.
+The delta encodings and `BYTE_STREAM_SPLIT` are never chosen by `AUTO`. Its comparison works because both candidates' sizes follow from what the chunk already holds: the exact cardinality, the dictionary's plain bytes, and each value's plain width. Neither optional encoding has that property. `DELTA_BINARY_PACKED`'s size follows from the bit width of the deltas inside each miniblock, a property of value order nothing in the buffer measures. `BYTE_STREAM_SPLIT` changes no page's size at all; it reorders bytes so the codec afterwards finds structure, which makes its payoff a property of the codec. Choosing either automatically would take a trial encode per chunk or an uncalibrated heuristic, so the writer honours an explicit choice and does not guess. `ALP` is never chosen for a further reason: the format specification marks it Preview, and a reader that does not implement it cannot read the column at all.
 
 No policy demands a dictionary. A dictionary is the one encoding the writer cannot promise, since a chunk whose values repeat too little has to be written another way; a `DICTIONARY` member would either fail a write over data the writer can encode or accept a request and not honour it.
 
@@ -165,12 +166,13 @@ Each encoder in `dev.hardwood.internal.encoding` is the inverse of the decoder b
 - **`DELTA_LENGTH_BYTE_ARRAY`** is the lengths as `DELTA_BINARY_PACKED` followed by the concatenated bytes.
 - **`DELTA_BYTE_ARRAY`** is the prefix lengths as `DELTA_BINARY_PACKED`, then the suffixes as `DELTA_LENGTH_BYTE_ARRAY`. For `FIXED_LEN_BYTE_ARRAY` the suffix lengths are still written, the values being fixed-length only by schema.
 - **`BYTE_STREAM_SPLIT`** scatters `K` streams where `K` is the type's byte width (`typeLength` for `FIXED_LEN_BYTE_ARRAY`). The streams carry present values only, so a page's section is its non-null count times `K`.
+- **`ALP`** (`AlpEncoder`) splits a page's present values into vectors of 1024. Each vector is scaled to integers by an (exponent, factor) pair, and a value keeps its integer only where the decode `AlpFormat` shares with `AlpDecoder` gives back its exact bits; every other value is an exception, stored verbatim, its slot taking the vector's first kept integer. The pair therefore decides only the size, never the values. It is chosen in two steps: once per chunk, every pair is scored on samples of up to eight vectors and the five that win most often form the chunk's preset; each vector then takes the preset pair smallest on a sample of its own values. A pair is scored by its packed bits plus 2 bytes and a value per exception, and samples are taken at an odd stride, so that values alternating in kind do not all land on one side of it. A vector whose packing costs more than storing every value as an exception is stored as exceptions alone, which bounds every vector for the page cut.
 
-`BitPacker` packs fixed-width values LSB-first for both the RLE/bit-packing hybrid's eight-value groups and the delta miniblocks. It takes widths up to 64 bits and a `long` domain, for an `INT64` column whose deltas span the type. Both callers pack a whole number of bytes at every width.
+`BitPacker` packs fixed-width values LSB-first for the RLE/bit-packing hybrid's eight-value groups, the delta miniblocks and the `ALP` vectors. It takes widths up to 64 bits and a `long` domain, for an `INT64` column whose deltas span the type and an `ALP` vector spanning the range of a long. It writes whole bytes only: the first two callers' group sizes are a multiple of eight bits at every width, and `AlpEncoder` pads a short last vector with zeros to a multiple of eight values and keeps only the bytes the format counts.
 
 A concrete `ValueEncoder` implements the encodings its physical type may carry and throws `IllegalStateException` for the rest, a combination validation has already excluded.
 
-Tests: `WriterEncodingPolicyTest`, `DeltaBinaryPackedEncoderTest`, `ByteArrayEncodingsTest`, `ByteStreamSplitEncoderTest`, `BitPackerTest`, `RleBitPackingHybridEncoderTest`.
+Tests: `WriterEncodingPolicyTest`, `DeltaBinaryPackedEncoderTest`, `ByteArrayEncodingsTest`, `ByteStreamSplitEncoderTest`, `AlpEncoderTest`, `BitPackerTest`, `RleBitPackingHybridEncoderTest`.
 
 ## Codecs
 

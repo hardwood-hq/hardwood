@@ -150,6 +150,7 @@ Each option has a getter that reads the configured value back: `pageTargetBytes(
 | `DELTA_LENGTH_BYTE_ARRAY` | Lengths delta-encoded ahead of the values, cheaper than `PLAIN`'s per-value length prefix where the lengths are similar. |
 | `DELTA_BYTE_ARRAY` | Each value carrying only what it does not share with the value before it. Suits sorted values with common prefixes. |
 | `BYTE_STREAM_SPLIT` | A value's bytes scattered across one stream per byte position. Changes no page's size on its own; it changes how well the codec afterwards compresses floating-point data. |
+| `ALP` | Floating-point values scaled to integers by a power of ten and bit-packed per block of 1024 values. Suits values with few decimal digits, such as prices and measurements; a value with more significant digits than its block keeps is stored as it is, at its width plus 2 bytes. |
 
 An encoding is legal only for some physical types:
 
@@ -160,8 +161,11 @@ An encoding is legal only for some physical types:
 | `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` |
 | `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` |
 | `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` |
+| `ALP` | `FLOAT`, `DOUBLE` |
 
 A policy naming a column whose type cannot carry it fails when the writer is created, including a file-wide `BYTE_STREAM_SPLIT` over a schema holding a `BYTE_ARRAY` column. A per-column override names the column by its **dotted leaf path** as the schema spells it, synthetic segments included: `readings.list.element`, not `readings`. A path matching no leaf column is rejected the same way.
+
+`AUTO` never chooses `ALP`. The format specification marks `ALP` as Preview, and a column written with it can be read only by readers that implement it. The page cut charges each `ALP` value its width plus 2 bytes, the most a value can take, so an `ALP` page holds fewer values than a `PLAIN` page and stays within `pageTargetBytes`.
 
 No policy demands a dictionary; it is an outcome `AUTO` may arrive at. A `BOOLEAN` column is never dictionary-encoded, so `AUTO` resolves it to `PLAIN` whatever its values are.
 

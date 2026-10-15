@@ -11,6 +11,7 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.bloomfilter.XxHash64;
+import dev.hardwood.internal.encoding.AlpEncoder;
 import dev.hardwood.internal.encoding.ByteStreamSplitEncoder;
 import dev.hardwood.internal.encoding.LongDictionaryEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
@@ -29,6 +30,10 @@ final class DoubleValueEncoder extends ValueEncoder {
     private final double[] window;
     private final LongDictionaryEncoder dictionary; // null when dictionary encoding is disabled
     private DoubleStatisticsCollector statistics = new DoubleStatisticsCollector();
+    /// The chunk's ALP preset, searched for on its first ALP page from all of its stored values.
+    private int[] alpPreset;
+    /// Created on the column's first ALP page and kept for the rest, so its buffers are reused.
+    private AlpEncoder alp;
 
     private DoubleColumnSource source;
     private int size;
@@ -104,6 +109,7 @@ final class DoubleValueEncoder extends ValueEncoder {
     @Override
     void startChunk() {
         statistics = new DoubleStatisticsCollector();
+        alpPreset = null;
         if (dictionary != null) {
             dictionary.clear();
         }
@@ -147,6 +153,16 @@ final class DoubleValueEncoder extends ValueEncoder {
             case BYTE_STREAM_SPLIT -> {
                 int at = out.reserve(PlainEncoder.fixedWidthLength(count, Double.BYTES));
                 ByteStreamSplitEncoder.splitDoubles(plain, from, count, out.array(), at);
+            }
+            case ALP -> {
+                if (alpPreset == null) {
+                    alpPreset = AlpEncoder.presetDoubles(plain, 0, plainCount);
+                }
+                if (alp == null) {
+                    alp = new AlpEncoder(Double.BYTES);
+                }
+                int length = alp.encodeDoubles(plain, from, count, alpPreset);
+                out.write(alp.buffer(), 0, length);
             }
             default -> throw unsupported(encoding, PhysicalType.DOUBLE);
         }

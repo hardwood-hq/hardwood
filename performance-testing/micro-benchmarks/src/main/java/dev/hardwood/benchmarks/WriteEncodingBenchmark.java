@@ -278,6 +278,7 @@ public class WriteEncodingBenchmark {
             case DELTA_LENGTH_BYTE_ARRAY -> Encoding.DELTA_LENGTH_BYTE_ARRAY;
             case DELTA_BYTE_ARRAY -> Encoding.DELTA_BYTE_ARRAY;
             case BYTE_STREAM_SPLIT -> Encoding.BYTE_STREAM_SPLIT;
+            case ALP -> Encoding.ALP;
             case AUTO -> throw new IllegalStateException("AUTO names no encoding to check for");
         };
     }

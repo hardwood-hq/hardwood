@@ -421,6 +421,24 @@ class WriterInteropTest {
                 .isInstanceOf(ClassNotFoundException.class);
     }
 
+    /// Why `ALP` is absent from the optional-encoding axes, asserted rather than left as a
+    /// comment.
+    ///
+    /// parquet-java's `Encoding` stops at `BYTE_STREAM_SPLIT`: no release up to 1.18.1 names ALP,
+    /// let alone decodes its pages, so this gate has no reader for it. The writer's ALP output is
+    /// covered by core's round trips (`AlpEncoderTest`, `WriterEncodingPolicyTest`,
+    /// `WriterLayoutTest`) through a decoder `AlpReadTest` holds to Arrow C++'s output bit for
+    /// bit.
+    ///
+    /// This test pins the reason, so a parquet-java that gains the encoding fails here and `ALP`
+    /// joins the axes and the coverage domain rather than staying out by inertia.
+    @Test
+    void parquetJavaHasNoAlpEncoding() {
+        assertThatThrownBy(() -> Encoding.valueOf("ALP"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("No enum constant org.apache.parquet.column.Encoding.ALP");
+    }
+
     /// Which of the two write APIs produces the file under test.
     private enum WritePath { BATCH, ROW }
 
@@ -690,6 +708,8 @@ class WriterInteropTest {
             case DELTA_LENGTH_BYTE_ARRAY -> Encoding.DELTA_LENGTH_BYTE_ARRAY;
             case DELTA_BYTE_ARRAY -> Encoding.DELTA_BYTE_ARRAY;
             case BYTE_STREAM_SPLIT -> Encoding.BYTE_STREAM_SPLIT;
+            case ALP -> throw new IllegalArgumentException(
+                    "parquet-java has no ALP encoding; see parquetJavaHasNoAlpEncoding");
         };
     }
 

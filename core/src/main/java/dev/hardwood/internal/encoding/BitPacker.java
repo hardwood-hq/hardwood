@@ -8,13 +8,14 @@
 package dev.hardwood.internal.encoding;
 
 /// Packs fixed-width values LSB-first, the bit layout shared by the RLE/bit-packing hybrid's
-/// eight-value groups and DELTA_BINARY_PACKED's 32-value miniblocks.
+/// eight-value groups, DELTA_BINARY_PACKED's 32-value miniblocks and ALP's vectors.
 ///
 /// Value `i` of a group occupies bits `[i·bitWidth, (i+1)·bitWidth)` counted from the least
-/// significant bit of the first byte, which is what [RleBitPackingHybridDecoder] and
-/// [DeltaBinaryPackedDecoder] both unpack. Both callers pack a whole number of bytes — eight
-/// values at any width and 32 values at any width are each a multiple of eight bits — so no
-/// caller has a partial trailing byte to carry.
+/// significant bit of the first byte, which is what [RleBitPackingHybridDecoder],
+/// [DeltaBinaryPackedDecoder] and [AlpDecoder] unpack. Every caller packs a whole number of
+/// bytes, so no caller has a partial trailing byte to carry: eight values and 32 values at any
+/// width are each a multiple of eight bits, and [AlpEncoder] pads a short last vector with zeros
+/// to a multiple of eight values, keeping only the bytes the format counts.
 public final class BitPacker {
 
     private BitPacker() {
@@ -24,7 +25,7 @@ public final class BitPacker {
     ///
     /// Only whole bytes are flushed, so a group whose bits do not divide by eight would leave up
     /// to seven of them in the accumulator: the packed values would be short by a byte and
-    /// unreadable, with nothing to say so. Both callers pack a multiple of eight bits at every
+    /// unreadable, with nothing to say so. Every caller packs a multiple of eight bits at every
     /// width — that is a property of their group sizes, not of this method — so the check costs
     /// nothing and turns a future caller's silent truncation into a failure at the call.
     private static void checkGroup(int count, int bitWidth, int maxBitWidth) {

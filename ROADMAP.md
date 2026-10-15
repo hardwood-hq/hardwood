@@ -108,7 +108,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 2.6 Adaptive Lossless floating-Point (ALP)
 - [x] Decoder implementation (FLOAT, DOUBLE; all vector sizes)
-- [ ] Encoder implementation
+- [x] Encoder implementation (opt-in `ColumnEncoding.ALP`)
 
 ---
 
@@ -204,7 +204,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Caller-placed row-group boundaries (#985)
 - [x] Dictionary page writing
 - [x] Data page encoding and writing (`AUTO` dictionary-or-`PLAIN` per chunk, or a named
-  per-column policy: `PLAIN`, the three delta encodings, `BYTE_STREAM_SPLIT`)
+  per-column policy: `PLAIN`, the three delta encodings, `BYTE_STREAM_SPLIT`, `ALP`)
 - [x] Page compression (UNCOMPRESSED, GZIP, SNAPPY, ZSTD, LZ4_RAW, BROTLI; `LZ4`'s deprecated
   Hadoop framing and `LZO` are refused at writer creation)
 - [x] Footer writing
@@ -511,7 +511,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] DELTA_LENGTH_BYTE_ARRAY
 - [x] DELTA_BYTE_ARRAY
 - [x] BYTE_STREAM_SPLIT
-- [x] ALP (read)
+- [x] ALP
 - [x] **Validate**: Read files using these encodings
 
 ### Milestone 6: Optimization Features (partial)

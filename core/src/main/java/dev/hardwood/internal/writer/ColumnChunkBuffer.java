@@ -19,6 +19,8 @@ import java.util.zip.CRC32;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.conversion.FixedWidths;
+import dev.hardwood.internal.encoding.AlpEncoder;
 import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridEncoder;
@@ -462,7 +464,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         // dictionary, or the value itself. Read once for the whole chunk where every value costs
         // the same, which is every column but a variable-width `BYTE_ARRAY` one.
         long indexBits = hasDictionary ? LevelEncoder.bitWidth(dictionarySize - 1) : 0;
-        long uniformValueBits = hasDictionary ? indexBits : values.uniformValueBits();
+        long uniformValueBits = hasDictionary ? indexBits : storedValueBits();
+        long pageOverheadBits = hasDictionary ? 0 : storedPageOverheadBits();
         // A dictionary chunk's values are its indices, one width whatever the values behind them
         // were, so its store's offsets say nothing about what its pages carry.
         int[] valueOffsets = hasDictionary ? null : values.storedValueOffsets();
@@ -476,7 +479,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         int valueFrom = 0;
         long firstRow = 0;
         while (entryFrom < entryCount) {
-            long cut = pageCut(entryFrom, valueFrom, uniformValueBits, valueOffsets);
+            long cut = pageCut(entryFrom, valueFrom, uniformValueBits, pageOverheadBits, valueOffsets);
             int entries = (int) (cut >>> Integer.SIZE);
             int valueCount = (int) cut;
             long nulls = entries - valueCount;
@@ -622,20 +625,25 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// a dictionary column carrying its target in values and carrying its target in indices.
     /// Levels are charged the width their stream encodes at, which the RLE beats on any column
     /// whose levels run, so a levelled page comes out at or under the target rather than over it.
-    private long pageCut(int entryFrom, int valueFrom, long uniformValueBits, int[] offsets) {
+    ///
+    /// `pageOverheadBits` is what the page's value section costs beyond its values, charged
+    /// before the first of them.
+    private long pageCut(int entryFrom, int valueFrom, long uniformValueBits, long pageOverheadBits,
+                         int[] offsets) {
         // Every entry costs the same wherever the column is unlevelled and its values are one
         // width — a dictionary chunk included, its indices being one width by construction — and
         // every entry is a record. Then where the page ends is arithmetic, and the walk below is
         // for the columns that need it.
         if (offsets == null && maxDefLevel == 0 && maxRepLevel == 0) {
             long entryBits = levelBitsPerEntry + uniformValueBits;
-            long fit = Math.min(pageTargetRows, Math.max(1, pageTargetBits / Math.max(1, entryBits)));
+            long fit = Math.min(pageTargetRows,
+                    Math.max(1, (pageTargetBits - pageOverheadBits) / Math.max(1, entryBits)));
             int entries = (int) Math.min(entryCount - entryFrom, fit);
             return pageCut(entries, entries);
         }
         byte[] definitions = maxDefLevel > 0 ? defLevels.array() : null;
         byte[] repetitions = maxRepLevel > 0 ? repLevels.array() : null;
-        long bits = 0;
+        long bits = pageOverheadBits;
         int value = valueFrom;
         int records = 0;
         // The start of the page's last record, and the present values before it: where the page
@@ -757,6 +765,21 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         return encoding == ColumnEncoding.AUTO ? ColumnEncoding.PLAIN : encoding;
     }
 
+    /// The bits a page cut charges each stored value of a chunk without a dictionary: its `PLAIN`
+    /// width, which no delta encoding exceeds, or for `ALP` the bound [AlpEncoder] keeps every
+    /// value under, an exception taking more than its `PLAIN` width.
+    private long storedValueBits() {
+        return storedEncoding() == ColumnEncoding.ALP
+                ? AlpEncoder.maxValueBits(FixedWidths.of(type))
+                : values.uniformValueBits();
+    }
+
+    /// The bits a page's value section takes beyond its values under [#storedEncoding]: the page
+    /// and first vector headers for `ALP`, nothing for any other encoding.
+    private long storedPageOverheadBits() {
+        return storedEncoding() == ColumnEncoding.ALP ? AlpEncoder.pageOverheadBits(FixedWidths.of(type)) : 0;
+    }
+
     /// The metadata [Encoding] naming what [#storedEncoding] produces.
     private Encoding valueEncoding() {
         return switch (storedEncoding()) {
@@ -765,6 +788,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             case DELTA_LENGTH_BYTE_ARRAY -> Encoding.DELTA_LENGTH_BYTE_ARRAY;
             case DELTA_BYTE_ARRAY -> Encoding.DELTA_BYTE_ARRAY;
             case BYTE_STREAM_SPLIT -> Encoding.BYTE_STREAM_SPLIT;
+            case ALP -> Encoding.ALP;
             case AUTO -> throw new IllegalStateException("AUTO resolves before it is written");
         };
     }

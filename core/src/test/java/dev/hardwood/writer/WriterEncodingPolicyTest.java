@@ -80,6 +80,7 @@ class WriterEncodingPolicyTest {
             case BYTE_STREAM_SPLIT -> type == PhysicalType.INT32 || type == PhysicalType.INT64
                     || type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
                     || type == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+            case ALP -> type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE;
         };
     }
 
@@ -219,7 +220,7 @@ class WriterEncodingPolicyTest {
                 // to not claim one of the optional encodings.
                 assertThat(meta.encodings())
                         .doesNotContain(Encoding.DELTA_BINARY_PACKED, Encoding.DELTA_BYTE_ARRAY,
-                                Encoding.DELTA_LENGTH_BYTE_ARRAY, Encoding.BYTE_STREAM_SPLIT);
+                                Encoding.DELTA_LENGTH_BYTE_ARRAY, Encoding.BYTE_STREAM_SPLIT, Encoding.ALP);
                 return;
             }
             assertThat(meta.encodings()).as("declared encodings").containsExactly(expected(encoding));
@@ -336,6 +337,24 @@ class WriterEncodingPolicyTest {
         assertThat(split).as("uncompressed, the split is the same size as PLAIN").isEqualTo(plain);
         assertThat(splitZstd).as("ZSTD over split %d against ZSTD over plain %d", splitZstd, plainZstd)
                 .isLessThan(plainZstd);
+    }
+
+    @Test
+    void alpShrinksValuesWithFewDecimalDigits() throws Exception {
+        // Prices to the cent: each is an integer number of cents, packed at the width the
+        // vector's range of cents needs rather than at 64 bits.
+        double[] values = new double[ROWS];
+        for (int i = 0; i < ROWS; i++) {
+            values[i] = 5.0 + (i * 7919 % 10_000) / 100.0;
+        }
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .build();
+
+        int plain = writeDoubles(schema, values, ColumnEncoding.PLAIN, CompressionCodec.UNCOMPRESSED).length;
+        int alp = writeDoubles(schema, values, ColumnEncoding.ALP, CompressionCodec.UNCOMPRESSED).length;
+
+        assertThat(alp).as("ALP %d bytes against PLAIN's %d", alp, plain).isLessThan(plain / 3);
     }
 
     // ==================== Resolution ====================
@@ -559,6 +578,7 @@ class WriterEncodingPolicyTest {
             case DELTA_LENGTH_BYTE_ARRAY -> Encoding.DELTA_LENGTH_BYTE_ARRAY;
             case DELTA_BYTE_ARRAY -> Encoding.DELTA_BYTE_ARRAY;
             case BYTE_STREAM_SPLIT -> Encoding.BYTE_STREAM_SPLIT;
+            case ALP -> Encoding.ALP;
             case AUTO -> throw new IllegalArgumentException("AUTO names no single encoding");
         };
     }
@@ -571,7 +591,8 @@ class WriterEncodingPolicyTest {
             case INT32 -> 1_000_000 + r * 3;
             case INT64 -> 1_700_000_000_000L + r * 1_000L;
             // The low ordinals are the bit patterns a byte-stream-split can misplace without
-            // producing anything that looks wrong: both signed zeros, NaN, the infinities.
+            // producing anything that looks wrong, and the ones ALP has to store as exceptions:
+            // both signed zeros, NaN, the infinities.
             case FLOAT -> switch (r % 512) {
                 case 0 -> 0.0f;
                 case 1 -> -0.0f;

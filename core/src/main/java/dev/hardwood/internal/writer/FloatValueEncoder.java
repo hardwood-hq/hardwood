@@ -11,6 +11,7 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.bloomfilter.XxHash64;
+import dev.hardwood.internal.encoding.AlpEncoder;
 import dev.hardwood.internal.encoding.ByteStreamSplitEncoder;
 import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
@@ -28,6 +29,10 @@ final class FloatValueEncoder extends ValueEncoder {
     private final float[] window;
     private final DictionaryEncoder dictionary; // null when dictionary encoding is disabled
     private FloatStatisticsCollector statistics = new FloatStatisticsCollector();
+    /// The chunk's ALP preset, searched for on its first ALP page from all of its stored values.
+    private int[] alpPreset;
+    /// Created on the column's first ALP page and kept for the rest, so its buffers are reused.
+    private AlpEncoder alp;
 
     private FloatColumnSource source;
     private int size;
@@ -103,6 +108,7 @@ final class FloatValueEncoder extends ValueEncoder {
     @Override
     void startChunk() {
         statistics = new FloatStatisticsCollector();
+        alpPreset = null;
         if (dictionary != null) {
             dictionary.clear();
         }
@@ -146,6 +152,16 @@ final class FloatValueEncoder extends ValueEncoder {
             case BYTE_STREAM_SPLIT -> {
                 int at = out.reserve(PlainEncoder.fixedWidthLength(count, Float.BYTES));
                 ByteStreamSplitEncoder.splitFloats(plain, from, count, out.array(), at);
+            }
+            case ALP -> {
+                if (alpPreset == null) {
+                    alpPreset = AlpEncoder.presetFloats(plain, 0, plainCount);
+                }
+                if (alp == null) {
+                    alp = new AlpEncoder(Float.BYTES);
+                }
+                int length = alp.encodeFloats(plain, from, count, alpPreset);
+                out.write(alp.buffer(), 0, length);
             }
             default -> throw unsupported(encoding, PhysicalType.FLOAT);
         }

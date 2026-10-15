@@ -28,6 +28,7 @@ import dev.hardwood.metadata.PhysicalType;
 /// | `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` |
 /// | `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` |
 /// | `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` |
+/// | `ALP` | `FLOAT`, `DOUBLE` |
 ///
 /// No policy demands a dictionary: dictionary encoding is an outcome [#AUTO] may arrive at,
 /// not something to ask for.
@@ -61,7 +62,15 @@ public enum ColumnEncoding {
     /// A value's bytes scattered across one stream per byte position. This changes no page's
     /// size on its own; what it changes is how well the codec afterwards compresses floating
     /// point data, so it is worth choosing only alongside compression.
-    BYTE_STREAM_SPLIT;
+    BYTE_STREAM_SPLIT,
+
+    /// Values scaled to integers by a power of ten, stored as their distance above each block's
+    /// smallest and bit-packed. Suits values with few decimal digits, such as prices,
+    /// measurements and coordinates; a value with more significant digits than its block keeps
+    /// is stored as it is, at more than its `PLAIN` width. `AUTO` never chooses it: it is in
+    /// Preview in the format specification, and only readers that implement it can read the
+    /// column.
+    ALP;
 
     /// Whether a column of `type` may be written with this policy.
     ///

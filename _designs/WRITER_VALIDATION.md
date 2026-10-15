@@ -141,6 +141,8 @@ Hand-listing the domain would reproduce the problem it exists to solve, so `Cove
 
 The resolution from policy to page encoding is a switch expression, so a policy added to `ColumnEncoding` is a compile error there rather than a silently missing encoding.
 
+`ALP` resolves to no cell. Cells are spelled in parquet-java's `Encoding`, which has no member for it, and no parquet-java release reads its pages, so no gate test could produce one. `WriterInteropTest.parquetJavaHasNoAlpEncoding` pins the missing member, so the release that gains it fails there and `ALP` joins the axes and the domain. Until then the writer's `ALP` output is covered by `core`'s round trips, through a decoder `AlpReadTest` holds bit for bit to Arrow C++'s output, and DuckDB, which does not read `ALP` either, has no case for it. Reading Hardwood's `ALP` files with a PyArrow build that includes Arrow C++'s decoder is an ad-hoc verification step.
+
 A probe catches only the two exceptions the writer documents as refusals — `UnsupportedOperationException` for a capability it does not have, and `IllegalArgumentException` for a configuration a schema cannot carry. Anything else propagates, because a probe that swallowed an unexpected failure would drop the capability from the required set and leave the verdict passing having asserted less.
 
 The domain reads the writer's own capability tables: `EncodingSupport` and `LogicalTypeValueRange` live in `dev.hardwood.internal.writer`, which the test module depends on directly. A mirrored copy would drift, which is the defect this assertion exists to catch.

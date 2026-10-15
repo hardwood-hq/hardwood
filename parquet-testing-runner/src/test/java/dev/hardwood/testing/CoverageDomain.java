@@ -297,6 +297,11 @@ final class CoverageDomain {
                 case DELTA_LENGTH_BYTE_ARRAY -> EnumSet.of(Encoding.DELTA_LENGTH_BYTE_ARRAY);
                 case DELTA_BYTE_ARRAY -> EnumSet.of(Encoding.DELTA_BYTE_ARRAY);
                 case BYTE_STREAM_SPLIT -> EnumSet.of(Encoding.BYTE_STREAM_SPLIT);
+                // parquet-java's Encoding has no member to spell an ALP cell with, and no release
+                // reads the pages, so ALP is required nowhere in this module. The reason is pinned
+                // by WriterInteropTest.parquetJavaHasNoAlpEncoding, which fails on the release
+                // that gains the member.
+                case ALP -> EnumSet.noneOf(Encoding.class);
             });
         }
         return encodings;
