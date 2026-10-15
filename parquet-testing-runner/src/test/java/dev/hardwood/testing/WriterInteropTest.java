@@ -598,6 +598,7 @@ class WriterInteropTest {
     private void assertPageIndex(InteropCase testCase, Path file, ParquetMetadata footer, Pages pages,
                                  List<PageIndex> indexes) throws IOException {
         ParquetJavaReader.assertPageIndexStructure(footer, pages, indexes);
+        ParquetJavaReader.assertSizeStatistics(file, pages, indexes);
         List<ColumnChunkMetaData> chunks = chunks(footer);
         List<Long> nanCounts = ParquetJavaReader.readNanCounts(file);
         Comparable<Object> min = null;

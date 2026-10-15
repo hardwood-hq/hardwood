@@ -51,8 +51,9 @@ import dev.hardwood.writer.ColumnEncoding;
 /// and written straight to the output. A page takes whole records while they fit the page's byte
 /// and record targets, and at least one record, so a record larger than the byte target occupies
 /// a page of its own: the page index addresses pages by their first record, which requires every
-/// page to start at a record boundary. Each page's statistics are collected as it is written, and
-/// make up the chunk's `ColumnIndex` and `OffsetIndex` as well as its chunk statistics. Retaining the values rather
+/// page to start at a record boundary. Each page's statistics, level histograms and unencoded
+/// `BYTE_ARRAY` bytes are collected as it is written, and make up the chunk's `ColumnIndex`,
+/// `OffsetIndex`, chunk statistics and `SizeStatistics`. Retaining the values rather
 /// than the encoded pages is what lets a page's bytes be produced after the whole chunk is known;
 /// it costs no copy that streaming did not already make, since a value is copied out of the
 /// caller's array either way.
@@ -473,6 +474,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         // entries each page names, so its statistics compare each entry once rather than each value.
         boolean trackEntries = hasDictionary && dictionarySize <= MAX_TRACKED_DICTIONARY_ENTRIES;
         ColumnIndexBuilder columnIndex = new ColumnIndexBuilder(values, boundedStatistics);
+        SizeStatisticsBuilder sizes = new SizeStatisticsBuilder(column);
+        byte[] repetitions = maxRepLevel > 0 ? repLevels.array() : null;
+        byte[] definitions = maxDefLevel > 0 ? defLevels.array() : null;
         List<PageLocation> pageLocations = new ArrayList<>();
         int dataPageCount = 0;
         int entryFrom = 0;
@@ -497,6 +501,10 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             else {
                 columnIndex.add(values.pageStatistics(null, valueFrom, valueCount, nulls));
             }
+            long unencodedBytes = sizes.countsBytes()
+                    ? values.unencodedBytes(hasDictionary ? indices : null, valueFrom, valueCount)
+                    : 0;
+            sizes.add(repetitions, definitions, entryFrom, entries, unencodedBytes);
             long pageBytes = writeDataPage(out, entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
             pageLocations.add(new PageLocation(dataPageOffset + dataPagesCompressedSize,
                     Math.toIntExact(pageBytes), firstRow));
@@ -532,8 +540,10 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                                 new PageEncodingStats(PageType.DICTIONARY_PAGE, Encoding.PLAIN, 1),
                                 new PageEncodingStats(PageType.DATA_PAGE, Encoding.RLE_DICTIONARY, dataPageCount))
                         : List.of(new PageEncodingStats(PageType.DATA_PAGE, valueEncoding(), dataPageCount)),
-                null);
-        return new Flushed(metaData, columnIndex.build(), new OffsetIndex(List.copyOf(pageLocations), null),
+                sizes.build());
+        return new Flushed(metaData,
+                columnIndex.build(sizes.repetitionLevelHistograms(), sizes.definitionLevelHistograms()),
+                new OffsetIndex(List.copyOf(pageLocations), sizes.unencodedByteArrayDataBytes()),
                 bloomFilter(hasDictionary, distinctCount));
     }
 

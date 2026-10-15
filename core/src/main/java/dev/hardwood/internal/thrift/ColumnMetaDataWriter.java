@@ -86,6 +86,12 @@ public class ColumnMetaDataWriter {
                 writer.writeI32(metaData.bloomFilterLength());
             }
 
+            // 16: size_statistics
+            if (metaData.sizeStatistics() != null) {
+                writer.writeFieldBegin(16, ThriftCompactConstants.FieldType.STRUCT);
+                SizeStatisticsWriter.write(writer, metaData.sizeStatistics());
+            }
+
             writer.writeFieldStop();
         }
         finally {

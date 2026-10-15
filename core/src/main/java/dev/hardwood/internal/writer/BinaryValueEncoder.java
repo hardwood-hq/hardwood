@@ -248,6 +248,22 @@ final class BinaryValueEncoder extends ValueEncoder {
     }
 
     @Override
+    long unencodedBytes(int[] indices, int valueFrom, int valueCount) {
+        if (fixedLength()) {
+            return super.unencodedBytes(indices, valueFrom, valueCount);
+        }
+        if (indices == null) {
+            return plainOffsets[valueFrom + valueCount] - plainOffsets[valueFrom];
+        }
+        byte[][] entries = dictionary.values();
+        long bytes = 0;
+        for (int i = valueFrom; i < valueFrom + valueCount; i++) {
+            bytes += entries[indices[i]].length;
+        }
+        return bytes;
+    }
+
+    @Override
     int compareBounds(byte[] left, byte[] right) {
         return statistics.compareBounds(left, right);
     }

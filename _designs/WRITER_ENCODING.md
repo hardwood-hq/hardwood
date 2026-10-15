@@ -1,6 +1,6 @@
 # Writer encoding
 
-Describes how the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, the statistics written into the footer, the page index and the Bloom filters.
+Describes how the writer turns a buffered column chunk into bytes: the chunk and page layout, how each chunk's value encoding is chosen, the codecs, the statistics and size statistics written into the footer, the page index and the Bloom filters.
 
 Related documents:
 
@@ -262,6 +262,27 @@ The footer carries `column_orders` with one `TYPE_DEFINED_ORDER` per leaf column
 
 Tests: `WriterStatisticsTest`, `WriterLogicalTypeStatisticsTest`, `WriterFixedWidthTypeRoundTripTest`, `WriterVariableWidthTypeRoundTripTest`, `WriterFlba12TimestampTest`, `WriterDictionaryTest`.
 
+## Size statistics
+
+A column chunk's `SizeStatistics` counts its level entries and its `BYTE_ARRAY` bytes, which a reader uses to prune on a group's presence and to size buffers without decoding pages. The same counts are kept per data page for the page index. `SizeStatisticsBuilder` takes them at flush, page by page, from the levels the chunk retains a byte per entry and from the values each page holds; the chunk's counts are the sums of its pages'.
+
+| Field | Written |
+|---|---|
+| `repetition_level_histogram` | where the column's maximum repetition level is above 0: the entries at each repetition level |
+| `definition_level_histogram` | where the column's maximum definition level is above 1: the entries at each definition level |
+| `unencoded_byte_array_data_bytes` | for a `BYTE_ARRAY` column: the bytes of its present values, without the 4-byte length prefix `PLAIN` gives each, under any encoding |
+
+A chunk writes `SizeStatistics` when at least one of the three fields applies, so a top-level `REQUIRED` `INT32` column has none.
+
+A histogram is left out where the rest of the metadata already gives its counts:
+
+- In a column that does not repeat, every entry is at repetition level 0.
+- In a column whose maximum definition level is 1, `null_count` entries are at level 0 and the rest of `num_values` at level 1.
+
+Readers prune just as well without them, with one exception. A null predicate on a group uses the histogram when the group's maximum definition level is below its leaf's ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#definition-level-histograms)). A group with an optional or repeated node on its path then has a leaf of maximum level 2 or more, where the histogram is written. A group required from the root has maximum level 0, and over a leaf of maximum level 1 its null tests prune nothing.
+
+Tests: `WriterSizeStatisticsTest`, `WriterSizeStatisticsInteropTest`, `WriterInteropTest` and `WriterNestedInteropTest` (parquet-testing-runner).
+
 ## Page index
 
 Every column chunk gets an `OffsetIndex`, and a `ColumnIndex` wherever its bounds can be stated. Both are built as the chunk's pages are written (`ColumnIndexBuilder`), held by the writer until `close()`, and written between the last row group and the footer: every `ColumnIndex` of the file first, in row-group and then column order, then every `OffsetIndex` in the same order, as parquet-java lays them out. Kept together, the index of many row groups is one range for a reader to fetch.
@@ -269,13 +290,13 @@ Every column chunk gets an `OffsetIndex`, and a `ColumnIndex` wherever its bound
 | Structure | Field | Written |
 |---|---|---|
 | `OffsetIndex` | `page_locations` | per data page: the offset of its header, its size including the header, and its first record within the row group |
-| | `unencoded_byte_array_data_bytes` | not written |
+| | `unencoded_byte_array_data_bytes` | per data page of a `BYTE_ARRAY` chunk, as in [`SizeStatistics`](#size-statistics) |
 | `ColumnIndex` | `null_pages` | per data page: whether it holds no present value |
 | | `min_values` / `max_values` | the page's bounds, under the chunk statistics' rules: the column's order, `NaN` excluded, zero bounds sign-normalized, `BYTE_ARRAY` bounds truncated to `statisticsTruncationLength`. A `max` with no shorter upper bound is written whole, the field being required. A null page has empty bounds |
 | | `boundary_order` | `ASCENDING` or `DESCENDING` where every non-null page's bounds are at least, or at most, the previous non-null page's; `UNORDERED` otherwise. Taken over the bounds as written, since truncating text at a code-point boundary does not preserve the order of the values truncated |
 | | `null_counts` | per data page, always |
 | | `nan_counts` | per data page of a `FLOAT`, `DOUBLE` or `FLOAT16` chunk |
-| | level histograms | not written |
+| | `repetition_level_histograms` / `definition_level_histograms` | per data page, concatenated in page order, where the chunk's `SizeStatistics` carries the histogram |
 
 A chunk has no `ColumnIndex` where the format leaves its bounds unstateable: a column whose order is undefined, the same set that writes no chunk bounds, and a floating-point chunk with a page whose present values are all `NaN`. That page has no bounds under `TYPE_DEFINED_ORDER`, and the format forbids a column index for its chunk rather than let a reader mistake legacy files that bounded `NaN`. Its `OffsetIndex` is still written.
 
@@ -314,7 +335,6 @@ Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloom
 
 ## Boundaries
 
-- **Level histograms.** The `ColumnIndex` level histograms and the `OffsetIndex` `unencoded_byte_array_data_bytes` are not written, nor is `SizeStatistics`, which carries the same counts per chunk (#1499).
 - **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
 - **Data page V2** is not produced; every data page is V1.

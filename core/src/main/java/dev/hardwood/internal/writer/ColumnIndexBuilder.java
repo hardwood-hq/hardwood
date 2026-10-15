@@ -82,12 +82,17 @@ final class ColumnIndexBuilder {
     }
 
     /// The chunk's `ColumnIndex`, or `null` where the chunk cannot have one.
-    ColumnIndex build() {
+    ///
+    /// @param repetitionLevelHistograms the pages' repetition level histograms, concatenated page
+    ///        by page, or `null` where the chunk omits them
+    /// @param definitionLevelHistograms the pages' definition level histograms, likewise
+    ColumnIndex build(long[] repetitionLevelHistograms, long[] definitionLevelHistograms) {
         if (!expressible || pageCount == 0) {
             return null;
         }
         return new ColumnIndex(Arrays.copyOf(nullPages, pageCount), List.copyOf(mins), List.copyOf(maxs),
-                boundaryOrder(), Arrays.copyOf(nullCounts, pageCount), null, null,
+                boundaryOrder(), Arrays.copyOf(nullCounts, pageCount), repetitionLevelHistograms,
+                definitionLevelHistograms,
                 countsNaN ? Arrays.copyOf(nanCounts, pageCount) : null);
     }
 

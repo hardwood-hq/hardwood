@@ -17,9 +17,9 @@ phases 2 and 8) or the value-conversion layer (phase 7.4).
 - ❌ **skipped** — not read (the reader's `default` branch, or an explicit skip case).
 
 The 🟡-vs-✅ distinction is a maintained judgment (whether a parsed value is
-*meaningfully* consumed cannot be derived automatically — e.g. `SizeStatistics` and
-`ColumnMetaData.key_value_metadata` are decoded onto the public metadata records, and
-nothing reads them back). Sitting on a public record is not on its own enough for ✅.
+*meaningfully* consumed cannot be derived automatically — e.g.
+`ColumnMetaData.key_value_metadata` is decoded onto the public metadata records, and
+nothing reads it back). Sitting on a public record is not on its own enough for ✅.
 The read-vs-skipped axis matches the `switch`-on-field-id in each `internal.thrift`
 reader.
 
@@ -100,7 +100,7 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 13 | encoding_stats | ✅ | on public record; dictionary row-group pruning (#105) and the CLI's data-page encoding column; written for every column chunk |
 | 14 | bloom_filter_offset | ✅ | shown in dive; filter body read & decoded (#669); used for `eq`/`in` row-group pruning (#105); written for configured columns (#1449) |
 | 15 | bloom_filter_length | ✅ | shown in dive; #669 read path; #105 pushdown; written with the offset (#1449) |
-| 16 | size_statistics | 🟡 | on public record, no functional consumer |
+| 16 | size_statistics | ✅ | definition level histogram drives group null-predicate pruning (#977); shown in dive and `inspect columns`; written (#1499) |
 | 17 | geospatial_statistics | ✅ | row-group filter evaluator (no per-page geospatial stats exist) |
 
 ### PageEncodingStats
@@ -130,9 +130,9 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 ### SizeStatistics
 | id | field | status | notes |
 |----|-------|--------|-------|
-| 1 | unencoded_byte_array_data_bytes | 🟡 | on public record, no functional consumer |
-| 2 | repetition_level_histogram | 🟡 | absent and empty are distinguished (`null` vs empty array) |
-| 3 | definition_level_histogram | 🟡 | |
+| 1 | unencoded_byte_array_data_bytes | ✅ | shown in dive and `inspect columns`; written for every `BYTE_ARRAY` chunk |
+| 2 | repetition_level_histogram | ✅ | shown in dive and `inspect columns`; absent and empty are distinguished (`null` vs empty array); written where the maximum repetition level is above 0 |
+| 3 | definition_level_histogram | ✅ | group null-predicate pruning (#977); written where the maximum definition level is above 1 |
 
 ### GeospatialStatistics
 | id | field | status | notes |
@@ -188,15 +188,15 @@ Empty struct; not read (see `PageHeader.index_page_header`).
 | 3 | max_values | ✅ | |
 | 4 | boundary_order | ✅ | |
 | 5 | null_counts | ✅ | |
-| 6 | repetition_level_histograms | 🟡 | per-page, concatenated page-major |
-| 7 | definition_level_histograms | 🟡 | per-page, concatenated page-major |
+| 6 | repetition_level_histograms | ✅ | per-page, concatenated page-major; shown in dive; written with the chunk's histogram |
+| 7 | definition_level_histograms | ✅ | per-page, concatenated page-major; page-level group null-predicate pruning; written with the chunk's histogram |
 | 8 | nan_counts | ✅ | filtering: all-`NaN` pages, `NaN`-free bounds |
 
 ### OffsetIndex
 | id | field | status | notes |
 |----|-------|--------|-------|
 | 1 | page_locations | ✅ | page scanning |
-| 2 | unencoded_byte_array_data_bytes | 🟡 | per-page counterpart of the chunk-level field |
+| 2 | unencoded_byte_array_data_bytes | ✅ | per-page counterpart of the chunk-level field; shown in dive; written for every `BYTE_ARRAY` chunk |
 
 ### PageLocation
 All fields (offset, compressed_page_size, first_row_index) ✅.
@@ -240,7 +240,6 @@ integer and binary types (#105). Dive surfacing is #507. The writer produces `BL
 The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP:
 
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
-- **Size statistics & level histograms** — parsed, exposed, and surfaced by the CLI (`dive` column chunk detail, `hardwood inspect columns`); no reader-side consumer yet.
 - **Statistics completeness** — distinct_count and the exactness flags are parsed but drive no filtering (#483).
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.
 - **Column orders** — float total-order vs type-defined; #483.

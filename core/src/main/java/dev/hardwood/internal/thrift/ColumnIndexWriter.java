@@ -12,8 +12,8 @@ import java.util.List;
 import dev.hardwood.metadata.ColumnIndex;
 
 /// Writer for `ColumnIndex` to Thrift Compact Protocol, the inverse of [ColumnIndexReader].
-/// Writes the four required members, then `null_counts` and `nan_counts` where present; the
-/// level histograms (fields 6 and 7) are not written.
+/// Writes the four required members, then `null_counts`, the level histograms and `nan_counts`
+/// where present.
 public class ColumnIndexWriter {
 
     public static void write(ThriftCompactWriter writer, ColumnIndex index) {
@@ -40,6 +40,14 @@ public class ColumnIndexWriter {
             // 5: null_counts (optional list<i64>)
             if (index.nullCounts() != null) {
                 writeLongs(writer, 5, index.nullCounts());
+            }
+
+            // 6: repetition_level_histograms, 7: definition_level_histograms (optional list<i64>)
+            if (index.repetitionLevelHistograms() != null) {
+                writeLongs(writer, 6, index.repetitionLevelHistograms());
+            }
+            if (index.definitionLevelHistograms() != null) {
+                writeLongs(writer, 7, index.definitionLevelHistograms());
             }
 
             // 8: nan_counts (optional list<i64>)

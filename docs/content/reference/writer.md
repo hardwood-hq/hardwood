@@ -275,12 +275,14 @@ Every column chunk carries `null_count`. `min` / `max` are computed under the co
 
 Every column chunk also carries `encoding_stats`: its page count per page type and encoding. A dictionary-encoded chunk lists one `PLAIN` dictionary page and all of its data pages as `RLE_DICTIONARY`, so a reader can prune its row group on the dictionary for an `eq` or `in` predicate (see [Query Controls](../how-to/query-controls.md)). Any other chunk lists its data pages under the one value encoding it was written in.
 
+A column chunk carries `SizeStatistics` where it has something to count: its repetition level histogram where the column is repeated, its definition level histogram where the column's maximum definition level is 2 or more, and for a `BYTE_ARRAY` column the bytes of its values without their length prefixes.
+
 Every file carries a page index, written between the last row group and the footer:
 
-- **`OffsetIndex`**, for every column chunk: the location of each data page and the first record it holds. Every page starts at a record boundary.
-- **`ColumnIndex`**, for every column chunk whose bounds can be stated: each page's `min` / `max` under the same rules as the chunk statistics, its null count, whether it holds only nulls, its `NaN` count for `FLOAT`, `DOUBLE` and `FLOAT16`, and whether the pages' bounds ascend or descend. A column without an order writes none, nor does a floating-point column chunk with a page whose values are all `NaN`. Where no truncated `max` exists, a page's `max` is written whole.
+- **`OffsetIndex`**, for every column chunk: the location of each data page and the first record it holds, and for a `BYTE_ARRAY` column the bytes of the page's values without their length prefixes. Every page starts at a record boundary.
+- **`ColumnIndex`**, for every column chunk whose bounds can be stated: each page's `min` / `max` under the same rules as the chunk statistics, its null count, whether it holds only nulls, its `NaN` count for `FLOAT`, `DOUBLE` and `FLOAT16`, its level histograms where the chunk's `SizeStatistics` carries them, and whether the pages' bounds ascend or descend. A column without an order writes none, nor does a floating-point column chunk with a page whose values are all `NaN`. Where no truncated `max` exists, a page's `max` is written whole.
 
-The level histograms of `SizeStatistics` and the `ColumnIndex`, and the `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
+The `GeospatialStatistics` of a `GEOMETRY` or `GEOGRAPHY` column are not written. [Bounding-box pushdown](../how-to/geospatial.md) prunes row groups from that last field, so it prunes nothing in a file Hardwood produced.
 
 ### Bloom filters
 

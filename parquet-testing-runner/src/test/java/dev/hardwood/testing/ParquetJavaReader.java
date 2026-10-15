@@ -19,7 +19,9 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.apache.parquet.CorruptDeltaByteArrays;
 import org.apache.parquet.CorruptStatistics;
@@ -29,8 +31,10 @@ import org.apache.parquet.VersionParser;
 import org.apache.parquet.VersionParser.ParsedVersion;
 import org.apache.parquet.VersionParser.VersionParseException;
 import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.column.ColumnReader;
 import org.apache.parquet.column.Encoding;
 import org.apache.parquet.column.ValuesType;
+import org.apache.parquet.column.impl.ColumnReadStoreImpl;
 import org.apache.parquet.column.page.DataPage;
 import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.PageReadStore;
@@ -38,11 +42,14 @@ import org.apache.parquet.column.page.PageReader;
 import org.apache.parquet.column.values.ValuesReader;
 import org.apache.parquet.column.values.bloomfilter.BloomFilter;
 import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.convert.GroupRecordConverter;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.format.ColumnChunk;
+import org.apache.parquet.format.ColumnMetaData;
 import org.apache.parquet.format.FileMetaData;
 import org.apache.parquet.format.RowGroup;
+import org.apache.parquet.format.SizeStatistics;
 import org.apache.parquet.format.Statistics;
 import org.apache.parquet.format.Util;
 import org.apache.parquet.hadoop.ParquetFileReader;
@@ -190,6 +197,7 @@ final class ParquetJavaReader {
         int count = 0;
         List<Set<Encoding>> chunkValueEncodings = new ArrayList<>();
         List<List<Long>> chunkPageRecords = new ArrayList<>();
+        List<List<Integer>> chunkPageEntries = new ArrayList<>();
         int pagesMidRecord = 0;
         try (ParquetFileReader reader = ParquetFileReader
                 .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS))) {
@@ -201,9 +209,11 @@ final class ParquetJavaReader {
                     PageReader pageReader = rowGroup.getPageReader(column);
                     Set<Encoding> chunkEncodings = EnumSet.noneOf(Encoding.class);
                     List<Long> pageRecords = new ArrayList<>();
+                    List<Integer> pageEntries = new ArrayList<>();
                     DataPage page;
                     while ((page = pageReader.readPage()) != null) {
                         chunkEncodings.add(valueEncoding(page));
+                        pageEntries.add(page.getValueCount());
                         if (column.getMaxRepetitionLevel() == 0) {
                             pageRecords.add((long) page.getValueCount());
                             continue;
@@ -217,10 +227,150 @@ final class ParquetJavaReader {
                     count += pageRecords.size();
                     chunkValueEncodings.add(chunkEncodings);
                     chunkPageRecords.add(List.copyOf(pageRecords));
+                    chunkPageEntries.add(List.copyOf(pageEntries));
                 }
             }
         }
-        return new Pages(count, List.copyOf(chunkValueEncodings), List.copyOf(chunkPageRecords), pagesMidRecord);
+        return new Pages(count, List.copyOf(chunkValueEncodings), List.copyOf(chunkPageRecords),
+                List.copyOf(chunkPageEntries), pagesMidRecord);
+    }
+
+    /// Each data page's level histograms and unencoded `BYTE_ARRAY` bytes, counted from the levels
+    /// and values parquet-java's column reader decodes, chunk by chunk in footer order. A chunk is
+    /// read entry by entry and split into pages by the entry counts the page walk found, so the
+    /// counts owe nothing to the metadata they are compared with.
+    ///
+    /// @param file the file to read
+    /// @param chunkPageEntries the entries each data page of each column chunk holds
+    /// @return one entry per data page of each column chunk
+    /// @throws IOException if parquet-java cannot read the file
+    private static List<List<PageSizes>> decodePageSizes(Path file, List<List<Integer>> chunkPageEntries)
+            throws IOException {
+        List<List<PageSizes>> chunks = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader
+                .open(HadoopInputFile.fromPath(hadoopPath(file), HadoopConf.DEFAULTS))) {
+            MessageType schema = reader.getFooter().getFileMetaData().getSchema();
+            String createdBy = reader.getFooter().getFileMetaData().getCreatedBy();
+            PageReadStore rowGroup;
+            while ((rowGroup = reader.readNextRowGroup()) != null) {
+                ColumnReadStoreImpl store = new ColumnReadStoreImpl(rowGroup,
+                        new GroupRecordConverter(schema).getRootConverter(), schema, createdBy);
+                for (ColumnDescriptor column : schema.getColumns()) {
+                    ColumnReader values = store.getColumnReader(column);
+                    List<PageSizes> pages = new ArrayList<>();
+                    for (int entries : chunkPageEntries.get(chunks.size())) {
+                        pages.add(decodePage(column, values, entries));
+                    }
+                    chunks.add(List.copyOf(pages));
+                }
+            }
+        }
+        return chunks;
+    }
+
+    /// Counts the next `entries` entries of `values`, which make up one data page.
+    private static PageSizes decodePage(ColumnDescriptor column, ColumnReader values, int entries) {
+        long[] repetitionLevels = new long[column.getMaxRepetitionLevel() + 1];
+        long[] definitionLevels = new long[column.getMaxDefinitionLevel() + 1];
+        boolean binary = column.getPrimitiveType().getPrimitiveTypeName() == PrimitiveTypeName.BINARY;
+        long bytes = 0;
+        for (int entry = 0; entry < entries; entry++) {
+            repetitionLevels[values.getCurrentRepetitionLevel()]++;
+            int definitionLevel = values.getCurrentDefinitionLevel();
+            definitionLevels[definitionLevel]++;
+            if (definitionLevel == column.getMaxDefinitionLevel()) {
+                if (binary) {
+                    bytes += values.getBinary().length();
+                }
+                else {
+                    values.skip();
+                }
+            }
+            values.consume();
+        }
+        return new PageSizes(repetitionLevels, definitionLevels, bytes);
+    }
+
+    /// One data page's counts, the histograms at full length whether or not a file records them.
+    private record PageSizes(long[] repetitionLevels, long[] definitionLevels, long unencodedBytes) {
+    }
+
+    /// Asserts each column chunk's size statistics agree with the levels and values parquet-java
+    /// decodes from its pages: the `SizeStatistics` in the raw footer, the level histograms of its
+    /// `ColumnIndex` and the unencoded bytes of its `OffsetIndex`.
+    ///
+    /// The fields are expected where they say something the rest of the metadata does not, as
+    /// parquet-java writes them: the repetition level histograms where the column repeats, the
+    /// definition level histograms where it has more than one definition level, and the unencoded
+    /// bytes for a `BYTE_ARRAY` column. A chunk with none of the three carries no
+    /// `SizeStatistics`.
+    ///
+    /// @param file the file to read
+    /// @param pages what the page walk found
+    /// @param indexes the page index [#readPageIndex] read
+    /// @throws IOException if parquet-java cannot read the file
+    static void assertSizeStatistics(Path file, Pages pages, List<PageIndex> indexes) throws IOException {
+        List<List<PageSizes>> decoded = decodePageSizes(file, pages.chunkPageEntries());
+        List<ColumnDescriptor> columns = readFooter(file).getFileMetaData().getSchema().getColumns();
+        List<ColumnChunk> chunks = new ArrayList<>();
+        for (RowGroup rowGroup : readFormatFooter(file).getRow_groups()) {
+            chunks.addAll(rowGroup.getColumns());
+        }
+        assertThat(decoded).as("decoded column chunks").hasSize(chunks.size());
+        for (int i = 0; i < chunks.size(); i++) {
+            ColumnDescriptor column = columns.get(i % columns.size());
+            List<PageSizes> chunkPages = decoded.get(i);
+            boolean repetitions = column.getMaxRepetitionLevel() > 0;
+            boolean definitions = column.getMaxDefinitionLevel() > 1;
+            boolean bytes = column.getPrimitiveType().getPrimitiveTypeName() == PrimitiveTypeName.BINARY;
+
+            ColumnMetaData metaData = chunks.get(i).getMeta_data();
+            assertThat(metaData.isSetSize_statistics()).as("size statistics of chunk %d", i)
+                    .isEqualTo(repetitions || definitions || bytes);
+            if (metaData.isSetSize_statistics()) {
+                SizeStatistics statistics = metaData.getSize_statistics();
+                assertThat(statistics.isSetUnencoded_byte_array_data_bytes())
+                        .as("unencoded bytes of chunk %d recorded", i).isEqualTo(bytes);
+                if (bytes) {
+                    assertThat(statistics.getUnencoded_byte_array_data_bytes()).as("unencoded bytes of chunk %d", i)
+                            .isEqualTo(chunkPages.stream().mapToLong(PageSizes::unencodedBytes).sum());
+                }
+                assertThat(statistics.getRepetition_level_histogram()).as("repetition levels of chunk %d", i)
+                        .isEqualTo(repetitions ? summed(chunkPages, PageSizes::repetitionLevels) : null);
+                assertThat(statistics.getDefinition_level_histogram()).as("definition levels of chunk %d", i)
+                        .isEqualTo(definitions ? summed(chunkPages, PageSizes::definitionLevels) : null);
+            }
+
+            ColumnIndex columnIndex = indexes.get(i).columnIndex();
+            if (columnIndex != null) {
+                assertThat(columnIndex.getRepetitionLevelHistogram()).as("page repetition levels of chunk %d", i)
+                        .isEqualTo(repetitions ? concatenated(chunkPages, PageSizes::repetitionLevels) : List.of());
+                assertThat(columnIndex.getDefinitionLevelHistogram()).as("page definition levels of chunk %d", i)
+                        .isEqualTo(definitions ? concatenated(chunkPages, PageSizes::definitionLevels) : List.of());
+            }
+            OffsetIndex offsetIndex = indexes.get(i).offsetIndex();
+            for (int p = 0; p < chunkPages.size(); p++) {
+                assertThat(offsetIndex.getUnencodedByteArrayDataBytes(p)).as("unencoded bytes of page %d of chunk %d", p, i)
+                        .isEqualTo(bytes ? Optional.of(chunkPages.get(p).unencodedBytes()) : Optional.empty());
+            }
+        }
+    }
+
+    /// The pages' histograms added level by level.
+    private static List<Long> summed(List<PageSizes> pages, Function<PageSizes, long[]> histogram) {
+        long[] sum = new long[histogram.apply(pages.getFirst()).length];
+        for (PageSizes page : pages) {
+            long[] counts = histogram.apply(page);
+            for (int level = 0; level < sum.length; level++) {
+                sum[level] += counts[level];
+            }
+        }
+        return Arrays.stream(sum).boxed().toList();
+    }
+
+    /// The pages' histograms one after the other, as a `ColumnIndex` lays them out.
+    private static List<Long> concatenated(List<PageSizes> pages, Function<PageSizes, long[]> histogram) {
+        return pages.stream().flatMapToLong(page -> Arrays.stream(histogram.apply(page))).boxed().toList();
     }
 
     /// A page's repetition levels, one per entry: a 0 starts a record.
@@ -306,12 +456,16 @@ final class ParquetJavaReader {
     }
 
     /// Asserts the page index of `file` is well formed as parquet-java reads it, as
-    /// [#assertPageIndexStructure] states it.
+    /// [#assertPageIndexStructure] states it, and its size statistics as
+    /// [#assertSizeStatistics] does.
     ///
     /// @param file the file to read
     /// @throws IOException if parquet-java cannot read the file
     static void assertPageIndex(Path file) throws IOException {
-        assertPageIndexStructure(readFooter(file), readPages(file), readPageIndex(file));
+        Pages pages = readPages(file);
+        List<PageIndex> indexes = readPageIndex(file);
+        assertPageIndexStructure(readFooter(file), pages, indexes);
+        assertSizeStatistics(file, pages, indexes);
     }
 
     /// Asserts each column chunk's page index is well formed as parquet-java reads it: every
@@ -608,9 +762,11 @@ final class ParquetJavaReader {
     /// @param chunkPageRecords the records each data page of each column chunk holds, in the
     ///        same order: a page's entries for a flat column, the entries starting a record for
     ///        a repeated one
+    /// @param chunkPageEntries the level entries each data page of each column chunk holds, in the
+    ///        same order
     /// @param pagesMidRecord data pages of repeated columns whose first entry continues a record
     record Pages(int dataPageCount, List<Set<Encoding>> chunkValueEncodings, List<List<Long>> chunkPageRecords,
-                 int pagesMidRecord) {
+                 List<List<Integer>> chunkPageEntries, int pagesMidRecord) {
     }
 
     /// The encoding a data page declares for its values. The writer produces DataPage V1 only, so

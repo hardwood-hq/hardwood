@@ -11,7 +11,6 @@ import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 
 /// Writer for `OffsetIndex` to Thrift Compact Protocol, the inverse of [OffsetIndexReader].
-/// `unencoded_byte_array_data_bytes` (field 2) is not written.
 public class OffsetIndexWriter {
 
     public static void write(ThriftCompactWriter writer, OffsetIndex index) {
@@ -30,6 +29,16 @@ public class OffsetIndexWriter {
                 writer.writeI64(location.firstRowIndex());
                 writer.writeFieldStop();
                 writer.popFieldIdContext(element);
+            }
+
+            // 2: unencoded_byte_array_data_bytes (optional list<i64>)
+            if (index.unencodedByteArrayDataBytes() != null) {
+                writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.LIST);
+                writer.writeListBegin(index.unencodedByteArrayDataBytes().length,
+                        ThriftCompactConstants.ElementType.I64);
+                for (long bytes : index.unencodedByteArrayDataBytes()) {
+                    writer.writeI64(bytes);
+                }
             }
             writer.writeFieldStop();
         }

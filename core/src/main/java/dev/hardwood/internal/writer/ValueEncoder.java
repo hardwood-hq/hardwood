@@ -266,6 +266,14 @@ abstract class ValueEncoder {
     abstract PageBounds dictionaryPageStatistics(int[] entries, int[] occurrences, int distinct, int valueCount,
                                                  long nullCount);
 
+    /// The bytes of one data page's present values without the length prefix `PLAIN` gives each,
+    /// as `unencoded_byte_array_data_bytes` counts them. The values are the stored values
+    /// `[valueFrom, valueFrom + valueCount)`, or, where `indices` is not `null`, the dictionary
+    /// entries those positions of `indices` name. Only a `BYTE_ARRAY` column is counted this way.
+    long unencodedBytes(int[] indices, int valueFrom, int valueCount) {
+        throw new IllegalStateException("Only a BYTE_ARRAY column counts unencoded bytes");
+    }
+
     /// Adds the chunk's present values to `filter`: the dictionary's entries where
     /// `fromDictionary`, which requires the chunk to still hold its dictionary, and every stored
     /// value otherwise. Each value is hashed over its bytes as the data pages carry them:
