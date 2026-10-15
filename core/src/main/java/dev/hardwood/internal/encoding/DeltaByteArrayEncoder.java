@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.encoding;
 
+import java.util.Arrays;
+
 /// Encoder for DELTA_BYTE_ARRAY, the inverse of [DeltaByteArrayDecoder].
 ///
 /// Each value states how much of its start it shares with the value before it, and carries only
@@ -76,10 +78,7 @@ public final class DeltaByteArrayEncoder {
     private static int sharedPrefix(byte[] data, int previousOffset, int previousLength,
             int offset, int length) {
         int limit = Math.min(previousLength, length);
-        int shared = 0;
-        while (shared < limit && data[previousOffset + shared] == data[offset + shared]) {
-            shared++;
-        }
-        return shared;
+        int mismatch = Arrays.mismatch(data, previousOffset, previousOffset + limit, data, offset, offset + limit);
+        return mismatch < 0 ? limit : mismatch;
     }
 }

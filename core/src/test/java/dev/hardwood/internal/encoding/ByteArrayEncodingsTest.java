@@ -150,6 +150,31 @@ class ByteArrayEncodingsTest {
     }
 
     @Test
+    void deltaByteArrayRecordsTheLongestSharedPrefix() throws IOException {
+        // A prefix shorter than the longest shared one still round-trips, so the prefix-length
+        // stream is read back and pinned. The first difference falls before, inside and past
+        // the widths a vectorized comparison works in, on a pair identical over its whole
+        // length, and on a pair of unequal lengths that differ at the first byte.
+        String base = "x".repeat(200);
+        List<byte[]> values = strings(
+                base,
+                base.substring(0, 3) + "a" + base.substring(4),
+                base.substring(0, 3) + "a" + base.substring(4, 31) + "b",
+                base.substring(0, 3) + "a" + base.substring(4, 31) + "b" + "y".repeat(100),
+                base.substring(0, 3) + "a" + base.substring(4, 31) + "b" + "y".repeat(100),
+                base.substring(0, 3) + "a" + base.substring(4, 31) + "b" + "y".repeat(70) + "z",
+                "q",
+                "");
+
+        byte[] encoded = encodeDeltaByteArray(values);
+
+        assertThat(decodeDeltaByteArray(encoded, values.size())).containsExactlyElementsOf(values);
+        int[] prefixLengths = new int[values.size()];
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(prefixLengths, null, 0);
+        assertThat(prefixLengths).containsExactly(0, 3, 31, 32, 132, 102, 0, 0);
+    }
+
+    @Test
     void deltaByteArrayStartsAPageWithoutItsPredecessor() throws IOException {
         // A page is decodable on its own, so encoding a range starting mid-chunk must give its
         // first value a zero prefix rather than one relative to the value before the range.
