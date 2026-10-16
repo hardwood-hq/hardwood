@@ -1,6 +1,6 @@
 # Testing
 
-This document describes how Hardwood's automated tests are organised and how to run them: the split between unit and integration tests, the tags that keep some tests out of an ordinary build, and the differential tests that compare Hardwood against DuckDB. It ends with manual recipes for scenarios the automated suite does not cover. The Maven profiles, Error Prone checks and CI jobs are described in [_designs/BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), the native CLI build in [NATIVE_BUILD.md](NATIVE_BUILD.md), and benchmarks in [PERFORMANCE.md](PERFORMANCE.md).
+This document describes how Hardwood's automated tests are organised and how to run them: the split between unit and integration tests, the tags that keep some tests out of an ordinary build, the runs at small batch capacities, and the differential tests that compare Hardwood against DuckDB. It ends with manual recipes for scenarios the automated suite does not cover. The Maven profiles, Error Prone checks and CI jobs are described in [_designs/BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), the native CLI build in [NATIVE_BUILD.md](NATIVE_BUILD.md), and benchmarks in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Integration tests
 
@@ -82,6 +82,18 @@ Some tests stay in their Maven phase but are selected by JUnit tag or system pro
 | `native` | the native CLI ITs | excluded from Failsafe | `-Dnative` builds the binary and includes them |
 | `differential` | the DuckDB [differential tests](#differential-testing) | run | `-DexcludedGroups=differential` skips them |
 | `large` | `WriterLargeFileTest` (core), `LargeFileReadTest` (parquet-testing-runner): files past 2 GB | skipped | `-Dhardwood.largeFileTests=true` |
+
+## Small batch capacities
+
+The suites that compare the values a read returns run a second time with the internal system property `hardwood.internal.batchSize`, which replaces the auto batch size of every read that does not set one. At 7 pages span many batches and batches span many pages; at 1, every record start is a batch edge. The `small-batches` profiles of `core` and `parquet-testing-runner` hold these Surefire executions and list the test classes they run:
+
+| Module | Capacity | Tests |
+|--------|----------|-------|
+| `core` | 7 | the differential, nested, fixed-size-list, filter, dictionary and multi-file read suites |
+| `core` | 1 | the nested and `V1` subset of them, including `NestedV1MidRecordPagesTest`, whose pages begin inside a record |
+| `parquet-testing-runner` | 7 | `ParquetComparisonTest` |
+
+A test that asserts the shape of a batch, such as its record count or a value at a fixed index of its first batch, stays out of these lists. The profiles are inactive under `-Dtest=...`, which would otherwise run the selection once per execution.
 
 ## Differential testing
 

@@ -52,6 +52,7 @@ from parquet_annotators import (
     drop_page_index,
     misplace_dictionary_page_offset,
     understate_data_page_offset,
+    recut_v1_pages,
 )
 
 
@@ -4875,6 +4876,50 @@ print("\nGenerated nested_v1_no_index.parquet:")
 print(f"  - 1 row group, {NESTED_V1_ROWS} rows, Parquet v1, NO ColumnIndex/OffsetIndex")
 print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, v1 pages)")
 print("  - Closes the row-group-wide mask gate; drives the fallback path")
+
+# Nested LIST<STRING> column with V1 pages that begin inside a record: 43 of
+# its 97 pages have a first repetition level of 1, so their leading values
+# belong to the previous page's last record. PyArrow always cuts pages at
+# record boundaries, so the chunk is recut after writing into pages of 7
+# level positions.
+# Lists of 1-4 elements, empty and null lists, and null elements vary the
+# definition levels around the cuts.
+# =====================================================================
+
+MID_RECORD_ROWS = 300
+
+
+def mid_record_tags(i):
+    if i % 13 == 5:
+        return None
+    if i % 11 == 4:
+        return []
+    return [None if (i + j) % 9 == 0 else f"r{i}-e{j}" for j in range(i % 4 + 1)]
+
+
+mid_record_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('tags', pa.list_(pa.field('element', pa.string()))),
+])
+mid_record_table = pa.table({
+    'id': list(range(MID_RECORD_ROWS)),
+    'tags': [mid_record_tags(i) for i in range(MID_RECORD_ROWS)],
+}, schema=mid_record_schema)
+mid_record_path = 'core/src/test/resources/nested_v1_mid_record_pages.parquet'
+pq.write_table(
+    mid_record_table,
+    mid_record_path,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=False,
+    write_page_index=False,
+)
+recut_v1_pages(mid_record_path, 'tags.list.element', max_rep=1, max_def=3, levels_per_page=7)
+
+print("\nGenerated nested_v1_mid_record_pages.parquet:")
+print(f"  - 1 row group, {MID_RECORD_ROWS} rows, Parquet v1, no page index")
+print("  - tags LIST<STRING> recut into pages of 7 level positions, 43 of 97 beginning inside a record")
 
 # ============================================================================
 # PR #471 Review Fixtures (#463 / #470 / #473)
