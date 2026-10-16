@@ -24,13 +24,17 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.reader.DictionaryParser;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.thrift.FooterRewriter;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
@@ -84,6 +88,28 @@ class FixedWidthSchemaValidationTest {
                     .isInstanceOf(SchemaIncompatibleException.class)
                     .hasMessage("[negative-width.parquet] Column 'digest' declares a FIXED_LEN_BYTE_ARRAY "
                             + "type length of -4, which must be positive");
+        }
+    }
+
+    /// The metadata tools parse a column's dictionary without a read, so the parse checks the
+    /// width itself.
+    @Test
+    void parsingTheDictionaryOfAWidthlessColumnNamesTheColumn() throws Exception {
+        Path file = writeToTempFile(withTypeLength(dictionaryEncodedDigestFile(), "digest", null),
+                "no-width-dictionary.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                InputFile input = InputFile.of(file);
+                HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            ColumnSchema digest = reader.getFileSchema().getColumn("digest");
+            ColumnChunk chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(digest.columnIndex());
+            input.open();
+            ByteBuffer page = DictionaryParser.readPage(input, chunk, "");
+            assertThat(page).as("digest's dictionary page").isNotNull();
+
+            assertThatThrownBy(() -> DictionaryParser.parse(page, digest, chunk.metaData(), context))
+                    .isInstanceOf(SchemaIncompatibleException.class)
+                    .hasMessage("Column 'digest' is a FIXED_LEN_BYTE_ARRAY that declares no type length");
         }
     }
 
@@ -148,6 +174,31 @@ class FixedWidthSchemaValidationTest {
 
     /// A well-formed three-column file: `id` `INT32`, `digest` `FIXED_LEN_BYTE_ARRAY(4)`,
     /// and `price` a `FIXED_LEN_BYTE_ARRAY(8)` `DECIMAL` for the predicate path.
+    /// A file whose `digest` `FIXED_LEN_BYTE_ARRAY(4)` column repeats three values over 1,000
+    /// rows, so the writer encodes it with a dictionary.
+    private static byte[] dictionaryEncodedDigestFile() throws IOException {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("digest", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, 4)
+                .build();
+
+        byte[][] pool = { bytes("aaaa"), bytes("bbbb"), bytes("cccc") };
+        int[] ids = new int[1_000];
+        byte[][] digests = new byte[ids.length][];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = i;
+            digests[i] = pool[i % pool.length];
+        }
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .ints(0, ids)
+                    .fixed(1, digests));
+        }
+        return InMemoryFiles.toByteArray(out);
+    }
+
     private static byte[] validFile() throws IOException {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)

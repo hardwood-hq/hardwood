@@ -12,6 +12,7 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -78,13 +79,13 @@ public sealed interface Dictionary {
         return dictionary;
     }
 
-    /// The width of a `FIXED_LEN_BYTE_ARRAY` column's values, which the schema must state.
+    /// The width of a `FIXED_LEN_BYTE_ARRAY` column's values. A file's declared width is
+    /// validated before its dictionary is parsed ([FixedWidthValidator]), so a width that is
+    /// absent or not positive here is a caller's error.
     private static int requireTypeLength(Integer typeLength) {
-        if (typeLength == null) {
-            throw new ParquetReadException("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
-        }
-        if (typeLength < 0) {
-            throw new ParquetReadException("Invalid FIXED_LEN_BYTE_ARRAY type length: " + typeLength);
+        if (typeLength == null || typeLength <= 0) {
+            throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY requires a positive type length, got "
+                    + typeLength);
         }
         return typeLength;
     }

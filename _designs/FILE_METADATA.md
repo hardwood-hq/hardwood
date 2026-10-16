@@ -75,7 +75,7 @@ A length or offset from the file reaches an allocation, an array index or a `Byt
 
 | Value | Rule |
 |---|---|
-| the offsets, sizes and row and value counts of `FileMetaData`, `RowGroup`, `ColumnChunk`, `ColumnMetaData`, the page headers, `PageLocation` and `BloomFilterHeader` | read with `readNonNegativeI32` / `readNonNegativeI64`; `SchemaElement.type_length` is checked by `FixedWidthValidator` instead, for the columns a read touches ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)) |
+| the offsets, sizes and row and value counts of `FileMetaData`, `RowGroup`, `ColumnChunk`, `ColumnMetaData`, the page headers, `PageLocation` and `BloomFilterHeader` | read with `readNonNegativeI32` / `readNonNegativeI64`; `SchemaElement.type_length` is checked by `FixedWidthValidator` instead, for the columns a read touches and for a dictionary parsed outside a read ([EXCEPTION_MODEL.md](EXCEPTION_MODEL.md#an-annotation-the-reader-cannot-use-is-dropped-not-raised)) |
 | map size, and list or set element count in the long form | at most the bytes remaining, since every element occupies at least one byte on the wire; a count past the `int` range is rejected, never truncated. A short-form list or set count (at most 14) is left to the element reads to catch |
 | binary or string length | at most the bytes remaining, checked before the allocation |
 | varint | at most ten bytes |

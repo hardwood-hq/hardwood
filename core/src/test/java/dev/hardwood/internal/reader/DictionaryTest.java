@@ -144,18 +144,18 @@ class DictionaryTest {
         byte[] data = { 'A', 'B', 'C', 'D' };
 
         assertThatThrownBy(() -> Dictionary.parse(data, data.length, 1, PhysicalType.FIXED_LEN_BYTE_ARRAY, null))
-                .isInstanceOf(ParquetReadException.class)
-                .hasMessage("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY requires a positive type length, got null");
     }
 
     @Test
-    void rejectsFixedLengthDictionaryWithNegativeTypeLength() {
+    void rejectsFixedLengthDictionaryWithNonPositiveTypeLength() {
         byte[] data = { 'A', 'B', 'C', 'D' };
 
         assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.FIXED_LEN_BYTE_ARRAY,
                 Integer.MIN_VALUE))
-                .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Invalid FIXED_LEN_BYTE_ARRAY type length: -2147483648");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY requires a positive type length, got -2147483648");
     }
 
     @Test

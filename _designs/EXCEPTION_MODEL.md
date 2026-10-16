@@ -156,4 +156,5 @@ file's other columns stay readable.
 
 A missing width is not in that class. A `FIXED_LEN_BYTE_ARRAY` without one cannot be decoded
 at all — the width sizes the buffer and spaces the offsets — so `FixedWidthValidator` refuses
-it when the reader is built, over the columns the read touches.
+it when the reader is built, over the columns the read touches. `DictionaryParser` refuses it
+too, for the metadata tools that parse a column's dictionary without building a reader.

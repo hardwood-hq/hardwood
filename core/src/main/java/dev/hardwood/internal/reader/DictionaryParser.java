@@ -14,6 +14,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
@@ -22,6 +23,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PageType;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Parses dictionary pages from column chunk data.
@@ -236,11 +238,15 @@ public final class DictionaryParser {
     /// @param metaData the column metadata (for codec)
     /// @param context the hardwood context (for decompressor)
     /// @return the parsed dictionary
+    /// @throws SchemaIncompatibleException if the column is a `FIXED_LEN_BYTE_ARRAY` whose
+    ///         declared width is absent or not positive (see [FixedWidthValidator])
     /// @throws ParquetReadException if the page is not the one the header describes, if the
     ///         header contradicts itself, or if the body cannot be decoded
     public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData,
                             ColumnSchema columnSchema, ColumnMetaData metaData,
                             HardwoodContextImpl context) {
+        // A read has checked this already; the metadata tools parse dictionaries without a read
+        FixedWidthValidator.validate(null, columnSchema);
         if (header.type() != PageType.DICTIONARY_PAGE) {
             throw new ParquetReadException(
                     "Invalid dictionary page: page type is " + header.type());
