@@ -1012,7 +1012,7 @@ public class RowGroupIterator implements Closeable {
                         perRgMaxRows, leaves, BoundsReadability.ofOneColumn(readability.int96TimestampOrder(fileOrdinal)),
                         matchingRows, rowGroup.numRows(), preloadedDictionary,
                         shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
-                        prefetchTasks);
+                        readsEveryRow(matchingRows, leaves), prefetchTasks);
                 continue;
             }
 
@@ -1079,7 +1079,8 @@ public class RowGroupIterator implements Closeable {
                         neededPages, groups, handles, dictionaryHandle, dictStart,
                         firstDataPageOffset,
                         columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
+                        context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary,
+                        readsEveryRow(neededPages, allPages.size()));
             }
             catch (ParquetReadException e) {
                 throw new ParquetReadException(ExceptionContext.readPrefix(inputFile.name(),
@@ -1427,6 +1428,28 @@ public class RowGroupIterator implements Closeable {
     /// reader. Without a filter, returns `max(0, maxRows - workItem.rowsConsumedBefore())`,
     /// which naturally trims the last partially-needed row group's fetch plan
     /// while being a no-op (all pages kept) for fully-needed earlier ones.
+    /// Whether a sequential read decodes every row of a column chunk: no row limit, no row
+    /// ranges, and no predicate on the column that inline page statistics could drop a page
+    /// with. Whether inline statistics drop a page is known only once its header is read, after
+    /// the dictionary page.
+    private boolean readsEveryRow(RowRanges matchingRows, List<ResolvedPredicate> dropLeaves) {
+        return maxRows <= 0 && matchingRows.isAll() && dropLeaves.isEmpty();
+    }
+
+    /// Whether an indexed read decodes every row of a column chunk: no row limit, and every
+    /// page needed in full.
+    private boolean readsEveryRow(List<NeededPage> neededPages, int pageCount) {
+        if (maxRows > 0 || neededPages.size() != pageCount) {
+            return false;
+        }
+        for (NeededPage page : neededPages) {
+            if (!page.mask().isAll()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private long perRgMaxRows(WorkItem workItem) {
         if (maxRows <= 0 || filterPredicate != null) {
             return 0;

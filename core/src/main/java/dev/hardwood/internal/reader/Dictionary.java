@@ -137,7 +137,8 @@ public sealed interface Dictionary {
     }
 
     /// A class (not a record) so it can hold the lazily-materialised per-chunk
-    /// interned `String` cache ([#interned]) alongside the entry bytes.
+    /// interned `String` cache ([#interned]) and the read's coverage of the chunk
+    /// ([#readInFull]) alongside the entry bytes.
     final class ByteArrayDictionary implements Dictionary {
 
         /// The entries' bytes back to back, entry `i` at
@@ -150,6 +151,10 @@ public sealed interface Dictionary {
         /// Interned `String` per entry, decoded once per chunk and reused. Lazily
         /// allocated; populated only for columns read as text, via [#internedString(int)].
         private String[] interned;
+
+        /// Whether the read decodes every row of this dictionary's column chunk. Every entry
+        /// occurs in the chunk, so such a read references every entry.
+        private boolean readInFull;
 
         /// Flattens `values`, which the dictionary does not keep.
         ByteArrayDictionary(byte[][] values) {
@@ -184,6 +189,18 @@ public sealed interface Dictionary {
         @Override
         public int size() {
             return entryOffsets.length - 1;
+        }
+
+        /// Records that the read decodes every row of this dictionary's column chunk. The fetch
+        /// plan calls this before it hands out the chunk's first page.
+        public void markReadInFull() {
+            readInFull = true;
+        }
+
+        /// Whether the read decodes every row of this dictionary's column chunk, as recorded by
+        /// [#markReadInFull()].
+        public boolean readInFull() {
+            return readInFull;
         }
 
         /// Returns dictionary entry `index` as a `String`, decoding it once per chunk

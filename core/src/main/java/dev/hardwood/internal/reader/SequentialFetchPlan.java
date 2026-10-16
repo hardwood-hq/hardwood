@@ -137,6 +137,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
+    /// Whether the read decodes every row of this chunk; see [Dictionary.ByteArrayDictionary#markReadInFull].
+    private final boolean readsEveryRow;
     /// Where the one-ahead pre-fetch of each chunk runs.
     private final PrefetchTasks prefetchTasks;
     /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
@@ -157,7 +159,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                  RowRanges matchingRows, long rowGroupRowCount,
-                                 Dictionary preloadedDictionary, PrefetchTasks prefetchTasks) {
+                                 Dictionary preloadedDictionary, boolean readsEveryRow,
+                                 PrefetchTasks prefetchTasks) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -181,12 +184,21 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
         this.preloadedDictionary = preloadedDictionary;
+        this.readsEveryRow = readsEveryRow;
         this.prefetchTasks = prefetchTasks;
     }
 
     @Override
     public boolean isEmpty() {
         return false;
+    }
+
+    /// Marks `dictionary` as read in full when this plan decodes every row of the chunk.
+    private Dictionary withCoverage(Dictionary dictionary) {
+        if (readsEveryRow && dictionary instanceof Dictionary.ByteArrayDictionary binary) {
+            binary.markReadInFull();
+        }
+        return dictionary;
     }
 
     @Override
@@ -323,7 +335,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
                 maxRows, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount, null, 0,
-                new PrefetchTasks());
+                false, new PrefetchTasks());
     }
 
     /// @param dropReadability the readability `dropLeaves` decide inline page statistics under
@@ -333,6 +345,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     ///        otherwise
     /// @param preloadedDictionaryEnd where the preloaded dictionary's page ends, which is where
     ///        the plan starts reading; ignored without a preloaded dictionary
+    /// @param readsEveryRow whether the read decodes every row of the chunk, recorded on the
+    ///        chunk's dictionary (see [Dictionary.ByteArrayDictionary#markReadInFull])
     /// @param prefetchTasks where the one-ahead pre-fetch of each chunk runs; the overloads
     ///        without it give the plan tasks of its own that nothing waits for
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
@@ -341,7 +355,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       List<ResolvedPredicate> dropLeaves, BoundsReadability dropReadability,
                                       RowRanges matchingRows, long rowGroupRowCount,
                                       Dictionary preloadedDictionary, long preloadedDictionaryEnd,
-                                      PrefetchTasks prefetchTasks) {
+                                      boolean readsEveryRow, PrefetchTasks prefetchTasks) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         long totalCompressedSize = columnChunk.metaData().totalCompressedSize();
         if (totalCompressedSize > Integer.MAX_VALUE) {
@@ -366,7 +380,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves, dropReadability,
                 matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount,
-                preloadedDictionary, prefetchTasks);
+                preloadedDictionary, readsEveryRow, prefetchTasks);
     }
 
     /// Computes the per-fetch chunk size.
@@ -635,7 +649,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             initialized = true;
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
-                dictionary = preloadedDictionary;
+                dictionary = withCoverage(preloadedDictionary);
                 return;
             }
             if (position >= columnChunkLength) {
@@ -657,8 +671,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // parser would have to open and read the same header out of again.
                 ByteBuffer compressedData = readPageBytes(position, dictTotalSize)
                         .slice(headerSize, compressedSize);
-                dictionary = DictionaryParser.parsePage(header, compressedData,
-                        columnSchema, metaData, context);
+                dictionary = withCoverage(DictionaryParser.parsePage(header, compressedData,
+                        columnSchema, metaData, context));
                 position += dictTotalSize;
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }

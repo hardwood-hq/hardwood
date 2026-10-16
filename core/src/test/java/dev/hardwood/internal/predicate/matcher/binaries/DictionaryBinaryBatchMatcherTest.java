@@ -64,6 +64,27 @@ class DictionaryBinaryBatchMatcherTest {
     }
 
     @Test
+    void decidesEveryEntryInDictionaryOrderWhenTheChunkIsReadInFull() throws Exception {
+        Dictionary.ByteArrayDictionary dictionary =
+                dictionary(utf8("a"), utf8("match"), utf8("c"), utf8("never"));
+        dictionary.markReadInFull();
+        CountingMatcher delegate = new CountingMatcher();
+        DictionaryBinaryBatchMatcher matcher = new DictionaryBinaryBatchMatcher(delegate);
+
+        long[] first = run(matcher, binaryBatch(
+                dictionary, new int[]{2, 1}, null,
+                utf8("c"), utf8("match")));
+
+        assertThat(first).containsExactly(1L << 1);
+        assertThat(delegate.valuesInCallOrder()).containsExactly("a", "match", "c", "never");
+
+        assertThat(run(matcher, binaryBatch(
+                dictionary, new int[]{3, 1, 0}, null,
+                utf8("never"), utf8("match"), utf8("a")))).containsExactly(1L << 1);
+        assertThat(delegate.valuesInCallOrder()).containsExactly("a", "match", "c", "never");
+    }
+
+    @Test
     void decidesUnknownEntriesInlineWithRowTraversal() throws Exception {
         Dictionary.ByteArrayDictionary dictionary =
                 dictionary(utf8("dictionary-a"), utf8("match"));

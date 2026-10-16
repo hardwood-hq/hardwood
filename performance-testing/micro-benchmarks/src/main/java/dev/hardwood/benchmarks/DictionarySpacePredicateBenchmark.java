@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 
 import org.openjdk.jmh.annotations.Benchmark;
@@ -42,10 +43,13 @@ import dev.hardwood.metadata.PhysicalType;
 /// Compares [DictionaryBinaryBatchMatcher] with the ordinary per-value loop of its delegate over
 /// one dictionary-encoded batch.
 ///
-/// The cold arm installs a fresh wrapper for every invocation, so dictionary preparation and entry
-/// decisions occur inside the measured operation. The hot arm reuses a wrapper whose outcomes were
+/// The cold arms install a fresh wrapper for every invocation, so dictionary preparation and entry
+/// decisions occur inside the measured operation: `dictionaryCold` decides entries as rows first
+/// reference them, `dictionaryReadInFullCold` decides every entry in dictionary order, as for a
+/// read that decodes the whole column chunk. The hot arm reuses a wrapper whose outcomes were
 /// populated by a previous batch. `SPARSE` references four entries from a potentially large
-/// dictionary; `FULL` references every entry.
+/// dictionary; `FULL` references every entry in ascending order; `RANDOM` references entries in
+/// random order.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
@@ -56,7 +60,8 @@ public class DictionarySpacePredicateBenchmark {
 
     public enum Access {
         SPARSE,
-        FULL
+        FULL,
+        RANDOM
     }
 
     public enum PredicateKind {
@@ -70,7 +75,7 @@ public class DictionarySpacePredicateBenchmark {
         LONG
     }
 
-    @Param({"16", "100", "4096"})
+    @Param({"16", "100", "4096", "65536"})
     private int cardinality;
 
     @Param
@@ -89,6 +94,8 @@ public class DictionarySpacePredicateBenchmark {
     private BinaryBatchMatcher packedMatcher;
     private BinaryBatchMatcher coldDictionaryMatcher;
     private BinaryBatchMatcher hotDictionaryMatcher;
+    private BinaryBatchMatcher coldReadInFullMatcher;
+    private BatchExchange.Batch readInFullBatch;
     private long[] outWords;
 
     @Setup(Level.Trial)
@@ -109,22 +116,26 @@ public class DictionarySpacePredicateBenchmark {
             encoded.putInt(entry.length);
             encoded.put(entry);
         }
-        Dictionary.ByteArrayDictionary dictionary =
-                (Dictionary.ByteArrayDictionary) Dictionary.parse(
-                        encoded.array(), encoded.array().length,
-                        entries.length, PhysicalType.BYTE_ARRAY, null);
+        Dictionary.ByteArrayDictionary dictionary = parseDictionary(encoded.array(), entries.length);
+        Dictionary.ByteArrayDictionary readInFullDictionary = parseDictionary(encoded.array(), entries.length);
+        readInFullDictionary.markReadInFull();
 
         int referencedEntries = access == Access.SPARSE ? Math.min(4, cardinality) : cardinality;
+        int[] ids = new int[rows];
+        SplittableRandom random = new SplittableRandom(42);
+        for (int row = 0; row < rows; row++) {
+            ids[row] = access == Access.RANDOM ? random.nextInt(cardinality) : row % referencedEntries;
+        }
         int packedSize = 0;
         for (int row = 0; row < rows; row++) {
-            packedSize += entries[row % referencedEntries].length;
+            packedSize += entries[ids[row]].length;
         }
         byte[] bytes = new byte[packedSize];
         int[] offsets = new int[rows + 1];
         int[] dictionaryIndices = new int[rows];
         int position = 0;
         for (int row = 0; row < rows; row++) {
-            int dictionaryIndex = row % referencedEntries;
+            int dictionaryIndex = ids[row];
             byte[] entry = entries[dictionaryIndex];
             System.arraycopy(entry, 0, bytes, position, entry.length);
             position += entry.length;
@@ -139,6 +150,13 @@ public class DictionarySpacePredicateBenchmark {
         batch = new BatchExchange.Batch();
         batch.values = values;
         batch.recordCount = rows;
+        BinaryBatchValues readInFullValues = new BinaryBatchValues(bytes,
+                Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1), bytes.length);
+        readInFullValues.dictionary = readInFullDictionary;
+        readInFullValues.dictIndices = dictionaryIndices;
+        readInFullBatch = new BatchExchange.Batch();
+        readInFullBatch.values = readInFullValues;
+        readInFullBatch.recordCount = rows;
 
         int middle = referencedEntries / 2;
         byte[] literal = entries[middle];
@@ -161,11 +179,18 @@ public class DictionarySpacePredicateBenchmark {
     @Setup(Level.Invocation)
     public void setupInvocation() {
         coldDictionaryMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
+        coldReadInFullMatcher = new DictionaryBinaryBatchMatcher(packedMatcher);
     }
 
     @Benchmark
     public long dictionaryCold() {
         coldDictionaryMatcher.test(batch, outWords);
+        return checksum();
+    }
+
+    @Benchmark
+    public long dictionaryReadInFullCold() {
+        coldReadInFullMatcher.test(readInFullBatch, outWords);
         return checksum();
     }
 
@@ -181,6 +206,11 @@ public class DictionarySpacePredicateBenchmark {
         return checksum();
     }
 
+    private static Dictionary.ByteArrayDictionary parseDictionary(byte[] encoded, int entryCount) {
+        return (Dictionary.ByteArrayDictionary) Dictionary.parse(
+                encoded, encoded.length, entryCount, PhysicalType.BYTE_ARRAY, null);
+    }
+
     private long checksum() {
         long checksum = 1L;
         for (long word : outWords) {
@@ -192,10 +222,11 @@ public class DictionarySpacePredicateBenchmark {
     private void verifyEquivalentResults() {
         long[] expected = new long[outWords.length];
         packedMatcher.test(batch, expected);
-        verifyEquivalentResults(new DictionaryBinaryBatchMatcher(packedMatcher), expected);
+        verifyEquivalentResults(new DictionaryBinaryBatchMatcher(packedMatcher), batch, expected);
+        verifyEquivalentResults(new DictionaryBinaryBatchMatcher(packedMatcher), readInFullBatch, expected);
     }
 
-    private void verifyEquivalentResults(BinaryBatchMatcher matcher, long[] expected) {
+    private void verifyEquivalentResults(BinaryBatchMatcher matcher, BatchExchange.Batch batch, long[] expected) {
         long[] actual = new long[expected.length];
         matcher.test(batch, actual);
         requireEquivalentResults("cold", expected, actual);

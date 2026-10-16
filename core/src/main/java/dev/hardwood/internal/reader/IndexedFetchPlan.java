@@ -46,6 +46,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final String fileName;
     /// The dictionary pruning has already read, or `null` when the plan reads it.
     private final Dictionary preloadedDictionary;
+    /// Whether the read decodes every row of this chunk; see [Dictionary.ByteArrayDictionary#markReadInFull].
+    private final boolean readsEveryRow;
 
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
@@ -56,7 +58,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                               ColumnSchema columnSchema, ColumnChunk columnChunk,
                               HardwoodContextImpl context,
                               int rowGroupIndex, String fileName,
-                              Dictionary preloadedDictionary) {
+                              Dictionary preloadedDictionary, boolean readsEveryRow) {
         this.neededPages = neededPages;
         this.pageGroups = pageGroups;
         this.chunkHandles = chunkHandles;
@@ -69,6 +71,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.preloadedDictionary = preloadedDictionary;
+        this.readsEveryRow = readsEveryRow;
     }
 
     @Override
@@ -183,6 +186,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
     /// @param preloadedDictionary the column's dictionary if pruning has read it, in which case
     ///        the page groups leave the dictionary page out; `null` otherwise
+    /// @param readsEveryRow whether the read decodes every row of the chunk, recorded on the
+    ///        chunk's dictionary (see [Dictionary.ByteArrayDictionary#markReadInFull])
     static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
                                    List<RowGroupIterator.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
@@ -192,10 +197,10 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                                    ColumnSchema columnSchema, ColumnChunk columnChunk,
                                    HardwoodContextImpl context,
                                    int rowGroupIndex, String fileName,
-                                   Dictionary preloadedDictionary) {
+                                   Dictionary preloadedDictionary, boolean readsEveryRow) {
         return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles, dictionaryHandle, dictionaryStart,
                 firstDataPageOffset, columnSchema, columnChunk, context,
-                rowGroupIndex, fileName, preloadedDictionary);
+                rowGroupIndex, fileName, preloadedDictionary, readsEveryRow);
     }
 
     /// Iterator that lazily parses the dictionary on first access and yields
@@ -235,6 +240,9 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 dictionaryParsed = true;
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
                 dictionary = parseDictionary();
+                if (readsEveryRow && dictionary instanceof Dictionary.ByteArrayDictionary binary) {
+                    binary.markReadInFull();
+                }
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 

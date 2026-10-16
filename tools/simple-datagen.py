@@ -7349,3 +7349,28 @@ drop_page_index(_empty_ranges_path, 'tags.list.element')
 print("\nGenerated page_index_empty_ranges_unindexed_column.parquet:")
 print("  - 100 rows, 1 row group; id: Page Index, pages 0-49 and 100-149")
 print("  - value (flat) and tags (nested, v1 pages): no Page Index")
+
+# A dictionary-encoded 'url' whose every page holds every entry ('u00'-'u19' in turn), next to a
+# sorted 'id' that page statistics can narrow, in four pages of 100 rows. Written once with a Page
+# Index and once without, for whether a read decodes every row of a column chunk.
+_coverage_table = pa.table({
+    'id': pa.array(range(400), pa.int64()),
+    'url': pa.array([f'u{i % 20:02d}' for i in range(400)], pa.string()),
+})
+for _coverage_path, _coverage_index in (
+        ('core/src/test/resources/dictionary_coverage_indexed.parquet', True),
+        ('core/src/test/resources/dictionary_coverage_unindexed.parquet', False)):
+    pq.write_table(
+        _coverage_table,
+        _coverage_path,
+        use_dictionary=['url'],
+        compression='NONE',
+        data_page_version='1.0',
+        max_rows_per_page=100,
+        row_group_size=400,
+        write_statistics=True,
+        write_page_index=_coverage_index,
+    )
+print("\nGenerated dictionary_coverage_indexed.parquet and dictionary_coverage_unindexed.parquet:")
+print("  - 400 rows, 1 row group, 4 pages per column; id: 0-399; url: 'u00'-'u19' cycling, dictionary-encoded")
+print("  - the first with a Page Index, the second without")

@@ -17,7 +17,10 @@ import dev.hardwood.internal.reader.Dictionary;
 /// encoded rows from the cached outcomes.
 ///
 /// A batch without a dictionary goes directly to the delegate's optimized
-/// whole-batch loop. In a dictionary batch, a `-1` entry ID identifies a value
+/// whole-batch loop. When the read decodes every row of the dictionary's column
+/// chunk, every entry is decided up front in dictionary order, since the rows will
+/// reference each of them; otherwise an entry is decided when a row first references
+/// it. In a dictionary batch, a `-1` entry ID identifies a value
 /// written `PLAIN` after the chunk's dictionary filled up; such a row uses the
 /// delegate's per-value operation over its byte view. Rows with an entry ID never
 /// read their view, so a batch of dictionary values only is decided without its
@@ -74,6 +77,21 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         }
         else {
             Arrays.fill(entryStates, 0, size, UNKNOWN);
+        }
+        if (dictionary.readInFull()) {
+            decideEveryEntry(dictionary);
+        }
+    }
+
+    /// Decides every entry in dictionary order, which reads the entries' bytes front to back
+    /// rather than in the order rows first reference them.
+    private void decideEveryEntry(Dictionary.ByteArrayDictionary dictionary) {
+        byte[] entryBytes = dictionary.entryBytes();
+        int[] entryOffsets = dictionary.entryOffsets();
+        int size = dictionary.size();
+        for (int i = 0; i < size; i++) {
+            entryStates[i] = delegate.testValue(entryBytes, entryOffsets[i], entryOffsets[i + 1])
+                    ? MATCH : NO_MATCH;
         }
     }
 
