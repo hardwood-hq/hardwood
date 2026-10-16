@@ -97,6 +97,28 @@ final class BinaryValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void internRun(int from, int count, int[] indices, int at) {
+        long bytes = 0;
+        for (int i = 0; i < count; i++) {
+            byte[] value = valueAt(from + i);
+            bytes += value.length;
+            indices[at + i] = dictionary.intern(value);
+        }
+        plainValueBits += (bytes + (long) count * Integer.BYTES) * Byte.SIZE;
+    }
+
+    @Override
+    void storeRun(int from, int count) {
+        long bytes = 0;
+        for (int i = 0; i < count; i++) {
+            byte[] value = valueAt(from + i);
+            bytes += value.length;
+            append(value);
+        }
+        plainValueBits += (bytes + (long) count * Integer.BYTES) * Byte.SIZE;
+    }
+
+    @Override
     int dictionarySize() {
         return dictionary.size();
     }

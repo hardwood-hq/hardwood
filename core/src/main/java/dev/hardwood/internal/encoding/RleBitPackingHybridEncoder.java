@@ -59,17 +59,87 @@ public final class RleBitPackingHybridEncoder {
     }
 
     /// Appends `count` values starting at `offset`.
+    ///
+    /// Produces the bytes [#writeInt] would for the same values, eight at a time where it can. A
+    /// run of eight equal values only ever starts where the encoder holds nothing buffered —
+    /// eight values arriving after a buffered one fill the group before they can count as a run —
+    /// so from such a position the next eight values are either an RLE run, extended while the
+    /// value repeats, or one bit-packed group taken straight from `values`. Values are passed to
+    /// [#writeInt] one at a time only to reach such a position, and for a tail shorter than a
+    /// group.
     public void writeInts(int[] values, int offset, int count) {
-        for (int i = 0; i < count; i++) {
-            writeInt(values[offset + i]);
+        requireUnfinished();
+        if (bitWidth == 0) {
+            repeatCount += count;
+            return;
+        }
+        int i = offset;
+        int end = offset + count;
+        while (i < end) {
+            if (repeatCount >= 8) {
+                // An RLE run is open: it takes every further repeat of its value.
+                int value = previousValue;
+                while (i < end && values[i] == value) {
+                    repeatCount++;
+                    i++;
+                }
+                if (i < end) {
+                    writeRleRun();
+                }
+            }
+            else if (numBufferedValues > 0 || end - i < 8) {
+                writeInt(values[i++]);
+            }
+            else if (isRun(values, i)) {
+                // Opened with nothing buffered, which [#writeInt] treats alike: the run's values
+                // are counted, not buffered, until a different value or the end closes it.
+                previousValue = values[i];
+                repeatCount = 8;
+                i += 8;
+            }
+            else {
+                writeOrAppendBitPackedRun(values, i);
+                previousValue = values[i + 7];
+                i += 8;
+            }
+        }
+    }
+
+    /// Appends `count` values starting at `offset`, each read as an unsigned byte, producing the
+    /// bytes [#writeInts] would for the same values widened to `int`.
+    public void writeUnsignedBytes(byte[] values, int offset, int count) {
+        for (int from = 0; from < count; from += widened.length) {
+            int length = Math.min(widened.length, count - from);
+            for (int k = 0; k < length; k++) {
+                widened[k] = values[offset + from + k] & 0xFF;
+            }
+            writeInts(widened, 0, length);
+        }
+    }
+
+    /// Scratch for [#writeUnsignedBytes], which widens its bytes a slice at a time.
+    private final int[] widened = new int[64];
+
+    /// Whether the eight values from `from` are all the same.
+    private static boolean isRun(int[] values, int from) {
+        int value = values[from];
+        for (int k = 1; k < 8; k++) {
+            if (values[from + k] != value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void requireUnfinished() {
+        if (finished) {
+            throw new IllegalStateException("Encoder already finished");
         }
     }
 
     /// Appends a single value.
     public void writeInt(int value) {
-        if (finished) {
-            throw new IllegalStateException("Encoder already finished");
-        }
+        requireUnfinished();
         if (bitWidth == 0) {
             // Zero bits leave only one representable value, so the whole stream is one RLE
             // run and the value itself needs no bytes. The run header is still required: a
@@ -95,7 +165,7 @@ public final class RleBitPackingHybridEncoder {
 
         bufferedValues[numBufferedValues++] = value;
         if (numBufferedValues == 8) {
-            writeOrAppendBitPackedRun();
+            writeOrAppendBitPackedRun(bufferedValues, 0);
         }
     }
 
@@ -157,7 +227,7 @@ public final class RleBitPackingHybridEncoder {
         }
         else if (numBufferedValues > 0) {
             Arrays.fill(bufferedValues, numBufferedValues, 8, 0);
-            writeOrAppendBitPackedRun();
+            writeOrAppendBitPackedRun(bufferedValues, 0);
             endPreviousBitPackedRun();
         }
         else {
@@ -166,7 +236,9 @@ public final class RleBitPackingHybridEncoder {
         finished = true;
     }
 
-    private void writeOrAppendBitPackedRun() {
+    /// Writes the eight values from `from` as one bit-packed group, appending it to the open
+    /// bit-packed run or opening one.
+    private void writeOrAppendBitPackedRun(int[] values, int from) {
         if (bitPackedGroupCount >= 63) {
             // A bit-packed run header counts groups in the upper bits of one byte, so a
             // run holds at most 63 groups; start a fresh one past that.
@@ -177,7 +249,7 @@ public final class RleBitPackingHybridEncoder {
             write(0);
             bitPackedRunHeaderIndex = length - 1;
         }
-        packGroup();
+        packGroup(values, from);
         numBufferedValues = 0;
         // The buffered values are now written as a bit-packed group, so they must not also
         // be counted toward a later RLE run.
@@ -206,13 +278,13 @@ public final class RleBitPackingHybridEncoder {
         numBufferedValues = 0;
     }
 
-    /// Packs the eight buffered values into `bitWidth` bytes, LSB-first, matching the
+    /// Packs the eight values from `from` into `bitWidth` bytes, LSB-first, matching the
     /// decoder's little-endian bit order. The layout is [BitPacker]'s, shared with
     /// DELTA_BINARY_PACKED's 32-value miniblocks.
-    private void packGroup() {
+    private void packGroup(int[] values, int from) {
         int packed = BitPacker.packedLength(8, bitWidth);
         ensureCapacity(packed);
-        length += BitPacker.pack(bufferedValues, 0, 8, bitWidth, buffer, length);
+        length += BitPacker.pack(values, from, 8, bitWidth, buffer, length);
     }
 
     private void writeUnsignedVarInt(int value) {

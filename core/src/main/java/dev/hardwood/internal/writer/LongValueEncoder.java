@@ -72,6 +72,25 @@ final class LongValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void internRun(int from, int count, int[] indices, int at) {
+        for (int i = 0; i < count; i++) {
+            long value = valueAt(from + i);
+            int index = dictionary.indexOf(value);
+            indices[at + i] = index >= 0 ? index : dictionary.add(value);
+        }
+    }
+
+    @Override
+    void storeRun(int from, int count) {
+        if (plainCount + count > plain.length) {
+            plain = Arrays.copyOf(plain, grownCapacity(plain.length, plainCount + count));
+        }
+        // Straight from the source into the store: a run is contiguous in both.
+        source.copyInto(from, plain, plainCount, count);
+        plainCount += count;
+    }
+
+    @Override
     int dictionarySize() {
         return dictionary.size();
     }

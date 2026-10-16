@@ -2,7 +2,7 @@
 
 **Status: In progress.** Tracking issue: #1291. The shipped writer is described in [WRITER.md](../_designs/WRITER.md), [WRITER_INPUT.md](../_designs/WRITER_INPUT.md), [WRITER_ENCODING.md](../_designs/WRITER_ENCODING.md) and [WRITER_VALIDATION.md](../_designs/WRITER_VALIDATION.md).
 
-Stages 1–20a, 21a, 26a, 27, 28, 31, 36 and 37 shipped under #9 and #1083, stage 22 under #1454, stage 24 under #1426, stage 25 under #1449, stage 30 under #985 and stage 38 under #1499; stage 26b was superseded when the dictionary size cap was removed. Stage 32 (`ColumnBatch.strings(…)` and a packed binary input form, #1424) was dropped: copying a binary column from `ColumnReader` to `ColumnBatch` took the same time through `getBinaries()` and `byte[][]` as through the reader's packed buffer (4M rows of two `STRING` columns: 283 ms against 285–296 ms uncompressed, 680 ms against 674–688 ms under ZSTD), the writer's encoding being the cost. Stage numbers are stable identifiers from that plan, not positions, so the open ones below keep their numbers.
+Stages 1–20a, 21a, 26a, 27, 28, 31, 36 and 37 shipped under #9 and #1083, stage 22 under #1454, stage 24 under #1426, stage 25 under #1449, stage 30 under #985, stage 38 under #1499 and stage 39 under #1513; stage 26b was superseded when the dictionary size cap was removed. Stage 32 (`ColumnBatch.strings(…)` and a packed binary input form, #1424) was dropped: copying a binary column from `ColumnReader` to `ColumnBatch` took the same time through `getBinaries()` and `byte[][]` as through the reader's packed buffer (4M rows of two `STRING` columns: 283 ms against 285–296 ms uncompressed, 680 ms against 674–688 ms under ZSTD), the writer's encoding being the cost. Stage numbers are stable identifiers from that plan, not positions, so the open ones below keep their numbers.
 
 ## Open stages
 
@@ -11,7 +11,6 @@ Each carries a **Kind**: *Dimension* (changes the shape of the solution), *Bread
 | # | Increment | Kind | New capability | Roadmap boxes | Completed |
 |---|-----------|------|----------------|---------------|-----------|
 | 21b | **Nested and schema-width write benchmarks** (the flat encoding axis shipped as `WriteEncodingBenchmark`, #989): a nested write benchmark and a schema-width axis, each needing a fixture of its own, taken once the flat baseline says where the time goes. A fixture with prefix-sharing values (paths, URLs, keys) belongs here too, since the flat fixture's `BYTE_ARRAY` columns are small dictionaries where `DELTA_LENGTH_BYTE_ARRAY` / `DELTA_BYTE_ARRAY` are configurations nobody would choose. Its own design. | Benchmark | Measured cost of the nested and wide-schema write paths | — | [ ] |
-| 39 | **Bulk path for flat columns** (#1513): a column with no repetition level skips `RecordShredder`'s per-value callback; its levels follow from the batch's `Validity`, fixed-width values are retained in bulk, and interning runs as a tight loop over the batch. Dictionary indices and levels are bit-packed in runs of eight instead of value by value. Output stays byte-identical. Profiled on a 4M-row, 6-column fixture, per-value shredding is ~55–60% of the writer's Java time and per-value bit-packing ~18%. | Optimization | Flat writes without per-value overhead | — | [ ] |
 | 40 | **Cheaper binary min/max** (#1514): page and chunk statistics of a `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` chunk without a dictionary compare every value through `Arrays.compareUnsigned`, whose fixed cost dominates for short values (22% of a `PLAIN` string write's Java time). A cheaper test settles most updates; the statistics written stay the same. | Optimization | Non-dictionary string columns without a per-value comparison toll | — | [ ] |
 | 23a | **Parallel chunk encoding** (#1455): at flush, each column chunk of the row group is encoded and compressed as a task on a worker pool, its retention released once encoded, and the encoded chunks drained to the `OutputFile` in schema order as they complete, so chunk 0 is written while later chunks still encode and the file stays byte-identical. See [the model](#parallel-write-model). | Optimization | Encoding of one row group on several cores | — | [ ] |
 | 23b | **Caller released before the drain** (#1515): `writeBatch` returns once every chunk of the flushed row group is encoded, not written, so the next row group accumulates while the previous one drains, bounded by a queue of encoded bytes. Sized against 23a's measurements. | Optimization | Accumulation overlaps output | — | [ ] |
@@ -22,7 +21,7 @@ Each carries a **Kind**: *Dimension* (changes the shape of the solution), *Bread
 
 ## Ordering
 
-39 leads, then 23a: parallelizing first would spread the per-value overhead 39 removes across cores instead of removing it. 23a is argued on 21b's measurements of the wide and nested shapes where encoding dominates; 23b follows it. 40 is independent of the others.
+23a leads, following 39, which removed the per-value overhead parallelizing would otherwise have spread across cores. 23a is argued on 21b's measurements of the wide and nested shapes where encoding dominates; 23b follows it. 40 is independent of the others.
 
 33 is not sequenced ahead of them. Its evidence of demand is `ColumnarNestedCopyTest` alone, and its design has an open fork: leaf validation deferred to submit, or groups ordered before leaves in a batch. The common reason to copy a file is a rewrite or a merge, which #791 and #767 serve by byte-copying row groups instead of decoding and re-encoding them, so 33 is weighed against those when it is picked up.
 
@@ -50,7 +49,7 @@ What each step must keep: byte-identical output to a single-threaded write; a fa
 
 ## User documentation
 
-Every stage that adds public API carries its own docs update under `docs/content/`: 34 and 35 the new `StructBuilder` setters. 21b, 23a, 23b, 29, 39 and 40 have no public API surface of their own.
+Every stage that adds public API carries its own docs update under `docs/content/`: 34 and 35 the new `StructBuilder` setters. 21b, 23a, 23b, 29 and 40 have no public API surface of their own.
 
 ## Roadmap reconciliation
 

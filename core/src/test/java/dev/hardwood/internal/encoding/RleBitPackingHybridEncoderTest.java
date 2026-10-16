@@ -131,6 +131,61 @@ class RleBitPackingHybridEncoderTest {
         assertRoundTrip(values, 3);
     }
 
+    /// [RleBitPackingHybridEncoder#writeInts] takes eight values at a time where it can; its
+    /// bytes must be exactly those of the same values written one by one, however the stream is
+    /// split across calls, since a page's bytes are what the writer's output is pinned on.
+    @Test
+    void bulkWritesMatchValueByValueWrites() {
+        Random random = new Random(1513);
+        for (int trial = 0; trial < 2000; trial++) {
+            // At most eight bits, so the same values also fit the byte-wide level path.
+            int bitWidth = random.nextInt(9);
+            int[] values = runHeavyValues(random, bitWidth);
+            RleBitPackingHybridEncoder single = new RleBitPackingHybridEncoder(bitWidth);
+            for (int value : values) {
+                single.writeInt(value);
+            }
+            RleBitPackingHybridEncoder bulk = new RleBitPackingHybridEncoder(bitWidth);
+            for (int from = 0; from < values.length; ) {
+                int length = Math.min(values.length - from, random.nextInt(40));
+                if (random.nextInt(4) == 0 && length > 0) {
+                    bulk.writeInt(values[from]);
+                    length = 1;
+                }
+                else {
+                    bulk.writeInts(values, from, length);
+                }
+                from += length;
+            }
+            byte[] expected = single.toByteArray();
+            assertThat(bulk.toByteArray()).as("trial %d", trial).isEqualTo(expected);
+
+            byte[] levels = new byte[values.length];
+            for (int i = 0; i < values.length; i++) {
+                levels[i] = (byte) values[i];
+            }
+            RleBitPackingHybridEncoder bytes = new RleBitPackingHybridEncoder(bitWidth);
+            bytes.writeUnsignedBytes(levels, 0, levels.length);
+            assertThat(bytes.toByteArray()).as("trial %d", trial).isEqualTo(expected);
+        }
+    }
+
+    /// Up to 2000 values of `bitWidth` bits, drawn as runs of random length so that both run
+    /// kinds and the transitions between them, at every alignment, occur.
+    private static int[] runHeavyValues(Random random, int bitWidth) {
+        int[] values = new int[random.nextInt(2000)];
+        int max = 1 << bitWidth;
+        int i = 0;
+        while (i < values.length) {
+            int value = random.nextInt(max);
+            int run = random.nextInt(3) == 0 ? 1 + random.nextInt(30) : 1 + random.nextInt(3);
+            for (int k = 0; k < run && i < values.length; k++) {
+                values[i++] = value;
+            }
+        }
+        return values;
+    }
+
     @Test
     void rejectsWritingAfterFinish() {
         RleBitPackingHybridEncoder encoder = new RleBitPackingHybridEncoder(1);

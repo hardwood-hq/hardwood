@@ -57,6 +57,12 @@ final class ByteArrayBuilder {
         count = needed;
     }
 
+    /// Appends `length` copies of the byte `b`, of which only the low eight bits are kept.
+    void fill(int b, int length) {
+        int at = reserve(length);
+        Arrays.fill(buf, at, count, (byte) b);
+    }
+
     /// Appends every byte of `source`.
     void writeBytes(byte[] source) {
         write(source, 0, source.length);

@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.conversion.FixedWidths;
@@ -41,10 +42,13 @@ import dev.hardwood.writer.ColumnEncoding;
 
 /// Accumulates one column's chunk for the current row group in two phases.
 ///
-/// **While records arrive**, the [RecordShredder] streams a record range's entries into this
-/// buffer through [#accept] (as a [RecordShredder.LevelSink]). Nothing is encoded: the levels are
-/// retained a byte per entry, and each present value is interned into the dictionary or copied
-/// into the [ValueEncoder]'s store. No page is cut yet.
+/// **While records arrive**, a record range's entries are appended to this buffer. For a column
+/// that repeats nowhere on its path every record is one entry, so the range is taken a run of
+/// present or absent records at a time, as the column's [presence][RecordShredder#presence]
+/// splits it; for any other column the [RecordShredder] streams the entries in one by one through
+/// [#accept] (as a [RecordShredder.LevelSink]). Either way the stores end up the same and nothing
+/// is encoded: the levels are retained a byte per entry, and each present value is interned into
+/// the dictionary or copied into the [ValueEncoder]'s store. No page is cut yet.
 ///
 /// **At flush**, the chunk is encoded: the dictionary page where the chunk has one, then the data
 /// pages one by one, each *cut* (its extent planned) and its levels and values framed, compressed
@@ -62,8 +66,9 @@ import dev.hardwood.writer.ColumnEncoding;
 /// definition level streams, page cutting, compression, CRC, and (in dictionary mode) the
 /// integer index stream. The **type-specific** half — reading the typed value, the `PLAIN`
 /// value section, the dictionary, and statistics — lives in a per-type [ValueEncoder], driven
-/// value by value as entries arrive and page by page at flush. The shredder emits only source
-/// positions, so this buffer never sees a typed value.
+/// run by run for a flat column, value by value as the shredder's entries arrive for a nested
+/// one, and page by page at flush. Both paths pass only source positions, so this buffer never
+/// sees a typed value.
 ///
 /// A page body is `[rep levels?][def levels?][value section]`, each level stream prefixed by its
 /// 4-byte little-endian length. The value section is `[1-byte index bit width][RLE/bit-packed
@@ -247,12 +252,112 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.bloomFilterFpp = bloomFilterFpp;
     }
 
-    /// Binds the value encoder to this batch's source, then shreds records
-    /// `[fromRecord, fromRecord + count)` of this column into the chunk's level and value stores.
-    /// No page is cut until the row group is flushed.
+    /// Binds the value encoder to this batch's source, then appends records
+    /// `[fromRecord, fromRecord + count)` of this column to the chunk's level and value stores:
+    /// a [flat][RecordShredder#isFlat] column a run of present values at a time, any other through
+    /// the shredder an entry at a time. No page is cut until the row group is flushed.
     void append(RecordShredder shredder, ColumnSource source, int columnIndex, int fromRecord, int count) {
+        if (shredder.isFlat(columnIndex)) {
+            values.reset(source);
+            appendFlat(shredder, columnIndex, fromRecord, count);
+        }
+        else {
+            appendShredded(shredder, source, columnIndex, fromRecord, count);
+        }
+    }
+
+    /// Appends records `[fromRecord, fromRecord + count)` an entry at a time, as the shredder
+    /// emits them. Holds for every column; [#append] takes it only for one that repeats.
+    void appendShredded(RecordShredder shredder, ColumnSource source, int columnIndex, int fromRecord,
+                        int count) {
         values.reset(source);
         shredder.shred(columnIndex, fromRecord, count, this);
+    }
+
+    /// Appends records `[from, from + count)` of a column that repeats nowhere on its path. Every
+    /// record is one entry at its own position in the source, so the range splits into runs of
+    /// present and absent records by the column's [presence][RecordShredder#presence], and each
+    /// run is taken whole: a present run's levels in one fill and its values in one call to the
+    /// value encoder, an absent run's levels alone. The stores end up holding what
+    /// [#appendShredded] would have put there.
+    private void appendFlat(RecordShredder shredder, int columnIndex, int from, int count) {
+        Validity presence = shredder.presence(columnIndex);
+        int end = from + count;
+        if (!presence.hasNulls()) {
+            appendPresent(from, count);
+        }
+        else {
+            int at = from;
+            while (at < end) {
+                int absentFrom = presence.nextNull(at, end);
+                if (absentFrom == -1) {
+                    appendPresent(at, end - at);
+                    break;
+                }
+                appendPresent(at, absentFrom - at);
+                int presentFrom = presence.nextNotNull(absentFrom, end);
+                int absentEnd = presentFrom == -1 ? end : presentFrom;
+                appendAbsent(shredder, columnIndex, absentFrom, absentEnd - absentFrom);
+                at = absentEnd;
+            }
+        }
+        entryCount += count;
+    }
+
+    /// Appends the run of present values `[from, from + count)`, interned or stored as [#accept]
+    /// takes each one. Interning goes in steps that end where `accept` would act on a value
+    /// before taking the next: at the next probe of the dictionary, and before the value that
+    /// could fill it.
+    private void appendPresent(int from, int count) {
+        if (defLevels != null) {
+            defLevels.fill(maxDefLevel, count);
+        }
+        int at = from;
+        int remaining = count;
+        while (remaining > 0) {
+            int taken = remaining;
+            if (dictionaryAlive) {
+                // Doubling takes the probe count past `Integer.MAX_VALUE` once a chunk has held a
+                // billion values, after which no index count reaches it and no probe fires.
+                int toProbe = nextProbeValues > 0 ? nextProbeValues - indexCount : Integer.MAX_VALUE;
+                // Each value adds at most one entry, so a step this long cannot assign the last
+                // index before its final value.
+                int toFull = Math.max(1, LAST_DICTIONARY_INDEX - values.dictionarySize());
+                taken = Math.min(taken, Math.min(toProbe, toFull));
+                if (indexCount + taken > indices.length) {
+                    indices = Arrays.copyOf(indices, ValueEncoder.grownCapacity(indices.length, indexCount + taken));
+                }
+                values.internRun(at, taken, indices, indexCount);
+                indexCount += taken;
+                presentCount += taken;
+                if (values.dictionarySize() > LAST_DICTIONARY_INDEX) {
+                    giveUpDictionary();
+                }
+                else if (indexCount == nextProbeValues) {
+                    probeDictionary();
+                }
+            }
+            else {
+                values.storeRun(at, taken);
+                plainCount += taken;
+                presentCount += taken;
+            }
+            at += taken;
+            remaining -= taken;
+        }
+    }
+
+    /// Appends the definition levels of the absent run `[from, from + count)`, which carries no
+    /// value. Where the column's maximum definition level is 1, every absent slot sits at 0;
+    /// deeper, each slot's level is where its path first turns null.
+    private void appendAbsent(RecordShredder shredder, int columnIndex, int from, int count) {
+        if (maxDefLevel == 1) {
+            defLevels.fill(0, count);
+            return;
+        }
+        for (int record = from; record < from + count; record++) {
+            defLevels.write(shredder.absentDefinitionLevel(columnIndex, record));
+        }
     }
 
     @Override

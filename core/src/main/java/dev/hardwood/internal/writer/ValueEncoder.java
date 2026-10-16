@@ -14,15 +14,17 @@ import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.writer.ColumnEncoding;
 
-/// The per-physical-type half of a column chunk's value section: the typed value read window
-/// over the batch source, the typed `PLAIN` buffer, the (optional) dictionary, and the typed
-/// statistics. [ColumnChunkBuffer] owns the type-agnostic half — repetition / definition level
-/// streams, page sealing, compression, CRC, and the dictionary-index stream — and drives this
-/// encoder value by value as the [RecordShredder] streams a record range in.
+/// The per-physical-type half of a column chunk's value section: reading typed values from the
+/// batch source, the typed `PLAIN` buffer, the (optional) dictionary, and the typed statistics.
+/// [ColumnChunkBuffer] owns the type-agnostic half — repetition / definition level streams, page
+/// sealing, compression, CRC, and the dictionary-index stream — and drives this encoder a run of
+/// present values at a time for a column that repeats nowhere on its path, and value by value as
+/// the [RecordShredder] streams a record range in for any other.
 ///
-/// The shredder emits only source positions, so every type-specific line lives here behind a
-/// type-agnostic shredder and page sealer. A concrete encoder reads a present value through its
-/// window at the shredder's `valueIndex` and feeds it to the dictionary or the `PLAIN` buffer.
+/// The buffer passes only source positions, so every type-specific line lives here behind a
+/// type-agnostic shredder and page sealer. A concrete encoder reads a present value at its
+/// position through a window it fills from the source in bulk, and feeds it to the dictionary or
+/// the `PLAIN` buffer.
 /// Statistics are taken at flush, page by page, from what the chunk holds: a page's values are
 /// compared once, by that page's collector, and the chunk's statistics are the merge of its
 /// pages'.
@@ -145,6 +147,16 @@ abstract class ValueEncoder {
         };
     }
 
+    /// The capacity a store of `current` grows to so that it holds at least `needed` values, in
+    /// the steps [#grownCapacity(int)] takes.
+    static int grownCapacity(int current, int needed) {
+        int capacity = current;
+        while (capacity < needed) {
+            capacity = grownCapacity(capacity);
+        }
+        return capacity;
+    }
+
     /// The capacity of the fixed window a column reads its source through.
     ///
     /// The window is scratch, not storage: it is filled from the batch in bulk and read value by
@@ -182,6 +194,17 @@ abstract class ValueEncoder {
     /// new one in first-seen order if it is unseen. Only called while the chunk still has a
     /// dictionary, which requires [#dictionaryCapable].
     abstract int intern(int valueIndex);
+
+    /// Interns the present values `[from, from + count)` of the bound source, writing each one's
+    /// dictionary index to `indices` from `at` — what [#intern] does for each of them in turn.
+    /// The caller bounds `count` so that the dictionary cannot fill part way through: a flat
+    /// column's values arrive as runs, and taking a run in one call is what spares each value a
+    /// call of its own.
+    abstract void internRun(int from, int count, int[] indices, int at);
+
+    /// Stores the present values `[from, from + count)` of the bound source, as [#store] does for
+    /// each of them in turn.
+    abstract void storeRun(int from, int count);
 
     /// The bytes the dictionary body would occupy if written, which is one half of what a chunk's
     /// encoding is chosen on.

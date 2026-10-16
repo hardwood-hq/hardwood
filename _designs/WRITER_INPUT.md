@@ -144,6 +144,8 @@ The first entry of a list scope inherits the repetition level of the enclosing s
 
 The shredder is value-type-agnostic. Its `LevelSink` receives `(repetitionLevel, definitionLevel, valueIndex)`, where `valueIndex` is the position of a present value in the column's source and a negative index marks an absent slot; the per-type value writer behind the column chunk reads the typed value itself. Present positions arrive in increasing source order, so the typed read stays a forward-only bulk copy, and the nested recursion is written once for every type. Shredding streams: a record range is shredded on demand into the column chunk's level and value stores, and `leafRange` composes one offsets lookup per repeated layer to map a record range to its leaf range without walking records. How the level streams are framed in a page is in [WRITER_ENCODING.md](WRITER_ENCODING.md).
 
+A column whose maximum repetition level is 0 is not shredded. Every layer on its path is a `STRUCT` one, so it has exactly one entry per record, at the record's own position in its source. At bind the shredder combines the leaf's validity and those of the optional structs around it into one presence `Validity` per such column (`RecordShredder.presence`), and `ColumnChunkBuffer` splits a record range into runs of present and absent records by it. A present run fills its definition levels with `maxDefinitionLevel` and hands its values to the `ValueEncoder` in one call (`internRun` / `storeRun`); an absent run writes only definition levels, `0` for a column with `maxDefinitionLevel` 1 and otherwise the depth of the first null struct on the path. The stores this leaves are those the per-entry `LevelSink` path leaves for the same records, which keeps the two paths' files byte-identical. Interning goes in steps that end where the per-entry path acts between two values: at the chunk's next dictionary probe, and before a value that could fill the dictionary (the latter untested, a full dictionary holding hundreds of millions of entries).
+
 **Worked trace.** Schema `m: [[int?]]`, canonical layout, `maxDef = 5`, `maxRep = 2`:
 
 ```
@@ -170,7 +172,7 @@ Five records `[[1,2],[3]]`, `[]`, `null`, `[[]]`, `[null]`, supplied as:
 
 Seven entries on disk, three values. Reading the page back reconstructs the five records.
 
-Tests: `WriterNestedRoundTripTest`, `WriterBatchContractTest`, `ColumnarNestedCopyTest`, `NestedListStructFixtureCopyTest`, `WriterNestedInteropTest` (parquet-testing-runner).
+Tests: `FlatAppendTest`, `WriterNestedRoundTripTest`, `WriterBatchContractTest`, `ColumnarNestedCopyTest`, `NestedListStructFixtureCopyTest`, `WriterNestedInteropTest` (parquet-testing-runner).
 
 ## Physical × logical legality
 

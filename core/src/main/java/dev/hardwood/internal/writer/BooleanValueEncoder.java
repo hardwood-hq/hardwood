@@ -78,6 +78,18 @@ final class BooleanValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void internRun(int from, int count, int[] indices, int at) {
+        throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
+    }
+
+    @Override
+    void storeRun(int from, int count) {
+        for (int i = 0; i < count; i++) {
+            store(from + i);
+        }
+    }
+
+    @Override
     void storeDictionaryValue(int dictionaryIndex) {
         throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
     }

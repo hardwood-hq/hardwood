@@ -34,9 +34,7 @@ public final class LevelEncoder {
     public static void writeInto(RleBitPackingHybridEncoder encoder, byte[] levels, int offset, int count,
                                  int maxLevel) {
         encoder.reset(bitWidth(maxLevel));
-        for (int i = 0; i < count; i++) {
-            encoder.writeInt(levels[offset + i] & 0xFF);
-        }
+        encoder.writeUnsignedBytes(levels, offset, count);
     }
 
     /// The largest level a byte-backed level store can hold, and so the deepest nesting the

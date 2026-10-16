@@ -134,6 +134,10 @@ public final class RecordShredder {
     private ColumnSource[] sources;
     private int recordCount;
 
+    /// Per column, for the bound batch, which records hold a value: set for a column that
+    /// repeats nowhere on its path, `null` for any other.
+    private Validity[] presence;
+
     /// @param schema the file schema
     public RecordShredder(FileSchema schema) {
         int columnCount = schema.getColumnCount();
@@ -226,6 +230,78 @@ public final class RecordShredder {
         for (FileGroup group : fileGroups) {
             checkFileValues(group);
         }
+        this.presence = new Validity[layers.length];
+        for (int c = 0; c < layers.length; c++) {
+            if (maxRep[c] == 0) {
+                presence[c] = presenceOf(c);
+            }
+        }
+    }
+
+    /// Whether column `columnIndex` repeats nowhere on its path. Such a column has one entry per
+    /// record, at the record's own position in its source, so its levels and values follow from
+    /// [#presence] without shredding: every layer on its path is a `STRUCT` one.
+    public boolean isFlat(int columnIndex) {
+        return maxRep[columnIndex] == 0;
+    }
+
+    /// For a [flat][#isFlat] column, which records of the bound batch hold a value: those at which
+    /// neither the leaf nor any optional struct around it is null. A value is present there at
+    /// the column's maximum definition level; an absent slot's level is
+    /// [#absentDefinitionLevel].
+    public Validity presence(int columnIndex) {
+        return presence[columnIndex];
+    }
+
+    /// The definition level of record `record` of a [flat][#isFlat] column where
+    /// [#presence] marks it absent: the depth of the first null struct on the column's path, or
+    /// the leaf's parent depth where every struct is present and the leaf itself is null.
+    public int absentDefinitionLevel(int columnIndex, int record) {
+        int definitionLevel = 0;
+        for (Layer layer : layers[columnIndex]) {
+            if (isNull(layer.validity, record)) {
+                return definitionLevel;
+            }
+            definitionLevel += layer.presentDefInc();
+        }
+        return definitionLevel;
+    }
+
+    /// The presence of a flat column: its own nulls and every struct layer's, combined. Where
+    /// only one of them has nulls, that one is the answer as it stands.
+    private Validity presenceOf(int columnIndex) {
+        Validity combined = Validity.NO_NULLS;
+        long[] words = null;
+        if (leafOptional[columnIndex]) {
+            combined = orNoNulls(leafValidities[columnIndex]);
+        }
+        for (Layer layer : layers[columnIndex]) {
+            Validity validity = orNoNulls(layer.validity);
+            if (!validity.hasNulls()) {
+                continue;
+            }
+            if (!combined.hasNulls()) {
+                combined = validity;
+                continue;
+            }
+            if (words == null) {
+                words = Arrays.copyOf(combined.words(), wordsFor(recordCount));
+                combined = Validity.of(words);
+            }
+            long[] other = validity.words();
+            for (int w = 0; w < words.length; w++) {
+                words[w] &= other[w];
+            }
+        }
+        return combined;
+    }
+
+    private static Validity orNoNulls(Validity validity) {
+        return validity == null ? Validity.NO_NULLS : validity;
+    }
+
+    private static int wordsFor(int count) {
+        return (count + Long.SIZE - 1) >>> 6;
     }
 
     /// Rejects the batch if a present value of `group` is not a valid reference. The group's
