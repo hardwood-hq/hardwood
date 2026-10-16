@@ -17,12 +17,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import dev.hardwood.OutputFile;
 import dev.hardwood.s3.internal.S3Api;
+import dev.hardwood.s3.internal.S3OutputFile;
 
 /// A configured connection to an S3-compatible object store.
 ///
 /// Holds the region, endpoint, credentials (or anonymous access), and HTTP client needed
-/// to create [S3InputFile] instances. Reuse a single `S3Source` across
+/// to create [S3InputFile] and [OutputFile] instances. Reuse a single `S3Source` across
 /// multiple files for connection pooling and credential reuse.
 ///
 /// **URL styles:**
@@ -35,14 +37,16 @@ public final class S3Source implements Closeable {
     private final boolean externalHttpClient;
     private final RangeBacking rangeBacking;
     private final Path tempDir;
+    private final int uploadPartSize;
 
     private S3Source(S3Api api, HttpClient httpClient, boolean externalHttpClient,
-                     RangeBacking rangeBacking, Path tempDir) {
+                     RangeBacking rangeBacking, Path tempDir, int uploadPartSize) {
         this.api = api;
         this.httpClient = httpClient;
         this.externalHttpClient = externalHttpClient;
         this.rangeBacking = rangeBacking;
         this.tempDir = tempDir;
+        this.uploadPartSize = uploadPartSize;
     }
 
     /// Creates an [S3InputFile] for the given bucket and key. When the
@@ -62,6 +66,36 @@ public final class S3Source implements Closeable {
         Objects.requireNonNull(uri, "uri must not be null");
         String[] parsed = parseS3Uri(uri);
         return inputFile(parsed[0], parsed[1]);
+    }
+
+    /// Creates an [OutputFile] that writes the object at the given bucket and key, for
+    /// [dev.hardwood.writer.ParquetFileWriter].
+    ///
+    /// The output buffers one part of [Builder#uploadPartSize(int)] bytes. An object smaller
+    /// than one part is sent in a single `PUT` on close; a larger one is sent as a multipart
+    /// upload, one part each time the buffer fills, and completed on close. Nothing is visible
+    /// at the key before close, and a successful close replaces any object already there.
+    /// Discarding the output aborts the multipart upload. The bucket must exist.
+    ///
+    /// When close fails after its final request reached S3 but its response was lost, the
+    /// object may have been published although close throws.
+    ///
+    /// @throws IllegalStateException if the source sends requests unsigned ([Builder#anonymous()])
+    public OutputFile outputFile(String bucket, String key) {
+        Objects.requireNonNull(bucket, "bucket must not be null");
+        Objects.requireNonNull(key, "key must not be null");
+        if (api.anonymous()) {
+            throw new IllegalStateException("Cannot write s3://" + bucket + "/" + key + " through an anonymous source");
+        }
+        return new S3OutputFile(api, bucket, key, uploadPartSize);
+    }
+
+    /// Creates an [OutputFile] from an `s3://bucket/key` URI. See
+    /// [#outputFile(String, String)].
+    public OutputFile outputFile(String uri) {
+        Objects.requireNonNull(uri, "uri must not be null");
+        String[] parsed = parseS3Uri(uri);
+        return outputFile(parsed[0], parsed[1]);
     }
 
     /// Creates [S3InputFile] instances for multiple keys in the same bucket.
@@ -131,6 +165,7 @@ public final class S3Source implements Closeable {
         private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
         private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
         private static final int DEFAULT_MAX_RETRIES = 3;
+        private static final int DEFAULT_UPLOAD_PART_SIZE = 8 * 1024 * 1024;
 
         private String region;
         private String endpoint;
@@ -143,8 +178,18 @@ public final class S3Source implements Closeable {
         private HttpClient httpClient;
         private RangeBacking rangeBacking = RangeBacking.NONE;
         private Path tempDir;
+        private int uploadPartSize = DEFAULT_UPLOAD_PART_SIZE;
 
         private Builder() {
+        }
+
+        /// Sets the part size of uploads through [S3Source#outputFile(String, String)] (default
+        /// 8 MiB, at least 5 MiB). Each open output holds a buffer of this size. A multipart
+        /// upload has at most 10,000 parts, which caps an object at 10,000 times the part size.
+        public Builder uploadPartSize(int bytes) {
+            S3OutputFile.validatePartSize(bytes);
+            this.uploadPartSize = bytes;
+            return this;
         }
 
         /// Sets the AWS region (e.g. `"eu-west-1"`, `"auto"`).
@@ -198,7 +243,7 @@ public final class S3Source implements Closeable {
             return this;
         }
 
-        /// Sets the maximum number of retries for GET requests on transient failures
+        /// Sets the maximum number of retries per request on transient failures
         /// (HTTP 500/503 and network errors). Default is 3.
         public Builder maxRetries(int maxRetries) {
             if (maxRetries < 0) {
@@ -272,7 +317,7 @@ public final class S3Source implements Closeable {
                     : HttpClient.newBuilder().connectTimeout(connectTimeout).build();
             S3Api api = new S3Api(client, credentialsProvider, effectiveRegion, endpointUri, pathStyle,
                     requestTimeout, maxRetries);
-            return new S3Source(api, client, externalClient, rangeBacking, effectiveTempDir);
+            return new S3Source(api, client, externalClient, rangeBacking, effectiveTempDir, uploadPartSize);
         }
 
         /// Rejects a temp directory that [RangeBacking#SPARSE_TEMPFILE]

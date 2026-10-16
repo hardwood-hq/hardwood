@@ -16,7 +16,7 @@ import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 
 /// An s3proxy Testcontainers container serving `target/s3proxy/` of the
-/// module under test, bind-mounted read-only, so the Docker daemon must be
+/// module under test, bind-mounted read-write, so the Docker daemon must be
 /// able to see that path. It runs until the JVM exits.
 record ContainerS3Proxy(String endpoint, Path dataDir) implements S3Proxy {
 
@@ -39,7 +39,7 @@ record ContainerS3Proxy(String endpoint, Path dataDir) implements S3Proxy {
                 .withEnv("S3PROXY_ENDPOINT", "http://0.0.0.0:" + PORT)
                 .withEnv("JCLOUDS_PROVIDER", "filesystem")
                 .withEnv("JCLOUDS_FILESYSTEM_BASEDIR", CONTAINER_DATA_DIR)
-                .withFileSystemBind(dataDir.toString(), CONTAINER_DATA_DIR, BindMode.READ_ONLY);
+                .withFileSystemBind(dataDir.toString(), CONTAINER_DATA_DIR, BindMode.READ_WRITE);
         container.start();
         Runtime.getRuntime().addShutdownHook(new Thread(container::stop));
         return new ContainerS3Proxy("http://" + container.getHost() + ":" + container.getMappedPort(PORT), dataDir);

@@ -57,7 +57,7 @@ Every S3 test works in a `TestBucket` from `S3Proxy.get().bucketFor(...)`, serve
 | Environment | Server | Data dir |
 |-------------|--------|----------|
 | `HARDWOOD_S3PROXY_ENDPOINT` and `HARDWOOD_S3PROXY_DATA_DIR` set | `SharedS3Proxy`: the running server at that endpoint | the directory that server serves |
-| neither set | `ContainerS3Proxy`: one Testcontainers container per test JVM; with `-DforkCount=4` from `.mvn/maven.config`, up to four per module | `target/s3proxy/` of the module, bind-mounted read-only |
+| neither set | `ContainerS3Proxy`: one Testcontainers container per test JVM; with `-DforkCount=4` from `.mvn/maven.config`, up to four per module | `target/s3proxy/` of the module, bind-mounted read-write |
 
 The dev container (`docker-compose.yaml`) sets both variables: its `s3proxy` service serves `.s3proxy-data/` in the repository root, which the `claude` service sees under `/workspace`. The tests there start no containers, and the `claude` container has no access to a Docker daemon. The service's port is published on `localhost` (`8080`, or `S3PROXY_PORT`), so a build on the host can use the same server while the stack is up:
 
@@ -66,6 +66,8 @@ HARDWOOD_S3PROXY_ENDPOINT=http://localhost:8080 HARDWOOD_S3PROXY_DATA_DIR=$PWD/.
 ```
 
 `HARDWOOD_S3PROXY_DATA_DIR` must be absolute, since each module's tests run in the module directory. Any number of builds can share the server at once, as each test class works in its own bucket. The first `S3Proxy.get()` in a JVM deletes buckets older than a day, left behind by runs that did not finish.
+
+The data dir is mounted writable, so tests can also write through S3, as the upload tests (`S3OutputFileIT`) do in buckets of their own. A write never changes a fixture `TestBucket.withObject(Path)` hard-linked into a bucket: s3proxy writes an object to a temporary file and renames it over the old one, which breaks the link instead of writing through it. `S3OutputFileIT` checks this, so an s3proxy version that writes in place fails the build rather than corrupting a checked-in file. Files and directories the server writes belong to the server's user, root inside a container, which the test JVM may not be able to delete; a test that writes therefore deletes its objects through S3 before `TestBucket.delete()` removes the bucket.
 
 ### The s3proxy image
 

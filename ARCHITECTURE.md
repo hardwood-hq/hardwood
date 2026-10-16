@@ -59,6 +59,7 @@ flowchart LR
     end
 
     S3_STORAGE -. implements .-> INPUT_FILES
+    S3_STORAGE -. implements .-> WRITER
     INPUT_FILES --> FILE_METADATA
     INPUT_FILES --> FETCH_PLANNING
     PREDICATE_MODEL --> STATISTICS_PRUNING
@@ -108,7 +109,7 @@ Each decoded column (the projection plus any filter-only predicate columns) has 
 | Module | Purpose |
 |--------|---------|
 | `core` | The Parquet reader and writer library |
-| `s3` | Reading from S3-compatible object storage |
+| `s3` | Reading from and writing to S3-compatible object storage |
 | `aws-auth` | Bridges the AWS SDK credential chain to Hardwood's credential types |
 | `avro` | Reading rows as Avro `GenericRecord`s |
 | `cli` | The `hardwood` command-line tool, including the `dive` TUI |

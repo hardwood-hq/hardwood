@@ -19,6 +19,7 @@ The `OutputFile` a writer is created with decides where the file is written.
 |---|---|
 | `OutputFile.of(Path)` | A local file. The bytes are streamed to a temporary sibling of the target path and renamed onto it when the writer closes, so a write that fails or is abandoned leaves nothing at the path |
 | `OutputFile.inMemory()` | The heap, up to `Integer.MAX_VALUE - 8` bytes. Returns an `InMemoryOutputFile`, whose `buffer()` returns the finished file |
+| `S3Source.outputFile(...)` | An S3 object, uploaded as the file is written and published when the writer closes (`hardwood-s3`; see [S3 Reference](s3.md#writing)) |
 
 An in-memory file can be written and read back without a filesystem: `buffer()` returns the whole file as a `ByteBuffer` positioned at its first byte, which is what `InputFile.of(ByteBuffer)` expects.
 
@@ -38,7 +39,7 @@ The buffer grows with the file, so no size has to be given up front; the length 
 
 The file is complete only after the writer is closed, and `buffer()` throws `IllegalStateException` before that, or if the destination was discarded.
 
-To write anywhere else (an object store, a network connection), implement `OutputFile`.
+To write anywhere else, implement `OutputFile`.
 
 ## Schema
 

@@ -34,6 +34,7 @@ nav:
     - Read Multiple Files as One Dataset: how-to/multi-file.md
     - Read into Avro GenericRecords: how-to/avro.md
     - Read from S3: how-to/s3.md
+    - Write to S3: how-to/write-to-s3.md
     - Read with the parquet-java API: how-to/compat.md
     - Read Variant Columns: how-to/variant.md
     - Read Geospatial Columns: how-to/geospatial.md

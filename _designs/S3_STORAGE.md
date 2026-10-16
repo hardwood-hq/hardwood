@@ -1,22 +1,23 @@
 # S3 Storage
 
-Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and anonymous access, the optional `hardwood-aws-auth` bridge and the CLI's credential fallback, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
+Covers the `hardwood-s3` module: the HTTP client it builds on the JDK alone, SigV4 request signing, credential delegation and anonymous access, the optional `hardwood-aws-auth` bridge and the CLI's credential fallback, `S3Source` and its configuration, `S3InputFile` with its suffix-range open and its `ETag` identity, `S3OutputFile` and its multipart upload, retries and error mapping, and the optional range cache (`RangeBacking`, `RangeBackedInputFile`) that remote reads can sit behind.
 
 Related documents:
 
 - [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract every backend implements, including ownership and the local mapped and in-memory backends
 - [FETCH_PLANNING.md](FETCH_PLANNING.md): which byte ranges a read asks for, how they are coalesced and prefetched
 - [FILE_METADATA.md](FILE_METADATA.md): how the footer bytes are parsed and cached
-- [docs/content/how-to/s3.md](../docs/content/how-to/s3.md) and [docs/content/reference/s3.md](../docs/content/reference/s3.md): user-facing configuration
+- [WRITER.md](WRITER.md#outputfile): the `OutputFile` contract `S3OutputFile` implements
+- [docs/content/how-to/s3.md](../docs/content/how-to/s3.md), [docs/content/how-to/write-to-s3.md](../docs/content/how-to/write-to-s3.md) and [docs/content/reference/s3.md](../docs/content/reference/s3.md): user-facing configuration
 
 ## Module boundary
 
-`hardwood-s3` depends on `hardwood-core` and nothing else at compile time. It needs two operations against an object store, a suffix-range `GET` and a byte-range `GET`, and implements them on `java.net.http.HttpClient` with JDK crypto for signing. The AWS SDK is not a dependency of the module; a design change that adds one to `hardwood-s3` gives up the dependency-free footprint the module exists to keep.
+`hardwood-s3` depends on `hardwood-core` and nothing else at compile time. Reading needs two operations against an object store, a suffix-range `GET` and a byte-range `GET`; writing needs a `PUT` and the four multipart-upload requests. It implements them on `java.net.http.HttpClient` with JDK crypto for signing. The AWS SDK is not a dependency of the module; a design change that adds one to `hardwood-s3` gives up the dependency-free footprint the module exists to keep.
 
 | Module | Depends on | Role |
 |---|---|---|
 | `hardwood-core` | nothing S3-specific | `InputFile`, the read pipeline, `RangeBackedInputFile` and `RangeSet` (internal) |
-| `hardwood-s3` | `hardwood-core` | `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking`; internal `S3Api`, `Aws4Signer`; package-private `S3Fetcher` |
+| `hardwood-s3` | `hardwood-core` | `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking`; internal `S3Api`, `Aws4Signer`, `S3OutputFile`, `S3Xml`; package-private `S3Fetcher` |
 | `hardwood-aws-auth` (optional) | `hardwood-s3`, `software.amazon.awssdk:auth` | `SdkCredentialsProviders`: the AWS credential chain as an `S3CredentialsProvider` |
 | `hardwood-cli` | `hardwood-s3`, `hardwood-aws-auth` | `s3://` URIs on every file-taking command |
 
@@ -115,6 +116,25 @@ An opened `S3InputFile` is safe for concurrent `readRange` calls. The fetcher's 
 
 Tests: `S3InputFileIT` (s3), `S3InputFileLargeFileIT` (s3), `S3MultiFileIT` (s3), `S3SelectiveReadJfrIT` (s3).
 
+## S3OutputFile
+
+`S3Source.outputFile(...)` returns an `S3OutputFile` (internal) typed as `OutputFile`, so the writer sees only the [output contract](WRITER.md#outputfile). Its state is one buffer of the source's `uploadPartSize` (default 8 MiB, at least the 5 MiB S3 requires of every part but the last), allocated on `create()`.
+
+| Event | Requests |
+|---|---|
+| Buffer fills | `CreateMultipartUpload` the first time, then `UploadPart` with the buffer as the next part; the buffer is reused |
+| `close()` without a full part ever | One `PUT` of the buffered bytes |
+| `close()` after a part | `UploadPart` of the remainder, if any, then `CompleteMultipartUpload` listing every part's `ETag` |
+| `discard()`, or a failed `close()` | `AbortMultipartUpload`, if an upload was started |
+
+Two invariants follow. Nothing is visible at the key until the closing `PUT` or completion succeeds, which is what lets the writer's `discard()` leave the destination as it was. And an output holds one part in memory however large the file grows: parts upload on the writing thread, so the writer waits for each one instead of buffering ahead. Ten thousand parts is S3's limit, so a file is capped at 10,000 × `uploadPartSize`; a write that would cross it is rejected before any of it is buffered.
+
+S3 sends a completion's `200` status before the completion is done, and reports a failure that follows as an `Error` document in that body; `S3Xml` reads the body and raises it as a failed completion. Every request is retried as in [Errors and retries](#errors-and-retries). A retried `CreateMultipartUpload` whose first response was lost leaves an upload the output does not know of, and an output whose process ends leaves its started upload behind; both are removed only by a bucket lifecycle rule. A completion that succeeded but whose response was lost through every retry makes `close()` throw although the object exists, the one case where a failed `close()` does not leave the destination unchanged.
+
+A source built with `anonymous()` refuses `outputFile(...)` with an `IllegalStateException`, since S3 does not accept unsigned writes to a bucket that is not public-write.
+
+Tests: `S3OutputFileTest`, `S3XmlTest`, `S3SourceOutputTest`, `S3OutputFileIT` (s3). The lost-completion case is untested.
+
 ## Range backing
 
 `RangeBacking` selects whether an `S3InputFile` keeps the bytes it fetches beyond the tail. Both modes return identical bytes; they differ in how many requests go out and in side effects on the host.
@@ -171,9 +191,9 @@ Every failure from the network path is an `IOException`, the checked type the `I
 | any request | interrupt | `IOException` with the interrupt flag restored |
 | `S3Source.Builder.build()` | neither credentials nor anonymous, both, missing region without endpoint, unusable `tempDir` | `IllegalStateException` |
 
-`S3Api.sendWithRetry` retries a `GET` up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
+`S3Api.sendWithRetry` retries a request up to `maxRetries` times when the response is `500` or `503` or when `HttpClient.send` throws an `IOException`; the body of a response it retries past is closed, so a retry does not hold a connection. Each attempt is signed afresh (unless the source is anonymous), so a retry after a credential refresh carries the new credentials and a current timestamp. Backoff between attempts is exponential with a cap and random jitter. When the budget is spent, a final `500`/`503` response is returned to the fetcher, which raises it as an HTTP error; a final network failure is rethrown as is. Other statuses, including `429` and every `4xx`, are not retried.
 
-The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. `PUT` requests (test fixtures only) are never retried.
+The retry boundary is `send()`. For the open-time tail the body is read inside `send()`, so a failure mid-body is retried; for `readRange` the body is streamed after `send()` returns, so a connection lost mid-body surfaces as an `IOException` from the stream without a retry. A write sends its body from a byte array, so each attempt sends the same bytes.
 
 Tests: `S3InputFileIT` (s3), `S3FetcherStatusTest` (s3), `S3ApiRetryTest` (s3). Backoff, retry exhaustion and the non-retried statuses are untested.
 
@@ -189,4 +209,5 @@ Tests: `ParquetReaderS3CompatIT` (parquet-java-compat).
 - **Latency-aware coalescing (#763).** The gap policy does not adapt to the latency of the remote backend ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
 - **Other remote backends (#519).** Only S3 is a remote backend; there is no plain HTTP(S) `InputFile`.
 - **Range-backed files over 2 GB (#501).** See [INPUT_FILES.md](INPUT_FILES.md#boundaries).
-- **Not tracked.** Requester-pays buckets, SigV4a, writing to S3, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.
+- **Overlapped uploads (#1455).** A part uploads while the writer waits; the next part does not fill during the upload.
+- **Not tracked.** Requester-pays buckets, SigV4a, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.

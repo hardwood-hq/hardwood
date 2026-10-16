@@ -18,7 +18,7 @@ services:
     ports:
       - "127.0.0.1:${S3PROXY_PORT:-8080}:80"
     volumes:
-      - ./.s3proxy-data:/data:ro
+      - ./.s3proxy-data:/data:rw
     environment:
       S3PROXY_AUTHORIZATION: aws-v2-or-v4
       S3PROXY_IDENTITY: access

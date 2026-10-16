@@ -17,8 +17,10 @@ import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 
 import dev.hardwood.s3.S3Credentials;
 import dev.hardwood.s3.S3CredentialsProvider;
@@ -26,8 +28,8 @@ import dev.hardwood.s3.S3CredentialsProvider;
 /// Low-level S3 REST API client. Signs and issues HTTP requests.
 ///
 /// Encapsulates credential resolution, SigV4 signing, URI construction,
-/// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads and
-/// by test infrastructure for uploads.
+/// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads, by
+/// [S3OutputFile] for uploads, and by test infrastructure.
 public final class S3Api {
 
     private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
@@ -55,7 +57,7 @@ public final class S3Api {
     /// @param endpoint            custom endpoint URI, or `null` for AWS virtual-hosted style
     /// @param pathStyle           if `true`, use path-style access (`endpoint/bucket/key`)
     /// @param requestTimeout      timeout for individual HTTP requests, or `null` for no timeout
-    /// @param maxRetries          maximum number of retries for GET requests (0 means no retries)
+    /// @param maxRetries          maximum number of retries per request (0 means no retries)
     public S3Api(HttpClient httpClient, S3CredentialsProvider credentialsProvider,
             String region, URI endpoint, boolean pathStyle,
             Duration requestTimeout, int maxRetries) {
@@ -91,20 +93,26 @@ public final class S3Api {
 
     private <T> HttpResponse<T> sendWithRetry(String bucket, String key, String rangeHeader,
             HttpResponse.BodyHandler<T> bodyHandler) throws IOException {
+        return sendWithRetry(() -> signRequest("GET", objectUri(bucket, key),
+                SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(), "Range", rangeHeader),
+                bodyHandler, "GET s3://" + bucket + "/" + key);
+    }
+
+    /// Sends the request `signedRequest` builds, retrying on HTTP 500/503 responses and network
+    /// errors up to [#maxRetries] times with exponential backoff and jitter. Each attempt is
+    /// signed afresh, so a retry carries refreshed credentials and a current timestamp.
+    private <T> HttpResponse<T> sendWithRetry(Supplier<HttpRequest> signedRequest,
+            HttpResponse.BodyHandler<T> bodyHandler, String description) throws IOException {
         IOException lastException = null;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0 && lastException != null) {
                 sleepBeforeRetry(attempt);
             }
-            HttpRequest request = signRequest("GET", objectUri(bucket, key),
-                    SHA256_EMPTY, HttpRequest.BodyPublishers.noBody(),
-                    "Range", rangeHeader);
             try {
-                HttpResponse<T> response = httpClient.send(request, bodyHandler);
+                HttpResponse<T> response = httpClient.send(signedRequest.get(), bodyHandler);
                 int status = response.statusCode();
                 if ((status == HTTP_INTERNAL_SERVER_ERROR || status == HTTP_SERVICE_UNAVAILABLE) && attempt < maxRetries) {
-                    lastException = new IOException("GET s3://" + bucket + "/" + key
-                            + " failed: HTTP " + status);
+                    lastException = new IOException(description + " failed: HTTP " + status);
                     discardBody(response);
                     continue;
                 }
@@ -112,7 +120,7 @@ public final class S3Api {
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IOException("Interrupted during GET s3://" + bucket + "/" + key, e);
+                throw new IOException("Interrupted during " + description, e);
             }
             catch (IOException e) {
                 lastException = e;
@@ -151,10 +159,80 @@ public final class S3Api {
 
     /// Sends a PUT request to upload a byte array.
     public void putObject(String bucket, String key, byte[] body) throws IOException {
-        String payloadHash = Aws4Signer.hexEncode(Aws4Signer.sha256(body));
-        HttpRequest request = signRequest("PUT", objectUri(bucket, key),
-                payloadHash, HttpRequest.BodyPublishers.ofByteArray(body));
-        sendAndCheck(request, "PUT s3://" + bucket + "/" + key);
+        putObject(bucket, key, body, body.length);
+    }
+
+    /// Sends a PUT request uploading the first `length` bytes of `body` as the whole object.
+    void putObject(String bucket, String key, byte[] body, int length) throws IOException {
+        String description = "PUT s3://" + bucket + "/" + key;
+        sendWrite("PUT", objectUri(bucket, key), body, length, 200, description);
+    }
+
+    // ==================== Multipart upload ====================
+
+    /// Starts a multipart upload and returns its upload ID.
+    String createMultipartUpload(String bucket, String key) throws IOException {
+        String description = "Create multipart upload s3://" + bucket + "/" + key;
+        HttpResponse<byte[]> response = sendWrite("POST", URI.create(objectUri(bucket, key) + "?uploads="),
+                new byte[0], 0, 200, description);
+        return S3Xml.uploadId(response.body(), description);
+    }
+
+    /// Uploads the first `length` bytes of `body` as part `partNumber` and returns its `ETag`.
+    String uploadPart(String bucket, String key, String uploadId, int partNumber, byte[] body, int length)
+            throws IOException {
+        String description = "Upload part " + partNumber + " of s3://" + bucket + "/" + key;
+        URI uri = uploadUri(bucket, key, "partNumber=" + partNumber + "&uploadId=" + Aws4Signer.uriEncode(uploadId));
+        HttpResponse<byte[]> response = sendWrite("PUT", uri, body, length, 200, description);
+        return response.headers().firstValue("ETag")
+                .orElseThrow(() -> new IOException(description + " failed: response has no ETag"));
+    }
+
+    /// Completes a multipart upload from its parts, in part-number order.
+    void completeMultipartUpload(String bucket, String key, String uploadId, List<S3Xml.Part> parts)
+            throws IOException {
+        String description = "Complete multipart upload s3://" + bucket + "/" + key;
+        byte[] body = S3Xml.completionBody(parts);
+        HttpResponse<byte[]> response = sendWrite("POST", uploadUri(bucket, key, "uploadId=" + Aws4Signer.uriEncode(uploadId)),
+                body, body.length, 200, description);
+        // S3 can answer 200 and report a failure in the body, once the response has started.
+        S3Xml.checkCompletion(response.body(), description);
+    }
+
+    /// Aborts a multipart upload, releasing its parts. An upload that no longer exists counts as
+    /// aborted.
+    void abortMultipartUpload(String bucket, String key, String uploadId) throws IOException {
+        String description = "Abort multipart upload s3://" + bucket + "/" + key;
+        URI uri = uploadUri(bucket, key, "uploadId=" + Aws4Signer.uriEncode(uploadId));
+        HttpResponse<byte[]> response = sendWithRetry(
+                () -> signRequest("DELETE", uri, SHA256_EMPTY, HttpRequest.BodyPublishers.noBody()),
+                HttpResponse.BodyHandlers.ofByteArray(), description);
+        if (response.statusCode() != 204 && response.statusCode() != 404) {
+            throw failure(response, description);
+        }
+    }
+
+    private URI uploadUri(String bucket, String key, String query) {
+        return URI.create(objectUri(bucket, key) + "?" + query);
+    }
+
+    /// Sends a request with the first `length` bytes of `body`, retried like a GET, and checks
+    /// its status. The payload is hashed once; each attempt re-signs it.
+    private HttpResponse<byte[]> sendWrite(String method, URI uri, byte[] body, int length, int expectedStatus,
+            String description) throws IOException {
+        String payloadHash = Aws4Signer.hexEncode(Aws4Signer.sha256(body, 0, length));
+        HttpResponse<byte[]> response = sendWithRetry(
+                () -> signRequest(method, uri, payloadHash, HttpRequest.BodyPublishers.ofByteArray(body, 0, length)),
+                HttpResponse.BodyHandlers.ofByteArray(), description);
+        if (response.statusCode() != expectedStatus) {
+            throw failure(response, description);
+        }
+        return response;
+    }
+
+    private static IOException failure(HttpResponse<byte[]> response, String description) {
+        return new IOException(description + " failed: HTTP " + response.statusCode()
+                + S3Xml.errorSummary(response.body()));
     }
 
     /// Sends a PUT request to create a bucket.
