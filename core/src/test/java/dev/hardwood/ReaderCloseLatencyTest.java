@@ -44,14 +44,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// adds up rather than overlapping, and the total goes linear in the projection width.
 ///
 /// Both consumer shapes have to be covered, because the two `BatchExchange` modes block their
-/// drain thread at *different* points and so are separately breakable. The column-reader cases
-/// read `INT64` columns, which the read's scheduler decodes instead of a drain, so they cover its
-/// close; the row-reader case reads `BYTE_ARRAY` columns, which keep their drains. [ColumnReaders] uses
+/// drain thread at *different* points and so are separately breakable. [ColumnReaders] uses
 /// the detaching mode, whose drain blocks in `publish()` once its ready queue holds two full
-/// batches' worth of rows; [RowReader]
-/// uses the recycling mode, whose drain blocks in `takeBatch()` on an empty free pool. A
-/// teardown that releases only one of the two looks fixed from one shape and is still broken
-/// from the other.
+/// batches' worth of rows; [RowReader] uses the recycling mode, whose drain blocks in
+/// `takeBatch()` on an empty free pool. A teardown that releases only one of the two looks fixed
+/// from one shape and is still broken from the other. The read's scheduler decodes every flat
+/// column, with no drain, so the flat cases cover its close in both modes; the nested row-reader
+/// case reads struct fields, whose column workers keep their drains.
 ///
 /// On the bound: sub-millisecond closes are typical, but the distribution has a heavy tail,
 /// and under 8x CPU oversubscription maxima of 27 / 61 / 67 / 101 ms have been observed across
@@ -87,6 +86,9 @@ class ReaderCloseLatencyTest {
     /// How many rows the row-reader case consumes before closing. Enough to have started the
     /// pipeline, far short of the file.
     private static final int ROWS_READ = 10;
+
+    /// The struct of the nested row-reader case, whose fields are named like the flat columns.
+    private static final String STRUCT = "s";
 
     /// The per-column cost a teardown that fails to signal its drain directly settles at —
     /// 10 ms was what the timed `BatchExchange` waits this test was written against charged.
@@ -147,9 +149,8 @@ class ReaderCloseLatencyTest {
     /// [RowReader] recycles its batch holders, so its drain blocks in `takeBatch()` waiting for
     /// the consumer to hand a holder back, not in `publish()` waiting for ready-queue room.
     /// Releasing only the publish side leaves this path stalling per column, which is exactly
-    /// the regression the two cases above cannot see. Its file's columns are `BYTE_ARRAY`, which a
-    /// row read decodes through column workers and their drains; fixed-width columns go through
-    /// the read's scheduler, which no drain waits in.
+    /// the regression the two cases above cannot see. Its file's columns are flat `BYTE_ARRAY`,
+    /// which the read's scheduler decodes; the nested case below covers the drains.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void rowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {
@@ -163,6 +164,29 @@ class ReaderCloseLatencyTest {
 
             assertThat(elapsed)
                     .as("RowReader.close() over a %d-column projection after reading %d rows; "
+                            + "a %d ms stall per column would be about %d ms",
+                            COLUMNS, ROWS_READ, PER_COLUMN_STALL_DURATION.toMillis(),
+                            stallAcrossColumns().toMillis())
+                    .isLessThan(BOUND);
+        }
+    }
+
+    /// And of the nested row reader, which recycles its batch holders too and whose struct fields
+    /// are decoded by column workers, so a drain blocks in `takeBatch()` until the consumer hands
+    /// a holder back.
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void nestedRowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {
+        byte[] file = writeSyntheticStructFile();
+        String[] columns = { STRUCT };
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+
+            Duration elapsed = timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+
+            assertThat(elapsed)
+                    .as("RowReader.close() over a struct of %d fields after reading %d rows; "
                             + "a %d ms stall per column would be about %d ms",
                             COLUMNS, ROWS_READ, PER_COLUMN_STALL_DURATION.toMillis(),
                             stallAcrossColumns().toMillis())
@@ -269,8 +293,7 @@ class ReaderCloseLatencyTest {
         return InMemoryFiles.toByteArray(out);
     }
 
-    /// The same shape with required `BYTE_ARRAY` columns, which a row read decodes through a column
-    /// worker whose drain blocks in `takeBatch()` on the recycling exchange.
+    /// The same shape with required `BYTE_ARRAY` columns.
     private static byte[] writeSyntheticBinaryFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("close_scaling_binary");
         for (String name : columnNames()) {
@@ -287,6 +310,33 @@ class ReaderCloseLatencyTest {
             writer.columnWriter().writeBatch(batch -> {
                 for (String name : columnNames()) {
                     batch.bytes(name, values);
+                }
+            });
+        }
+        return InMemoryFiles.toByteArray(out);
+    }
+
+    /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through nested
+    /// column workers.
+    private static byte[] writeSyntheticStructFile() throws Exception {
+        FileSchema schema = FileSchema.builder("close_scaling_struct")
+                .struct(STRUCT, RepetitionType.REQUIRED, struct -> {
+                    for (String name : columnNames()) {
+                        struct.addColumn(name, PhysicalType.INT64, RepetitionType.REQUIRED);
+                    }
+                })
+                .build();
+
+        long[] values = new long[ROWS];
+        for (int i = 0; i < ROWS; i++) {
+            values[i] = i;
+        }
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.columnWriter().writeBatch(batch -> {
+                for (String name : columnNames()) {
+                    batch.longs(STRUCT + "." + name, values);
                 }
             });
         }

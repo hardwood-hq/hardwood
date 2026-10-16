@@ -63,9 +63,9 @@ final class ColumnCursor {
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
     /// detached, so every batch the cursor hands out is fresh and never reused. The batches
-    /// close where the batch plan of `rowGroupIterator` closes them. A flat column a
-    /// [ScheduledColumn] reads is added to `scheduler`, which starts it; `scheduler` is `null`
-    /// when no column is read that way.
+    /// close where the batch plan of `rowGroupIterator` closes them. A flat column is a
+    /// [ScheduledColumn] added to `scheduler`, which starts it; `scheduler` is `null` when the
+    /// scheduler is switched off.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
@@ -92,7 +92,7 @@ final class ColumnCursor {
         // The flat worker gives a batch its values on the batch's first rows, sized to the
         // rows the batch plan puts in it.
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
-        if (scheduler != null && ScheduledColumn.reads(column)) {
+        if (scheduler != null) {
             ScheduledColumn scheduled = new ScheduledColumn(scheduler, pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), null);
             return new ColumnCursor(column, exchange, null, scheduled);

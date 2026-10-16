@@ -7343,6 +7343,34 @@ pq.write_table(
 print("\nGenerated dict_plain_fallback.parquet:")
 print(f"  - {FALLBACK_REPEATED_ROWS + FALLBACK_DISTINCT_ROWS} rows, label: dictionary pages, then PLAIN once the dictionary outgrows 1 KiB")
 
+# The same fallback over an optional column with nulls, on page edges and inside
+# pages, beside a required INT64 column, so a batch mixes dictionary ids, plain
+# values and nulls across pages of both encodings.
+FALLBACK_NULLS_ROWS = 4000
+fallback_null_labels = [
+    None if i % 7 == 3 or i % 300 in (0, 299)
+    else (['alpha', 'bravo', 'charlie'][i % 3] if i < 2000 else f'distinct-{i:06d}')
+    for i in range(FALLBACK_NULLS_ROWS)
+]
+pq.write_table(
+    pa.table({
+        'label': pa.array(fallback_null_labels, type=pa.string()),
+        'id': pa.array(range(FALLBACK_NULLS_ROWS), type=pa.int64()),
+    }, schema=pa.schema([
+        pa.field('label', pa.string(), nullable=True),
+        pa.field('id', pa.int64(), nullable=False),
+    ])),
+    'core/src/test/resources/dict_plain_fallback_nulls.parquet',
+    use_dictionary=['label'],
+    compression='none',
+    data_page_version='1.0',
+    dictionary_pagesize_limit=1024,
+    write_batch_size=300,
+    data_page_size=1,
+)
+print("\nGenerated dict_plain_fallback_nulls.parquet:")
+print(f"  - {FALLBACK_NULLS_ROWS} rows, label (optional): dictionary pages, then PLAIN once the dictionary outgrows 1 KiB; nulls on page edges and every 7th row; id: INT64")
+
 # Dictionary-encoded INT96 timestamps: a few distinct instants repeated, written in
 # the legacy INT96 form, so a column reader exposes dictionary ids for an INT96 column.
 INT96_DICT_ROWS = 300

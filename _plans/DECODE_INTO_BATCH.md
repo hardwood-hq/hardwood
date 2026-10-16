@@ -106,16 +106,19 @@ is free, whose arrays it reuses, a new batch otherwise.
 
 | Array | Size known | Allocated |
 | --- | --- | --- |
-| values of a fixed-width leaf without repetition; validity | the batch's record count, from the plan | by the first page task that reaches the cell |
-| values and levels of a leaf with repetition; record offsets; dictionary ids and byte buffer of a variable-length leaf | the sum of the counts of its pages' segments | when the last page touching the cell is measured |
+| values of a fixed-width leaf without repetition; validity; dictionary ids and views of a variable-length leaf without repetition | the batch's record count, from the plan | by the first page task that reaches the cell; ids and views by the first segment that writes them |
+| byte buffer of a variable-length leaf | the sum of its segments' bytes | when the cell is sealed and the last page touching it is measured |
+| values and levels of a leaf with repetition; record offsets | the sum of the counts of its pages' segments | when the last page touching the cell is measured |
 
 Validity is allocated only if a page touching the cell is not all-present. Every array is
 allocated once at its final size. Allocation stays off the scheduler, which would otherwise
 zero every column's arrays on one thread.
 
 A plan-sized cell is never waited for: whichever task reaches it first allocates it. Only a
-measured cell can be reached by a page task before it is allocated; that task records its
-position and ends, and the allocation resubmits it.
+measured cell can be reached by a page task before it is allocated. A segment of a flat
+variable-length leaf writes everything but its bytes in place, parks its bytes on the cell and
+the task goes on; the allocation copies them into place. A leaf with repetition has nothing
+plan-sized to write, so its task records its position and ends, and the allocation resubmits it.
 
 ### Measure and fill
 
@@ -175,16 +178,18 @@ batches cut by the one batch plan.
 | 1 | Batch plan per read (#1503) | the per-column close rules | done |
 | 2 | Scheduler, fetchers and cells for flat fixed-width leaves on `ColumnReader`; `V1` dictionary and `PLAIN` pages read in place, every other page through a page array on its task | the drain of those columns, and their page arrays and copy for the common encodings | `run-flat.sh` columnar faster, narrow read not slower |
 | 3 | The same columns on the flat row reader (recycling exchange) | the drain of those columns | `run-flat.sh` row readers faster, narrow read not slower |
-| 4 | Leaves with repetition: measure, placement after measure, kernels; fixed-size lists; every column of `NestedRowReader`, its non-repeated fixed-width leaves included | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE) | `run-nested.sh`, `run-fixedlist.sh` faster |
-| 5 | Measure and fill for flat variable-length leaves (`PLAIN` and delta bytes), dictionary ids of flat binary leaves, including chunks with a `PLAIN` fallback | the `byte[]` per value, the per-page id array | `run-1brc.sh`, `run-dictfilter.sh` and a plain `BYTE_ARRAY` scan (a benchmark to add) faster |
+| 4 | Measure and fill for flat variable-length leaves (`PLAIN` and delta bytes), dictionary ids of flat binary leaves, including chunks with a `PLAIN` fallback; `V1` `PLAIN` and dictionary pages read in place, every other page through a page array on its task | the `byte[]` per value, the per-page id array | `run-1brc.sh`, `run-dictfilter.sh` and `run-binary.sh` (a plain `BYTE_ARRAY` scan) faster |
+| 5 | Leaves with repetition: measure, placement after measure, kernels; fixed-size lists; every column of `NestedRowReader`, its non-repeated fixed-width leaves included | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE) | `run-nested.sh`, `run-fixedlist.sh` faster |
 | 6 | In-place kernels for `V2` pages, `BYTE_STREAM_SPLIT`, delta `INT32`/`INT64`, `ALP` and `BOOLEAN` | the remaining page arrays and copies | `run-encodings.sh` faster |
 | 7 | Remove the per-column pipeline, fold the end state into `READ_PIPELINE.md`, `VALUE_DECODE.md` and `NESTED_DECODE.md`, delete this plan | the drain | — |
 | 8 | Snappy decompresses heap to heap (#1015) | steps 1–2 of #1287 | `run-filter.sh` (SNAPPY) faster |
 
 Stage 2 carries the gain the spike and the prototype measured, on the read they measured it on;
-every later stage moves more columns onto a pipeline already shown faster. Leaves with
-repetition come before binary leaves: their measure-then-place path is the riskier part of the
-design. The kernels of stage 6 wait for a measurement, since Hardwood's writer and the default
+every later stage moves more columns onto a pipeline already shown faster. Binary leaves come
+before leaves with repetition: they bring the first measured cells while placement still comes
+from metadata, and with them every flat column of both readers, 1BRC's `station` included, is
+on the new pipeline; leaves with repetition add placement after measure on top. The kernels of
+stage 6 wait for a measurement, since Hardwood's writer and the default
 PyArrow and parquet-java settings write `V1` pages without those encodings. Stage 8 is
 independent of the others and can land at any point.
 
