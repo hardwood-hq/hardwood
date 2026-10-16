@@ -71,9 +71,10 @@ public final class S3Source implements Closeable {
     /// Creates an [OutputFile] that writes the object at the given bucket and key, for
     /// [dev.hardwood.writer.ParquetFileWriter].
     ///
-    /// The output buffers one part of [Builder#uploadPartSize(int)] bytes. An object smaller
-    /// than one part is sent in a single `PUT` on close; a larger one is sent as a multipart
-    /// upload, one part each time the buffer fills, and completed on close. Nothing is visible
+    /// The output collects the file in parts of [Builder#uploadPartSize(int)] bytes. An object
+    /// smaller than one part is sent in a single `PUT` on close; a larger one is sent as a
+    /// multipart upload, with up to four parts uploading in the background while the writer fills
+    /// the next, and completed on close. An output holds up to five parts in memory. Nothing is visible
     /// at the key before close, and a successful close replaces any object already there.
     /// Discarding the output aborts the multipart upload. The bucket must exist.
     ///
@@ -184,7 +185,7 @@ public final class S3Source implements Closeable {
         }
 
         /// Sets the part size of uploads through [S3Source#outputFile(String, String)] (default
-        /// 8 MiB, at least 5 MiB). Each open output holds a buffer of this size. A multipart
+        /// 8 MiB, at least 5 MiB). Each open output holds up to five buffers of this size. A multipart
         /// upload has at most 10,000 parts, which caps an object at 10,000 times the part size.
         public Builder uploadPartSize(int bytes) {
             S3OutputFile.validatePartSize(bytes);

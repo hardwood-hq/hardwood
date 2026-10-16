@@ -118,18 +118,18 @@ Tests: `S3InputFileIT` (s3), `S3InputFileLargeFileIT` (s3), `S3MultiFileIT` (s3)
 
 ## S3OutputFile
 
-`S3Source.outputFile(...)` returns an `S3OutputFile` (internal) typed as `OutputFile`, so the writer sees only the [output contract](WRITER.md#outputfile). Its state is one buffer of the source's `uploadPartSize` (default 8 MiB, at least the 5 MiB S3 requires of every part but the last), allocated on `create()`.
+`S3Source.outputFile(...)` returns an `S3OutputFile` (internal) typed as `OutputFile`, so the writer sees only the [output contract](WRITER.md#outputfile). It fills buffers of the source's `uploadPartSize` (default 8 MiB, at least the 5 MiB S3 requires of every part but the last), the first allocated on `create()`, and uploads up to four parts at once, each on a virtual thread of its own.
 
 | Event | Requests |
 |---|---|
-| Buffer fills | `CreateMultipartUpload` the first time, then `UploadPart` with the buffer as the next part; the buffer is reused |
+| Buffer fills | `CreateMultipartUpload` the first time, on the writing thread. The buffer is handed to an `UploadPart` of the next part on a virtual thread, and writing continues in a spare buffer. With four parts in flight, the writing thread first waits for the oldest |
 | `close()` without a full part ever | One `PUT` of the buffered bytes |
-| `close()` after a part | `UploadPart` of the remainder, if any, then `CompleteMultipartUpload` listing every part's `ETag` |
-| `discard()`, or a failed `close()` | `AbortMultipartUpload`, if an upload was started |
+| `close()` after a part | `UploadPart` of the remainder, if any, a wait for every part, then `CompleteMultipartUpload` listing each part's `ETag` in part order |
+| `discard()`, or a failed `close()` | Waits for the part uploads in flight to end, then `AbortMultipartUpload`, if an upload was started |
 
-Two invariants follow. Nothing is visible at the key until the closing `PUT` or completion succeeds, which is what lets the writer's `discard()` leave the destination as it was. And an output holds one part in memory however large the file grows: parts upload on the writing thread, so the writer waits for each one instead of buffering ahead. Ten thousand parts is S3's limit, so a file is capped at 10,000 × `uploadPartSize`; a write that would cross it is rejected before any of it is buffered.
+Two invariants follow. Nothing is visible at the key until the closing `PUT` or completion succeeds, which is what lets the writer's `discard()` leave the destination as it was. And an output holds at most five parts in memory however large the file grows, four uploading and one filling, so uploading overlaps the writer's encoding by four parts and no further. A part that fails is raised by the next part handed off or by `close()`, so the writer stops within one part of a failure. The abort waits for the uploads in flight to end, without interrupting them, because S3 keeps a part whose upload completes after the abort; the wait and the abort run with the thread's interrupt status cleared, so an interrupted writer still releases its parts. A part upload has to complete within `requestTimeout`, which with four uploads sharing the connection's bandwidth bounds the part size a slow link can carry. Ten thousand parts is S3's limit, so a file is capped at 10,000 × `uploadPartSize`; a write that would cross it is rejected before any of it is buffered.
 
-S3 sends a completion's `200` status before the completion is done, and reports a failure that follows as an `Error` document in that body; `S3Xml` reads the body and raises it as a failed completion. Every request is retried as in [Errors and retries](#errors-and-retries). A retried `CreateMultipartUpload` whose first response was lost leaves an upload the output does not know of, and an output whose process ends leaves its started upload behind; both are removed only by a bucket lifecycle rule. A completion that succeeded but whose response was lost through every retry makes `close()` throw although the object exists, the one case where a failed `close()` does not leave the destination unchanged.
+S3 sends a completion's `200` status before the completion is done, and reports a failure that follows as an `Error` document in that body; `S3Xml` reads the body and raises it as a failed completion, which is retried like a `500` when its code is `InternalError`, `SlowDown` or `ServiceUnavailable`. Every request is retried as in [Errors and retries](#errors-and-retries). A retried `CreateMultipartUpload` whose first response was lost leaves an upload the output does not know of, and an output whose process ends leaves its started upload behind; both are removed only by a bucket lifecycle rule. A completion that succeeded but whose response was lost through every retry makes `close()` throw although the object exists, the one case where a failed `close()` does not leave the destination unchanged.
 
 A source built with `anonymous()` refuses `outputFile(...)` with an `IllegalStateException`, since S3 does not accept unsigned writes to a bucket that is not public-write.
 
@@ -209,5 +209,4 @@ Tests: `ParquetReaderS3CompatIT` (parquet-java-compat).
 - **Latency-aware coalescing (#763).** The gap policy does not adapt to the latency of the remote backend ([FETCH_PLANNING.md](FETCH_PLANNING.md#gap-policy)).
 - **Other remote backends (#519).** Only S3 is a remote backend; there is no plain HTTP(S) `InputFile`.
 - **Range-backed files over 2 GB (#501).** See [INPUT_FILES.md](INPUT_FILES.md#boundaries).
-- **Overlapped uploads (#1455).** A part uploads while the writer waits; the next part does not fill during the upload.
 - **Not tracked.** Requester-pays buckets, SigV4a, eviction or a global size cap for the range cache, and revalidation of an object that changes while open.

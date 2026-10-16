@@ -9,21 +9,30 @@ package dev.hardwood.s3.internal;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import dev.hardwood.OutputFile;
 
-/// An [OutputFile] that writes one S3 object through a buffer of one part.
+/// An [OutputFile] that writes one S3 object as a multipart upload, with up to
+/// [#MAX_UPLOADS_IN_FLIGHT] parts uploading while the writer goes on filling the next.
 ///
-/// Bytes collect in the buffer; each time it fills, it is uploaded as the next part of a
-/// multipart upload, which the first full part starts. [#close()] uploads the remainder and
-/// completes the upload, or, for an output that never filled a part, sends the whole object in
-/// one `PUT`. Until then nothing is visible at the key. [#discard()] aborts the upload, releasing
-/// the parts already sent.
+/// Bytes collect in a buffer of one part; each time it fills, it is handed to a virtual thread
+/// that uploads it as the next part, and writing continues into another buffer. The first full
+/// part starts the upload. When every upload slot is taken, a write waits for the oldest part to
+/// finish. [#close()] uploads the remainder, waits for every part and completes the upload, or,
+/// for an output that never filled a part, sends the whole object in one `PUT`. Until then
+/// nothing is visible at the key. [#discard()] waits for the uploads in flight to end and aborts
+/// the upload, releasing the parts already sent.
 ///
-/// Part uploads run on the writing thread, so the writer waits for each one.
+/// An output holds at most [#MAX_UPLOADS_IN_FLIGHT] + 1 buffers of one part each, allocated as
+/// the upload needs them.
 public final class S3OutputFile implements OutputFile {
 
     /// The smallest part S3 accepts, except for the last.
@@ -35,17 +44,26 @@ public final class S3OutputFile implements OutputFile {
     /// The most parts one multipart upload may have.
     static final int MAX_PARTS = 10_000;
 
+    /// The most parts of one output uploading at once.
+    static final int MAX_UPLOADS_IN_FLIGHT = 4;
+
     private final S3Api api;
     private final String bucket;
     private final String key;
     private final int partSize;
+    /// The parts uploaded, in part-number order.
     private final List<S3Xml.Part> parts = new ArrayList<>();
+    /// The parts uploading, oldest first.
+    private final ArrayDeque<PendingPart> inFlight = new ArrayDeque<>();
+    /// Buffers whose upload finished, for reuse.
+    private final ArrayDeque<byte[]> spareBuffers = new ArrayDeque<>();
 
     private State state = State.NEW;
     private byte[] buffer;
     private int buffered;
     private long position;
     private String uploadId;
+    private ExecutorService uploads;
 
     public S3OutputFile(S3Api api, String bucket, String key, int partSize) {
         this.api = Objects.requireNonNull(api, "api");
@@ -82,7 +100,7 @@ public final class S3OutputFile implements OutputFile {
             buffered += length;
             position += length;
             if (buffered == partSize) {
-                uploadPart();
+                startPartUpload(false);
             }
         }
     }
@@ -106,7 +124,10 @@ public final class S3OutputFile implements OutputFile {
             }
             else {
                 if (buffered > 0) {
-                    uploadPart();
+                    startPartUpload(true);
+                }
+                while (!inFlight.isEmpty()) {
+                    finishOldestPart();
                 }
                 api.completeMultipartUpload(bucket, key, uploadId, parts);
                 uploadId = null;
@@ -124,17 +145,30 @@ public final class S3OutputFile implements OutputFile {
         finish();
     }
 
-    /// Aborts the multipart upload, if one was started. Does nothing once the output is closed.
+    /// Waits for the part uploads in flight to end and aborts the multipart upload, if one was
+    /// started. Does nothing once the output is closed.
+    ///
+    /// The wait and the abort run with the thread's interrupt status cleared, and the status
+    /// restored afterwards, so that an interrupted writer still releases its parts.
     @Override
     public void discard() throws IOException {
         if (state == State.CLOSED) {
             return;
         }
-        finish();
-        if (uploadId != null) {
-            String abandoned = uploadId;
-            uploadId = null;
-            api.abortMultipartUpload(bucket, key, abandoned);
+        boolean interrupted = Thread.interrupted();
+        try {
+            // S3 keeps a part whose upload completes after the abort, so the uploads end first.
+            finish();
+            if (uploadId != null) {
+                String abandoned = uploadId;
+                uploadId = null;
+                api.abortMultipartUpload(bucket, key, abandoned);
+            }
+        }
+        finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -148,21 +182,86 @@ public final class S3OutputFile implements OutputFile {
         }
     }
 
-    private void uploadPart() throws IOException {
+    /// Hands the buffer to an upload of the next part, after taking a free upload slot, and
+    /// continues in a spare buffer unless this is the last part. A part that failed in the
+    /// meantime is raised here, so a failure stops the writer within one part.
+    private void startPartUpload(boolean last) throws IOException {
         if (uploadId == null) {
             uploadId = api.createMultipartUpload(bucket, key);
+            uploads = Executors.newVirtualThreadPerTaskExecutor();
         }
-        int partNumber = parts.size() + 1;
-        String etag = api.uploadPart(bucket, key, uploadId, partNumber, buffer, buffered);
-        parts.add(new S3Xml.Part(partNumber, etag));
+        raiseFailedPart();
+        if (inFlight.size() == MAX_UPLOADS_IN_FLIGHT) {
+            finishOldestPart();
+        }
+        int partNumber = parts.size() + inFlight.size() + 1;
+        byte[] part = buffer;
+        int length = buffered;
+        String id = uploadId;
+        inFlight.add(new PendingPart(partNumber, part,
+                uploads.submit(() -> api.uploadPart(bucket, key, id, partNumber, part, length))));
+        buffer = last ? null : nextBuffer();
         buffered = 0;
     }
 
+    private byte[] nextBuffer() {
+        byte[] spare = spareBuffers.poll();
+        return spare != null ? spare : new byte[partSize];
+    }
+
+    /// Waits for the oldest part in flight and records its `ETag`.
+    private void finishOldestPart() throws IOException {
+        PendingPart oldest = inFlight.peek();
+        String etag = await(oldest.etag());
+        inFlight.poll();
+        parts.add(new S3Xml.Part(oldest.partNumber(), etag));
+        spareBuffers.push(oldest.buffer());
+    }
+
+    private void raiseFailedPart() throws IOException {
+        for (PendingPart part : inFlight) {
+            if (part.etag().state() == Future.State.FAILED) {
+                await(part.etag());
+            }
+        }
+    }
+
+    private static String await(Future<String> etag) throws IOException {
+        try {
+            return etag.get();
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while waiting for a part upload", e);
+        }
+        catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IOException io) {
+                throw io;
+            }
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IOException("Part upload failed", cause);
+        }
+    }
+
+    /// Ends the output: waits for the part uploads still running to end, then releases the
+    /// buffers.
     private void finish() {
         state = State.CLOSED;
+        if (uploads != null) {
+            uploads.close();
+            uploads = null;
+        }
+        inFlight.clear();
+        spareBuffers.clear();
+        parts.clear();
         buffer = null;
         buffered = 0;
-        parts.clear();
     }
 
     private void requireOpen() {
@@ -173,6 +272,9 @@ public final class S3OutputFile implements OutputFile {
 
     private String target() {
         return "s3://" + bucket + "/" + key;
+    }
+
+    private record PendingPart(int partNumber, byte[] buffer, Future<String> etag) {
     }
 
     private enum State {

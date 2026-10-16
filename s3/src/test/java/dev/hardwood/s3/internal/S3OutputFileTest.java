@@ -21,6 +21,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
@@ -51,6 +55,14 @@ class S3OutputFileTest {
     private final AtomicInteger completionFailures = new AtomicInteger();
     private volatile byte[] published;
     private volatile boolean aborted;
+    /// Counted down when part 2 arrives; part 1's upload waits for it, when set.
+    private volatile CountDownLatch partTwoArrived;
+    private volatile boolean partOneSawPartTwo;
+    /// When set, part 2's upload waits for it before answering.
+    private volatile CountDownLatch partTwoRelease;
+    private volatile boolean partTwoDone;
+    private volatile boolean abortSawPartTwoDone;
+    private ExecutorService handlers;
     private HttpServer server;
     private HttpClient client;
 
@@ -58,6 +70,8 @@ class S3OutputFileTest {
     void setUp() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", this::handle);
+        handlers = Executors.newCachedThreadPool();
+        server.setExecutor(handlers);
         server.start();
         client = HttpClient.newHttpClient();
     }
@@ -66,6 +80,7 @@ class S3OutputFileTest {
     void tearDown() {
         client.close();
         server.stop(0);
+        handlers.shutdownNow();
     }
 
     @ParameterizedTest
@@ -130,6 +145,47 @@ class S3OutputFileTest {
     }
 
     @Test
+    void uploadsTheNextPartWhileOneIsInFlight() throws IOException {
+        partTwoArrived = new CountDownLatch(1);
+        byte[] bytes = payload(2 * PART_SIZE + 1);
+
+        write(output(), bytes);
+
+        assertThat(partOneSawPartTwo).isTrue();
+        assertThat(published).isEqualTo(bytes);
+    }
+
+    @Test
+    void aFailedPartStopsTheWriterOnceTheUploadSlotsAreTaken() throws IOException {
+        failOnce.put("PUT /bucket/dir/file.parquet?partNumber=1&uploadId=upload%2B%2F%3D1", 403);
+        S3OutputFile out = output();
+        out.create();
+
+        assertThatThrownBy(() -> out.write(ByteBuffer.wrap(payload((S3OutputFile.MAX_UPLOADS_IN_FLIGHT + 1) * PART_SIZE))))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Upload part 1 of s3://bucket/dir/file.parquet failed: HTTP 403 AccessDenied: Access Denied");
+        out.discard();
+
+        assertThat(aborted).isTrue();
+        assertThat(published).isNull();
+        assertThat(requests.getLast()).isEqualTo("DELETE /bucket/dir/file.parquet?uploadId=upload%2B%2F%3D1");
+    }
+
+    @Test
+    void aFailedLastPartFailsCloseAndAbortsAfterTheOtherParts() throws IOException {
+        failOnce.put("PUT /bucket/dir/file.parquet?partNumber=3&uploadId=upload%2B%2F%3D1", 403);
+        S3OutputFile out = output();
+        out.create();
+        out.write(ByteBuffer.wrap(payload(2 * PART_SIZE + 1)));
+
+        assertThatThrownBy(out::close)
+                .isInstanceOf(IOException.class)
+                .hasMessage("Upload part 3 of s3://bucket/dir/file.parquet failed: HTTP 403 AccessDenied: Access Denied");
+        assertThat(aborted).isTrue();
+        assertThat(requests.getLast()).isEqualTo("DELETE /bucket/dir/file.parquet?uploadId=upload%2B%2F%3D1");
+    }
+
+    @Test
     void discardAbortsTheUpload() throws IOException {
         S3OutputFile out = output();
         out.create();
@@ -170,8 +226,69 @@ class S3OutputFileTest {
     }
 
     @Test
-    void completionReportingAnErrorInA200ResponseFails() throws IOException {
+    void retriesACompletionReportingAnInternalErrorInA200Response() throws IOException {
         completionFailures.set(1);
+        byte[] bytes = payload(PART_SIZE + 1);
+
+        write(output(), bytes);
+
+        assertThat(published).isEqualTo(bytes);
+        assertThat(requests).filteredOn(r -> r.startsWith("POST") && r.contains("uploadId=")).hasSize(2);
+    }
+
+    @Test
+    void reusesSpareBuffersAcrossManyParts() throws IOException {
+        byte[] bytes = payload((S3OutputFile.MAX_UPLOADS_IN_FLIGHT + 3) * PART_SIZE + 1);
+
+        write(output(), bytes);
+
+        assertThat(parts).hasSize(S3OutputFile.MAX_UPLOADS_IN_FLIGHT + 4);
+        assertThat(published).isEqualTo(bytes);
+    }
+
+    @Test
+    void discardWaitsForThePartsInFlightBeforeAborting() throws Exception {
+        partTwoRelease = new CountDownLatch(1);
+        S3OutputFile out = output();
+        out.create();
+        out.write(ByteBuffer.wrap(payload(2 * PART_SIZE)));
+
+        Thread discarding = Thread.ofVirtual().start(() -> {
+            try {
+                out.discard();
+            }
+            catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        assertThat(discarding.join(Duration.ofMillis(300))).isFalse();
+        partTwoRelease.countDown();
+        assertThat(discarding.join(Duration.ofSeconds(10))).isTrue();
+
+        assertThat(aborted).isTrue();
+        assertThat(abortSawPartTwoDone).isTrue();
+    }
+
+    @Test
+    void anInterruptedWriterStillAbortsTheUpload() throws IOException {
+        S3OutputFile out = output();
+        out.create();
+        out.write(ByteBuffer.wrap(payload(PART_SIZE)));
+
+        Thread.currentThread().interrupt();
+        try {
+            out.discard();
+        }
+        finally {
+            assertThat(Thread.interrupted()).isTrue();
+        }
+
+        assertThat(aborted).isTrue();
+    }
+
+    @Test
+    void completionReportingAnErrorInA200ResponseFailsOnceItsRetriesAreSpent() throws IOException {
+        completionFailures.set(4);
         S3OutputFile out = output();
         out.create();
         out.write(ByteBuffer.wrap(payload(PART_SIZE)));
@@ -277,11 +394,35 @@ class S3OutputFileTest {
         }
         else if (method.equals("PUT") && query != null) {
             int partNumber = Integer.parseInt(query.substring("partNumber=".length(), query.indexOf('&')));
+            CountDownLatch latch = partTwoArrived;
+            if (latch != null && partNumber == 2) {
+                latch.countDown();
+            }
+            else if (latch != null && partNumber == 1) {
+                try {
+                    partOneSawPartTwo = latch.await(10, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            CountDownLatch release = partTwoRelease;
+            if (release != null && partNumber == 2) {
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             synchronized (parts) {
                 parts.put(partNumber, body);
             }
             exchange.getResponseHeaders().add("ETag", "\"etag-" + partNumber + "\"");
             respond(exchange, 200, "");
+            if (partNumber == 2) {
+                partTwoDone = true;
+            }
         }
         else if (method.equals("PUT")) {
             published = body;
@@ -304,6 +445,7 @@ class S3OutputFileTest {
             respond(exchange, 200, "<CompleteMultipartUploadResult><ETag>\"done\"</ETag></CompleteMultipartUploadResult>");
         }
         else if (method.equals("DELETE")) {
+            abortSawPartTwoDone = partTwoDone;
             aborted = true;
             respond(exchange, 204, "");
         }

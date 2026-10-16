@@ -37,13 +37,14 @@ The source is configured as for reading; [Reading from S3](s3.md) covers credent
 
 ## Change the part size
 
-The output uploads the file in parts of 8 MiB. A larger part size raises the size limit of one file (10,000 parts) and takes more memory per open output:
+The output uploads the file in parts of 8 MiB. A larger part size raises the size limit of one file (10,000 parts) and takes more memory per open output, which holds up to five parts. Each part upload must complete within the source's `requestTimeout` (30 s by default), with four sharing the upload bandwidth, so raise the timeout with the part size on a slow link:
 
 ```java
 S3Source source = S3Source.builder()
         .region("eu-west-1")
         .credentials(S3Credentials.of(accessKeyId, secretKey))
         .uploadPartSize(64 * 1024 * 1024)
+        .requestTimeout(Duration.ofMinutes(2))
         .build();
 ```
 

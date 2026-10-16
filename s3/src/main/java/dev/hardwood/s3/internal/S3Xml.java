@@ -53,12 +53,29 @@ final class S3Xml {
         return uploadId;
     }
 
+    /// A failed completion reported in the body of a `200` response, with the S3 error code.
+    static final class CompletionFailure extends IOException {
+
+        private final String code;
+
+        CompletionFailure(String message, String code) {
+            super(message);
+            this.code = code;
+        }
+
+        /// Whether S3 asks for the completion to be retried: an internal error or throttling.
+        boolean transientFailure() {
+            return "InternalError".equals(code) || "SlowDown".equals(code) || "ServiceUnavailable".equals(code);
+        }
+    }
+
     /// Checks that a `200` completion response reports success. S3 sends the status before the
-    /// completion is done, so a failure arrives as an `Error` document in a `200` response.
+    /// completion is done, so a failure arrives as an `Error` document in a `200` response, raised
+    /// as a [CompletionFailure].
     static void checkCompletion(byte[] body, String description) throws IOException {
         Map<String, String> fields = rootFields(body, description);
         if ("Error".equals(fields.get(ROOT))) {
-            throw new IOException(description + " failed:" + summary(fields));
+            throw new CompletionFailure(description + " failed:" + summary(fields), fields.get("Code"));
         }
         if (!"CompleteMultipartUploadResult".equals(fields.get(ROOT))) {
             throw new IOException(description + " failed: unexpected response " + fields.get(ROOT));

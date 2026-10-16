@@ -193,10 +193,23 @@ public final class S3Api {
             throws IOException {
         String description = "Complete multipart upload s3://" + bucket + "/" + key;
         byte[] body = S3Xml.completionBody(parts);
-        HttpResponse<byte[]> response = sendWrite("POST", uploadUri(bucket, key, "uploadId=" + Aws4Signer.uriEncode(uploadId)),
-                body, body.length, 200, description);
-        // S3 can answer 200 and report a failure in the body, once the response has started.
-        S3Xml.checkCompletion(response.body(), description);
+        URI uri = uploadUri(bucket, key, "uploadId=" + Aws4Signer.uriEncode(uploadId));
+        for (int attempt = 0;; attempt++) {
+            if (attempt > 0) {
+                sleepBeforeRetry(attempt);
+            }
+            HttpResponse<byte[]> response = sendWrite("POST", uri, body, body.length, 200, description);
+            try {
+                // S3 can answer 200 and report a failure in the body, once the response has started.
+                S3Xml.checkCompletion(response.body(), description);
+                return;
+            }
+            catch (S3Xml.CompletionFailure e) {
+                if (!e.transientFailure() || attempt >= maxRetries) {
+                    throw e;
+                }
+            }
+        }
     }
 
     /// Aborts a multipart upload, releasing its parts. An upload that no longer exists counts as

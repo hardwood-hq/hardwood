@@ -63,7 +63,7 @@ Tests: `WriterLayoutTest`, `RowWriterEquivalenceTest`, `WriterNestedRoundTripTes
 | Backend | Where | Behaviour |
 |---|---|---|
 | Local file | `internal.writer.ChannelOutputFile`, from `OutputFile.of(Path)` | Streams to a temporary sibling (`<name>.hardwood-tmp`) through a coalescing buffer, and atomically renames it onto the target on `close()`; `discard()`, or a `close()` whose final flush or rename fails, deletes the sibling. A reader never observes a half-written file at the target path. |
-| S3 object | `s3.internal.S3OutputFile`, from `S3Source.outputFile(...)` | Buffers one part and sends the file as a multipart upload, completed on `close()` and aborted on `discard()`; a file smaller than a part is one `PUT` on `close()`. Nothing is visible at the key before `close()`. See [S3_STORAGE.md](S3_STORAGE.md#s3outputfile). |
+| S3 object | `s3.internal.S3OutputFile`, from `S3Source.outputFile(...)` | Sends the file as a multipart upload with up to four parts uploading while the writer fills the next, completed on `close()` and aborted on `discard()`; a file smaller than a part is one `PUT` on `close()`. Nothing is visible at the key before `close()`. See [S3_STORAGE.md](S3_STORAGE.md#s3outputfile). |
 | In memory | `InMemoryOutputFile`, from `OutputFile.inMemory()` | A growable heap buffer, the write-side counterpart to `ByteBufferInputFile`. It is public, final, `@Experimental` and constructed only by the factory; its `buffer()` method, after `close()`, returns a buffer spanning exactly the file, so it passes to `InputFile.of(ByteBuffer)` unchanged. A file is capped at the largest array the JVM allocates; a write past it throws `IOException`. |
 
 `buffer()` promises the file's contents and a position and limit per call, not a view of the storage: callers must not modify the buffer. Storage is therefore free to change from one growable array to a list of chunks, which is what a file past 2 GB needs. A single `ByteBuffer` is `int`-indexed, so `buffer()` stays capped at 2 GB under any storage, and a larger file would leave through an accessor that has no such cap: a transfer to a `WritableByteChannel`, or an `InputFile` over the chunks (`InputFile.readRange` takes a `long` offset). Neither exists. A `MemorySegment` accessor is unavailable while the baseline is Java 21, where it is a preview API.
@@ -242,5 +242,5 @@ The architecture leaves parallelism open without a public-API change. Within a r
 
 ## Boundaries
 
-- No parallel column encoding or row-group pipelining, and no upload overlapping the encoding of the next part (#1455).
+- No parallel column encoding or row-group pipelining (#1455).
 - The row layer costs measurably more than the columnar one for the same file, in time and in staging allocation (#1045).
