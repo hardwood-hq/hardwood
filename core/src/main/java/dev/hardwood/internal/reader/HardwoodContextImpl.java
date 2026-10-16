@@ -31,13 +31,15 @@ public class HardwoodContextImpl implements HardwoodContext {
     private static final System.Logger LOG = System.getLogger(HardwoodContextImpl.class.getName());
 
     private final ExecutorService executor;
+    private final int threads;
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
     private final MetadataSource metadataSource;
 
-    private HardwoodContextImpl(ExecutorService executor, LibdeflatePool libdeflatePool,
+    private HardwoodContextImpl(ExecutorService executor, int threads, LibdeflatePool libdeflatePool,
                                  MetadataSource metadataSource) {
         this.executor = executor;
+        this.threads = threads;
         this.libdeflatePool = libdeflatePool;
         this.decompressorFactory = new DecompressorFactory(libdeflatePool);
         this.metadataSource = metadataSource;
@@ -62,7 +64,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         };
         ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, libdeflatePool, metadataSource);
+        return new HardwoodContextImpl(executor, threads, libdeflatePool, metadataSource);
     }
 
     /// Start building a context.
@@ -97,6 +99,11 @@ public class HardwoodContextImpl implements HardwoodContext {
     @Override
     public ExecutorService executor() {
         return executor;
+    }
+
+    /// The number of threads in [#executor()].
+    public int threads() {
+        return threads;
     }
 
     /// Get the decompressor factory.

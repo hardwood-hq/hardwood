@@ -10,6 +10,7 @@ package dev.hardwood.internal.writer;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.compression.Compressor;
@@ -280,18 +281,20 @@ public final class RowGroupBuffer {
         rowCount = 0;
     }
 
-    /// Writes the buffered column chunks to `out` in schema order and returns the row
-    /// group's metadata, with the page index and Bloom filter of each chunk, which the writer
-    /// places after the last row group.
-    public FlushedRowGroup flushTo(OutputFile out) throws IOException {
+    /// Encodes the buffered column chunks, on up to `workers` tasks of `executor` besides the
+    /// calling thread, writes them to `out` in schema order, and returns the row group's metadata,
+    /// with the page index and Bloom filter of each chunk, which the writer places after the last
+    /// row group. The file is the same whatever `workers` is; see [RowGroupFlush].
+    ///
+    /// @param executor runs the worker tasks; unused where `workers` is `0`
+    public FlushedRowGroup flushTo(OutputFile out, ExecutorService executor, int workers) throws IOException {
+        List<ColumnChunkBuffer.Flushed> written = new RowGroupFlush(columns, schema).writeTo(out, executor, workers);
         List<ColumnChunk> chunks = new ArrayList<>(columns.length);
         List<ColumnIndex> columnIndexes = new ArrayList<>(columns.length);
         List<OffsetIndex> offsetIndexes = new ArrayList<>(columns.length);
         List<byte[]> bloomFilters = new ArrayList<>(columns.length);
         long totalByteSize = 0;
-        for (int c = 0; c < columns.length; c++) {
-            long chunkStartOffset = out.position();
-            ColumnChunkBuffer.Flushed chunk = columns[c].flushTo(out, schema.getColumn(c), chunkStartOffset);
+        for (ColumnChunkBuffer.Flushed chunk : written) {
             chunks.add(new ColumnChunk(chunk.metaData(), null, null, null, null, ""));
             columnIndexes.add(chunk.columnIndex());
             offsetIndexes.add(chunk.offsetIndex());

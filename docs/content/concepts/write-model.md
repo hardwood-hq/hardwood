@@ -27,7 +27,7 @@ The `FileMetaData` footer carries the schema and every page and column-chunk off
 - **A failure leaves nothing behind.** When the writer cannot finish, it discards what it has written; see [Handle Write Failures](../how-to/write-failures.md). `RowWriter.tryWriteRow` rejects a record without failing the writer. The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path.
 - **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close` / `discard`, with no seeking and no size known ahead of time. `close()` publishes the file and `discard()` throws it away; the writer calls exactly one of them.
 
-## What bounds memory
+## Memory bounds
 
 A column chunk's metadata (its compressed and uncompressed sizes, its page offsets, its statistics) is only known once the chunk's bytes have been encoded. The writer therefore encodes and buffers a whole row group's columns in memory, then writes them out in schema order and records where each landed.
 
@@ -35,9 +35,10 @@ A file of any size is a sequence of row groups, each buffered, flushed and forgo
 
 A row group passes `rowGroupBufferTargetBytes` by at most one record, since a record cannot be split across row groups.
 
-Two overheads sit on top of the target, and neither scales with how much you write:
+Three overheads sit on top of the target, and none scales with how much you write:
 
 - **Growth headroom.** The buffers hold more than they are charged for while they grow: the value stores grow by half again, and the level streams, a `BYTE_ARRAY` column's packed content and every dictionary's value array and hash table double.
+- **Encoded chunks.** The column chunks of a row group are encoded in parallel at flush and written in schema order, so a chunk finished ahead of its turn is held, compressed, until the chunks before it are written: at most one row group's encoded size.
 - **A per-column floor.** A column's buffers have a floor under them, so a schema with enough columns that each one's share of the target falls below that floor opens at a multiple of it. Measured, 200 columns against a 1 MiB target hold about 2.4 MB before a record arrives, while a thousand columns against the default 128 MiB target stay inside it, their shares being far above the floor.
 
 The page index is held until `close()` writes it, so it grows with the file: per data page, a location and two bounds. A bound is the type's width, or for a `BYTE_ARRAY` column usually at most `statisticsTruncationLength` bytes; a page holds at most `pageTargetRows` records and fewer where its bytes reach `pageTargetBytes` first. Bloom filters are held until `close()` too: per row group, each configured column's filter, about 1.2 bytes per distinct value of the chunk at the default false-positive probability, rounded up to a power of two. While a filter is built, a chunk that wrote no dictionary briefly holds up to about 2.4 bytes per non-null value for it.

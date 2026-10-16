@@ -128,7 +128,7 @@ WriterConfig config = WriterConfig.builder()
 | `pageTargetBytes(int)` | `1 MiB` | Encoded bytes before a data page is cut, counting the values as the chunk's chosen encoding writes them, so a dictionary column is measured in indices. A ceiling: the page is cut before the record that would cross it, and only a single record larger than the whole target can breach it, a page holding whole records. Must be at least 4 bytes. |
 | `pageTargetRows(int)` | `20,000` | Records before a data page is cut. A page holds whole records, so on a repeated column it counts records, not values. Sets how finely the page index lets a reader skip within a column chunk; it binds on columns whose values encode small, such as dictionary-encoded ones. Must be positive. |
 | `rowGroupTargetRows(long)` | `1,048,576` | Records per row group: row groups hold exactly this many records apart from the last. Must be positive; a target above the structural ceiling of `Integer.MAX_VALUE - 9` records is that ceiling, so `Long.MAX_VALUE` means "cut on bytes alone". |
-| `rowGroupBufferTargetBytes(long)` | `128 MiB` | Bytes the writer holds for the open row group before cutting it: level streams, dictionary indices, value stores and dictionaries. A row group passes it by at most one record. A row group is also cut before a repeated column's chunk would reach `Integer.MAX_VALUE - 8` values and nulls, or before any column chunk would pass `Integer.MAX_VALUE - 8` bytes of `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` values, so a target above 2 GiB can yield smaller row groups. See [The Write Model](../concepts/write-model.md#what-bounds-memory). Must be positive. |
+| `rowGroupBufferTargetBytes(long)` | `128 MiB` | Bytes the writer holds for the open row group before cutting it: level streams, dictionary indices, value stores and dictionaries. A row group passes it by at most one record. A row group is also cut before a repeated column's chunk would reach `Integer.MAX_VALUE - 8` values and nulls, or before any column chunk would pass `Integer.MAX_VALUE - 8` bytes of `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` values, so a target above 2 GiB can yield smaller row groups. See [The Write Model](../concepts/write-model.md#memory-bounds). Must be positive. |
 | `codec(CompressionCodec)` | `ZSTD`, or `UNCOMPRESSED` when the ZSTD library is absent | Codec each page body is compressed with. |
 | `encoding(ColumnEncoding)` | `AUTO` | Encoding policy for every column without an override of its own. |
 | `encoding(String, ColumnEncoding)` | — | Encoding policy for one leaf column, overriding the file-wide default. |
@@ -342,6 +342,17 @@ The row-group targets close row groups as well; a row group ends at a target or 
 
 `endRowGroup()` and `close()` throw `IllegalStateException` when called from inside a `writeBatch` or `writeRow` filler. Any exception from `endRowGroup()` fails the writer.
 
+## Encoding Threads
+
+At each row-group flush, the column chunks are encoded and compressed in parallel on the threads of a `HardwoodContext` and on the thread that called the write, then written in schema order. The file is byte-identical to one written on a single thread. Values are copied into the row group on the calling thread.
+
+| Factory | Threads |
+|---|---|
+| `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor on its first flush of more than one column, and closes it on `close()` or `abort()` |
+| `create(out, schema, config, context)` | The threads of `context`. The caller closes `context` after the writer; one context can serve several writers and readers |
+
+A schema of one column is encoded on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
+
 ## Finishing and Abandoning a File
 
 | Call | Effect |
@@ -351,7 +362,7 @@ The row-group targets close row groups as well; a row group ends at a target or 
 | `abort()` | Discards the output and closes the writer |
 | `close()` or `abort()` on a closed or aborted writer | Nothing |
 
-The writer fails when `ColumnWriter.writeBatch`, `RowWriter.writeRow` or `endRowGroup` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
+The writer fails when `ColumnWriter.writeBatch`, `RowWriter.writeRow` or `endRowGroup` throws, whatever the exception: a batch or record rejected by the checks under [Rejected Input](#rejected-input), an exception thrown by the filler, a destination `IOException` or a codec failure. `RowWriter.tryWriteRow` fails the writer only on the exceptions listed under [`RowWriteResult`](#rowwriteresult). A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
 
 A failure while `close()` finishes or publishes the file discards the output as well, and `close()` throws it. When the output cannot be discarded, `abort()` and `close()` on a failed writer throw the `IOException`; a failure while finishing or publishing carries it as a suppressed exception.
 
@@ -368,14 +379,14 @@ A rejection that depends on the value handed over becomes `Rejected`: a value ou
 
 Every other failure throws and fails the writer, as it does under `writeRow`: an unknown field name or index, a field set twice, a setter that does not fit the field (including any value setter on a column annotated `UNKNOWN`), an exception thrown by the filler, and a failure while a completed batch is written.
 
-## What the Writer Rejects
+## Rejected Input
 
 | Exception | When |
 |---|---|
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`), one whose library is missing, or one whose native library will not load; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `FILE` value that is not valid, or that sets a field its group has no child for; a `REQUIRED` field left unset by a record; a record whose values for one column pass what a column chunk can hold; a Bloom filter configured for a `BOOLEAN` column, or with a false-positive probability outside (0, 1) |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded |
+| `IllegalStateException` | Writing, ending a row group, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; ending a row group or closing the writer from inside a batch or record filler; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned; taking `InMemoryOutputFile.buffer()` before the writer has closed, or from a destination that was discarded; flushing a row group after the `HardwoodContext` passed to `create` has been closed |
 | `IOException` | The destination cannot be created, written, or finalized; an in-memory file would pass `Integer.MAX_VALUE - 8` bytes |
 | `ParquetWriteException` | The file could not be produced for a reason that is neither the caller's input nor the destination: a compression codec that rejects a page body. Unchecked |
 

@@ -109,7 +109,7 @@ A Bloom filter therefore pays off on a column with all of these properties:
   skip.
 
 Each filter adds its size to the file for every row group, and the writer holds it in memory
-until the file is closed; see [What bounds memory](write-model.md#what-bounds-memory). Configuring
+until the file is closed; see [Memory bounds](write-model.md#memory-bounds). Configuring
 a column to carry one is described under [Bloom filters](../reference/writer.md#bloom-filters) in
 the Writer Reference.
 

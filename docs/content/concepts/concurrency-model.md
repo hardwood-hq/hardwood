@@ -12,7 +12,8 @@
 # The Concurrency Model
 
 Hardwood is multi-threaded at its core: a single reader, driven by a single consumer thread,
-keeps a pool of worker threads busy decoding ahead of where the consumer is reading.
+keeps a pool of worker threads busy decoding ahead of where the consumer is reading, and a
+writer encodes the column chunks of each row group on such a pool.
 
 ## Why concurrency is built in
 
@@ -52,7 +53,13 @@ a multi-file reader rather than looping over single-file readers yourself, and t
 shared pool matters, since all the files draw on the same workers. See
 [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
-## What this means for your code
+## Writing
+
+A writer copies values into the open row group on the thread that calls it. When the row group is flushed, its column chunks are encoded and compressed in parallel: the pool threads of a `HardwoodContext` and the calling thread each take the next chunk not yet claimed, and the chunks are written in schema order, so the file is the same as one written on a single thread. A writer opened without a context creates its own for the duration of the write; `ParquetFileWriter.create(out, schema, config, context)` uses yours, so writers and readers can draw on one pool.
+
+Encoding and compression make up most of a write with a compressing codec such as `ZSTD`, and less of an uncompressed one, where copying values into the row group dominates; the copying stays on the calling thread. A schema of many columns spreads its flush across all the threads. A schema of a few columns is bounded by its most expensive column chunk, since a chunk is encoded by one thread.
+
+## Guidelines for your code
 
 - **Drive one reader from one thread.** A `RowReader` / `ColumnReader` / `ColumnReaders` instance
   is a stateful cursor meant to be advanced by a single consumer thread. The concurrency is
@@ -60,6 +67,7 @@ shared pool matters, since all the files draw on the same workers. See
   multiple threads. The batch arrays a `ColumnReader` returns may be handed to other threads while
   the consumer moves on (see
   [Column-Oriented Reading](../how-to/column-reader.md#retaining-and-handing-off-batch-arrays)).
+  A `ParquetFileWriter` and its views are likewise used from one thread at a time.
 - **For your own parallelism, read in parallel at the file or row-group grain.** To use more
   than one consumer thread, give each its own reader over a different file, or partition one file
   across readers by byte range with
@@ -67,7 +75,7 @@ shared pool matters, since all the files draw on the same workers. See
   `HardwoodContext` so they draw worker threads from one pool rather than each spinning up its
   own.
 - **Size the pool to the workload.** `HardwoodContext.create(n)` sets the number of
-  threads that decompress and decode pages, which is the bulk of the CPU, so `n` is the main throughput
+  threads that decompress and decode pages, and that encode and compress column chunks on write, which is the bulk of the CPU, so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
   Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages,
   fetching page bytes on demand and assembling decoded values into batches, run on the JVM's

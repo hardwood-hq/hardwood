@@ -11,10 +11,11 @@ import java.util.concurrent.ExecutorService;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.writer.ParquetFileWriter;
 
-/// Context object that manages shared resources for Parquet file reading.
+/// Context object that manages shared resources for reading and writing Parquet files.
 ///
-/// Holds the thread pool for parallel page decoding, the libdeflate
+/// Holds the thread pool for parallel page decoding and column chunk encoding, the libdeflate
 /// decompressor pool for native GZIP decompression, the decompressor factory,
 /// and the [MetadataSource] installed through [#builder()], if any.
 ///
@@ -22,6 +23,10 @@ import dev.hardwood.reader.ParquetFileReader;
 ///
 /// - [Hardwood] instance (for multi-file usage)
 /// - [ParquetFileReader] instance (for standalone single-file usage)
+/// - [ParquetFileWriter] instance (for a writer created without a context)
+///
+/// A context created by the caller is closed by the caller, after every reader and writer
+/// using it.
 public interface HardwoodContext extends AutoCloseable {
 
     /// Get the executor service for parallel operations.
@@ -59,7 +64,8 @@ public interface HardwoodContext extends AutoCloseable {
     @Experimental
     interface Builder {
 
-        /// Sets the number of platform threads the context uses to decompress and decode pages.
+        /// Sets the number of platform threads the context uses to decompress and decode pages, and
+        /// to encode and compress the column chunks of a writer's row groups.
         /// Defaults to [Runtime#availableProcessors()].
         ///
         /// @throws IllegalArgumentException if `threads` is less than 1

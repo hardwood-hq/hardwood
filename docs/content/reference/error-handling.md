@@ -63,4 +63,4 @@ the schema path of the offending group or column, not the file.
 
 ## Writing
 
-The exceptions a write can throw, the condition behind each, and the schema shapes the writer refuses are tabulated in the [Writer Reference](writer.md#what-the-writer-rejects).
+The exceptions a write can throw, the condition behind each, and the schema shapes the writer refuses are tabulated in the [Writer Reference](writer.md#rejected-input).

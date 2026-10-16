@@ -9,14 +9,12 @@ package dev.hardwood.internal.writer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 
-import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.bloomfilter.SplitBlockBloomFilterBuilder;
 import dev.hardwood.internal.compression.Compressor;
@@ -52,7 +50,8 @@ import dev.hardwood.writer.ColumnEncoding;
 ///
 /// **At flush**, the chunk is encoded: the dictionary page where the chunk has one, then the data
 /// pages one by one, each *cut* (its extent planned) and its levels and values framed, compressed
-/// and written straight to the output. A page takes whole records while they fit the page's byte
+/// and handed to a [ChunkSink]: the file, or a buffer held until the chunks ahead of it in schema
+/// order are written ([RowGroupFlush]). A page takes whole records while they fit the page's byte
 /// and record targets, and at least one record, so a record larger than the byte target occupies
 /// a page of its own: the page index addresses pages by their first record, which requires every
 /// page to start at a record boundary. Each page's statistics, level histograms and unencoded
@@ -536,12 +535,34 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param columnIndex the chunk's `ColumnIndex`, `null` where the chunk cannot have one
     /// @param bloomFilter the chunk's Bloom filter bitset, `null` where its column has none
     record Flushed(ColumnMetaData metaData, ColumnIndex columnIndex, OffsetIndex offsetIndex, byte[] bloomFilter) {
+
+        /// This chunk with its offsets, which [#encodeTo] records from the chunk's first byte,
+        /// moved to where that byte lands in the file.
+        Flushed at(long chunkStart) {
+            ColumnMetaData m = metaData;
+            ColumnMetaData placed = new ColumnMetaData(m.type(), m.encodings(), m.pathInSchema(), m.codec(),
+                    m.numValues(), m.totalUncompressedSize(), m.totalCompressedSize(), m.keyValueMetadata(),
+                    m.dataPageOffset() + chunkStart,
+                    m.dictionaryPageOffset() == null ? null : m.dictionaryPageOffset() + chunkStart,
+                    m.statistics(), m.geospatialStatistics(), m.bloomFilterOffset(), m.bloomFilterLength(),
+                    m.encodingStats(), m.sizeStatistics());
+            List<PageLocation> pages = new ArrayList<>(offsetIndex.pageLocations().size());
+            for (PageLocation page : offsetIndex.pageLocations()) {
+                pages.add(new PageLocation(page.offset() + chunkStart, page.compressedPageSize(),
+                        page.firstRowIndex()));
+            }
+            return new Flushed(placed, columnIndex,
+                    new OffsetIndex(List.copyOf(pages), offsetIndex.unencodedByteArrayDataBytes()), bloomFilter);
+        }
     }
 
-    /// Encodes and writes the whole column chunk — dictionary page (when present) then data
-    /// pages — to `out` starting at `chunkStartOffset`, and returns its metadata and page index.
-    /// The caller captures `chunkStartOffset` before invoking this.
-    Flushed flushTo(OutputFile out, ColumnSchema column, long chunkStartOffset) throws IOException {
+    /// Encodes the whole column chunk — dictionary page (when present) then data pages — into
+    /// `sink`, and returns its metadata and page index with every offset counted from the chunk's
+    /// first byte; [Flushed#at] places them in the file.
+    ///
+    /// Touches nothing but this chunk's own state and the shared, stateless [Compressor], so the
+    /// chunks of one row group can be encoded on different threads.
+    Flushed encodeTo(ChunkSink sink, ColumnSchema column) throws IOException {
         // Read the cardinality before the dictionary can be given up below: a chunk that still
         // has the structure it counted with can state the count exactly, whichever encoding the
         // comparison then chooses.
@@ -553,17 +574,17 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             giveUpDictionary();
         }
         int dictionarySize = hasDictionary ? values.dictionarySize() : 0;
-        long dataPageOffset = chunkStartOffset;
+        long dataPageOffset = 0;
         Long dictionaryPageOffset = null;
         long dictionaryCompressedSize = 0;
         long dictionaryUncompressedSize = 0;
         if (hasDictionary) {
             byte[] dictionaryPage = buildDictionaryPage();
-            dictionaryPageOffset = chunkStartOffset;
-            dataPageOffset = chunkStartOffset + dictionaryPage.length;
+            dictionaryPageOffset = 0L;
+            dataPageOffset = dictionaryPage.length;
             dictionaryCompressedSize = dictionaryPage.length;
             dictionaryUncompressedSize = dictionaryPageUncompressedSize;
-            out.write(ByteBuffer.wrap(dictionaryPage));
+            sink.write(dictionaryPage, 0, dictionaryPage.length, false);
         }
         long dataPagesCompressedSize = 0;
         // What a value costs is settled now that the encoding is: an index against the
@@ -610,7 +631,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                     ? values.unencodedBytes(hasDictionary ? indices : null, valueFrom, valueCount)
                     : 0;
             sizes.add(repetitions, definitions, entryFrom, entries, unencodedBytes);
-            long pageBytes = writeDataPage(out, entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
+            long pageBytes = writeDataPage(sink, entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
             pageLocations.add(new PageLocation(dataPageOffset + dataPagesCompressedSize,
                     Math.toIntExact(pageBytes), firstRow));
             dataPagesCompressedSize += pageBytes;
@@ -802,10 +823,10 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         return ((long) entries << Integer.SIZE) | Integer.toUnsignedLong(valueCount);
     }
 
-    /// Encodes one planned page and writes it straight to `out`, returning the bytes written.
-    /// Data pages are streamed rather than buffered: the chunk's encoding is settled before any
-    /// of them is produced, so nothing has to be revisited once written.
-    private long writeDataPage(OutputFile out, int entryFrom, int entries, int valueFrom, int valueCount,
+    /// Encodes one planned page and hands it to `sink`, returning the bytes written. Pages go out
+    /// one by one: the chunk's encoding is settled before any of them is produced, so nothing has
+    /// to be revisited once written.
+    private long writeDataPage(ChunkSink sink, int entryFrom, int entries, int valueFrom, int valueCount,
                                int dictionarySize, int maxIndex) throws IOException {
         buildBody(entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
         int uncompressedLength = body.length();
@@ -830,8 +851,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         PageHeaderWriter.writeDataPageV1(header, entries, uncompressedLength, storedLength,
                 (int) crc.getValue(), valuesEncoding);
         byte[] headerBytes = header.toByteArray();
-        out.write(ByteBuffer.wrap(headerBytes));
-        out.write(ByteBuffer.wrap(storedArray, 0, storedLength));
+        sink.write(headerBytes, 0, headerBytes.length, false);
+        // The body buffer is overwritten by the next page; a compressor's output is not.
+        sink.write(storedArray, 0, storedLength, storedArray == body.array());
         dataPagesUncompressedSize += headerBytes.length + uncompressedLength;
         return (long) headerBytes.length + storedLength;
     }

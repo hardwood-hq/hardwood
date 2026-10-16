@@ -18,15 +18,18 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.BuildInfo;
 import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.compression.CompressorFactory;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
 import dev.hardwood.internal.thrift.BloomFilterHeaderWriter;
 import dev.hardwood.internal.thrift.ColumnIndexWriter;
@@ -71,6 +74,11 @@ import dev.hardwood.schema.FileSchema;
 /// body is compressed with the configured codec (`ZSTD` by default). All of these are
 /// configurable through [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
+/// At each flush the row group's column chunks are encoded and compressed in parallel, on the
+/// thread pool of a [HardwoodContext] and on the calling thread, and written in schema order; the
+/// file is the same as from one thread. A writer opened without a context creates one on its first
+/// flush of more than one column, and closes it with the writer.
+///
 /// The file is produced front to back and is valid only after `close()` returns. A writer whose
 /// write has thrown accepts no more data, and `close()` discards its output rather than
 /// publishing the rows written before the failure. [#abort()] discards the output on a failure
@@ -111,6 +119,11 @@ public final class ParquetFileWriter implements Closeable {
     private final RowGroupBuffer current;
     private long numRows;
 
+    /// The pool that encodes column chunks beside the caller. Created on first use where the
+    /// caller passed none, a one-column schema never needing it, and then closed with the writer.
+    private HardwoodContextImpl context;
+    private final boolean ownsContext;
+
     /// Where the writer is in its lifecycle. A writer fails only while open: a flush that throws
     /// inside [#close()] leaves it closed, so its output is discarded once.
     private enum State { OPEN, FAILED, CLOSED }
@@ -129,9 +142,11 @@ public final class ParquetFileWriter implements Closeable {
     private ColumnWriter columnWriter;
     private RowWriter rowWriter;
 
-    private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config, Compressor compressor,
-            ColumnEncoding[] encodings, double[] bloomFilterFpps) {
+    private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config, HardwoodContextImpl context,
+            Compressor compressor, ColumnEncoding[] encodings, double[] bloomFilterFpps) {
         this.out = out;
+        this.context = context;
+        this.ownsContext = context == null;
         this.schema = schema;
         this.config = config;
         this.shredder = new RecordShredder(schema);
@@ -192,7 +207,34 @@ public final class ParquetFileWriter implements Closeable {
     ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
-        return create(out, schema, config, () -> new CompressorFactory().getCompressor(config.codec()));
+        return create(out, schema, config, null, () -> new CompressorFactory().getCompressor(config.codec()));
+    }
+
+    /// Opens a writer that encodes column chunks on the thread pool of `context`, writing the
+    /// leading magic bytes.
+    ///
+    /// The caller keeps ownership of `context` and closes it after the writer. Several writers,
+    /// and readers, may share one context.
+    ///
+    /// @param out the destination
+    /// @param schema the schema to write
+    /// @param config the writer configuration
+    /// @param context the context whose threads encode column chunks
+    /// @return an open writer
+    /// @throws IOException if the destination cannot be opened
+    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
+    ///         physical type, a shape the writer cannot produce, or the configured codec cannot
+    ///         be written
+    /// @throws IllegalArgumentException if the schema declares no columns, or a column the writer
+    ///         cannot write: a `FIXED_LEN_BYTE_ARRAY` without a positive length, or an annotation
+    ///         its physical type cannot carry or no value can be written for; or an encoding
+    ///         policy names a column the schema does not have, or one its physical type cannot carry;
+    ///         or a Bloom filter names a column the schema does not have, or a `BOOLEAN` column
+    /// @throws NullPointerException if `context` is `null`
+    public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config,
+            HardwoodContext context) throws IOException {
+        HardwoodContextImpl impl = (HardwoodContextImpl) Objects.requireNonNull(context, "context");
+        return create(out, schema, config, impl, () -> new CompressorFactory().getCompressor(config.codec()));
     }
 
     /// Opens a writer over a caller-supplied compressor.
@@ -204,15 +246,24 @@ public final class ParquetFileWriter implements Closeable {
     /// not. Not a configuration a caller has any use for.
     static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config,
             Compressor compressor) throws IOException {
-        return create(out, schema, config, () -> compressor);
+        return create(out, schema, config, null, () -> compressor);
+    }
+
+    /// Opens a writer over a caller-supplied compressor and `context`, for the tests of a codec
+    /// failing on a pool thread.
+    static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config,
+            HardwoodContext context, Compressor compressor) throws IOException {
+        return create(out, schema, config, (HardwoodContextImpl) context, () -> compressor);
     }
 
     /// Resolves the compressor through a supplier rather than taking one, so the codec and its
     /// library are still checked at the point in the order below where they always were —
     /// after the schema and the encoding policies, so a file that fails on two counts reports
     /// the same one it always did.
+    ///
+    /// @param context the caller's context, or `null` for the writer to create its own
     private static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config,
-            Supplier<Compressor> compressors) throws IOException {
+            HardwoodContextImpl context, Supplier<Compressor> compressors) throws IOException {
         // Everything this schema and configuration decide is settled before the output is
         // touched, so a file the writer cannot honour is never begun: the columns' physical
         // types, the schema's shape, the encoding policies and Bloom filters against the schema's
@@ -238,7 +289,7 @@ public final class ParquetFileWriter implements Closeable {
         out.create();
         try {
             out.write(ByteBuffer.wrap(MAGIC));
-            return new ParquetFileWriter(out, schema, config, compressor, encodings, bloomFilterFpps);
+            return new ParquetFileWriter(out, schema, config, context, compressor, encodings, bloomFilterFpps);
         }
         catch (Throwable t) {
             // The destination is open and holds no valid file. Discard it rather than leaving
@@ -559,21 +610,26 @@ public final class ParquetFileWriter implements Closeable {
         }
         state = State.CLOSED;
         try {
-            closeRowGroup();
-            writeFooter();
-        }
-        catch (Throwable t) {
-            // The footer is incomplete, so the file is not valid. Discard it rather than
-            // letting out.close() publish a truncated file.
             try {
-                out.discard();
+                closeRowGroup();
+                writeFooter();
             }
-            catch (IOException suppressed) {
-                t.addSuppressed(suppressed);
+            catch (Throwable t) {
+                // The footer is incomplete, so the file is not valid. Discard it rather than
+                // letting out.close() publish a truncated file.
+                try {
+                    out.discard();
+                }
+                catch (IOException suppressed) {
+                    t.addSuppressed(suppressed);
+                }
+                throw t;
             }
-            throw t;
+            out.close();
         }
-        out.close();
+        finally {
+            releaseContext();
+        }
     }
 
     /// Discards the output without publishing a file, leaving nothing at the destination, and
@@ -609,7 +665,19 @@ public final class ParquetFileWriter implements Closeable {
             return;
         }
         state = State.CLOSED;
-        out.discard();
+        try {
+            out.discard();
+        }
+        finally {
+            releaseContext();
+        }
+    }
+
+    /// Closes the context the writer created for itself, if it did.
+    private void releaseContext() {
+        if (ownsContext && context != null) {
+            context.close();
+        }
     }
 
     /// Writes the buffered row group out.
@@ -617,10 +685,33 @@ public final class ParquetFileWriter implements Closeable {
         if (current.isEmpty()) {
             return;
         }
-        RowGroupBuffer.FlushedRowGroup rowGroup = current.flushTo(out);
+        // The calling thread encodes too, so a pool thread per column beyond the first is the
+        // most that can be busy.
+        int helpers = schema.getColumnCount() - 1;
+        if (context != null && context.executor().isShutdown()) {
+            throw new IllegalStateException(
+                    "The HardwoodContext this writer encodes on is closed; close the writer before its context");
+        }
+        RowGroupBuffer.FlushedRowGroup rowGroup;
+        if (helpers == 0) {
+            rowGroup = current.flushTo(out, null, 0);
+        }
+        else {
+            HardwoodContextImpl pool = encodingContext();
+            rowGroup = current.flushTo(out, pool.executor(), Math.min(pool.threads(), helpers));
+        }
         rowGroups.add(rowGroup);
         numRows += rowGroup.rowGroup().numRows();
         current.reset();
+    }
+
+    /// The context whose pool encodes column chunks, created on first use where the caller gave
+    /// none.
+    private HardwoodContextImpl encodingContext() {
+        if (context == null) {
+            context = HardwoodContextImpl.create();
+        }
+        return context;
     }
 
     /// One `ColumnOrder` per leaf column, in schema order. The format requires the list wherever
