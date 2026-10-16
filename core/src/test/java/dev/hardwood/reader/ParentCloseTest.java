@@ -68,7 +68,7 @@ class ParentCloseTest {
 
     /// Where a close stops a child reader's column workers.
     private static final String WORKER_CLOSE = ColumnWorker.class.getName() + "#close";
-    /// Where a close stops a fixed-width column of a column read.
+    /// Where a close stops a flat column of a column or row read.
     private static final String SCHEDULED_CLOSE = ScheduledColumn.class.getName() + "#close";
     /// Where a close waits for the speculative tasks a read has started.
     private static final String AWAIT_PREFETCHES = PrefetchTasks.class.getName() + "#awaitAll";
@@ -164,7 +164,7 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, WORKER_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, WORKER_CLOSE, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
         consumer.join();
 
         assertThat(file.violations).isEmpty();

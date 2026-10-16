@@ -47,8 +47,8 @@ public final class ReadScheduler {
     /// Batch byte budgets a column decodes at most ahead of the batch it publishes next.
     private static final int CAP_BUDGETS = 8;
 
-    /// Whether flat fixed-width columns are read by a scheduler; `false` reads every column through
-    /// a [ColumnWorker], for tests comparing the two.
+    /// Whether flat columns are read by a scheduler; `false` reads every column through a
+    /// [ColumnWorker], for tests comparing the two.
     public static final boolean ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("hardwood.internal.scheduled"));
 

@@ -257,6 +257,7 @@
                     <include>**/LaterFileFailureTest.java</include>
                     <include>**/InlineNullPageDropTest.java</include>
                     <include>**/DictionaryEndToEndTest.java</include>
+                    <include>**/DictionaryFallbackNullsTest.java</include>
                   </includes>
                   <systemPropertyVariables>
                     <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
