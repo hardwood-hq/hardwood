@@ -19,6 +19,7 @@ import org.aesh.command.invocation.CommandInvocation;
 import org.aesh.command.option.Mixin;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.Fmt;
 
 @CommandDefinition(name = "footer", description = "Print decoded footer length, offset, and file structure.", generateHelp = true)
 public class FooterCommand implements Command<CommandInvocation> {
@@ -27,6 +28,11 @@ public class FooterCommand implements Command<CommandInvocation> {
     private static final byte[] ENCRYPTED_MAGIC = { 'P', 'A', 'R', 'E' };
     private static final int TRAILER_SIZE = 8;
     private static final int MAGIC_SIZE = 4;
+
+    /// Labels are padded to this width before their value so all five values line
+    /// up in one column; `Trailing Magic:` is the longest label, so it sets it.
+    private static final int LABEL_WIDTH = 15;
+    private static final String LABEL = "%-" + LABEL_WIDTH + "s ";
 
     @Mixin
     FileMixin fileMixin;
@@ -69,11 +75,14 @@ public class FooterCommand implements Command<CommandInvocation> {
 
             long footerOffset = fileSize - TRAILER_SIZE - footerLength;
 
-            System.out.println("File Size:     " + fileSize + " bytes");
-            System.out.println("Footer Offset: " + footerOffset + " bytes");
-            System.out.println("Footer Length: " + footerLength + " bytes");
-            System.out.println("Leading Magic:  " + new String(leadingMagic, StandardCharsets.US_ASCII));
-            System.out.println("Trailing Magic: " + new String(trailingMagic, StandardCharsets.US_ASCII));
+            String leadingMagicText = new String(leadingMagic, StandardCharsets.US_ASCII);
+            String trailingMagicText = new String(trailingMagic, StandardCharsets.US_ASCII);
+
+            System.out.println(Fmt.fmt(LABEL + "%d bytes", "File Size:", fileSize));
+            System.out.println(Fmt.fmt(LABEL + "%d bytes", "Footer Offset:", footerOffset));
+            System.out.println(Fmt.fmt(LABEL + "%d bytes", "Footer Length:", footerLength));
+            System.out.println(Fmt.fmt(LABEL + "%s", "Leading Magic:", leadingMagicText));
+            System.out.println(Fmt.fmt(LABEL + "%s", "Trailing Magic:", trailingMagicText));
         }
         catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());

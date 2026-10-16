@@ -24,9 +24,9 @@ interface FooterCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
-                File Size:     722 bytes
-                Footer Offset: 178 bytes
-                Footer Length: 536 bytes
+                File Size:      722 bytes
+                Footer Offset:  178 bytes
+                Footer Length:  536 bytes
                 Leading Magic:  PAR1
                 Trailing Magic: PAR1""");
     }
