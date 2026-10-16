@@ -147,7 +147,18 @@ public class RowGroupIterator implements Closeable {
     private final ConcurrentHashMap<Integer, Arrival> arrivalCache = new ConcurrentHashMap<>();
 
     // Per-row-group fetch plans cache (keyed by work item index).
-    private final ConcurrentHashMap<Integer, FetchPlan[]> fetchPlanCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, RowGroupPlans> fetchPlanCache = new ConcurrentHashMap<>();
+
+    /// The read's batch boundaries, set by [#planBatches] before any fetch plan is computed;
+    /// `null` for an iterator whose fetch plans no column worker drains.
+    private volatile BatchPlan batchPlan;
+    /// Whether any row group's fetch plans have been computed, after which the batch plan can no
+    /// longer be set.
+    private volatile boolean fetchPlansComputed;
+
+    /// The fetch plans of one row group, one per decoded column, and its batches, `null` when
+    /// the iterator plans no batches.
+    private record RowGroupPlans(FetchPlan[] columns, BatchPlan.RowGroupBatches batches) {}
 
     // Number of projected columns still referencing each work item. Initialized to
     // projectedColumnCount in initialize(); each PageSource calls releaseWorkItem
@@ -774,6 +785,40 @@ public class RowGroupIterator implements Closeable {
         return true;
     }
 
+    /// Decides the read's batch boundaries ([BatchPlan]) as the read plans its row groups. Every
+    /// column worker of the read closes its batches where this plan does. Must be called once,
+    /// before any column requests its fetch plan.
+    ///
+    /// @param batchCapacity the read's batch capacity, in rows
+    /// @param maxRows the row cap the read's batches end at, `0` for none; under a filter it
+    ///        counts matching rows
+    /// @throws IllegalStateException if the batches are already planned, or a fetch plan was
+    ///         computed before
+    public void planBatches(int batchCapacity, long maxRows) {
+        if (projection == null) {
+            throw new IllegalStateException("initialize() must be called before planBatches()");
+        }
+        if (batchPlan != null || fetchPlansComputed) {
+            throw new IllegalStateException(
+                    "planBatches must be called once, before any column requests its fetch plan");
+        }
+        batchPlan = new BatchPlan(batchCapacity,
+                BatchPlan.endsBatchesAtRowGroupBoundaries(projection.decoded().getProjectedColumns()),
+                filterPredicate != null, maxRows);
+    }
+
+    /// The batches of `workItem`'s row group. Valid between the column's [#getColumnPlan] for the
+    /// row group and its [#releaseWorkItem].
+    ///
+    /// @throws IllegalStateException if the read plans no batches ([#planBatches])
+    BatchPlan.RowGroupBatches getBatches(WorkItem workItem) throws IOException {
+        BatchPlan.RowGroupBatches batches = rowGroupPlans(workItem).batches();
+        if (batches == null) {
+            throw new IllegalStateException("No batch plan: planBatches() was not called for this read");
+        }
+        return batches;
+    }
+
     /// Returns the [FetchPlan] for the given column in the given row group.
     /// Plans are computed once per row group (on first access) and cached.
     ///
@@ -781,8 +826,12 @@ public class RowGroupIterator implements Closeable {
     /// @param projectedColumnIndex the projected column index
     /// @return a fetch plan for iterating pages with lazy byte fetching
     public FetchPlan getColumnPlan(WorkItem workItem, int projectedColumnIndex) throws IOException {
+        return rowGroupPlans(workItem).columns()[projectedColumnIndex];
+    }
+
+    private RowGroupPlans rowGroupPlans(WorkItem workItem) throws IOException {
         int workItemIndex = workItem.workItemIndex();
-        FetchPlan[] plans = fetchPlanCache.get(workItemIndex);
+        RowGroupPlans plans = fetchPlanCache.get(workItemIndex);
         if (plans == null) {
             try {
                 plans = fetchPlanCache.computeIfAbsent(workItemIndex, idx -> {
@@ -809,7 +858,7 @@ public class RowGroupIterator implements Closeable {
         if (nextRowGroupPrefetched.add(workItemIndex)) {
             prefetchNextRowGroup(workItem);
         }
-        return plans[projectedColumnIndex];
+        return plans;
     }
 
     /// Notifies the iterator that one projected column is done with the given
@@ -882,7 +931,7 @@ public class RowGroupIterator implements Closeable {
         prefetchTasks.submit(() -> {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "prefetch rg=" + nextWorkItem.rowGroupIndex())) {
-                FetchPlan[] nextPlans = fetchPlanCache.computeIfAbsent(
+                RowGroupPlans nextPlans = fetchPlanCache.computeIfAbsent(
                         nextWorkItem.workItemIndex(),
                         idx -> {
                             // Every column may already have read past the row group and
@@ -910,7 +959,7 @@ public class RowGroupIterator implements Closeable {
                     return;
                 }
                 // Pre-fetch the first chunk of the first plan that reads one
-                for (FetchPlan plan : nextPlans) {
+                for (FetchPlan plan : nextPlans.columns()) {
                     if (!plan.isEmpty() && !(plan instanceof SkippedColumnFetchPlan)) {
                         plan.prefetch();
                         break;
@@ -920,13 +969,18 @@ public class RowGroupIterator implements Closeable {
         });
     }
 
-    private FetchPlan[] computeFetchPlans(WorkItem workItem) throws IOException {
+    /// Computes the fetch plans of every decoded column for `workItem`'s row group, and then
+    /// the row group's batches. Row groups are planned in work-list order: the first column to
+    /// reach a row group plans it, or the previous row group's prefetch, which starts only once
+    /// that row group is planned.
+    private RowGroupPlans computeFetchPlans(WorkItem workItem) throws IOException {
+        fetchPlansComputed = true;
         SharedRowGroupMetadata shared = getSharedMetadata(workItem);
         int projectedCount = projection.decoded().getProjectedColumnCount();
         if (shared.dropped()) {
             FetchPlan[] empty = new FetchPlan[projectedCount];
             Arrays.fill(empty, FetchPlan.EMPTY);
-            return empty;
+            return new RowGroupPlans(empty, planBatches(workItem, 0));
         }
         RowGroup rowGroup = workItem.rowGroup();
         RowRanges matchingRows = shared.matchingRows();
@@ -1090,7 +1144,20 @@ public class RowGroupIterator implements Closeable {
 
         coalesceAcrossColumns(plans, inputFile, workItem);
 
-        return plans;
+        // Last, once nothing above can fail: a speculative plan that fails is planned again on
+        // demand, and the batch plan takes each row group once.
+        return new RowGroupPlans(plans, planBatches(workItem, matchingRows.rowCount(rowGroup.numRows())));
+    }
+
+    /// Plans `workItem`'s batches from the rows its page masks keep, or returns `null` when the
+    /// read plans no batches.
+    private BatchPlan.RowGroupBatches planBatches(WorkItem workItem, long keptRows) {
+        BatchPlan plan = batchPlan;
+        if (plan == null) {
+            return null;
+        }
+        return plan.plan(workItem.workItemIndex(), workItem.fileIndex(), workItem.inputFile().name(),
+                workItem.filterAlwaysMatches(), keptRows);
     }
 
     /// Whether the column at `projCol` is not read in `workItem`'s row group: the predicate
@@ -1723,15 +1790,6 @@ public class RowGroupIterator implements Closeable {
         while (planNextFile()) {
             // planNextFile appends
         }
-    }
-
-    /// Whether a filter predicate is installed, so that row groups can reach the
-    /// readers with [WorkItem#filterAlwaysMatches] unset and rows scanned therefore
-    /// outnumber rows matched.
-    ///
-    /// Only meaningful after [#initialize].
-    public boolean hasFilter() {
-        return filterPredicate != null;
     }
 
     /// Gets or loads file-wide metadata. Projection-specific validation remains

@@ -202,6 +202,21 @@ public class RowRanges {
         return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
     }
 
+    /// Returns the number of rows this set keeps of a row group of `rowGroupRowCount` rows.
+    public long rowCount(long rowGroupRowCount) {
+        if (all) {
+            return rowGroupRowCount;
+        }
+        long count = 0;
+        for (int i = 0; i < ranges.length; i += 2) {
+            long end = Math.min(ranges[i + 1], rowGroupRowCount);
+            if (end > ranges[i]) {
+                count += end - ranges[i];
+            }
+        }
+        return count;
+    }
+
     /// Returns the number of intervals in this set.
     public int intervalCount() {
         return ranges.length / 2;

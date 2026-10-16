@@ -14,7 +14,6 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
-import dev.hardwood.internal.reader.ColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
@@ -74,13 +73,12 @@ final class ColumnScan implements Closeable {
                 : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
         ProjectedSchema decoded = projection.decoded();
         int columnCount = decoded.getProjectedColumnCount();
-        boolean endBatchesAtRowGroupBoundaries =
-                ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
+        // Every cursor's worker closes its batches where the read's batch plan does.
+        rowGroupIterator.planBatches(batchSize, 0);
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode,
-                    endBatchesAtRowGroupBoundaries);
+                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
         }
         SelectionEngine engine = filter == null
                 ? null

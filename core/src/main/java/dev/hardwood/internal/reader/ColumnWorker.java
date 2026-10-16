@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -101,18 +100,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // same slot-reuse rule. Together they say where a page came from, which is what a
     // failure met at a thread boundary needs in order to place itself.
     private final int[] rowGroupBuffer;
-    // Work-item ordinal per slot, written and read alongside rowGroupBuffer[slot]: keys the
-    // row-group flush, since a row-group index repeats across inputs.
-    private final int[] workItemBuffer;
-    // Row count of the slot's row group, written alongside workItemBuffer[slot]: sizes a
-    // batch ending at a row-group boundary to the rows its row group has left.
-    private final long[] rowGroupRowsBuffer;
     private final int[] pageBuffer;
 
-    // Per-slot filter-always-matches flag, written by the retriever alongside
-    // fileNameBuffer[slot] under the same happens-before chain: whether the page's
-    // row group was proven by statistics to match the filter in full.
-    private final boolean[] filterAlwaysMatchesBuffer;
+    // The batches of the slot's row group, from the read's batch plan, written by the retriever
+    // alongside fileNameBuffer[slot] under the same happens-before chain. The drain closes its
+    // batches where they say, and takes each batch's file name and always-match flag from them.
+    private final BatchPlan.RowGroupBatches[] batchesBuffer;
 
     // === Drain position (only modified by drain thread, read by retriever for throttle) ===
     private volatile int consumePosition;
@@ -137,24 +130,22 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     // === Drain assembly state (drain thread only) ===
 
-    /// Whether a filter is installed, so that the reader downstream returns a subset of
-    /// what the drain assembles. Two things follow: `maxRows` counts matching rows rather
-    /// than scanned ones (see [#activeMaxRows]), and batches are kept homogeneous in
-    /// whether statistics decided them, so a reader can act on a whole batch at a time.
-    /// Read from the page source when the drain starts, which is where it first matters.
-    boolean filterActive;
-
-    /// The cap the drain is enforcing. Starts at the constructor's `maxRows`, except that when
-    /// [#filterActive] it drops to [#UNLIMITED] — for the remainder of the read —
-    /// at the first page whose row group statistics did not prove to match the filter in
-    /// full. Up to that point every assembled row is a matching row, so the drain can
-    /// count them against the cap; past it only the filtering reader downstream can.
-    /// Written and read on the drain thread only.
-    long activeMaxRows;
-
-    long totalRowsAssembled;
     B currentBatch;
     int rowsInCurrentBatch;
+
+    /// The batches of the row group the drain is assembling, `null` before its first page.
+    private BatchPlan.RowGroupBatches rowGroupBatches;
+    /// The segment of [#rowGroupBatches] the next rows go to.
+    private int segment;
+    /// Rows the current segment still takes. At `0` the segment is complete: a flat worker has
+    /// closed its batch where the plan closes it, a nested worker closes it at the next record
+    /// start, the next row group or the end of the stream.
+    int segmentRowsLeft;
+    /// Whether the column is not read in the current row group (a boundary marker stands for it).
+    private boolean rowGroupSkipped;
+    /// Whether the plan left a batch open across a row group the column is not read in. Only a
+    /// row group that closes that batch may follow with rows.
+    private boolean openBatchSkipped;
 
     /// File name of the file being assembled into the current batch.
     /// Written only by the drain thread.
@@ -166,26 +157,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// where the one it is assembling came from. Written only by the drain thread.
     int currentPageRowGroup = ExceptionContext.UNKNOWN_ROW_GROUP;
 
-    /// Whether a batch ends at every row-group boundary, set by [#endBatchesAtRowGroupBoundaries()]
-    /// before the worker starts.
-    private boolean rowGroupFlush;
-
-    /// The work item (row group of one input) the current batch's rows come from, tracked
-    /// when [#rowGroupFlush] is set.
-    private int currentBatchWorkItem = -1;
-
-    /// Rows of the current work item's row group not yet assembled, tracked when
-    /// [#rowGroupFlush] is set; an upper bound where a filter drops rows before assembly.
-    /// A batch ending at the row group's end needs no more capacity than this.
-    long rowGroupRowsLeft = Long.MAX_VALUE;
-
     /// Page ordinal of the page the drain last took, or [ExceptionContext#UNKNOWN_PAGE]
     /// before it has taken one. Written only by the drain thread.
     int currentPageIndex = ExceptionContext.UNKNOWN_PAGE;
 
-    /// Whether every page of the current batch comes from a row group whose statistics
-    /// prove the filter matches all rows. Only maintained (with batch flushes on
-    /// transitions) when [#flushOnFilterAlwaysMatchesTransition] is `true`.
+    /// Whether statistics prove the filter matches every row of the current batch, from the
+    /// batch plan. Always `false` in an unfiltered read.
     boolean currentBatchFilterAlwaysMatches;
 
     // === Instrumentation (drain thread only) ===
@@ -194,20 +171,18 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     /// Creates a new column worker.
     ///
+    /// The batches close where the read's batch plan closes them ([RowGroupIterator#planBatches]),
+    /// which every worker of the read shares; `batchCapacity` must be the plan's capacity.
+    ///
     /// @param pageSource yields [PageInfo] objects for this column
     /// @param exchange the output exchange for assembled batches
     /// @param column the column schema
     /// @param batchCapacity rows per batch
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
-    /// @param maxRows maximum rows to assemble (0 = unlimited). The drain stops
-    ///        after assembling this many rows and publishes the partial batch.
-    ///        With a filter installed the cap is on matching rows, and the drain
-    ///        applies it only as far as statistics prove every row it assembles
-    ///        matches — see [#activeMaxRows].
     protected ColumnWorker(PageSource pageSource, BatchExchange<B> exchange, ColumnSchema column,
                            int batchCapacity, DecompressorFactory decompressorFactory,
-                           Executor decodeExecutor, long maxRows) {
+                           Executor decodeExecutor) {
         this.pageSource = pageSource;
         this.exchange = exchange;
         this.column = column;
@@ -216,7 +191,6 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.maxDefinitionLevel = column.maxDefinitionLevel();
         this.decompressorFactory = decompressorFactory;
         this.decodeExecutor = decodeExecutor;
-        this.activeMaxRows = maxRows;
         this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
         this.levelScratchBuffer = new PageDecoder.LevelScratch[MAX_INFLIGHT_PAGES];
         for (int i = 0; i < levelScratchBuffer.length; i++) {
@@ -224,10 +198,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         }
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
         this.rowGroupBuffer = new int[MAX_INFLIGHT_PAGES];
-        this.workItemBuffer = new int[MAX_INFLIGHT_PAGES];
-        this.rowGroupRowsBuffer = new long[MAX_INFLIGHT_PAGES];
         this.pageBuffer = new int[MAX_INFLIGHT_PAGES];
-        this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
+        this.batchesBuffer = new BatchPlan.RowGroupBatches[MAX_INFLIGHT_PAGES];
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -248,48 +220,6 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     /// Publishes the current batch to the [BatchExchange] and takes a new free batch.
     abstract void publishCurrentBatch();
-
-    /// Whether the drain should flush the current batch when crossing a row-group
-    /// boundary that changes the filter-always-matches flag. Only worth it when a
-    /// filter is installed — a homogeneous batch lets a reader skip evaluating the
-    /// whole of it — and for an unfiltered read the extra flushes would shrink
-    /// batches for nothing.
-    boolean flushOnFilterAlwaysMatchesTransition() {
-        return filterActive;
-    }
-
-    /// Whether the workers of a read decoding `columns` end their batches at row-group
-    /// boundaries ([#endBatchesAtRowGroupBoundaries()]): exactly when one of the columns holds
-    /// binary values (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`), flat or nested. A batch of
-    /// binary values then draws on one column chunk's dictionary. The cut costs every column of
-    /// the read a batch hand-off per row group, which only a read with a binary column has a use
-    /// for.
-    ///
-    /// @param columns every column the read decodes, predicate columns included
-    public static boolean endsBatchesAtRowGroupBoundaries(List<ColumnSchema> columns) {
-        for (ColumnSchema column : columns) {
-            switch (column.type()) {
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
-                    return true;
-                }
-                case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> {
-                }
-            }
-        }
-        return false;
-    }
-
-    /// Ends every batch at a row-group boundary, so a batch never holds rows of two column
-    /// chunks and so never values of two dictionaries. Every column of a read must be configured
-    /// alike, which keeps their batches row-aligned: all columns cross a row-group boundary at
-    /// the same row. A read decides by [#endsBatchesAtRowGroupBoundaries(List)]. Must be called
-    /// before [#start()].
-    public void endBatchesAtRowGroupBoundaries() {
-        if (drainThread != null) {
-            throw new IllegalStateException("Column worker for '" + column.name() + "' already started");
-        }
-        rowGroupFlush = true;
-    }
 
     /// Starts both virtual threads. Must be called once.
     ///
@@ -452,10 +382,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 int slot = seq % MAX_INFLIGHT_PAGES;
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 rowGroupBuffer[slot] = pageSource.getCurrentRowGroupIndex();
-                workItemBuffer[slot] = pageSource.getCurrentWorkItemOrdinal();
-                rowGroupRowsBuffer[slot] = pageSource.getCurrentRowGroupRowCount();
                 pageBuffer[slot] = pageSource.getCurrentPageIndex();
-                filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
+                batchesBuffer[slot] = pageSource.getCurrentBatches();
                 if (pageInfo.isBoundaryMarker()) {
                     // Nothing to decode: hand the marker straight to the drain.
                     reorderBuffer.set(slot, BOUNDARY_MARKER);
@@ -545,7 +473,6 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     private void runDrain() {
         try {
-            filterActive = pageSource.isFilterActive();
             currentBatch = exchange.takeBatch();
             initDrainState();
 
@@ -601,7 +528,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 break;
             }
             if (decoded == EMPTY_SENTINEL) {
-                finishDrain();
+                finishRowGroup();
+                if (!done) {
+                    finishDrain();
+                }
                 return true;
             }
             if (decoded == FAILURE_SENTINEL) {
@@ -612,56 +542,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 return true;
             }
 
-            // Detect file boundary: flush the current batch when the file changes
-            // so that each batch is attributed to a single file.
-            String pageFileName = fileNameBuffer[slot];
             currentPageRowGroup = rowGroupBuffer[slot];
             currentPageIndex = pageBuffer[slot];
-            if (pageFileName != null) {
-                if (currentBatchFileName != null
-                        && !pageFileName.equals(currentBatchFileName)
-                        && rowsInCurrentBatch > 0) {
-                    publishCurrentBatch();
+            BatchPlan.RowGroupBatches batches = batchesBuffer[slot];
+            if (batches != rowGroupBatches) {
+                enterRowGroup(batches, decoded == BOUNDARY_MARKER);
+                if (done) {
+                    return true;
                 }
-                currentBatchFileName = pageFileName;
-            }
-
-            // Row-group boundary: in a read with a binary column, every batch draws on one column
-            // chunk's dictionary, for the column readers' dictionary ids and the row readers'
-            // shared strings. Composes with the file flush above, which already closed a batch
-            // whose next page comes from another file.
-            if (rowGroupFlush) {
-                int pageWorkItem = workItemBuffer[slot];
-                if (pageWorkItem != currentBatchWorkItem) {
-                    if (rowsInCurrentBatch > 0) {
-                        publishCurrentBatch();
-                    }
-                    rowGroupRowsLeft = rowGroupRowsBuffer[slot];
-                }
-                currentBatchWorkItem = pageWorkItem;
-            }
-
-            boolean pageAlwaysMatches = filterAlwaysMatchesBuffer[slot];
-
-            // Statistics did not prove this page's row group matches in full, so from
-            // here on the drain can no longer tell a scanned row from a matching one.
-            // Give up the cap and leave it to the filtering reader downstream, which
-            // counts matches.
-            if (filterActive && !pageAlwaysMatches) {
-                activeMaxRows = UNLIMITED;
-            }
-
-            // Detect a filter-always-matches boundary: flush so that each batch is
-            // homogeneous and the per-batch filter can be skipped for batches whose
-            // row groups are proven to match in full. Row groups only ever share a
-            // batch within one file, so this composes with the file flush above.
-            // A boundary marker counts as a proven page: it closes the batch in
-            // progress at the row where the columns that are read close theirs.
-            if (flushOnFilterAlwaysMatchesTransition()) {
-                if (pageAlwaysMatches != currentBatchFilterAlwaysMatches && rowsInCurrentBatch > 0) {
-                    publishCurrentBatch();
-                }
-                currentBatchFilterAlwaysMatches = pageAlwaysMatches;
             }
 
             // A boundary marker stands for a row group this column is not read in:
@@ -676,6 +564,119 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             drained = true;
         }
         return drained;
+    }
+
+    /// Moves the drain to the next row group's batches: checks the column assembled every row the
+    /// plan takes from the row group it leaves, closes a batch the plan closes at that row group's
+    /// end or before the new row group, and takes the new row group's file name and always-match
+    /// flag for the batches that hold its rows.
+    ///
+    /// @param skipped whether the column is not read in the row group (a boundary marker): it
+    ///        assembles no rows there, and no consumer takes its batches for them
+    private void enterRowGroup(BatchPlan.RowGroupBatches batches, boolean skipped) {
+        // A nested batch the row cap ends waits for its last record to complete, which the
+        // first page past the cap shows.
+        finishRowGroup();
+        if (done) {
+            return;
+        }
+        if (batches.workItemIndex() < 0) {
+            throw new IllegalStateException("Batch plan mismatch: the column reached a row group past the row cap that ended the read");
+        }
+        if (batches.capacity() != batchCapacity) {
+            throw new IllegalStateException("Batch plan mismatch: the plan's batch capacity is "
+                    + batches.capacity() + ", the column's " + batchCapacity);
+        }
+        if (batches.closesOpenBatch()) {
+            openBatchSkipped = false;
+            if (rowsInCurrentBatch > 0) {
+                publishCurrentBatch();
+                if (done) {
+                    return;
+                }
+            }
+        }
+        else if (skipped ? rowsInCurrentBatch > 0 : openBatchSkipped) {
+            throw new IllegalStateException("Batch plan mismatch: a batch spans a row group the column is not read in and one it is");
+        }
+        rowGroupBatches = batches;
+        rowGroupSkipped = skipped;
+        currentBatchFileName = batches.fileName();
+        currentBatchFilterAlwaysMatches = batches.alwaysMatches();
+        int segmentCount = batches.segmentCount();
+        if (skipped) {
+            segment = Math.max(0, segmentCount - 1);
+            segmentRowsLeft = 0;
+            openBatchSkipped = batches.lastOpen();
+            if (batches.endsRead()) {
+                finishDrain();
+            }
+            return;
+        }
+        segment = 0;
+        segmentRowsLeft = segmentCount > 0 ? batches.segmentRows(0) : 0;
+    }
+
+    /// Ends the current row group: fails unless the column assembled every row the plan takes
+    /// from it, then closes a batch the plan closes at its end that is still open, which is a
+    /// nested worker's batch waiting for its last record to complete.
+    private void finishRowGroup() {
+        BatchPlan.RowGroupBatches batches = rowGroupBatches;
+        if (batches == null || rowGroupSkipped) {
+            return;
+        }
+        int last = batches.segmentCount() - 1;
+        if (segment < last || segmentRowsLeft != 0) {
+            long assembled = batches.rowsBefore(segment) + batches.segmentRows(segment) - segmentRowsLeft;
+            throw new IllegalStateException("Batch plan mismatch: the column holds " + assembled + " of the "
+                    + batches.plannedRows() + " rows the plan takes from the row group");
+        }
+        if (last >= 0 && batches.closes(last) && rowsInCurrentBatch > 0) {
+            closeSegmentBatch();
+        }
+    }
+
+    /// Whether the current segment closes its batch at its end.
+    boolean segmentClosesBatch() {
+        return rowGroupBatches.closes(segment);
+    }
+
+    /// Publishes the batch the current segment closes, and finishes the drain when the row cap
+    /// ends the read there.
+    ///
+    /// @return whether the drain goes on
+    boolean closeSegmentBatch() {
+        publishCurrentBatch();
+        if (!done && rowGroupBatches.endsRead() && segment == rowGroupBatches.segmentCount() - 1) {
+            finishDrain();
+        }
+        return !done;
+    }
+
+    /// Moves to the row group's next segment once the current one is complete and its batch, if
+    /// the plan closes it, is published.
+    ///
+    /// @throws IllegalStateException if the plan takes no more rows from the row group
+    void nextSegment() {
+        if (segment + 1 >= rowGroupBatches.segmentCount()) {
+            throw new IllegalStateException("Batch plan mismatch: the column holds more than the "
+                    + rowGroupBatches.plannedRows() + " rows the plan takes from the row group");
+        }
+        segment++;
+        segmentRowsLeft = rowGroupBatches.segmentRows(segment);
+    }
+
+    /// At a record start with the current segment complete: closes its batch where the plan
+    /// closes it and moves to the next segment. A nested worker closes a batch here, since a
+    /// record's last values may follow its start on later pages.
+    ///
+    /// @return whether the drain goes on
+    boolean closeSegmentAtRecordStart() {
+        if (segmentClosesBatch() && rowsInCurrentBatch > 0 && !closeSegmentBatch()) {
+            return false;
+        }
+        nextSegment();
+        return true;
     }
 
     void finishDrain() {

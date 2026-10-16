@@ -1,6 +1,6 @@
 # Read pipeline
 
-Describes how a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the threads that run it, back-pressure, batch sizing, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`.
+Describes how a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the threads that run it, back-pressure, batch sizing, the batch plan, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`.
 
 Related documents:
 
@@ -18,7 +18,7 @@ Every data reader (`FlatRowReader`, `NestedRowReader`, a `ColumnReaders` group, 
 
 | Component | Count | Job |
 |---|---|---|
-| `RowGroupIterator` | one per data reader | Plans the work list of `(file, row group)` pairs a file at a time, caches per-row-group metadata and fetch plans, prefetches the next row group and the next footer |
+| `RowGroupIterator` | one per data reader | Plans the work list of `(file, row group)` pairs a file at a time, caches per-row-group metadata, fetch plans and batches (`BatchPlan`), prefetches the next row group and the next footer |
 | `PageSource` | one per decoded column | Walks the work list with its own cursor and yields that column's `PageInfo`s, draining each row group's `FetchPlan` |
 | `ColumnWorker` | one per decoded column | Decodes pages in parallel and assembles them into batches, in file order (`FlatColumnWorker`, `NestedColumnWorker`) |
 | `BatchExchange` | one per decoded column | Bounded hand-off of published batches from the worker to the consumer |
@@ -70,30 +70,38 @@ The retriever takes each `PageInfo` from its `PageSource` and gives it a sequenc
 | Null placeholder | `SequentialFetchPlan`, when inline page statistics prove no row matches | Decoded to an all-null page without decompression, keeping the column row-aligned ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) |
 | Boundary marker | `SkippedColumnFetchPlan` | Written straight into its slot; no decode task |
 
-Before submitting a page, the retriever writes the slot's side buffers: file name, row-group index, page index and the row group's always-match flag (`ColumnWorker.filterAlwaysMatchesBuffer`). These are plain writes; the decode task's volatile store into the reorder slot happens after them, and the drain's volatile read of that slot happens before it reads them, so the drain sees the values the retriever wrote. The slot's level scratch buffer follows the same lifecycle ([NESTED_DECODE.md](NESTED_DECODE.md)).
+Before submitting a page, the retriever writes the slot's side buffers: file name, row-group index, page index and the row group's batches from the batch plan (`ColumnWorker.batchesBuffer`, [When a batch closes](#when-a-batch-closes)). These are plain writes; the decode task's volatile store into the reorder slot happens after them, and the drain's volatile read of that slot happens before it reads them, so the drain sees the values the retriever wrote. The slot's level scratch buffer follows the same lifecycle ([NESTED_DECODE.md](NESTED_DECODE.md)).
 
 **Slot reuse.** The retriever reuses a slot only once `nextSeq - consumePosition < MAX_INFLIGHT_PAGES`, and the drain reads every side buffer of a slot before it advances `consumePosition` past it. A change to the throttle or to the drain's read-then-advance order must keep the previous occupant's values read before they are overwritten. Untested.
 
-The drain takes slots in sequence order, whatever order the decode tasks finish in, so a column's pages are assembled in file order while decoded in parallel. For each page it runs the per-page bookkeeping (file-change flush, row-cap rule, always-match flush) and then assembles the page unless it is a boundary marker. The retriever rebuilds its `PageDecoder` when a page's column chunk metadata is incompatible with the current one, which is what a file transition brings. At the end of the source it writes an end sentinel into the next free slot; the drain publishes its partial batch and finishes the exchange. A failure on the retriever is handed over the same way, behind every page it submitted: the drain assembles those pages and then reports the failure. It publishes its partial batch first only when the retriever failed between two work items, where only a planning failure is raised. Every column meets that failure at the same row, the end of the files planned before it, so the partial batches stay aligned. A failure inside a work item is met by one column at a row the others read past; its partial batch would be shorter than theirs, and a reader taking the columns in lockstep would report the mismatch instead of the failure.
+The drain takes slots in sequence order, whatever order the decode tasks finish in, so a column's pages are assembled in file order while decoded in parallel. At the first page of a row group it moves to that row group's batches ([When a batch closes](#when-a-batch-closes)), and it assembles every page that is not a boundary marker. The retriever rebuilds its `PageDecoder` when a page's column chunk metadata is incompatible with the current one, which is what a file transition brings. At the end of the source it writes an end sentinel into the next free slot; the drain publishes its partial batch and finishes the exchange. A failure on the retriever is handed over the same way, behind every page it submitted: the drain assembles those pages and then reports the failure. It publishes its partial batch first only when the retriever failed between two work items, where only a planning failure is raised. Every column meets that failure at the same row, the end of the files planned before it, so the partial batches stay aligned. A failure inside a work item is met by one column at a row the others read past; its partial batch would be shorter than theirs, and a reader taking the columns in lockstep would report the mismatch instead of the failure.
 
-`FlatColumnWorker` copies page values into arrays of fixed capacity. `NestedColumnWorker` accumulates values and levels and closes a batch only at a record start (repetition level 0), so a record never spans two batches, even when it spans pages. What the arrays hold is in [COLUMN_READER.md](COLUMN_READER.md) and [NESTED_DECODE.md](NESTED_DECODE.md).
+`FlatColumnWorker` copies page values into the batch's arrays and publishes the batch as soon as it holds its planned rows. `NestedColumnWorker` accumulates values and levels and closes a batch only at a record start (repetition level 0), at the next row group or at the end of the stream, so a record never spans two batches, even when it spans pages. What the arrays hold is in [COLUMN_READER.md](COLUMN_READER.md) and [NESTED_DECODE.md](NESTED_DECODE.md).
 
 ### When a batch closes
+
+Where every batch of a read closes is decided once for the read, by its `BatchPlan`, and every decoded column's worker closes its batches there. A batch closes:
 
 | Trigger | Applies |
 |---|---|
 | The batch holds its capacity in rows (flat) or records (nested) | always |
-| The next page comes from a file with another name | always |
-| The next page's always-match flag differs from the batch's | filtered reads only ([RECORD_FILTERING.md](RECORD_FILTERING.md#homogeneous-batches)) |
-| The next page comes from another row group | reads whose decoded columns include a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` leaf (`ColumnWorker.endsBatchesAtRowGroupBoundaries`), so a batch draws on one column chunk's dictionary: for the column readers' dictionary ids ([COLUMN_READER.md](COLUMN_READER.md#dictionary-ids)) and the row readers' shared strings ([VALUE_DECODE.md](VALUE_DECODE.md)) |
-| The row cap is reached | reads with a cap the drain holds |
+| The next row group comes from another file | always |
+| The next row group's always-match flag differs from the batch's | filtered reads only ([RECORD_FILTERING.md](RECORD_FILTERING.md#homogeneous-batches)) |
+| Its row group ends | reads whose decoded columns include a `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` leaf (`BatchPlan.endsBatchesAtRowGroupBoundaries`), so a batch draws on one column chunk's dictionary: for the column readers' dictionary ids ([COLUMN_READER.md](COLUMN_READER.md#dictionary-ids)) and the row readers' shared strings ([VALUE_DECODE.md](VALUE_DECODE.md)) |
+| The row cap is reached | reads with a cap ([row limits](#row-limits)) |
 | End of stream | always; the partial batch is published |
 
-The row-group cut is decided once per read, on the row readers and the column readers alike, and applied by every worker of it. It costs every column of the read a batch hand-off per row group, which slows a scan over small row groups measurably, so only a read with a binary column, whose values draw on a dictionary per batch, pays it. A batch spans row groups of one file only in a read without a binary column, and **no batch straddles files**. `RecordFilterTally` attributes counts per file from the batch's file name, both row readers take their current file name (for `FileAwareRowReader` and error context) from the first column's batch, and a boundary marker takes part in the change-of-file flush like any page. The change is detected by file name, so a path listed twice in a row reads as one file.
+**The plan.** Every input to these rules is known before a page is decoded, counts rows, and is the same for every column: the capacity ([batch sizing](#batch-sizing)), the work items' files and always-match flags, the row cap, and each row group's kept rows, which are the rows of its `RowRanges` when page masks apply and all its rows otherwise. Masks apply to every decoded column of a row group or to none ([FETCH_PLANNING.md](FETCH_PLANNING.md#the-mask-capability-gate)), so every column keeps the same rows. A row group that keeps no row (its row ranges are empty, or its bloom filters or dictionaries drop it) takes no part: it closes no batch and leaves the row cap in place.
 
-**Alignment.** Every worker of a read applies the same rules to the same sequence of row groups, pages, masks and capacity, so all decoded columns close their batches at the same rows. Nothing coordinates the workers; the readers poll one batch per payload column per step, and one per filter-only column in steps statistics did not prove ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)), and raise `IllegalStateException` when a column has no batch or a batch of another record count. Any new flush rule must be one every column evaluates identically.
+The plan is extended a row group at a time, as the row group's fetch plans are computed (`RowGroupIterator.computeFetchPlans`), and cached beside them. Row groups are planned in work-list order, so the plan follows the [incremental planning](#incremental-planning) of the work list and a row group's batches depend only on the row groups before it. Each row group is planned exactly once: its fetch plans and batches are computed together inside the fetch-plan cache's `computeIfAbsent`, whether on demand or by the prefetch, so every column reads the same batches, and `BatchPlan` fails the read on a row group planned out of order or a second time.
 
-Tests: `ColumnWorkerTest`, `RecordFilterEventTest`, `FileNameInExceptionTest`, `FilterOnlyColumnSkipTest`.
+**Consumption.** A drain takes a row group's batches from the slot of its first page. It checks that it assembled every row the plan takes from the row group it leaves, publishes a batch the plan closes, and takes the file name and flag for the batches that follow. A flat worker publishes a batch the moment it holds its planned rows. A nested worker publishes it at the next record start, at the next row group or at the end of the stream, since the record's last values can follow on later pages.
+
+**Alignment.** Every worker of a read closes its batches at the same rows by construction, since they all follow one plan. A worker whose column holds more or fewer rows of a row group than the plan takes from it fails the read with a `ParquetReadException` ("Batch plan mismatch") instead of publishing a batch out of line with its siblings. The readers poll one batch per payload column per step, and one per filter-only column in steps statistics did not prove ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)), and raise `IllegalStateException` when a column has no batch or a batch of another record count. A new boundary rule belongs in `BatchPlan`, and its inputs must be known before decoding and be the same for every column.
+
+The row-group cut costs every column of the read a batch hand-off per row group, which slows a scan over small row groups measurably, so only a read with a binary column, whose values draw on a dictionary per batch, pays it. A batch spans row groups of one file only in a read without a binary column, and **no batch straddles files**. `RecordFilterTally` attributes counts per file from the batch's file name, and both row readers take their current file name (for `FileAwareRowReader` and error context) from the first column's batch. A file is told apart by its position in the read, so a path listed twice in a row starts a new batch.
+
+Tests: `BatchPlanTest`, `ColumnWorkerTest`, `RecordFilterEventTest`, `FileNameInExceptionTest`, `FilterOnlyColumnSkipTest`.
 
 ### BatchExchange
 
@@ -104,7 +112,7 @@ The exchange holds a ready queue (drain → consumer) and, in recycling mode, a 
 | Recycling (`BatchExchange.recycling`) | `FlatRowReader`, `NestedRowReader` | A fixed pool of one more holder than the ready queue holds, allocated up front | Two batches | Returns each batch (`recycle`) when it moves to the next; a batch's arrays are valid until then |
 | Detaching (`BatchExchange.detaching`) | `ColumnCursor` (column readers) | A fresh batch per publish | Two full batches' worth of rows | Owns every batch it takes; the arrays are never reused ([column-reader.md](../docs/content/how-to/column-reader.md#retaining-and-handing-off-batch-arrays)) |
 
-**Detaching limit.** A batch ends early at a row group or a file ([When a batch closes](#when-a-batch-closes)), so a read over small row groups publishes many short batches. The detaching limit counts rows, so the queue holds what two full batches hold however the batches are cut, and a drain whose batch would take it past that waits until the consumer has taken it down to one full batch's worth. A flat batch counts the rows its arrays were allocated for rather than the rows it holds, since a batch ended at a file or by a row cap keeps full-size arrays; a nested batch's arrays are trimmed to its rows when it is published. Each wake-up of a waiting drain is paid on the consumer's thread; with the limit in rows, a drain is woken once per batch capacity of rows consumed rather than once per batch. A batch of no rows counts as one, so the limit also bounds the number of queued batches.
+**Detaching limit.** A batch ends early at a row group or a file ([When a batch closes](#when-a-batch-closes)), so a read over small row groups publishes many short batches. The detaching limit counts rows, so the queue holds what two full batches hold however the batches are cut, and a drain whose batch would take it past that waits until the consumer has taken it down to one full batch's worth. A flat batch counts the rows its arrays were allocated for rather than the rows it holds, since a batch left open into the next row group gets full-size arrays and can still end short, at a file, at a change of the always-match flag in a filtered read, or at the end of the stream; a nested batch's arrays are trimmed to its rows when it is published. Each wake-up of a waiting drain is paid on the consumer's thread; with the limit in rows, a drain is woken once per batch capacity of rows consumed rather than once per batch. A batch of no rows counts as one, so the limit also bounds the number of queued batches.
 
 **Consumer protocol.** `poll()` tries a non-blocking poll first and reads the `finished` flag only after a poll comes back empty, so every batch published before `finish()` is delivered before the end is reported. `finish()` also offers an end-of-stream sentinel, which queues behind every batch and releases a consumer already waiting; it is best effort (the recycling queue, when full, has no room, and then the consumer has batches to take and is not waiting). In detaching mode `finish()` also wakes a drain waiting for room. A `BatchWait` JFR event spans only the timed wait, so its duration is the consumer's stall.
 
@@ -161,8 +169,8 @@ The cursor is an integer rather than an `Iterator` because the list grows behind
 
 | Question | Answered |
 |---|---|
-| Does statistics prove every row matches? | Per row group: `WorkItem.filterAlwaysMatches` → per-slot buffer → `Batch.filterAlwaysMatches` |
-| May the drain hold the row cap under a filter? | Per page, from the same flag ([row limits](#row-limits)) |
+| Does statistics prove every row matches? | Per row group: `WorkItem.filterAlwaysMatches` → batch plan → per-slot buffer → `Batch.filterAlwaysMatches` |
+| Where do batches close, and does the row cap still hold under a filter? | Per row group, by the batch plan, as the row group's fetch plans are computed ([When a batch closes](#when-a-batch-closes), [row limits](#row-limits)) |
 | Drain-side or per-row filter evaluation? | From the predicate's shape alone (`BatchFilterCompiler.tryCompile`) |
 | Batch size | From the first file ([batch sizing](#batch-sizing)) |
 | Does the read have any work? | `hasLiveWorkItem()`, asked by every reader before it starts its workers: walks the work list until the first row group its bloom filters and dictionaries do not drop, so it plans and probes only as far as that row group, and leaves that row group's page index to the workers |
@@ -183,30 +191,30 @@ Tests: `MultiFilePlanningTest`, `SchemaCompatibilityTest`, `CrossFileColumnOrder
 
 ### Row-group and file transitions
 
-Within a file, a column moves from one row group to the next without flushing its batch, except where the always-match flag changes on a filtered read or the read ends its batches at row-group boundaries ([When a batch closes](#when-a-batch-closes)).
+Within a file, a batch continues from one row group into the next, except where the always-match flag changes on a filtered read or the read ends its batches at row-group boundaries ([When a batch closes](#when-a-batch-closes)).
 
 The first column to reach a row group also prefetches the next row group, once per row group, whether it computes the row group's plans or finds them cached by the previous prefetch. The prefetch task plans the next row group without passing through this step, so prefetch stays one row group ahead and does not cascade. The column resolves the next work item on its own thread through `workItemAt`, so the last row group of a file plans the next file. A planning failure there does not fail the current row group: the iterator keeps it, and each column's own `workItemAt` for the next item rethrows it. It then computes the next item's plans on the common pool and prefetches the first chunk of the first plan that reads one, passing over empty plans and skip plans. The chunks within a row group follow the same rule one level down ([FETCH_PLANNING.md](FETCH_PLANNING.md#chunk-handles-and-prefetch)). The task plans nothing if the iterator is closed or every column has already released the item, which would repeat its dictionary and index reads. Combined with the footer load started when the previous file was planned, the next file's metadata and first bytes are in flight by the time the current file is exhausted, and the transition does not stall the consumer. Local and remote files differ only in what a fetch costs ([FETCH_PLANNING.md](FETCH_PLANNING.md)).
 
 ### Filter flags in the pipeline
 
-The always-match decision travels from the retriever to the drain in the per-slot `filterAlwaysMatchesBuffer`, beside the file name, under the same happens-before chain. A filter-only column in an always-match row group gets a `SkippedColumnFetchPlan`: its boundary marker goes straight into the retriever's reorder slot with no decode task, the next row group's prefetch passes over the skip plan, and the drain treats the marker as a proven page, including in the change-of-file flush. The consumer-side rules are in [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip).
+The always-match decision travels from the retriever to the drain in the row group's batches, in the per-slot `batchesBuffer`, beside the file name, under the same happens-before chain. A filter-only column in an always-match row group gets a `SkippedColumnFetchPlan`: its boundary marker goes straight into the retriever's reorder slot with no decode task, and the next row group's prefetch passes over the skip plan. On the marker the drain publishes the batch the plan closes before the row group, assembles nothing, and finishes where the row cap ends the read in the row group. The consumer-side rules are in [RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip).
 
 ## Row limits, errors and cancellation
 
 ### Row limits
 
-`maxRows` (from `head(n)`, and `n + head` for a filtered `skip(n)`, see [ROW_READER.md](ROW_READER.md)) reaches the iterator and every worker of a row reader. For an unfiltered `skip`, the workers get `head` plus the skip's residue within the first kept row group, which the reader discards. It is enforced at four levels:
+`maxRows` (from `head(n)`, and `n + head` for a filtered `skip(n)`, see [ROW_READER.md](ROW_READER.md)) reaches the iterator and the batch plan of a row reader. For an unfiltered `skip`, the batch plan gets `head` plus the skip's residue within the first kept row group, which the reader discards. It is enforced at four levels:
 
 | Level | Where | Unfiltered read | Filtered read |
 |---|---|---|---|
 | Planning | `planNextFile` row budget | Stops planning row groups and files once the budget is covered | No effect: every row group stays available |
 | Fetch | Per-row-group remainder of the budget ([FETCH_PLANNING.md](FETCH_PLANNING.md)) | Truncates the last needed row group's pages where their row counts are known without decompressing: from the OffsetIndex, or from the value count of a flat column. A nested column without an OffsetIndex keeps its pages, and its retriever reads them until the drain reaches the cap | No truncation |
-| Drain | `ColumnWorker.activeMaxRows` | Assembles up to the cap, publishes the partial batch and finishes | Holds the cap while every page reached belongs to an always-match row group; drops it for the rest of the read at the first page of an undecided one |
+| Batch plan | `BatchPlan` | Ends the last batch at the cap; every worker publishes it and finishes | Holds the cap while every row group with kept rows is an always-match one; drops it for the rest of the read at the first undecided one |
 | Reader | Match counting | — | Counts matches against the cap |
 
 A page is the smallest decode unit: a page that straddles the cap is decoded whole and assembled in part. The column readers carry no row cap (#433).
 
-Tests: `ColumnWorkerTest`, `AlwaysMatchingRowGroupTest`, `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
+Tests: `BatchPlanTest`, `ColumnWorkerTest`, `AlwaysMatchingRowGroupTest`, `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
 
 ### Error propagation
 

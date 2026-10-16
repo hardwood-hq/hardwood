@@ -38,6 +38,9 @@ public class PageSource {
     // letting the iterator evict cached chunk bytes once all columns are done.
     private RowGroupIterator.WorkItem currentWorkItem;
 
+    // Batches of the current work item's row group, from the read's batch plan.
+    private BatchPlan.RowGroupBatches currentBatches;
+
     /// Creates a PageSource for the given column.
     ///
     /// @param rowGroupIterator shared iterator providing work items and metadata
@@ -65,18 +68,10 @@ public class PageSource {
                 : ExceptionContext.UNKNOWN_ROW_GROUP;
     }
 
-    /// Position of the current work item in the read's work list, or `-1` if no work item
-    /// is active. Every column of a read walks the same list, so equal ordinals mean the same
-    /// row group of the same input, even across inputs that share a name. Only valid on the
-    /// retriever thread.
-    public int getCurrentWorkItemOrdinal() {
-        return currentWorkItem != null ? workItemCursor - 1 : -1;
-    }
-
-    /// Rows of the current work item's row group, or `0` if no work item is active. Only valid
-    /// on the retriever thread.
-    public long getCurrentRowGroupRowCount() {
-        return currentWorkItem != null ? currentWorkItem.rowGroup().numRows() : 0;
+    /// The batches of the current work item's row group, or `null` if no work item is active.
+    /// Only valid on the retriever thread.
+    BatchPlan.RowGroupBatches getCurrentBatches() {
+        return currentBatches;
     }
 
     /// Which page of the current column chunk is being read, or
@@ -90,18 +85,6 @@ public class PageSource {
     /// not yet been handed the next. Only valid on the retriever thread.
     public boolean isBetweenWorkItems() {
         return currentWorkItem == null;
-    }
-
-    /// Whether statistics proved the current work item's row group matches the filter
-    /// predicate in full. Only valid on the retriever thread.
-    public boolean isCurrentFilterAlwaysMatches() {
-        return currentWorkItem != null && currentWorkItem.filterAlwaysMatches();
-    }
-
-    /// Whether a filter predicate is installed on the underlying iterator, so that the
-    /// rows this source yields can outnumber the rows a reader returns.
-    public boolean isFilterActive() {
-        return rowGroupIterator.hasFilter();
     }
 
     /// Whether a [dev.hardwood.MetadataSource] supplied the footers of the files this source
@@ -122,6 +105,7 @@ public class PageSource {
             if (currentWorkItem != null) {
                 rowGroupIterator.releaseWorkItem(currentWorkItem);
                 currentWorkItem = null;
+                currentBatches = null;
             }
 
             RowGroupIterator.WorkItem workItem = rowGroupIterator.workItemAt(workItemCursor);
@@ -137,6 +121,7 @@ public class PageSource {
             currentWorkItem = workItem;
             currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
+            currentBatches = rowGroupIterator.getBatches(workItem);
             currentPlan = plan.isEmpty() ? null : plan.pages();
         }
     }

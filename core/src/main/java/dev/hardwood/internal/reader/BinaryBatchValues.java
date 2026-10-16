@@ -48,7 +48,7 @@ public final class BinaryBatchValues {
 
     /// The dictionary this batch's views draw on, or `null` before its first dictionary value.
     /// A read with a binary column ends its batches at row-group boundaries
-    /// ([ColumnWorker#endsBatchesAtRowGroupBoundaries]), so a batch draws on at most one.
+    /// ([BatchPlan#endsBatchesAtRowGroupBoundaries]), so a batch draws on at most one.
     private Dictionary.ByteArrayDictionary viewedDictionary;
 
     /// Where [#viewedDictionary]'s bytes start in [#bytes] once copied in, `-1` until then.

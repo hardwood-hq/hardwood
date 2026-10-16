@@ -30,6 +30,21 @@ class RowRangesTest {
         assertTrue(ranges.overlapsPage(999, 1000));
     }
 
+    /// The rows a set keeps of a row group: every row for the all-rows sentinel, the sum of
+    /// the intervals otherwise, and none for an empty set.
+    @Test
+    void rowCountSumsTheKeptRows() {
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 50),
+                new PageLocation(200, 100, 100));
+
+        assertEquals(150, RowRanges.ALL.rowCount(150));
+        assertEquals(100, RowRanges.fromPages(pages, new boolean[]{ true, false, true }, 150).rowCount(150));
+        assertEquals(0, RowRanges.fromPages(pages, new boolean[]{ false, false, false }, 150).rowCount(150));
+        assertEquals(30, RowRanges.range(120, 150).rowCount(150));
+    }
+
     @Test
     void testFromPagesKeepAll() {
         List<PageLocation> pages = List.of(

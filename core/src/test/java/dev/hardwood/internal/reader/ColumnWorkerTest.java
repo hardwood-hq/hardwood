@@ -33,6 +33,7 @@ import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -70,9 +71,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             long totalRows = consumeAllBatches(exchange);
@@ -102,9 +104,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             int batchCount = 0;
@@ -157,9 +160,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, nullableCol), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             boolean sawNulls = false;
@@ -216,9 +220,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, maxRows);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), maxRows, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             long totalRows = consumeAllBatches(exchange);
@@ -277,7 +282,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     null, exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
 
             IOException first = new IOException("page 3 is corrupt");
             worker.signalError(first);
@@ -326,9 +331,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity * 2);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             NestedColumnWorker worker = new NestedColumnWorker(
                     new PageSource(iterator, nestedCol), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, layers);
+                    context.decompressorFactory(), context.executor(), layers);
             worker.start();
 
             long totalRows = 0;
@@ -408,9 +414,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), stalledExecutor, 0, null);
+                    context.decompressorFactory(), stalledExecutor, null);
             worker.start();
 
             assertThat(firstSubmitted.await(5, TimeUnit.SECONDS))
@@ -502,9 +509,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     stallingSource, exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             assertThat(readStalled.await(5, TimeUnit.SECONDS))
@@ -573,9 +581,10 @@ class ColumnWorkerTest {
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
+            iterator.planBatches(batchCapacity, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             assertThat(exchange.poll()).as("pipeline should produce a batch").isNotNull();
@@ -619,7 +628,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     null, exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
 
             worker.initDrainState();
             worker.currentBatch = exchange.takeBatch();
@@ -663,7 +672,7 @@ class ColumnWorkerTest {
                     });
             NestedColumnWorker worker = new NestedColumnWorker(
                     null, exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    context.decompressorFactory(), context.executor(), null);
 
             worker.initDrainState();
             worker.currentBatch = exchange.takeBatch();
@@ -748,10 +757,10 @@ class ColumnWorkerTest {
             ColumnSchema column = schema.getColumn(0);
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 1024);
+            iterator.planBatches(1024, 0);
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, 1024,
-                    context.decompressorFactory(), context.executor(), 0, null);
-            worker.endBatchesAtRowGroupBoundaries();
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             List<Integer> counts = new ArrayList<>();
@@ -775,8 +784,9 @@ class ColumnWorkerTest {
     }
 
     /// A batch that ends before it is full keeps the array it was given, and its capacity says so:
-    /// a batch size beyond the file's rows, without the row-group cut, gives one batch holding
-    /// every row in an array of the full batch size. The detaching exchange counts that capacity.
+    /// a batch size beyond the file's rows, in a read of a numeric column alone (so without the
+    /// row-group cut), gives one batch holding every row in an array of the full batch size. The
+    /// detaching exchange counts that capacity.
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aBatchEndedEarlyDeclaresTheCapacityOfItsArray() throws Exception {
@@ -791,8 +801,9 @@ class ColumnWorkerTest {
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
             FlatColumnWorker worker = new FlatColumnWorker(
-                    new PageSource(createIterator(TEST_FILE, schema, context), 0), exchange, column, batchSize,
-                    context.decompressorFactory(), context.executor(), 0, null);
+                    new PageSource(createIterator(TEST_FILE, schema, context, batchSize,
+                            ColumnProjection.columns(column.name())), 0), exchange, column, batchSize,
+                    context.decompressorFactory(), context.executor(), null);
             worker.start();
 
             BatchExchange.Batch batch = exchange.poll();
@@ -803,29 +814,6 @@ class ColumnWorkerTest {
             assertThat(batch.recordCount).isEqualTo(rows);
             assertThat(Array.getLength(batch.values)).isEqualTo(batchSize);
             assertThat(batch.capacity).isEqualTo(batchSize);
-        }
-    }
-
-    @Test
-    void theRowGroupCutCannotBeEnabledOnceStarted() throws Exception {
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
-
-            FileSchema schema = reader.getFileSchema();
-            ColumnSchema column = schema.getColumn(0);
-            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            FlatColumnWorker worker = new FlatColumnWorker(
-                    new PageSource(createIterator(TEST_FILE, schema, context), 0), exchange, column, 64,
-                    context.decompressorFactory(), context.executor(), 0, null);
-            worker.start();
-            try {
-                assertThatThrownBy(worker::endBatchesAtRowGroupBoundaries)
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessage("Column worker for '" + column.name() + "' already started");
-            }
-            finally {
-                worker.close();
-            }
         }
     }
 
@@ -851,9 +839,8 @@ class ColumnWorkerTest {
                         return b;
                     }, batch -> batch.capacity, 10);
             FlatColumnWorker worker = new FlatColumnWorker(
-                    new PageSource(createIterator(file, schema, context), 0), exchange, column, 10,
-                    context.decompressorFactory(), context.executor(), 0, filter);
-            worker.endBatchesAtRowGroupBoundaries();
+                    new PageSource(createIterator(file, schema, context, 10), 0), exchange, column, 10,
+                    context.decompressorFactory(), context.executor(), filter);
             worker.start();
 
             List<BinaryBatchValues> batches = new ArrayList<>();
@@ -872,16 +859,32 @@ class ColumnWorkerTest {
     }
 
     private static RowGroupIterator createIterator(Path file, FileSchema schema,
+                                                    HardwoodContextImpl context, int batchCapacity) throws Exception {
+        return createIterator(file, schema, context, batchCapacity, ColumnProjection.all());
+    }
+
+    private static RowGroupIterator createIterator(Path file, FileSchema schema, HardwoodContextImpl context,
+                                                    int batchCapacity, ColumnProjection projection) throws Exception {
+        RowGroupIterator iterator = createIterator(file, schema, context, projection);
+        iterator.planBatches(batchCapacity, 0);
+        return iterator;
+    }
+
+    private static RowGroupIterator createIterator(Path file, FileSchema schema,
                                                     HardwoodContextImpl context) throws Exception {
+        return createIterator(file, schema, context, ColumnProjection.all());
+    }
+
+    private static RowGroupIterator createIterator(Path file, FileSchema schema, HardwoodContextImpl context,
+                                                    ColumnProjection projection) throws Exception {
         InputFile inputFile = InputFile.of(file);
         inputFile.open();
 
         ParquetFileReader reader = ParquetFileReader.open(inputFile);
         RowGroupIterator iterator = new RowGroupIterator(
-                java.util.List.of(inputFile), context, 0);
+                List.of(inputFile), context, 0);
         iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
-        iterator.initialize(
-                ProjectedSchema.create(schema, dev.hardwood.schema.ColumnProjection.all()), null);
+        iterator.initialize(ProjectedSchema.create(schema, projection), null);
         reader.close();
         return iterator;
     }

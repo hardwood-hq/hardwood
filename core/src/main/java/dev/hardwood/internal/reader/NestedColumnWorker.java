@@ -89,7 +89,6 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// @param batchCapacity rows per batch
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
-    /// @param maxRows maximum rows to assemble (0 = unlimited)
     /// @param layers per-layer descriptor (kinds + def thresholds) for the
     ///        column's schema chain, as [NestedLevelComputer#computeLayers]
     ///        returns it. The descriptor drives the layer-indexed
@@ -97,21 +96,21 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
-                              Executor decodeExecutor, long maxRows,
+                              Executor decodeExecutor,
                               NestedLevelComputer.Layers layers) {
         this(pageSource, exchange, column, batchCapacity, decompressorFactory,
-             decodeExecutor, maxRows, layers, IndexMode.ALL_ITEMS, true);
+             decodeExecutor, layers, IndexMode.ALL_ITEMS, true);
     }
 
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
-                              Executor decodeExecutor, long maxRows,
+                              Executor decodeExecutor,
                               NestedLevelComputer.Layers layers,
                               IndexMode indexMode,
                               boolean fixedListFastPathEnabled) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
-              decodeExecutor, maxRows);
+              decodeExecutor);
         this.layers = layers;
         this.indexMode = indexMode;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -148,8 +147,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         boolean pageFixedWidth = k > 0;
         // A published batch must stay homogeneous — wholly fixed-width (levels
         // omitted) or wholly regular — but batches must also cut at the same row
-        // boundaries across all columns, which is only true at batch-capacity and
-        // file boundaries. We therefore never flush at a page boundary: when the
+        // boundaries across all columns, which the batch plan sets. We therefore
+        // never flush at a page boundary: when the
         // open fixed-width batch meets a regular page or a different k, we convert
         // it to the regular representation in place (synthesizing its levels) and
         // keep filling the same batch. A fixed-width page arriving into an
@@ -192,8 +191,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     /// Assembly for a fixed-width `k`-element page: every record is a present list
     /// of exactly `k` elements, so record boundaries are implicit and values are
-    /// bulk-copied per record with arithmetic record offsets. Batch/row splitting
-    /// mirrors [#assembleRegularPage] at record granularity.
+    /// bulk-copied per record with arithmetic record offsets. Batches close where
+    /// the batch plan closes them, as in [#assembleRegularPage], at record granularity.
     ///
     /// When `asRegularBatch` is `false` the batch stays on the fast path: the
     /// level arrays are skipped and `batchFixedK` is stamped so the omitted
@@ -218,24 +217,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         // per record.
         int r = 0;
         while (r < pageRecords) {
-            if (rowsInCurrentBatch >= batchCapacity) {
-                publishCurrentBatch();
-                if (done) {
-                    return;
-                }
-            }
-            if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
-                if (rowsInCurrentBatch > 0) {
-                    publishCurrentBatch();
-                }
-                finishDrain();
+            if (segmentRowsLeft == 0 && !closeSegmentAtRecordStart()) {
                 return;
             }
 
-            int records = Math.min(pageRecords - r, batchCapacity - rowsInCurrentBatch);
-            if (activeMaxRows > 0) {
-                records = (int) Math.min(records, activeMaxRows - totalRowsAssembled);
-            }
+            int records = Math.min(pageRecords - r, segmentRowsLeft);
             int span = records * k;
             int destStart = nestedValueCount;
             if (asRegularBatch) {
@@ -260,7 +246,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             }
             nestedValueCount += span;
             rowsInCurrentBatch += records;
-            totalRowsAssembled += records;
+            segmentRowsLeft -= records;
             r += records;
         }
     }
@@ -294,40 +280,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             int repLevel = pageRepLevels != null ? pageRepLevels[i] : 0;
 
             // A record start (repLevel = 0) closes the previous top-level record and
-            // opens a new one — except at the first value of the stream, where we also
-            // start record 0.
-            if (repLevel == 0 && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
-                // Previous record is complete — check if batch is full
-                if (rowsInCurrentBatch >= batchCapacity) {
-                    publishCurrentBatch();
-                    if (done) {
-                        return;
-                    }
-                }
-
-                // Check the active row cap after publishing
-                if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
-                    if (rowsInCurrentBatch > 0) {
-                        publishCurrentBatch();
-                    }
-                    finishDrain();
+            // opens a new one; the first value of a batch always opens its record 0.
+            if (repLevel == 0 || (nestedValueCount == 0 && rowsInCurrentBatch == 0)) {
+                // The previous record is complete: close the batch where the plan does.
+                if (segmentRowsLeft == 0 && !closeSegmentAtRecordStart()) {
                     return;
                 }
-
-                // Start new record
-                if (nestedRecordOffsets.length <= rowsInCurrentBatch) {
-                    nestedRecordOffsets = Arrays.copyOf(nestedRecordOffsets,
-                            nestedRecordOffsets.length * 2);
-                }
-                nestedRecordOffsets[rowsInCurrentBatch] = nestedValueCount;
-                rowsInCurrentBatch++;
-                totalRowsAssembled++;
-            }
-            else if (nestedValueCount == 0 && rowsInCurrentBatch == 0) {
-                // First value of the stream — start record 0.
-                nestedRecordOffsets[0] = 0;
-                rowsInCurrentBatch = 1;
-                totalRowsAssembled++;
+                openRecord(nestedValueCount);
             }
 
             // Ensure capacity for the new value
@@ -345,8 +304,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// Whole-page assembly for an all-present page. Every leaf is present
     /// ([Page#allPresent]), so the page's values are 1:1 with positions and
     /// contiguous. The record and batch-capacity bookkeeping mirrors
-    /// [#assembleRegularPage] — a record opens at each `repLevel == 0`, a full batch
-    /// is published at the next record boundary — but the per-element value copy and
+    /// [#assembleRegularPage] — a record opens at each `repLevel == 0`, a batch the
+    /// plan closes is published at the next record boundary — but the per-element value copy and
     /// level stores are deferred and flushed as bulk operations once per batch (see
     /// [#flushRun]). Records may span pages, so the batch is left open at page end
     /// for the next page to continue.
@@ -364,43 +323,30 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             if (pageRepLevels != null && pageRepLevels[i] != 0) {
                 continue; // continuation of the open record, not a boundary
             }
-            int batchValueIndex = runStartDest + (i - runStartPage);
-            if (batchValueIndex > 0 || rowsInCurrentBatch > 0) {
-                // A record just closed; open the next, publishing first if the batch
-                // is full (records are never split across batches).
-                if (rowsInCurrentBatch >= batchCapacity) {
-                    flushRun(page, pageRepLevels, runStartPage, i, runStartDest);
-                    publishCurrentBatch();
-                    if (done) {
-                        return;
-                    }
-                    runStartPage = i;
-                    runStartDest = 0;
-                }
-                if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
-                    flushRun(page, pageRepLevels, runStartPage, i, runStartDest);
-                    if (rowsInCurrentBatch > 0) {
-                        publishCurrentBatch();
-                    }
-                    finishDrain();
+            // A record just closed; open the next, closing the batch first where the
+            // plan does (records are never split across batches).
+            if (segmentRowsLeft == 0) {
+                flushRun(page, pageRepLevels, runStartPage, i, runStartDest);
+                if (!closeSegmentAtRecordStart()) {
                     return;
                 }
-                if (nestedRecordOffsets.length <= rowsInCurrentBatch) {
-                    nestedRecordOffsets = Arrays.copyOf(nestedRecordOffsets,
-                            nestedRecordOffsets.length * 2);
-                }
-                nestedRecordOffsets[rowsInCurrentBatch] = runStartDest + (i - runStartPage);
-                rowsInCurrentBatch++;
-                totalRowsAssembled++;
+                runStartPage = i;
+                runStartDest = nestedValueCount;
             }
-            else {
-                // First kept value of the stream — open record 0.
-                nestedRecordOffsets[0] = 0;
-                rowsInCurrentBatch = 1;
-                totalRowsAssembled++;
-            }
+            openRecord(runStartDest + (i - runStartPage));
         }
         flushRun(page, pageRepLevels, runStartPage, pageSize, runStartDest);
+    }
+
+    /// Opens a record of the current batch whose first value sits at `valueIndex`, taking one row
+    /// of the current segment.
+    private void openRecord(int valueIndex) {
+        if (nestedRecordOffsets.length <= rowsInCurrentBatch) {
+            nestedRecordOffsets = Arrays.copyOf(nestedRecordOffsets, nestedRecordOffsets.length * 2);
+        }
+        nestedRecordOffsets[rowsInCurrentBatch] = valueIndex;
+        rowsInCurrentBatch++;
+        segmentRowsLeft--;
     }
 
     /// Flushes the pending run of an all-present page — page positions

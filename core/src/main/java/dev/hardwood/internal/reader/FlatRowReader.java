@@ -285,8 +285,10 @@ public final class FlatRowReader implements FileAwareRowReader {
             return reader;
         }
 
-        boolean endBatchesAtRowGroupBoundaries =
-                ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
+        // Every worker closes its batches where the read's batch plan does, so the columns
+        // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
+        // only while statistics prove every row of the row groups it reaches matches.
+        rowGroupIterator.planBatches(batchSize, maxRows);
         FlatColumnWorker[] workers = new FlatColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -314,11 +316,8 @@ public final class FlatRowReader implements FileAwareRowReader {
             ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows,
+                    context.decompressorFactory(), context.executor(),
                     columnFilter);
-            if (endBatchesAtRowGroupBoundaries) {
-                worker.endBatchesAtRowGroupBoundaries();
-            }
 
             buffers[i] = buffer;
             workers[i] = worker;

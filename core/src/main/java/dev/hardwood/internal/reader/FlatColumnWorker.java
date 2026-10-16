@@ -40,7 +40,6 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// @param batchCapacity rows per batch
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
-    /// @param maxRows maximum rows to assemble (0 = unlimited)
     /// @param columnFilter optional drain-side per-column filter that runs against every
     ///                    published batch, writing matches into the batch's `matches`
     ///                    array. `null` leaves the worker on the existing path — no
@@ -48,10 +47,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     public FlatColumnWorker(PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
                             ColumnSchema column, int batchCapacity,
                             DecompressorFactory decompressorFactory,
-                            Executor decodeExecutor, long maxRows,
+                            Executor decodeExecutor,
                             ColumnBatchMatcher columnFilter) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
-              decodeExecutor, maxRows);
+              decodeExecutor);
         this.columnFilter = columnFilter;
     }
 
@@ -71,11 +70,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     }
 
     /// Gives a batch the column readers' exchange hands out without values its value array,
-    /// sized to the rows it can still receive: at most the batch capacity, and, where batches
-    /// end with their row group, no more than the row group has left. A file of small row
-    /// groups then allocates per batch what the batch can hold.
+    /// sized to the rows the batch plan puts in it: the rows of the segment it starts with
+    /// when the plan closes the batch at that segment's end, the batch capacity when the batch
+    /// stays open into the next row group. A file of small row groups then allocates per batch
+    /// what the batch holds.
     private void allocateValues() {
-        currentCapacity = (int) Math.max(1, Math.min(batchCapacity, rowGroupRowsLeft));
+        currentCapacity = segmentClosesBatch() ? segmentRowsLeft : batchCapacity;
         currentBatch.values = BatchExchange.allocateArray(column, currentCapacity);
         currentBatch.capacity = currentCapacity;
     }
@@ -108,48 +108,31 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     }
 
     /// Copies values at page-relative offsets `[rangeStart, rangeEnd)` into
-    /// the current batch, publishing and rolling over as the batch fills and
-    /// stopping early when `maxRows` is reached.
+    /// the current batch, publishing each batch where the batch plan closes it and
+    /// stopping where the plan's row cap ends the read.
     private void copyPageRange(Page page, int rangeStart, int rangeEnd) {
         int pagePosition = rangeStart;
 
         while (pagePosition < rangeEnd) {
+            if (segmentRowsLeft == 0) {
+                nextSegment();
+            }
             if (currentBatch.values == null) {
                 allocateValues();
             }
-            int spaceInBatch = currentCapacity - rowsInCurrentBatch;
-            int toCopy = Math.min(spaceInBatch, rangeEnd - pagePosition);
-
-            // Respect the active row cap: limit the copy to the remaining budget
-            if (activeMaxRows > 0) {
-                long remaining = activeMaxRows - totalRowsAssembled;
-                if (remaining <= 0) {
-                    finishDrain();
-                    return;
-                }
-                toCopy = (int) Math.min(toCopy, remaining);
+            int toCopy = Math.min(segmentRowsLeft, rangeEnd - pagePosition);
+            if (toCopy > currentCapacity - rowsInCurrentBatch) {
+                throw new IllegalStateException("Batch plan mismatch: a batch of " + currentCapacity
+                        + " rows cannot take " + toCopy + " more after " + rowsInCurrentBatch);
             }
 
             copyPageData(page, pagePosition, rowsInCurrentBatch, toCopy);
 
             rowsInCurrentBatch += toCopy;
-            totalRowsAssembled += toCopy;
-            rowGroupRowsLeft -= toCopy;
+            segmentRowsLeft -= toCopy;
             pagePosition += toCopy;
 
-            if (rowsInCurrentBatch >= currentCapacity) {
-                publishCurrentBatch();
-                if (done) {
-                    return;
-                }
-            }
-
-            // Check if we've hit the limit after publishing
-            if (activeMaxRows > 0 && totalRowsAssembled >= activeMaxRows) {
-                if (rowsInCurrentBatch > 0) {
-                    publishCurrentBatch();
-                }
-                finishDrain();
+            if (segmentRowsLeft == 0 && segmentClosesBatch() && !closeSegmentBatch()) {
                 return;
             }
         }

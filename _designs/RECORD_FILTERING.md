@@ -6,7 +6,7 @@ Related documents:
 
 - [PREDICATE_MODEL.md](PREDICATE_MODEL.md): the public predicate, its literal rules and its resolution to `ResolvedPredicate`
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decision for row groups and pages
-- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (worker flush rules, the reorder buffer)
+- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (the batch plan, the reorder buffer)
 - [FETCH_PLANNING.md](FETCH_PLANNING.md): fetch plans and page row masks, shared with unfiltered reads
 - [docs/content/concepts/row-selection.md](../docs/content/concepts/row-selection.md): the user-facing semantics of row selection
 
@@ -154,7 +154,7 @@ Tests: `ColumnReaderExactFilterTest`.
 
 ### Homogeneous batches
 
-When a filter is installed, every `ColumnWorker` flushes its batch in progress at a page whose `filterAlwaysMatches` differs from the batch's, and stamps the flag on the published batch (`Batch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every worker of a read applies the same rule to the same sequence of row groups, pages and masks with the same capacity, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. A per-column flush would desynchronise the merge. Unfiltered reads do not flush on the flag.
+When a filter is installed, the read's batch plan closes the batch in progress before a row group whose `filterAlwaysMatches` differs from the batch's ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and every `ColumnWorker` stamps the plan's flag on the published batch (`Batch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every worker of a read follows the one plan, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. Unfiltered reads do not close batches on the flag.
 
 A worker reads the flag of its own batch; a reader reads it from the first payload column's batch, which speaks for the step:
 
@@ -180,9 +180,9 @@ A filter-only column serves only the predicate, and the predicate needs it only 
 | `MIGHT_MATCH` | read | read |
 | `ALWAYS_MATCHES` | read | not fetched, decompressed or decoded |
 
-`RowGroupIterator.skipsColumn` gives a column the `SkippedColumnFetchPlan` exactly when the work item carries `filterAlwaysMatches` and the column is filter-only. The plan holds no chunk handle, takes no part in cross-column coalescing, and yields one `PageInfo.BOUNDARY_MARKER`: a page with no bytes and no rows. The retriever hands the marker to the drain without decoding; the drain runs its per-page bookkeeping for it and assembles nothing. The marker counts as a proven page, so it closes the column's batch in progress where the payload columns close theirs and keeps the column aligned across a proven row group placed between undecided ones. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
+`RowGroupIterator.skipsColumn` gives a column the `SkippedColumnFetchPlan` exactly when the work item carries `filterAlwaysMatches` and the column is filter-only. The plan holds no chunk handle, takes no part in cross-column coalescing, and yields one `PageInfo.BOUNDARY_MARKER`: a page with no bytes and no rows. The retriever hands the marker to the drain without decoding; the drain takes the row group's batches from the plan and assembles nothing. A proven row group never shares a batch with an undecided one, so the plan closes the column's undecided batch in progress before the marker's row group, where the payload columns close theirs, and the column stays aligned across a proven row group placed between undecided ones; a batch the plan continues from a skipped row group into a read one fails the read. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
 
-**Planning and polling must agree.** Every consumer takes a step's payload batches first and takes a batch from each filter-only column only when the step is not proven; otherwise the lockstep checks cover every column. The skip condition in `skipsColumn` is exactly this poll condition. If a filter-only column were read in a proven row group, it would publish batches no consumer takes, and the next undecided step would take them in place of its own. Nothing else, such as a page mask narrowing the payload columns in a proven row group or a row cap, may enter the skip decision, since the skipped column assembles no rows; a page mask changes how many rows the payload columns emit, not where they close their batches. A `ColumnScan` filter-only cursor keeps its previous batch through a proven step, and nothing reads it. At the end of the stream every exchange is checked for errors, so a failure on a filter-only column's worker surfaces. Untested.
+**Planning and polling must agree.** Every consumer takes a step's payload batches first and takes a batch from each filter-only column only when the step is not proven; otherwise the lockstep checks cover every column. The skip condition in `skipsColumn` is exactly this poll condition. If a filter-only column were read in a proven row group, it would publish batches no consumer takes, and the next undecided step would take them in place of its own. Nothing else, such as a page mask narrowing the payload columns in a proven row group or a row cap, may enter the skip decision, since the skipped column assembles no rows; a page mask changes how many rows the plan places in the payload columns' batches, which the skipped column holds none of. A `ColumnScan` filter-only cursor keeps its previous batch through a proven step, and nothing reads it. At the end of the stream every exchange is checked for errors, so a failure on a filter-only column's worker surfaces. Untested.
 
 A filter-only column keeps its worker and exchange for the whole read, since the decode set is fixed before the first row group is planned.
 
@@ -190,9 +190,9 @@ Tests: `FilterOnlyColumnSkipTest`.
 
 ### The row cap
 
-With a filter, `head(N)` caps matching rows. Each `ColumnWorker` holds the cap (`activeMaxRows`) while every page it has reached belongs to a proven row group, where assembled rows and matching rows are the same rows, and drops it for the rest of the read at the first page of an undecided row group; from there the reader counts matches. A boundary marker counts as a proven page and leaves the cap in place. A payload column that reaches the cap inside a proven row group ends the stream there.
+With a filter, `head(N)` caps matching rows. The batch plan holds the cap while every row group with kept rows is a proven one, where assembled rows and matching rows are the same rows, and drops it for the rest of the read at the first undecided row group; from there the reader counts matches. Where the cap falls inside a proven row group, the plan ends the read there: every payload column publishes its last batch and ends its stream, and a filter-only column, which reads a boundary marker for the row group, ends its stream too.
 
-Tests: `AlwaysMatchingRowGroupTest`, `FilterOnlyColumnSkipTest`, `PredicatePushDownTest`.
+Tests: `AlwaysMatchingRowGroupTest`, `BatchPlanTest`, `FilterOnlyColumnSkipTest`, `PredicatePushDownTest`.
 
 ## Row selection over the filtered relation
 

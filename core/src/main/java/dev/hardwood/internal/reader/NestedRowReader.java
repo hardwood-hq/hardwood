@@ -192,15 +192,14 @@ public final class NestedRowReader implements FileAwareRowReader {
         }
 
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT). The
-        // workers still take it — they hold it only while statistics prove every row
-        // they assemble matches, and drop it at the first row group that is not proven,
-        // from where the reader counts matches instead.
+        // batch plan still takes it — it holds it only while statistics prove every row
+        // of the row groups it reaches matches, and drops it at the first row group that
+        // is not proven, from where the reader counts matches instead.
         //
         // Nothing here asks a question about the read as a whole, so nothing here plans
         // beyond the first file: statistics reach the reader per row group, on
         // NestedBatch.filterAlwaysMatches (see #1107).
-        boolean endBatchesAtRowGroupBoundaries =
-                ColumnWorker.endsBatchesAtRowGroupBoundaries(decoded.getProjectedColumns());
+        rowGroupIterator.planBatches(batchSize, maxRows);
         NestedColumnWorker[] workers = new NestedColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -221,11 +220,8 @@ public final class NestedRowReader implements FileAwareRowReader {
                     schema.getRootNode(), columnSchema.columnIndex());
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows,
+                    context.decompressorFactory(), context.executor(),
                     layers, NestedColumnWorker.IndexMode.ALL_ITEMS, fixedListFastPathEnabled);
-            if (endBatchesAtRowGroupBoundaries) {
-                worker.endBatchesAtRowGroupBoundaries();
-            }
 
             buffers[i] = buffer;
             workers[i] = worker;

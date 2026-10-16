@@ -107,7 +107,7 @@ The drain thread assembles decoded pages into a batch through reusable accumulat
 
 Invariants every path keeps:
 
-- **Records are never split across batches.** A record opens at each `repLevel == 0`; a full batch is published at the next record boundary. Batch boundaries therefore depend only on record counts and the flush rules every column shares, which is what keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
+- **Records are never split across batches.** A record opens at each `repLevel == 0`; a batch holding the records the batch plan gives it is published at the next record boundary, at the next row group or at the end of the stream. Batch boundaries are therefore the plan's, which every column shares and which keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
 - **Masks are applied before assembly.** A masked page arrives trimmed to its kept records ([Masked pages](#masked-pages)), so every path keeps every value it is given.
 - **A published batch owns its arrays.** The accumulators are reused for the next batch, so publish copies the value, level and offset arrays out (`trimValues`, including the bytes prefix of a variable-length leaf). The one exception hands the accumulator itself to the batch and allocates a fresh one ([Fixed-size-list fast path](#fixed-size-list-fast-path)).
 - **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with a `ParquetReadException`. Later pages are checked only when masked, since trimming needs each masked page to open a record ([Masked pages](#masked-pages)).
