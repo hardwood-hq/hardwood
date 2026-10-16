@@ -104,6 +104,44 @@ class BatchExchangeTest {
                 .containsExactlyInAnyOrderElementsOf(holders);
     }
 
+    /// A worker that publishes without waiting fills a returned holder when one is free, and a new
+    /// one from the factory otherwise.
+    @Test
+    void handsOutAReturnedHolderBeforeANewOne() {
+        List<Object> created = new ArrayList<>();
+        BatchExchange<Object> exchange = BatchExchange.recycling("c", () -> {
+            Object batch = new Object();
+            created.add(batch);
+            return batch;
+        });
+        Object returned = created.getFirst();
+
+        assertThat(exchange.newBatch()).isSameAs(returned);
+        assertThat(exchange.newBatch()).isSameAs(created.get(1));
+        assertThat(exchange.newBatch()).isSameAs(created.get(2));
+        Object fresh = exchange.newBatch();
+
+        assertThat(fresh).isSameAs(created.get(3));
+        exchange.recycle(returned);
+        assertThat(exchange.newBatch()).isSameAs(returned);
+    }
+
+    /// A recycling exchange's bounded ready queue refuses a batch without waiting when it is full,
+    /// and the consumer's next take runs the room listener, in recycling mode as in detaching mode.
+    @Test
+    void refusesAPublishToAFullQueueAndRunsTheRoomListenerOnTheNextTake() throws Exception {
+        BatchExchange<Object> exchange = BatchExchange.recycling("c", Object::new);
+        List<String> events = new ArrayList<>();
+        exchange.setRoomListener(() -> events.add("room"));
+        Object first = new Object();
+
+        assertThat(exchange.tryPublish(first)).isTrue();
+        assertThat(exchange.tryPublish(new Object())).isTrue();
+        assertThat(exchange.tryPublish(new Object())).isFalse();
+        assertThat(exchange.poll()).isSameAs(first);
+        assertThat(events).containsExactly("room");
+    }
+
     /// An error ends the stream too, and has to reach the consumer rather than sit behind a
     /// poll that has already returned. [BatchExchange#signalError] goes through `finish()` for
     /// that reason, which puts the sentinel in the queue ahead of the throw.
