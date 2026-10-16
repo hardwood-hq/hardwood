@@ -19,8 +19,8 @@ on the Intel N300 pinned at 1.50 GHz, with the DuckDB 1.5.6 CLI as the reference
 | DuckDB CLI | 8.10 s |
 | `scatter-decode-spike` with callback consumption, recycled batches and #1471 | 5.34 s |
 
-The spike's figure is the ceiling seen so far, not a target: it needs a new scheduler, an
-API #737 rejected in another form, and batch recycling #737 has not accepted.
+The spike's figure is the ceiling seen so far, not a target: it needs an API #737 rejected in
+another form, and batch recycling #737 has not accepted. Its scheduler is part of stage 3.
 
 ## Stages
 
@@ -30,7 +30,6 @@ API #737 rejected in another form, and batch recycling #737 has not accepted.
 | 2 | The 1BRC benchmark | #1472 | baseline numbers for `main` |
 | 3 | Decode pages straight into batch arrays | #1287 | 1BRC and flat faster, no regression benchmark slower |
 | 4 | Parallel consumption | #1475 (callback), #737 | decided by measurement, see below |
-| 5 | One scheduler per read | #1475 | only if a gap remains that stage 3 and 4 cannot close |
 
 Stages 2 and 3 can run in parallel; stage 3's gate needs stage 2.
 
@@ -42,8 +41,10 @@ scan's CPU in zeroing and copying arrays, most of them above G1's humongous thre
 prototype that skipped the page array for dictionary-encoded numeric pages cut the flat
 scan from 306 to 209 ms on eight threads.
 
-The design, for every column kind and read, and its own stages are in
-[DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md).
+Pages reach the decode pool in row order across the read's columns, from one scheduler per
+read, as in the spike: per-column retrievers on a first-in-first-out pool cannot bound
+read-ahead for both narrow and wide reads. The design, for every column kind and read, and its
+own stages are in [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md).
 
 ### Stage 4: parallel consumption
 
@@ -59,17 +60,6 @@ Measure splits on stage 3's pipeline first. Propose the callback only if splits 
 clearly behind it; that reopens #737's "decode-time sink", which was rejected for running
 on the drain, not the pool.
 
-### Stage 5: one scheduler per read
-
-The spike replaces the per-column pipelines with one scheduler that places pages of every
-column into row-aligned batches. On the flat file it used the least CPU and was fastest on
-one thread (804 ms against 1112 ms), but on eight threads its single scheduler thread kept
-it behind the stage 3 prototype (262 ms against 209 ms). Stage 3 already decides batch boundaries once per read and removes
-the drain threads, leaving one retriever per column. Replacing those with one scheduler is worth
-its rewrite only if, after stages 3 and 4, single-core efficiency or CPU per row is what separates Hardwood from
-the reference. The design, measurements and open questions are on #1475; the code is on
-branch `scatter-decode-spike`.
-
 ## Not in scope
 
 | Topic | Why |
@@ -81,6 +71,6 @@ branch `scatter-decode-spike`.
 
 ## Completion
 
-When stage 4 is decided and stage 5 is either done or dropped, fold the end state into
+When stage 4 is decided, fold the end state into
 `READ_PIPELINE.md` and `COLUMN_READER.md`, record the final 1BRC numbers on #1476, and
 delete this plan.
