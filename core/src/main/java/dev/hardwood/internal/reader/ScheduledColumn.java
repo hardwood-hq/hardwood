@@ -16,6 +16,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -52,6 +53,8 @@ public final class ScheduledColumn implements ColumnPipeline {
     private final DecompressorFactory decompressorFactory;
     private final int maxDefinitionLevel;
     private final ReadScheduler scheduler;
+    /// The column's filter fragment, run on each batch as it completes; `null` for none.
+    private final ColumnBatchMatcher columnFilter;
 
     // === Guarded by `lock` ===
     private final ReentrantLock lock = new ReentrantLock();
@@ -60,6 +63,9 @@ public final class ScheduledColumn implements ColumnPipeline {
     private final ArrayDeque<PageTask> ready = new ArrayDeque<>();
     /// Cells in plan order, then [#END] or the failure that ends the read.
     private final ArrayDeque<Object> publishOrder = new ArrayDeque<>();
+    /// Cells whose seal came after their last fill, which the fetcher completes once it has
+    /// released the lock.
+    private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
 
     // === Read by the scheduler ===
     /// The read's row the column's next page starts at or after.
@@ -101,9 +107,14 @@ public final class ScheduledColumn implements ColumnPipeline {
     private long rowInRowGroup;
 
     /// Creates a scheduled column and adds it to `scheduler`, which starts it.
+    ///
+    /// @param columnFilter the column's filter fragment, which writes each batch's `matches` as
+    ///        the batch completes; `null` for none
     public ScheduledColumn(ReadScheduler scheduler, PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
-                           ColumnSchema column, int batchCapacity, DecompressorFactory decompressorFactory) {
+                           ColumnSchema column, int batchCapacity, DecompressorFactory decompressorFactory,
+                           ColumnBatchMatcher columnFilter) {
         this.scheduler = scheduler;
+        this.columnFilter = columnFilter;
         this.pageSource = pageSource;
         this.exchange = exchange;
         this.column = column;
@@ -262,6 +273,7 @@ public final class ScheduledColumn implements ColumnPipeline {
                     finally {
                         lock.unlock();
                     }
+                    completeSealed();
                     break;
                 }
                 if (!info.isBoundaryMarker()
@@ -336,6 +348,7 @@ public final class ScheduledColumn implements ColumnPipeline {
         finally {
             lock.unlock();
         }
+        completeSealed();
         return goesOn;
     }
 
@@ -372,6 +385,26 @@ public final class ScheduledColumn implements ColumnPipeline {
         finally {
             lock.unlock();
         }
+        completeSealed();
+    }
+
+    /// Completes the cells the fetcher's placement sealed after their last fill, outside the
+    /// lock: completing a cell runs the column's filter fragment.
+    private void completeSealed() {
+        while (true) {
+            Cell cell;
+            lock.lock();
+            try {
+                cell = sealedComplete.pollFirst();
+            }
+            finally {
+                lock.unlock();
+            }
+            if (cell == null) {
+                return;
+            }
+            completeAndPublish(cell);
+        }
     }
 
     /// What the placer's decisions do to the column; runs under the column lock.
@@ -385,7 +418,7 @@ public final class ScheduledColumn implements ColumnPipeline {
         @Override
         public void sealed(Cell cell) {
             if (cell.pending.decrementAndGet() == 0) {
-                completeAndPublish(cell);
+                sealedComplete.addLast(cell);
             }
         }
 
@@ -424,7 +457,7 @@ public final class ScheduledColumn implements ColumnPipeline {
                 }
                 Segment segment = page.segments.get(i);
                 Cell cell = segment.cell;
-                FlatFill.fill(segment, values, decoded, cell.allocate(column).values, maxDefinitionLevel);
+                FlatFill.fill(segment, values, decoded, cell.allocate(exchange, column).values, maxDefinitionLevel);
                 if (cell.pending.decrementAndGet() == 0) {
                     completeAndPublish(cell);
                 }
@@ -458,7 +491,7 @@ public final class ScheduledColumn implements ColumnPipeline {
     /// Completes a cell whose segments are all filled and which is sealed, and publishes what
     /// its completion lets the column publish.
     private void completeAndPublish(Cell cell) {
-        BatchExchange.Batch batch = cell.allocate(column);
+        BatchExchange.Batch batch = cell.allocate(exchange, column);
         int records = cell.records();
         batch.recordCount = records;
         FlatFill.backfillValidity(cell);
@@ -467,6 +500,9 @@ public final class ScheduledColumn implements ColumnPipeline {
         batch.validity = validity == null || validity.length == words ? validity : Arrays.copyOf(validity, words);
         batch.fileName = cell.fileName;
         batch.filterAlwaysMatches = cell.alwaysMatches;
+        if (columnFilter != null) {
+            testFilter(batch, records);
+        }
         lock.lock();
         try {
             cell.completed = true;
@@ -474,6 +510,20 @@ public final class ScheduledColumn implements ColumnPipeline {
         }
         finally {
             lock.unlock();
+        }
+    }
+
+    /// Writes the batch's matches for the column's filter fragment: all ones when statistics
+    /// proved every record matches, else the matcher's verdict, while the values are in this
+    /// task's cache. A matcher keeps scratch between calls, and cells complete on several tasks
+    /// at once, so its calls are serialized.
+    private void testFilter(BatchExchange.Batch batch, int records) {
+        if (batch.filterAlwaysMatches) {
+            FlatColumnWorker.fillAllOnes(batch.matches, records);
+            return;
+        }
+        synchronized (columnFilter) {
+            columnFilter.test(batch, batch.matches);
         }
     }
 

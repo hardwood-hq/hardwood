@@ -21,7 +21,7 @@ arrays of the batches its rows belong to. The drain threads go away.
 | Nested | page arrays; per-element copy into growable accumulators (doubled as they fill); accumulators copied out at publish (`trimValues`, `Arrays.copyOf` of levels and offsets) | values, levels and bytes decoded into arrays allocated once at their exact size |
 
 Plus a thread and a hand-off per column and page, and, for Snappy through a direct buffer, the
-two copies around native decompression (#1015; stage 7 below).
+two copies around native decompression (#1015; stage 8 below).
 
 ## Evidence
 
@@ -103,14 +103,14 @@ waits for are ahead of every read-ahead task in the queue.
 
 ### Cells
 
-The work of one column for one batch is a **cell**. A cell owns its arrays; the exchange's
-holder is attached at publish.
+The work of one column for one batch is a **cell**. A cell takes its batch from the column's
+exchange when its first page task reaches it: a returned holder of a recycling exchange when one
+is free, whose arrays it reuses, a new batch otherwise.
 
 | Array | Size known | Allocated |
 | --- | --- | --- |
 | values of a fixed-width leaf without repetition; validity | the batch's record count, from the plan | by the first page task that reaches the cell |
-| dictionary ids of a binary leaf whose chunk is dictionary-encoded throughout (encoding stats) | the batch's record count | by the first page task that reaches the cell |
-| values and levels of a leaf with repetition; record offsets; byte buffer of a variable-length leaf | the sum of the counts of its pages' segments | when the last page touching the cell is measured |
+| values and levels of a leaf with repetition; record offsets; dictionary ids and byte buffer of a variable-length leaf | the sum of the counts of its pages' segments | when the last page touching the cell is measured |
 
 Validity is allocated only if a page touching the cell is not all-present. Every array is
 allocated once at its final size. Allocation stays off the scheduler, which would otherwise
@@ -124,7 +124,7 @@ position and ends, and the allocation resubmits it.
 
 | Page | Task |
 | --- | --- |
-| fixed-width, or dictionary ids, without repetition | one step: decompress and decode straight into the segments |
+| fixed-width, without repetition | one step: decompress and decode straight into the segments |
 | with repetition, or variable-length | **measure** (decompress, decode levels and value lengths, report each segment's counts and whether it is all-present), then **fill** the segments in order, keeping the decoder state from one segment to the next |
 
 The fill writes values (typed kernels per encoding: dictionary lookup, `PLAIN`,
@@ -139,12 +139,12 @@ what the drain runs at publish today, while the cell's arrays are in its cache: 
 filter fragment, nested `computeIndex` and the real view. Each column publishes its cells in
 plan order into its `BatchExchange`.
 
-Publishing takes room in the exchange: a holder from the free queue (recycling exchange, the
-row readers) or rows from the budget (detaching exchange, `ColumnReader`). A completed cell
+Publishing takes room in the exchange: a slot in the bounded ready queue (recycling exchange,
+the row readers) or rows from the budget (detaching exchange, `ColumnReader`). A completed cell
 that finds no room stays at the head of the column's publish order, and the consumer that frees
 room publishes it, on its own thread, as bookkeeping only. No pool thread waits on the exchange,
-and no publish is queued behind read-ahead on the pool. On the recycling exchange, a returned
-holder's arrays go to the column's free arrays, which the next allocation of a cell takes.
+and no publish is queued behind read-ahead on the pool. The batches a column holds are bounded
+by the read-ahead window, not by the exchange's holders.
 
 ### Threads and lifecycle
 
@@ -178,14 +178,18 @@ batches cut by the one batch plan.
 | --- | --- | --- | --- |
 | 1 | Batch plan per read (#1503) | the per-column close rules | done |
 | 2 | Scheduler, fetchers and cells for flat fixed-width leaves on `ColumnReader`; `V1` dictionary and `PLAIN` pages read in place, every other page through a page array on its task | the drain of those columns, and their page arrays and copy for the common encodings | `run-flat.sh` columnar faster, narrow read not slower |
-| 3 | The same columns on the row readers (recycling exchange); in-place kernels for `V2` pages, `BYTE_STREAM_SPLIT`, delta `INT32`/`INT64` and `BOOLEAN` | the remaining page arrays of those columns | `run-flat.sh` row readers faster |
-| 4 | Measure and fill for flat variable-length leaves (`PLAIN` and delta bytes), dictionary ids of flat binary leaves, including chunks with a `PLAIN` fallback | the `byte[]` per value, the per-page id array | `run-1brc.sh`, `run-dictfilter.sh` and a plain `BYTE_ARRAY` scan (a benchmark to add) faster |
-| 5 | Leaves with repetition: measure, placement after measure, kernels; fixed-size lists | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE) | `run-nested.sh`, `run-fixedlist.sh` faster |
-| 6 | Remove the per-column pipeline, fold the end state into `READ_PIPELINE.md`, `VALUE_DECODE.md` and `NESTED_DECODE.md`, delete this plan | the drain | — |
-| 7 | Snappy decompresses heap to heap (#1015) | steps 1–2 of #1287 | `run-filter.sh` (SNAPPY) faster |
+| 3 | The same columns on the flat row reader (recycling exchange) | the drain of those columns | `run-flat.sh` row readers faster, narrow read not slower |
+| 4 | Leaves with repetition: measure, placement after measure, kernels; fixed-size lists; every column of `NestedRowReader`, its non-repeated fixed-width leaves included | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE) | `run-nested.sh`, `run-fixedlist.sh` faster |
+| 5 | Measure and fill for flat variable-length leaves (`PLAIN` and delta bytes), dictionary ids of flat binary leaves, including chunks with a `PLAIN` fallback | the `byte[]` per value, the per-page id array | `run-1brc.sh`, `run-dictfilter.sh` and a plain `BYTE_ARRAY` scan (a benchmark to add) faster |
+| 6 | In-place kernels for `V2` pages, `BYTE_STREAM_SPLIT`, delta `INT32`/`INT64`, `ALP` and `BOOLEAN` | the remaining page arrays and copies | `run-encodings.sh` faster |
+| 7 | Remove the per-column pipeline, fold the end state into `READ_PIPELINE.md`, `VALUE_DECODE.md` and `NESTED_DECODE.md`, delete this plan | the drain | — |
+| 8 | Snappy decompresses heap to heap (#1015) | steps 1–2 of #1287 | `run-filter.sh` (SNAPPY) faster |
 
 Stage 2 carries the gain the spike and the prototype measured, on the read they measured it on;
-every later stage moves more columns onto a pipeline already shown faster. Stage 7 is
+every later stage moves more columns onto a pipeline already shown faster. Leaves with
+repetition come before binary leaves: their measure-then-place path is the riskier part of the
+design. The kernels of stage 6 wait for a measurement, since Hardwood's writer and the default
+PyArrow and parquet-java settings write `V1` pages without those encodings. Stage 8 is
 independent of the others and can land at any point.
 
 ## Tests
@@ -196,7 +200,7 @@ independent of the others and can land at any point.
   the read-ahead bounds hold with one column and with many; a page spanning more batches than
   the window is submitted.
 - **Differential.** Each fixture read with the new pipeline and with today's (an internal switch
-  until stage 6), every batch compared: pages spanning many batches and pages smaller than one,
+  until stage 7), every batch compared: pages spanning many batches and pages smaller than one,
   required and optional leaves, `V1` pages beginning inside a record, single-entry dictionaries,
   dictionary and `PLAIN` pages mixed in one chunk, masks of one and of several intervals, null
   placeholders, boundary markers, the row cap inside a page, the file cut and the row-group cut,

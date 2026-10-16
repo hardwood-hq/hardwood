@@ -94,7 +94,7 @@ final class ColumnCursor {
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
         if (scheduler != null && ScheduledColumn.reads(column)) {
             ScheduledColumn scheduled = new ScheduledColumn(scheduler, pageSource, exchange, column, batchSize,
-                    context.decompressorFactory());
+                    context.decompressorFactory(), null);
             return new ColumnCursor(column, exchange, null, scheduled);
         }
         FlatColumnWorker worker = new FlatColumnWorker(

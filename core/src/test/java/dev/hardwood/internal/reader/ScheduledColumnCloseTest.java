@@ -79,7 +79,7 @@ class ScheduledColumnCloseTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchCapacity);
             ReadScheduler scheduler = new ReadScheduler(context, batchCapacity, batchCapacity);
             ScheduledColumn scheduled = new ScheduledColumn(scheduler, stallingSource, exchange, column,
-                    batchCapacity, context.decompressorFactory());
+                    batchCapacity, context.decompressorFactory(), null);
             scheduler.start();
             assertThat(readStalled.await(5, TimeUnit.SECONDS)).as("the fetcher is held inside a page read").isTrue();
 
@@ -185,7 +185,7 @@ class ScheduledColumnCloseTest {
             }
         };
         return new ScheduledColumn(scheduler, source, exchange, column, batchCapacity,
-                context.decompressorFactory());
+                context.decompressorFactory(), null);
     }
 
     private static void awaitParkedOrExited(Thread thread) throws InterruptedException {
