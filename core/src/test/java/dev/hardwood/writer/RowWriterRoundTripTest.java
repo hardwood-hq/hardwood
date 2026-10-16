@@ -482,6 +482,7 @@ class RowWriterRoundTripTest {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(records);
             try (RowReader rows = reader.rowReader()) {
                 for (int i = 0; i < records; i++) {
+                    assertThat(rows.hasNext()).isTrue();
                     rows.next();
                     assertThat(rows.getInt("id")).isEqualTo(i);
                     if (i % 3 == 0) {
