@@ -36,7 +36,13 @@ public sealed interface Dictionary {
     /// @param type physical type of the column
     /// @param typeLength type length for fixed-length types (may be null for variable-length types)
     /// @return typed dictionary
+    /// SPIKE: parse `BYTE_ARRAY` dictionaries in one pass into the flat layout.
+    boolean SPIKE_FLAT_PARSE = Boolean.getBoolean("hardwood.spike.flatParse");
+
     static Dictionary parse(byte[] data, int length, int numValues, PhysicalType type, Integer typeLength) {
+        if (SPIKE_FLAT_PARSE && type == PhysicalType.BYTE_ARRAY) {
+            return ByteArrayDictionary.parsePlainByteArrays(data, length, numValues);
+        }
         PlainDecoder decoder = new PlainDecoder(data, 0, length, type, typeLength);
 
         Dictionary dictionary = switch (type) {
@@ -60,7 +66,12 @@ public sealed interface Dictionary {
                 decoder.readDoubles(values, null, 0);
                 yield new DoubleDictionary(values);
             }
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
+            case BYTE_ARRAY -> {
+                byte[][] values = new byte[numValues][];
+                decoder.readByteArrays(values, null, 0);
+                yield new ByteArrayDictionary(values);
+            }
+            case FIXED_LEN_BYTE_ARRAY, INT96 -> {
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, null, 0);
                 yield new ByteArrayDictionary(values);
@@ -153,6 +164,42 @@ public sealed interface Dictionary {
         /// Interned `String` per entry, decoded once per chunk and reused. Lazily
         /// allocated; populated only for columns read as text, via [#internedString(int)].
         private String[] interned;
+
+        private ByteArrayDictionary(byte[] entryBytes, int[] entryOffsets) {
+            this.entryBytes = entryBytes;
+            this.entryOffsets = entryOffsets;
+        }
+
+        /// SPIKE: one pass over a PLAIN `BYTE_ARRAY` page, copying each entry into one array.
+        static ByteArrayDictionary parsePlainByteArrays(byte[] data, int length, int numValues) {
+            if ((long) numValues * Integer.BYTES > length) {
+                throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY length");
+            }
+            byte[] bytes = new byte[length - numValues * Integer.BYTES];
+            int[] offsets = new int[numValues + 1];
+            int pos = 0;
+            int out = 0;
+            for (int i = 0; i < numValues; i++) {
+                if (pos + Integer.BYTES > length) {
+                    throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY length");
+                }
+                int valueLength = (data[pos] & 0xFF) | (data[pos + 1] & 0xFF) << 8
+                        | (data[pos + 2] & 0xFF) << 16 | (data[pos + 3] & 0xFF) << 24;
+                pos += Integer.BYTES;
+                if (valueLength < 0 || valueLength > length - pos) {
+                    throw new ParquetReadException("Invalid BYTE_ARRAY length: " + valueLength);
+                }
+                System.arraycopy(data, pos, bytes, out, valueLength);
+                pos += valueLength;
+                out += valueLength;
+                offsets[i + 1] = out;
+            }
+            if (pos != length) {
+                throw new ParquetReadException("Dictionary page does not end with its " + numValues
+                        + " BYTE_ARRAY values; leftover bytes: " + (length - pos));
+            }
+            return new ByteArrayDictionary(bytes, offsets);
+        }
 
         /// Flattens `values`, which the dictionary does not keep.
         ByteArrayDictionary(byte[][] values) {
