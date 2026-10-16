@@ -203,4 +203,95 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!--
+      The result-comparing suites run a second time at small batch capacities, through the
+      internal `hardwood.internal.batchSize` property that replaces the auto batch size. At 7
+      (coprime with the fixtures' page periods) pages span many batches and batches many pages;
+      at 1, run on the nested and V1 subset, every record start is a batch edge. Tests asserting
+      the shape of a batch rather than the values read stay out of both lists.
+
+      Activated on the absence of `test`, as `-Dtest=...` replaces every execution's includes and
+      would run the selection three times.
+    -->
+    <profile>
+      <id>small-batches</id>
+      <activation>
+        <property>
+          <name>!test</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>small-batches-7</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <includes>
+                    <include>**/DifferentialReadTest.java</include>
+                    <include>**/DifferentialNullTest.java</include>
+                    <include>**/DifferentialValueTest.java</include>
+                    <include>**/DifferentialFixedSizeListTest.java</include>
+                    <include>**/DifferentialColumnOrderTest.java</include>
+                    <include>**/MisalignedPageBoundariesTest.java</include>
+                    <include>**/NestedV1NoIndexFallbackTest.java</include>
+                    <include>**/NestedV1MidRecordPagesTest.java</include>
+                    <include>**/NestedV2NoIndexMaskingTest.java</include>
+                    <include>**/NestedDictBatchBoundaryTest.java</include>
+                    <include>**/FixedSizeListFastPathReadTest.java</include>
+                    <include>**/FilterOnlyColumnSkipTest.java</include>
+                    <include>**/AlwaysMatchingRowGroupTest.java</include>
+                    <include>**/PredicatePushDownTest.java</include>
+                    <include>**/DrainSideOracleTest.java</include>
+                    <include>**/ColumnReaderExactFilterTest.java</include>
+                    <include>**/ColumnReaderLayerModelTest.java</include>
+                    <include>**/MultiFileRowReaderTest.java</include>
+                    <include>**/LaterFileFailureTest.java</include>
+                    <include>**/InlineNullPageDropTest.java</include>
+                    <include>**/DictionaryEndToEndTest.java</include>
+                  </includes>
+                  <systemPropertyVariables>
+                    <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
+                  </systemPropertyVariables>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-small-batches-7</reportsDirectory>
+                </configuration>
+              </execution>
+              <execution>
+                <id>small-batches-1</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <includes>
+                    <include>**/DifferentialReadTest.java</include>
+                    <include>**/DifferentialNullTest.java</include>
+                    <include>**/DifferentialFixedSizeListTest.java</include>
+                    <include>**/MisalignedPageBoundariesTest.java</include>
+                    <include>**/NestedV1NoIndexFallbackTest.java</include>
+                    <include>**/NestedV1MidRecordPagesTest.java</include>
+                    <include>**/NestedV2NoIndexMaskingTest.java</include>
+                    <include>**/NestedDictBatchBoundaryTest.java</include>
+                    <include>**/FixedSizeListFastPathReadTest.java</include>
+                  </includes>
+                  <systemPropertyVariables>
+                    <hardwood.internal.batchSize>1</hardwood.internal.batchSize>
+                  </systemPropertyVariables>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-small-batches-1</reportsDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
