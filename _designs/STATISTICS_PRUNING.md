@@ -122,6 +122,7 @@ The histogram is the only statistic that separates an absent group from a presen
 
 ```
 IS NULL / IS NOT NULL
+  definitionLevel == 0                              -> CANNOT_MATCH / ALWAYS_MATCHES, no statistic read
   group()  (definitionLevel < leafDefinitionLevel)  -> histogram only; MIGHT_MATCH without one
   leaf, histogram sizedFor(leafDefinitionLevel)     -> histogram
   leaf, otherwise                                   -> null count
@@ -133,9 +134,11 @@ GeospatialPredicate                                 -> MIGHT_MATCH (no unit carr
 
 A group predicate must never reach the null-count rules. The leaf it is answered from may be repeated, so its null count mixes absent groups with null elements over more entries than rows. The gate is `definitionLevel < leafDefinitionLevel`, tested once, in `decide`. It follows the schema's structure rather than its annotations: every repeated node adds a definition level, so every `LIST` and `MAP` encoding, legacy ones included, passes as a group; a group with only required nodes down to its leaf has equal levels and is answered as the leaf.
 
-The length guard protects the leaf branch. A leaf predicate carrying levels `0` on an optional column would read a two-bucket histogram at the wrong level and count every entry as present. Only a histogram of length 1 is sized for level `0`, and that belongs to a required column whose real level is `0`; any other length sends the predicate to the null count.
+A node required from the root, whose maximum definition level is `0`, is present on every row, so `IS NULL` cannot match and `IS NOT NULL` always matches, without reading a statistic. A required group over a leaf of maximum level 1 depends on this: it passes the group gate, writers omit the leaf's histogram ([WRITER_ENCODING.md](WRITER_ENCODING.md#size-statistics)), and the leaf's null count counts the leaf's nulls, not the group's. A `REQUIRED` leaf whose statistics claim nulls follows the same rule, as its decoder produces none. The per-row matcher compiles these predicates to constants ([RECORD_FILTERING.md](RECORD_FILTERING.md#per-row-matcher)).
 
-Tests: `UnitStatsTest`, `PageFilterEvaluatorTest`.
+The length guard protects the leaf branch: a histogram whose length is not `leafDefinitionLevel + 1` was written for another column shape and sends the predicate to the null count.
+
+Tests: `UnitStatsTest`, `PageFilterEvaluatorTest`, `RequiredGroupNullPruningTest`.
 
 ### `ALWAYS_MATCHES` and composition
 

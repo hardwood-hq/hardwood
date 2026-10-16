@@ -110,7 +110,7 @@ final class Cases {
     /// top-level column that shares a leaf's name.
     static List<P> nested() {
         List<P> cases = new ArrayList<>();
-        for (String node : List.of("s", "s.t", "l", "s.x", "s.name", "s.t.y", "r", "r.key", "r.name")) {
+        for (String node : List.of("s", "s.t", "l", "s.x", "s.name", "s.t.y", "r", "r.key", "r.name", "q", "q.v")) {
             cases.add(new IsNull(node));
             cases.add(new IsNotNull(node));
             cases.add(new Not(new IsNull(node)));

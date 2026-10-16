@@ -385,6 +385,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group (see `_designs/STATISTICS_PRUNING.md`)
 - [x] Skip filter-only columns in fully matching row groups: a column the predicate references and the projection does not is neither fetched nor decoded where statistics prove every row matches, on the row and column readers alike; row-reader accessors reach the projection only (see `_designs/RECORD_FILTERING.md`)
 - [x] One statistics abstraction for every pruning unit: `UnitStats` (column chunk, column-index page, inline page header) sources min/max, null counts and definition level histograms once each, and row-group filtering, page filtering and the inline-statistics drop all decide through it (see `_designs/STATISTICS_PRUNING.md`)
+- [x] Null tests on a required group decided from its definition level alone, which no statistic can decide where its leaf has one definition level (#1501)
 - [x] Reader opt-out of metadata-based filtering: `hardwood.metadata-filtering` `ReaderConfig` option falls back to full-scan per-row predicate evaluation for files with unreliable footer/page-index metadata
 
 ### 9.5 Fixed-size-list read fast path

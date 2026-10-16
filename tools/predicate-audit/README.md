@@ -39,10 +39,10 @@ The script:
     | `legacy` | converted types only |
     | `dropped` | annotations the physical type cannot carry |
     | `lowcard` | 40 distinct values, so every chunk is dictionary-encoded |
-    | `nested` | nulls at every level of a struct, a `LIST`, and a struct required all the way down beside a top-level column named like one of its leaves |
+    | `nested` | nulls at every level of a struct, a `LIST`, a struct required all the way down beside a top-level column named like one of its leaves, and a required struct over an optional leaf |
 
 - **Resolver** (`resolver.tsv`): one literal of every kind under every operator against every column and group, including `VARIANT` leaves, `MAP`s and repeated leaves, with each outcome and message. Also the build-time checks, each with the outcome the rule gives it.
-- **Consultation** (`consultation.tsv`): evidence that Bloom filters (a zeroed copy loses rows), dictionaries and `INT96_TIMESTAMP_ORDER` bounds (the `dev.hardwood.RowGroupFilter` JFR event) are consulted, so agreement is not an artefact of layouts the reader ignores. Bounds holding nanoseconds past one day must leave every row group kept. Each check states the expected outcome, including a Bloom filter left unread for a comparison that is not byte-exact.
+- **Consultation** (`consultation.tsv`): evidence that Bloom filters (a zeroed copy loses rows), dictionaries, `INT96_TIMESTAMP_ORDER` bounds and the presence of a required struct (the `dev.hardwood.RowGroupFilter` JFR event) are consulted, so agreement is not an artefact of layouts the reader ignores. Bounds holding nanoseconds past one day must leave every row group kept. Each check states the expected outcome, including a Bloom filter left unread for a comparison that is not byte-exact.
 - **Accessor round-trip** (`roundtrip.tsv`): every value an accessor returns for the rows around each column's edge cases, passed back as an `eq` literal, is expected to match its own row. The exception the rule states is a `String` read from bytes that are not well-formed UTF-8. This is the one step that reads values through Hardwood's accessors.
 - **Engines** (`engines.tsv`): about 50 predicates in their Hardwood, parquet-java `filter2` and DuckDB SQL forms, with every engine's rows next to the rule's. It includes a PyArrow file for `NaN` bounds and nanosecond timestamps.
 

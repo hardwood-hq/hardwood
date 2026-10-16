@@ -34,6 +34,9 @@ import jdk.jfr.consumer.RecordingStream;
 /// - **`INT96` bounds:** row-group decisions on `int96order_multi`, whose bounds are recorded in
 ///   `INT96_TIMESTAMP_ORDER`, and on `int96outofday_multi`, whose bounds hold the same instants
 ///   with nanoseconds past one day. The first prunes; the second must not.
+/// - **Required structs:** row-group decisions on `nested_multi` for null tests on `q`, a required
+///   struct over an optional leaf, for which no writer records a definition level histogram. The
+///   struct is present on every row, which prunes every row group for `isNull`.
 ///
 /// Every check states the outcome the rule expects, and a check whose outcome differs is counted.
 final class ConsultationChecks {
@@ -56,6 +59,7 @@ final class ConsultationChecks {
     private static final String ONE_OF_SIX_KEPT = "kept 1 of 6";
     private static final String TWO_OF_SIX_KEPT = "kept 2 of 6";
     private static final String SIX_OF_SIX_KEPT = "kept 6 of 6";
+    private static final String NONE_OF_SIX_KEPT = "kept 0 of 6";
 
     private ConsultationChecks() {
     }
@@ -68,6 +72,7 @@ final class ConsultationChecks {
         List<Check> dictionaryChecks = dictionaryChecks();
         List<Check> int96Checks = int96OrderChecks();
         List<Check> outOfDayChecks = int96OutOfDayChecks();
+        List<Check> requiredGroupChecks = requiredGroupChecks();
         for (Check check : bloomChecks) {
             long intact = count(fixtures.resolve("flat_bloom.parquet"), check.filter());
             long zeroed = count(fixtures.resolve("zerobloom_bloom.parquet"), check.filter());
@@ -84,11 +89,14 @@ final class ConsultationChecks {
         for (Check check : outOfDayChecks) {
             rowGroupCheck(lines, unexpected, "int96-order", check, fixtures.resolve("int96outofday_multi.parquet"));
         }
+        for (Check check : requiredGroupChecks) {
+            rowGroupCheck(lines, unexpected, "required-group", check, fixtures.resolve("nested_multi.parquet"));
+        }
         try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(report.resolve("consultation.tsv")))) {
             lines.forEach(out::println);
         }
-        return new Result(bloomChecks.size() + dictionaryChecks.size() + int96Checks.size() + outOfDayChecks.size(),
-                unexpected, lines);
+        return new Result(bloomChecks.size() + dictionaryChecks.size() + int96Checks.size() + outOfDayChecks.size()
+                + requiredGroupChecks.size(), unexpected, lines);
     }
 
     private static void rowGroupCheck(List<String> lines, List<String> unexpected, String kind, Check check, Path file)
@@ -157,6 +165,13 @@ final class ConsultationChecks {
     private static List<Check> int96OutOfDayChecks() {
         return List.of(new Check("eq(ts96, Instant of row 310), bounds past one day",
                 FilterPredicate.eq("ts96", Instant.EPOCH.plusNanos(Columns.int96Nanos(Columns.PROBE_ROW))), SIX_OF_SIX_KEPT));
+    }
+
+    private static List<Check> requiredGroupChecks() {
+        return List.of(
+                new Check("isNull(q)", FilterPredicate.isNull("q"), NONE_OF_SIX_KEPT),
+                new Check("not(isNotNull(q))", FilterPredicate.not(FilterPredicate.isNotNull("q")), NONE_OF_SIX_KEPT),
+                new Check("isNotNull(q)", FilterPredicate.isNotNull("q"), SIX_OF_SIX_KEPT));
     }
 
     private static long count(Path file, FilterPredicate filter) throws Exception {

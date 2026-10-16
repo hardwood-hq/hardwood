@@ -187,9 +187,10 @@ final class FixtureWriter {
         return Types.primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY, repetition).length(width).as(annotation).named(name);
     }
 
-    /// A struct with a leaf null under a present struct, a struct nested in it, a `LIST`, and a
-    /// struct required all the way down, whose leaves decode as flat columns. The top-level `key`
-    /// shares its name with `r.key` and holds different values.
+    /// A struct with a leaf null under a present struct, a struct nested in it, a `LIST`, a
+    /// struct required all the way down, whose leaves decode as flat columns, and a required struct
+    /// over an optional leaf, whose null tests no histogram can decide. The top-level `key` shares
+    /// its name with `r.key` and holds different values.
     private static void writeNested(Path file, int rowGroupRows, boolean dictionary) throws IOException {
         MessageType schema = MessageTypeParser.parseMessageType("""
                 message m {
@@ -206,6 +207,9 @@ final class FixtureWriter {
                   required group r {
                     required int64 key;
                     required binary name (STRING);
+                  }
+                  required group q {
+                    optional int64 v;
                   }
                   optional group l (LIST) {
                     repeated group list {
@@ -245,6 +249,10 @@ final class FixtureWriter {
                 Group r = group.addGroup("r");
                 r.add("key", Columns.requiredKey(row));
                 r.add("name", Columns.requiredName(row));
+                Group q = group.addGroup("q");
+                if (Columns.requiredGroupV(row) != null) {
+                    q.add("v", Columns.requiredGroupV(row));
+                }
                 if (!Columns.listNull(row)) {
                     Group list = group.addGroup("l");
                     for (int i = 0; i < row % 3; i++) {

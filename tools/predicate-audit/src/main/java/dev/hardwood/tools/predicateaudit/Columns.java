@@ -376,6 +376,11 @@ final class Columns {
         return String.format("r%04d", row);
     }
 
+    /// The leaf of the required struct `q`, null on some rows of every row group.
+    static Long requiredGroupV(int row) {
+        return row % 23 == 5 ? null : (long) row;
+    }
+
     static boolean listNull(int row) {
         return row % 5 == 0;
     }
@@ -390,6 +395,7 @@ final class Columns {
                 "s.t.y", new Col("s.t.y", Sem.I64, 0, 0, Columns::nestedY, false),
                 "key", new Col("key", Sem.I64, 0, 0, Columns::topLevelKey, false),
                 "r.key", new Col("r.key", Sem.I64, 0, 0, Columns::requiredKey, false),
-                "r.name", new Col("r.name", Sem.STRING, 0, 0, row -> utf8(requiredName(row)), false));
+                "r.name", new Col("r.name", Sem.STRING, 0, 0, row -> utf8(requiredName(row)), false),
+                "q.v", new Col("q.v", Sem.I64, 0, 0, Columns::requiredGroupV, false));
     }
 }

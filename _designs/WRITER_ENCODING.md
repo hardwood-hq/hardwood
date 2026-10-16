@@ -279,7 +279,7 @@ A histogram is left out where the rest of the metadata already gives its counts:
 - In a column that does not repeat, every entry is at repetition level 0.
 - In a column whose maximum definition level is 1, `null_count` entries are at level 0 and the rest of `num_values` at level 1.
 
-Readers prune just as well without them, with one exception. A null predicate on a group uses the histogram when the group's maximum definition level is below its leaf's ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#definition-level-histograms)). A group with an optional or repeated node on its path then has a leaf of maximum level 2 or more, where the histogram is written. A group required from the root has maximum level 0, and over a leaf of maximum level 1 its null tests prune nothing.
+Readers can prune just as well without them. A null predicate on a group uses the histogram when the group's maximum definition level is below its leaf's ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#definition-level-histograms)). A group with an optional or repeated node on its path then has a leaf of maximum level 2 or more, where the histogram is written. A group required from the root has maximum level 0 and is present on every row, so the reader decides it from the schema.
 
 Tests: `WriterSizeStatisticsTest`, `WriterSizeStatisticsInteropTest`, `WriterInteropTest` and `WriterNestedInteropTest` (parquet-testing-runner).
 

@@ -161,6 +161,11 @@ public final class RecordFilterCompiler {
                         ? indexedFloatInLeaf(idx, p.values())
                         : floatInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             }
+            // A node required from the root (maximum definition level 0) is present on every
+            // row, so its null tests are constants. The view serves the leaves of such a struct
+            // by index only, and has no struct to read.
+            case ResolvedPredicate.IsNullPredicate p when p.definitionLevel() == 0 -> row -> false;
+            case ResolvedPredicate.IsNotNullPredicate p when p.definitionLevel() == 0 -> row -> true;
             case ResolvedPredicate.IsNullPredicate p -> {
                 if (!p.group()) {
                     int idx = indexedLeaf(p.columnIndex(), leafIndex);

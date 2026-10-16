@@ -908,7 +908,7 @@ class FilterPredicateTest {
 
     @Test
     void testCanDropWithIsNull() throws IOException {
-        FileSchema schema = createIntSchema();
+        FileSchema schema = createOptionalIntSchema();
 
         // nullCount=0 -> can drop IS NULL (no nulls in this row group)
         RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
@@ -929,7 +929,7 @@ class FilterPredicateTest {
 
     @Test
     void testCanDropWithIsNotNull() throws IOException {
-        FileSchema schema = createIntSchema();
+        FileSchema schema = createOptionalIntSchema();
 
         // nullCount=0 -> cannot drop IS NOT NULL (all values are non-null)
         RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
@@ -1367,7 +1367,7 @@ class FilterPredicateTest {
 
     @Test
     void testNotOnIsNullInvertsToIsNotNull() throws IOException {
-        FileSchema schema = createIntSchema();
+        FileSchema schema = createOptionalIntSchema();
 
         // All rows are null → NOT(isNull) → isNotNull → can drop (all are null)
         RowGroup rgAllNulls = createRowGroupWithNullCount(PhysicalType.INT32, 100L, 100);
@@ -1382,7 +1382,7 @@ class FilterPredicateTest {
 
     @Test
     void testNotOnIsNotNullInvertsToIsNull() throws IOException {
-        FileSchema schema = createIntSchema();
+        FileSchema schema = createOptionalIntSchema();
 
         // No nulls → NOT(isNotNull) → isNull → can drop (no nulls exist)
         RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
@@ -1705,6 +1705,14 @@ class FilterPredicateTest {
 
     private static FileSchema createIntSchema() {
         return createSchemaForType(PhysicalType.INT32);
+    }
+
+    /// A schema whose column can hold nulls, for the null-count tests. A `REQUIRED` column is never
+    /// null, so its null tests do not read the null count.
+    private static FileSchema createOptionalIntSchema() {
+        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement col = SchemaElement.primitive("col", PhysicalType.INT32, RepetitionType.OPTIONAL);
+        return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
     private static FileSchema createLongSchema() {

@@ -69,6 +69,10 @@ class UnitStatsTest {
         // An optional MAP, answered from its required key one level down.
         ResolvedPredicate mapIsNull = new ResolvedPredicate.IsNullPredicate(0, 1, 2);
         ResolvedPredicate mapIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 1, 2);
+        // A struct required from the root (maximum definition level 0) over an optional leaf
+        // (maximum level 1).
+        ResolvedPredicate requiredGroupIsNull = new ResolvedPredicate.IsNullPredicate(0, 0, 1);
+        ResolvedPredicate requiredGroupIsNotNull = new ResolvedPredicate.IsNotNullPredicate(0, 0, 1);
         ResolvedPredicate gt5 = new ResolvedPredicate.IntPredicate(0, Operator.GT, 5);
         ResolvedPredicate gt15 = new ResolvedPredicate.IntPredicate(0, Operator.GT, 15);
 
@@ -89,11 +93,25 @@ class UnitStatsTest {
                         NullStats.UNKNOWN_NULL_COUNT, new long[]{ 0, 90 }, MIGHT_MATCH),
                 Arguments.of("IS NULL, histogram of the wrong length, null count decides", isNull, 100L,
                         new long[]{ 30, 70, 0 }, ALWAYS_MATCHES),
-                // Levels of 0 fit only a one-bucket histogram. Read at level 0, this two-bucket
-                // one would count every entry as present and promise every row.
-                Arguments.of("IS NOT NULL with no schema levels, optional column",
-                        new ResolvedPredicate.IsNotNullPredicate(0, 0),
-                        40L, new long[]{ 40, 60 }, MIGHT_MATCH),
+                // A node required from the root is present on every row. Here a required struct over an
+                // optional leaf that is null on 40 rows, with no histogram, as writers omit it at
+                // the leaf's maximum level of 1.
+                Arguments.of("required group IS NULL, no histogram", requiredGroupIsNull, 40L, null,
+                        CANNOT_MATCH),
+                Arguments.of("required group IS NOT NULL, no histogram", requiredGroupIsNotNull, 40L, null,
+                        ALWAYS_MATCHES),
+                Arguments.of("required group IS NULL, leaf null on every row", requiredGroupIsNull, 100L, null,
+                        CANNOT_MATCH),
+                Arguments.of("required group IS NOT NULL, no null count", requiredGroupIsNotNull,
+                        NullStats.UNKNOWN_NULL_COUNT, null, ALWAYS_MATCHES),
+                Arguments.of("required column IS NULL, no null count", new ResolvedPredicate.IsNullPredicate(0, 0),
+                        NullStats.UNKNOWN_NULL_COUNT, null, CANNOT_MATCH),
+                // A required column holds no null, and its decoder produces none, so statistics
+                // claiming nulls are ignored.
+                Arguments.of("required column IS NULL, statistics claim every row null",
+                        new ResolvedPredicate.IsNullPredicate(0, 0), 100L, null, CANNOT_MATCH),
+                Arguments.of("required column IS NOT NULL, statistics claim every row null",
+                        new ResolvedPredicate.IsNotNullPredicate(0, 0), 100L, null, ALWAYS_MATCHES),
                 Arguments.of("IS NOT NULL, no nulls", isNotNull, 0L, null, ALWAYS_MATCHES),
                 Arguments.of("IS NOT NULL, some nulls", isNotNull, 40L, null, MIGHT_MATCH),
                 Arguments.of("IS NOT NULL, every row null", isNotNull, 100L, null, CANNOT_MATCH),

@@ -62,9 +62,9 @@ Tests: `ReadProjectionTest`, `RequiredStructPredicateTest`.
 
 **Indexed leaves.** `compile(predicate, schema, leafIndex)` takes a callback mapping a file leaf column to the accessor's index. Where it returns a non-negative index the leaf reads through the indexed accessors (`isNull(int)`, `getLong(int)`, …); where it returns `-1` the leaf falls back to name-keyed access through the intermediate struct path. Both readers and `SelectionEngine` pass `PredicateView::indexOf`.
 
-**Missing intermediate structs.** A name-keyed leaf walks the intermediate struct path; if any struct on it is null the walk yields no accessor. A value leaf then does not match, `IS NULL` matches and `IS NOT NULL` does not. A group null predicate (`IsNullPredicate.group()`) tests the first field on the path at the predicate's definition level, which separates a null group from a present group with a null child.
+**Missing intermediate structs.** A name-keyed leaf walks the intermediate struct path; if any struct on it is null the walk yields no accessor. A value leaf then does not match, `IS NULL` matches and `IS NOT NULL` does not. A group null predicate (`IsNullPredicate.group()`) tests the first field on the path at the predicate's definition level, which separates a null group from a present group with a null child. A null predicate on a node required from the root, whose maximum definition level is 0, compiles to a constant, `false` for `IS NULL` and `true` for `IS NOT NULL`: no row lacks the node. The matcher reads no field for it: the leaves of such a struct can decode as flat columns, and the column reader's view then offers them by index only, with no struct to look up by name.
 
-Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExactFilterTest`.
+Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExactFilterTest`, `RequiredGroupNullPruningTest`.
 
 ## Drain-side matchers
 

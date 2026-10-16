@@ -57,7 +57,12 @@ sealed interface UnitStats {
     /// Which of the file's columns carry bounds in an order this reader can read.
     BoundsReadability readability();
 
-    /// What this unit's statistics prove about one leaf predicate.
+    /// Decides one leaf predicate for this unit.
+    ///
+    /// A null predicate on a node required from the root, whose maximum definition level is `0`,
+    /// is decided from the schema: no row lacks the node, so `IS NULL` cannot match and
+    /// `IS NOT NULL` always matches. A required group over a leaf of maximum level 1 depends on this, since writers
+    /// omit that leaf's histogram and its null count counts the leaf's nulls, not the group's.
     ///
     /// A null predicate on a group that a definition level separates from the leaf — an optional
     /// or repeated node between the two — is answered from [#definitionLevels] alone. The leaf it
@@ -69,9 +74,7 @@ sealed interface UnitStats {
     /// leaf, is answered from [#definitionLevels] where the file wrote a histogram sized for the
     /// leaf, and from [#nulls] otherwise. The leaf is then not repeated and is null exactly where
     /// the node is absent, so it writes one entry per row and the two agree wherever both are
-    /// present. The size check is what keeps a predicate carrying level `0` from reading a
-    /// histogram at the wrong level: only a required column's histogram is sized for it, and for
-    /// that column `0` is its real level.
+    /// present.
     ///
     /// A value predicate cannot match a unit that is null on every row, since a null satisfies
     /// none of them, `NOT_EQ` included. A floating-point one on a unit whose non-null values are
@@ -86,6 +89,8 @@ sealed interface UnitStats {
     ///        report bounds it had to discard
     default FilterDecision decide(ResolvedPredicate leaf, LogContext logContext) {
         return switch (leaf) {
+            case ResolvedPredicate.IsNullPredicate p when p.definitionLevel() == 0 -> FilterDecision.CANNOT_MATCH;
+            case ResolvedPredicate.IsNotNullPredicate p when p.definitionLevel() == 0 -> FilterDecision.ALWAYS_MATCHES;
             case ResolvedPredicate.IsNullPredicate p -> {
                 DefinitionLevelStats levels = definitionLevels();
                 yield p.group() || levels.sizedFor(p.leafDefinitionLevel())
