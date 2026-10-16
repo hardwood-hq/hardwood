@@ -28,11 +28,14 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     private static final byte NO_MATCH = 1;
     private static final byte MATCH = 2;
 
-    private static final boolean SPIKE_EAGER_ENTRIES = Boolean.getBoolean("hardwood.spike.eagerEntries");
+    /// SPIKE (#1258): `lazy` (default), `eager`, or `planned` (eager when the read covers the whole chunk).
+    private static final String SPIKE_ENTRY_MODE = System.getProperty("hardwood.spike.entryMode", "lazy");
 
     private final BinaryBatchMatcher delegate;
     private Dictionary.ByteArrayDictionary cachedDictionary;
     private byte[] entryStates;
+    /// SPIKE (#1258): entries decided so far for the cached dictionary, for the adaptive mode.
+    private int decided;
 
     public DictionaryBinaryBatchMatcher(BinaryBatchMatcher delegate) {
         this.delegate = delegate;
@@ -54,6 +57,26 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
 
         prepareDictionary(dictionary);
         writeMatches(values, values.dictIndices, batch.validity, batch.recordCount, outWords);
+        if (SPIKE_ENTRY_MODE.equals("adaptive")) {
+            decideRestOnceMostlyTouched();
+        }
+    }
+
+    /// SPIKE (#1258): once an eighth of the entries are decided, decide the rest in dictionary order.
+    private void decideRestOnceMostlyTouched() {
+        int size = cachedDictionary.size();
+        if (decided == size || (long) decided * 8 < size) {
+            return;
+        }
+        byte[] entryBytes = cachedDictionary.entryBytes();
+        int[] entryOffsets = cachedDictionary.entryOffsets();
+        for (int i = 0; i < size; i++) {
+            if (entryStates[i] == UNKNOWN) {
+                entryStates[i] = delegate.testValue(entryBytes, entryOffsets[i], entryOffsets[i + 1])
+                        ? MATCH : NO_MATCH;
+            }
+        }
+        decided = size;
     }
 
     @Override
@@ -70,6 +93,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
             return;
         }
         cachedDictionary = dictionary;
+        decided = 0;
         int size = dictionary.size();
         if (entryStates == null || entryStates.length < size) {
             entryStates = new byte[size];
@@ -77,7 +101,8 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
         else {
             Arrays.fill(entryStates, 0, size, UNKNOWN);
         }
-        if (SPIKE_EAGER_ENTRIES) {
+        if (SPIKE_ENTRY_MODE.equals("eager")
+                || (SPIKE_ENTRY_MODE.equals("planned") && dictionary.spikeWholeChunk)) {
             // SPIKE (#1258): decide every entry up front, in dictionary order.
             byte[] entryBytes = dictionary.entryBytes();
             int[] entryOffsets = dictionary.entryOffsets();
@@ -114,6 +139,7 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
                         state = delegate.testValue(entryBytes, entryOffsets[dictionaryIndex],
                                 entryOffsets[dictionaryIndex + 1]) ? MATCH : NO_MATCH;
                         entryStates[dictionaryIndex] = state;
+                        decided++;
                     }
                     matches = state == MATCH;
                 }

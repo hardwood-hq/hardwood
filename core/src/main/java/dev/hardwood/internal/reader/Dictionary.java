@@ -140,6 +140,9 @@ public sealed interface Dictionary {
     /// interned `String` cache ([#interned]) alongside the entry bytes.
     final class ByteArrayDictionary implements Dictionary {
 
+        /// SPIKE (#1258): set by the fetch plan when the read covers every page of the chunk.
+        public boolean spikeWholeChunk;
+
         /// The entries' bytes back to back, entry `i` at
         /// `[entryOffsets[i], entryOffsets[i + 1])`. A batch copies this once and points
         /// its values at it (see [BinaryBatchValues#viewDictionaryRange]); nothing holds

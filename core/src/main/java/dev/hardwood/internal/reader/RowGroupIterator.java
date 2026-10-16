@@ -1013,6 +1013,8 @@ public class RowGroupIterator implements Closeable {
                         matchingRows, rowGroup.numRows(), preloadedDictionary,
                         shared.dictionaries() == null ? 0 : shared.dictionaries().loadedPageEnd(fileOrdinal),
                         prefetchTasks);
+                ((SequentialFetchPlan) plans[projCol]).spikeWholeChunk =
+                        maxRows <= 0 && matchingRows.isAll() && leaves.isEmpty();
                 continue;
             }
 
@@ -1080,6 +1082,9 @@ public class RowGroupIterator implements Closeable {
                         firstDataPageOffset,
                         columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(), preloadedDictionary);
+                ((IndexedFetchPlan) plans[projCol]).spikeWholeChunk =
+                        maxRows <= 0 && neededPages.size() == allPages.size()
+                                && neededPages.stream().allMatch(page -> page.mask() == null || page.mask().isAll());
             }
             catch (ParquetReadException e) {
                 throw new ParquetReadException(ExceptionContext.readPrefix(inputFile.name(),

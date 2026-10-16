@@ -7,7 +7,7 @@ dictionary = sorted(f"https://example.com/{k * 2654435761 % 10**9:09d}/item-{k:0
 dict_arr = pa.array(dictionary, pa.string())
 rg = 1 << 20
 with pq.ParquetWriter(out, pa.schema([("id", pa.int64()), ("url", pa.dictionary(pa.int32(), pa.string()))]),
-                      dictionary_pagesize_limit=256 << 20, compression="snappy") as w:
+                      dictionary_pagesize_limit=256 << 20, compression="snappy", write_page_index=True, data_page_size=64 << 10) as w:
     for start in range(0, rows, rg):
         n = min(rg, rows - start)
         idx = pa.array(rng.integers(0, distinct, n, dtype=np.int32))

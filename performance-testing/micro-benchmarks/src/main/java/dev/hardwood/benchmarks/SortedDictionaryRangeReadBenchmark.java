@@ -45,7 +45,12 @@ public class SortedDictionaryRangeReadBenchmark {
         /// Projects `id`, filters on `url`: the filter column is never materialized.
         FILTER_ONLY,
         /// Projects and reads `url` as a `String` for every match.
-        READ_URL
+        READ_URL,
+        /// As `READ_URL`, also filtering on `id < 20000`, so the page index prunes the read to
+        /// a few pages of the first row group.
+        PRUNED,
+        /// As `READ_URL`, limited to the first 10 matches.
+        HEAD
     }
 
     @Param("")
@@ -58,29 +63,56 @@ public class SortedDictionaryRangeReadBenchmark {
     @Param
     private Shape shape;
 
+    /// `LT`: `url < literal`; `IN50`: `url IN` 50 URLs of the column's shape, an expensive
+    /// per-entry decision.
+    @Param({"LT"})
+    private String predicate;
+
+    private java.util.Set<String> members;
+
+    private static final long PRUNED_ID_LIMIT = 20_000L;
+    private static final long HEAD_ROWS = 10L;
+
     private FilterPredicate filter;
     private String literal;
 
     @Setup(Level.Trial)
     public void setup() throws IOException {
         literal = "https://example.com/" + cut;
-        filter = FilterPredicate.lt("url", literal);
+        String[] memberArray = new String[50];
+        for (int i = 0; i < memberArray.length; i++) {
+            // The generator's URL for key i, so every member occurs in the file.
+            memberArray[i] = String.format("https://example.com/%09d/item-%07d", i * 2654435761L % 1_000_000_000L, i);
+        }
+        members = java.util.Set.of(memberArray);
+        FilterPredicate urlFilter = predicate.equals("IN50")
+                ? FilterPredicate.in("url", memberArray)
+                : FilterPredicate.lt("url", literal);
+        filter = shape == Shape.PRUNED
+                ? FilterPredicate.and(FilterPredicate.lt("id", PRUNED_ID_LIMIT), urlFilter)
+                : urlFilter;
         long expected = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Path.of(file)));
-             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("url")).build()) {
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id", "url")).build()) {
             while (rows.hasNext()) {
                 rows.next();
-                if (rows.getString(0).compareTo(literal) < 0) {
+                String url = rows.getString(1);
+                if ((predicate.equals("IN50") ? members.contains(url) : url.compareTo(literal) < 0)
+                        && (shape != Shape.PRUNED || rows.getLong(0) < PRUNED_ID_LIMIT)) {
                     expected++;
                 }
             }
+        }
+        if (shape == Shape.HEAD) {
+            expected = Math.min(expected, HEAD_ROWS);
         }
         long actual = count();
         if (actual != expected) {
             throw new IllegalStateException("Filtered read found " + actual + " rows, a full scan " + expected);
         }
-        System.out.printf("%nGate passed: %,d matching rows (spike interval path %s)%n", expected,
-                Boolean.getBoolean("hardwood.spike.sortedDictionaries") ? "ON" : "OFF");
+        System.out.printf("%nGate passed: %,d matching rows (interval %s, entry mode %s)%n", expected,
+                Boolean.getBoolean("hardwood.spike.sortedDictionaries") ? "ON" : "OFF",
+                System.getProperty("hardwood.spike.entryMode", "lazy"));
     }
 
     @Benchmark
@@ -91,8 +123,7 @@ public class SortedDictionaryRangeReadBenchmark {
     private long count() throws IOException {
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Path.of(file)));
-             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id"))
-                     .filter(filter).build()) {
+             RowReader rows = builder(reader, "id").build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -101,12 +132,17 @@ public class SortedDictionaryRangeReadBenchmark {
         return count;
     }
 
+    private ParquetFileReader.RowReaderBuilder builder(ParquetFileReader reader, String column) {
+        ParquetFileReader.RowReaderBuilder builder = reader.buildRowReader()
+                .projection(ColumnProjection.columns(column)).filter(filter);
+        return shape == Shape.HEAD ? builder.head(HEAD_ROWS) : builder;
+    }
+
     private long run() throws IOException {
         long checksum = 0;
         String column = shape == Shape.FILTER_ONLY ? "id" : "url";
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Path.of(file)));
-             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns(column))
-                     .filter(filter).build()) {
+             RowReader rows = builder(reader, column).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 checksum += shape == Shape.FILTER_ONLY ? rows.getLong(0) : rows.getString(0).length();

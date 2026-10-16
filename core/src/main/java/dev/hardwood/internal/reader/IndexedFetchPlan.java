@@ -47,6 +47,16 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     /// The dictionary pruning has already read, or `null` when the plan reads it.
     private final Dictionary preloadedDictionary;
 
+    /// SPIKE (#1258): whether the read covers every page of the chunk, set by the planner.
+    public boolean spikeWholeChunk;
+
+    private Dictionary spikeStamp(Dictionary dictionary) {
+        if (dictionary instanceof Dictionary.ByteArrayDictionary binary) {
+            binary.spikeWholeChunk = spikeWholeChunk;
+        }
+        return dictionary;
+    }
+
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
                               List<ChunkHandle> chunkHandles,
@@ -234,7 +244,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 // never re-entered on the same iterator.
                 dictionaryParsed = true;
                 currentPage = ExceptionContext.DICTIONARY_PAGE;
-                dictionary = parseDictionary();
+                dictionary = spikeStamp(parseDictionary());
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 

@@ -137,6 +137,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final long rowGroupRowCount;
     /// The dictionary pruning has already read, or `null` when the plan parses it.
     private final Dictionary preloadedDictionary;
+
+    /// SPIKE (#1258): whether the read covers every page of the chunk, set by the planner.
+    public boolean spikeWholeChunk;
+
+    private Dictionary spikeStamp(Dictionary dictionary) {
+        if (dictionary instanceof Dictionary.ByteArrayDictionary binary) {
+            binary.spikeWholeChunk = spikeWholeChunk;
+        }
+        return dictionary;
+    }
     /// Where the one-ahead pre-fetch of each chunk runs.
     private final PrefetchTasks prefetchTasks;
     /// The [ChunkHandle] of the first chunk, shared by [#prefetch] and every [#pages] walk so
@@ -635,7 +645,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             initialized = true;
             if (preloadedDictionary != null) {
                 // The plan starts at the first data page: pruning has read the dictionary page.
-                dictionary = preloadedDictionary;
+                dictionary = spikeStamp(preloadedDictionary);
                 return;
             }
             if (position >= columnChunkLength) {
@@ -657,8 +667,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // parser would have to open and read the same header out of again.
                 ByteBuffer compressedData = readPageBytes(position, dictTotalSize)
                         .slice(headerSize, compressedSize);
-                dictionary = DictionaryParser.parsePage(header, compressedData,
-                        columnSchema, metaData, context);
+                dictionary = spikeStamp(DictionaryParser.parsePage(header, compressedData,
+                        columnSchema, metaData, context));
                 position += dictTotalSize;
                 currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
