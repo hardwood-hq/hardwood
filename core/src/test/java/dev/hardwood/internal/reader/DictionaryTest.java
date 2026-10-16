@@ -45,6 +45,120 @@ class DictionaryTest {
     }
 
     @Test
+    void parseByteArrayDictionaryKeepsEveryEntry() {
+        byte[] data = {
+            2, 0, 0, 0, 'A', 'B',
+            0, 0, 0, 0,
+            3, 0, 0, 0, 'X', 'Y', 'Z'
+        };
+
+        Dictionary.ByteArrayDictionary dict =
+                (Dictionary.ByteArrayDictionary) Dictionary.parse(data, data.length, 3, PhysicalType.BYTE_ARRAY, null);
+
+        assertThat(dict.entry(0)).containsExactly('A', 'B');
+        assertThat(dict.entry(1)).isEmpty();
+        assertThat(dict.entry(2)).containsExactly('X', 'Y', 'Z');
+        assertThat(dict.entryOffsets()).containsExactly(0, 2, 2, 5);
+    }
+
+    @Test
+    void parseByteArrayDictionaryReadsOnlyThePagesLength() {
+        byte[] data = { 1, 0, 0, 0, 'A', 9, 9, 9 };
+
+        Dictionary.ByteArrayDictionary dict =
+                (Dictionary.ByteArrayDictionary) Dictionary.parse(data, 5, 1, PhysicalType.BYTE_ARRAY, null);
+
+        assertThat(dict.entry(0)).containsExactly('A');
+    }
+
+    @Test
+    void rejectsByteArrayDictionaryTooShortForItsLengthPrefixes() {
+        byte[] data = { 1, 0, 0, 0, 'A' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading BYTE_ARRAY length");
+    }
+
+    @Test
+    void rejectsByteArrayDictionaryEntryReachingIntoLaterLengthPrefixes() {
+        byte[] data = { 1, 0, 0, 0, 'A', 2, 0, 0 };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading BYTE_ARRAY length");
+    }
+
+    @Test
+    void rejectsByteArrayDictionaryWithNegativeLength() {
+        byte[] data = { -1, -1, -1, -1, 'A', 'B' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 1, PhysicalType.BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid BYTE_ARRAY length: -1");
+    }
+
+    @Test
+    void rejectsByteArrayDictionaryWithEntryPastThePagesEnd() {
+        byte[] data = { 5, 0, 0, 0, 'A', 'B' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 1, PhysicalType.BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading BYTE_ARRAY data");
+    }
+
+    @Test
+    void parseInt96Dictionary() {
+        byte[] data = new byte[24];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) i;
+        }
+
+        Dictionary.ByteArrayDictionary dict =
+                (Dictionary.ByteArrayDictionary) Dictionary.parse(data, data.length, 2, PhysicalType.INT96, null);
+
+        assertThat(dict.entry(0)).containsExactly(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+        assertThat(dict.entry(1)).containsExactly(12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23);
+    }
+
+    @Test
+    void rejectsInt96DictionaryTooShortForItsEntries() {
+        byte[] data = new byte[20];
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.INT96, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading INT96");
+    }
+
+    @Test
+    void rejectsFixedLengthDictionaryTooShortForItsEntries() {
+        byte[] data = { 'A', 'B', 'C', 'D', 'E' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Unexpected EOF while reading fixed-length byte array");
+    }
+
+    @Test
+    void rejectsFixedLengthDictionaryWithoutTypeLength() {
+        byte[] data = { 'A', 'B', 'C', 'D' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 1, PhysicalType.FIXED_LEN_BYTE_ARRAY, null))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
+    }
+
+    @Test
+    void rejectsFixedLengthDictionaryWithNegativeTypeLength() {
+        byte[] data = { 'A', 'B', 'C', 'D' };
+
+        assertThatThrownBy(() -> Dictionary.parse(data, data.length, 2, PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                Integer.MIN_VALUE))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid FIXED_LEN_BYTE_ARRAY type length: -2147483648");
+    }
+
+    @Test
     void parseIntDictionary() throws IOException {
         byte[] data = {
             10, 0, 0, 0,

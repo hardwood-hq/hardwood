@@ -22,7 +22,7 @@ class ByteArrayDictionaryInternTest {
 
     @Test
     void internedStringDecodesEachEntryOnceAndReusesIt() {
-        Dictionary.ByteArrayDictionary dict = new Dictionary.ByteArrayDictionary(new byte[][] {
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {
             "alpha".getBytes(StandardCharsets.UTF_8),
             "beta".getBytes(StandardCharsets.UTF_8),
         });
@@ -41,7 +41,7 @@ class ByteArrayDictionaryInternTest {
 
     @Test
     void internedStringHandlesAnEmptyEntry() {
-        Dictionary.ByteArrayDictionary dict = new Dictionary.ByteArrayDictionary(new byte[][] {
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {
             new byte[0],
             "x".getBytes(StandardCharsets.UTF_8),
         });
@@ -62,7 +62,7 @@ class ByteArrayDictionaryInternTest {
         byte[] entry0 = {1, 2, 3, 4};
         byte[] entry1 = {5, 6, 7, 8};
         Dictionary.ByteArrayDictionary dict =
-                new Dictionary.ByteArrayDictionary(new byte[][] {entry0, entry1});
+                TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
 
         // RLE index run: header (4 << 1) | 0 = 8 = "repeat 4 times", value 1 (bit width 1).
         byte[] indexStream = {8, 0x01};
@@ -81,7 +81,7 @@ class ByteArrayDictionaryInternTest {
         byte[] entry0 = {1, 2, 3, 4};
         byte[] entry1 = {5, 6, 7, 8};
         Dictionary.ByteArrayDictionary dict =
-                new Dictionary.ByteArrayDictionary(new byte[][] {entry0, entry1});
+                TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
 
         // Two present values, both entry 1: RLE run header (2 << 1) | 0 = 4, value 1.
         byte[] indexStream = {4, 0x01};
@@ -99,7 +99,7 @@ class ByteArrayDictionaryInternTest {
     @Test
     void decodePageRejectsAnIndexBeyondTheDictionary() {
         Dictionary.ByteArrayDictionary dict =
-                new Dictionary.ByteArrayDictionary(new byte[][] {{1}, {2}});
+                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
         // RLE run of 4 values with index 3, beyond the 2-entry dictionary (bit width 2).
         byte[] indexStream = {8, 0x03};
@@ -113,7 +113,7 @@ class ByteArrayDictionaryInternTest {
     @Test
     void decodePageRejectsAnIndexBeyondTheDictionaryOnAPageWithNulls() {
         Dictionary.ByteArrayDictionary dict =
-                new Dictionary.ByteArrayDictionary(new byte[][] {{1}, {2}});
+                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
         // Two present values, both index 3: RLE run header (2 << 1) | 0 = 4, value 3 (bit width 2).
         byte[] indexStream = {4, 0x03};
@@ -129,7 +129,7 @@ class ByteArrayDictionaryInternTest {
     @Test
     void decodePageRejectsANegativeIndex() {
         Dictionary.ByteArrayDictionary dict =
-                new Dictionary.ByteArrayDictionary(new byte[][] {{1}, {2}});
+                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
         // RLE run of 4 values, value 0x80000000 as 4 little-endian bytes (bit width 32).
         byte[] indexStream = {8, 0x00, 0x00, 0x00, (byte) 0x80};
@@ -142,7 +142,7 @@ class ByteArrayDictionaryInternTest {
 
     @Test
     void decodePageRejectsAnyPresentValueAgainstAnEmptyDictionary() {
-        Dictionary.ByteArrayDictionary dict = new Dictionary.ByteArrayDictionary(new byte[0][]);
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[0][]);
 
         // Bit width 0: every index decodes as 0 without reading the stream.
         RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(new byte[0], 0);

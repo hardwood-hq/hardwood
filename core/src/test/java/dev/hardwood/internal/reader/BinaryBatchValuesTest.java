@@ -304,7 +304,7 @@ class BinaryBatchValuesTest {
         for (int i = 0; i < entries.length; i++) {
             values[i] = utf8(entries[i]);
         }
-        return new Dictionary.ByteArrayDictionary(values);
+        return TestDictionaries.byteArrays(values);
     }
 
     private static Page.DictionaryByteArrayPage page(Dictionary.ByteArrayDictionary dictionary, int... indices) {

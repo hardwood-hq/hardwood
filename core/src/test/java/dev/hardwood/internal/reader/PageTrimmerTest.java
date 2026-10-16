@@ -69,7 +69,7 @@ class PageTrimmerTest {
     /// Dictionary indices move with their levels, and a null keeps its `-1` slot.
     @Test
     void testMovesDictionaryIndices() {
-        Dictionary.ByteArrayDictionary dictionary = new Dictionary.ByteArrayDictionary(
+        Dictionary.ByteArrayDictionary dictionary = TestDictionaries.byteArrays(
                 new byte[][]{ { 'a' }, { 'b' }, { 'c' } });
         int[] dictIndices = { 0, 1, -1, 2 };
         int[] rep = { 0, 0, 0, 1 };

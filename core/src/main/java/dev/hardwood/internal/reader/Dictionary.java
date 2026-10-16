@@ -37,8 +37,20 @@ public sealed interface Dictionary {
     /// @param typeLength type length for fixed-length types (may be null for variable-length types)
     /// @return typed dictionary
     static Dictionary parse(byte[] data, int length, int numValues, PhysicalType type, Integer typeLength) {
-        PlainDecoder decoder = new PlainDecoder(data, 0, length, type, typeLength);
+        return switch (type) {
+            case INT32, INT64, FLOAT, DOUBLE -> parseNumbers(data, length, numValues, type);
+            case BYTE_ARRAY -> ByteArrayDictionary.parseLengthPrefixed(data, length, numValues);
+            case FIXED_LEN_BYTE_ARRAY -> ByteArrayDictionary.parseFixedWidth(data, length, numValues, type,
+                    requireTypeLength(typeLength), "Unexpected EOF while reading fixed-length byte array");
+            case INT96 -> ByteArrayDictionary.parseFixedWidth(data, length, numValues, type,
+                    12, "Unexpected EOF while reading INT96");
+            case BOOLEAN -> throw new UnsupportedOperationException(
+                    "Dictionary encoding not supported for BOOLEAN type");
+        };
+    }
 
+    private static Dictionary parseNumbers(byte[] data, int length, int numValues, PhysicalType type) {
+        PlainDecoder decoder = new PlainDecoder(data, 0, length, type, null);
         Dictionary dictionary = switch (type) {
             case INT32 -> {
                 int[] values = new int[numValues];
@@ -60,20 +72,30 @@ public sealed interface Dictionary {
                 decoder.readDoubles(values, null, 0);
                 yield new DoubleDictionary(values);
             }
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
-                byte[][] values = new byte[numValues][];
-                decoder.readByteArrays(values, null, 0);
-                yield new ByteArrayDictionary(values);
-            }
-            case BOOLEAN -> throw new UnsupportedOperationException(
-                    "Dictionary encoding not supported for BOOLEAN type");
+            default -> throw new IllegalArgumentException("Not a numeric physical type: " + type);
         };
-        // Entries read at the wrong boundaries would decode into wrong values, not an EOF
-        if (decoder.remaining() != 0) {
-            throw new ParquetReadException("Dictionary page does not end with its " + numValues + " " + type
-                    + " values; leftover bytes: " + decoder.remaining());
-        }
+        requireConsumed(decoder.remaining(), numValues, type);
         return dictionary;
+    }
+
+    /// The width of a `FIXED_LEN_BYTE_ARRAY` column's values, which the schema must state.
+    private static int requireTypeLength(Integer typeLength) {
+        if (typeLength == null) {
+            throw new ParquetReadException("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
+        }
+        if (typeLength < 0) {
+            throw new ParquetReadException("Invalid FIXED_LEN_BYTE_ARRAY type length: " + typeLength);
+        }
+        return typeLength;
+    }
+
+    /// Entries read at the wrong boundaries would decode into wrong values, not an EOF, so a page
+    /// with bytes left over after its last entry is rejected.
+    private static void requireConsumed(int leftover, int numValues, PhysicalType type) {
+        if (leftover != 0) {
+            throw new ParquetReadException("Dictionary page does not end with its " + numValues + " " + type
+                    + " values; leftover bytes: " + leftover);
+        }
     }
 
     record IntDictionary(int[] values) implements Dictionary {
@@ -151,20 +173,60 @@ public sealed interface Dictionary {
         /// allocated; populated only for columns read as text, via [#internedString(int)].
         private String[] interned;
 
-        /// Flattens `values`, which the dictionary does not keep.
-        ByteArrayDictionary(byte[][] values) {
-            int[] offsets = new int[values.length + 1];
-            long total = 0;
-            for (int i = 0; i < values.length; i++) {
-                total += values[i].length;
-                offsets[i + 1] = Math.toIntExact(total);
+        private ByteArrayDictionary(byte[] entryBytes, int[] entryOffsets) {
+            this.entryBytes = entryBytes;
+            this.entryOffsets = entryOffsets;
+        }
+
+        /// Parses a PLAIN `BYTE_ARRAY` dictionary page, `[4-byte little-endian length][bytes]` per
+        /// entry, in one pass: each entry's bytes are copied into one array and its end recorded.
+        static ByteArrayDictionary parseLengthPrefixed(byte[] data, int length, int numValues) {
+            if ((long) numValues * Integer.BYTES > length) {
+                // The page cannot hold the entries' length prefixes, let alone their bytes
+                throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY length");
             }
-            byte[] flat = new byte[Math.toIntExact(total)];
-            for (int i = 0; i < values.length; i++) {
-                System.arraycopy(values[i], 0, flat, offsets[i], values[i].length);
+            byte[] bytes = new byte[length - numValues * Integer.BYTES];
+            int[] offsets = new int[numValues + 1];
+            int pos = 0;
+            int end = 0;
+            for (int i = 0; i < numValues; i++) {
+                // The check above and the one below keep every remaining length prefix within the page
+                int entryLength = (data[pos] & 0xFF) | (data[pos + 1] & 0xFF) << 8
+                        | (data[pos + 2] & 0xFF) << 16 | (data[pos + 3] & 0xFF) << 24;
+                pos += Integer.BYTES;
+                if (entryLength < 0) {
+                    throw new ParquetReadException("Invalid BYTE_ARRAY length: " + entryLength);
+                }
+                if (entryLength > length - pos) {
+                    throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY data");
+                }
+                if (entryLength > bytes.length - end) {
+                    // The entry's bytes reach into where the later entries' length prefixes would be
+                    throw new ParquetReadException("Unexpected EOF while reading BYTE_ARRAY length");
+                }
+                System.arraycopy(data, pos, bytes, end, entryLength);
+                pos += entryLength;
+                end += entryLength;
+                offsets[i + 1] = end;
             }
-            this.entryBytes = flat;
-            this.entryOffsets = offsets;
+            requireConsumed(length - pos, numValues, PhysicalType.BYTE_ARRAY);
+            return new ByteArrayDictionary(bytes, offsets);
+        }
+
+        /// Parses a dictionary page of `width`-byte entries with no length prefixes, whose bytes
+        /// already are the flat layout.
+        static ByteArrayDictionary parseFixedWidth(byte[] data, int length, int numValues, PhysicalType type,
+                                                   int width, String eofMessage) {
+            long size = (long) numValues * width;
+            if (size > length) {
+                throw new ParquetReadException(eofMessage);
+            }
+            requireConsumed(Math.toIntExact(length - size), numValues, type);
+            int[] offsets = new int[numValues + 1];
+            for (int i = 1; i <= numValues; i++) {
+                offsets[i] = i * width;
+            }
+            return new ByteArrayDictionary(Arrays.copyOf(data, Math.toIntExact(size)), offsets);
         }
 
         public byte[] entryBytes() {
