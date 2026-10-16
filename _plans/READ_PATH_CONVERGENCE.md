@@ -316,9 +316,9 @@ specialization; #732 requires the same. Judged on both stage 2 workloads plus
 
 ### Stage 6 — cut the nested worker's per-batch cost
 
-Superseded by [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md), whose stage 3 decodes nested values,
-levels and bytes straight into batch arrays allocated at their exact size, so there is no
-accumulator left to swap or copy. Closes finding 6. Issues: #1024, #750, #1045.
+Superseded by [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md), whose stage 2 fills nested values,
+levels and bytes into batch arrays allocated at their exact size, so there is no accumulator
+left to swap or copy. Closes finding 6. Issues: #1024, #750, #1045.
 
 ## Completion
 

@@ -64,8 +64,9 @@ on the drain, not the pool.
 The spike replaces the per-column pipelines with one scheduler that places pages of every
 column into row-aligned batches. On the flat file it used the least CPU and was fastest on
 one thread (804 ms against 1112 ms), but on eight threads its single scheduler thread kept
-it behind the stage 3 prototype (262 ms against 209 ms). It is worth its rewrite only if,
-after stages 3 and 4, single-core efficiency or CPU per row is what separates Hardwood from
+it behind the stage 3 prototype (262 ms against 209 ms). Stage 3 already decides batch boundaries once per read and removes
+the drain threads, leaving one retriever per column. Replacing those with one scheduler is worth
+its rewrite only if, after stages 3 and 4, single-core efficiency or CPU per row is what separates Hardwood from
 the reference. The design, measurements and open questions are on #1475; the code is on
 branch `scatter-decode-spike`.
 
