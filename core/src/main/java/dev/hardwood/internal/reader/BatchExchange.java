@@ -113,6 +113,9 @@ public class BatchExchange<B> {
 
     private final AtomicReference<Throwable> error = new AtomicReference<>();
     private volatile boolean finished;
+    /// Run on the consumer's thread after it takes a batch, for a worker that publishes without
+    /// waiting ([#tryPublish]); `null` for none.
+    private volatile Runnable roomListener;
 
     private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
                           ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory,
@@ -265,6 +268,31 @@ public class BatchExchange<B> {
         return queue(batch, rows);
     }
 
+    /// Queues the batch if it keeps the ready queue within `readyRowLimit` rows, without waiting.
+    /// An empty queue takes any batch. Detaching mode only, and for one publisher at a time: the
+    /// consumer only ever takes rows out, so the room this checks is still there when it queues.
+    ///
+    /// @return whether the batch was queued; if not, the [#setRoomListener] listener runs once
+    ///         the consumer has taken a batch
+    boolean tryPublish(B batch) {
+        if (batchRows == null) {
+            throw new IllegalStateException("tryPublish() is only valid in detaching mode for column '"
+                    + columnName + "'");
+        }
+        long rows = rowsOf(batch);
+        long queued = readyRows.get();
+        if (queued > 0 && queued + rows > readyRowLimit) {
+            return false;
+        }
+        return queue(batch, rows);
+    }
+
+    /// Sets what runs on the consumer's thread each time it takes a batch: for a worker whose
+    /// [#tryPublish] found no room, and which publishes there instead of waiting.
+    void setRoomListener(Runnable listener) {
+        this.roomListener = listener;
+    }
+
     private boolean queue(B batch, long rows) {
         readyRows.addAndGet(rows);
         readyQueue.offer(batch);
@@ -279,6 +307,10 @@ public class BatchExchange<B> {
             long left = readyRows.addAndGet(-rowsOf((B) batch));
             if (left <= drainWakeRows && waitingDrain.get() != null) {
                 wakeDrain();
+            }
+            Runnable listener = roomListener;
+            if (listener != null) {
+                listener.run();
             }
         }
         return batch;

@@ -30,6 +30,7 @@ two copies around native decompression (#1015; stage 7 below).
 | Prototype `1287-proto-deferred-dict`: dictionary numeric pages gathered into the batch on the drain, 20 columns, 8 threads | wall 306 → 209 ms, CPU 2100 → 1460 ms |
 | Spike `scatter-decode-spike`: one scheduler, decode into batches, 20 columns | CPU −40% on 8 threads, wall −28% on 1 thread; behind the prototype on 8 threads (262 ms), its scheduler thread doing every column's I/O, header and dictionary parsing |
 | Spike, in-flight bound counted in batches past the consumer | a 4-batch window starved pages of ~870K rows; 16 did not |
+| Window of 8 batches counted in batch capacity (#1516), 3 columns of the 2016-01 file, pages of ~0.7M rows | clamped at `MAX_BATCH`, the window held about 1.5 pages per column: 46 ms against `main`'s 33 ms in a container with fast cores, while on the N300 it was 23% faster than `main`; with the window in byte-budget rows while the read waits for decoding and a decode thread idles, 31 ms in the container, and the 20-column read and 1BRC's eight concurrent readers unchanged on the N300 |
 | Per-column pipeline without a drain, cells filled by copy (#1516) | per-column throttles cannot serve both shapes: with a window of 3 batches per column, the 20-column flat read was 10% and the nested read 18–27% faster than `main`, and a 3-column read of the 2016 and 2019 files 30–50% slower; with cells allocated before decode and no window, the 3-column read was close to `main` and the 20-column read 26–32% slower |
 
 The first two rows are where the gains come from: no page arrays and no copy. The last two are
@@ -85,8 +86,11 @@ scheduler holds at most a small fixed number of them unplaced.
 
 - pages submitted and not finished, across all columns;
 - the first batch a page touches, at most a fixed number of batches past the next batch the
-  consumer takes. A page may extend past that window, so a page spanning many batches is
-  never held back by its own span.
+  consumer takes; while the slowest column's next batch waits for decoding and a decode thread
+  has no task, a batch counts as the rows of the batch byte budget, which the `MAX_BATCH` clamp
+  cuts the batch capacity of a narrow read short of.
+  A page may extend past that window, so a page spanning many batches is never held back by
+  its own span.
 
 Both bounds are fixed by measurement on the shapes in [Stages](#stages): a 20-column flat read,
 a 3-column read of a long single-row-group file, a nested read, and 1BRC.

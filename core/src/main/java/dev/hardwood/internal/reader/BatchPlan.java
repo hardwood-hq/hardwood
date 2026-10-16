@@ -41,7 +41,7 @@ final class BatchPlan {
 
     /// The plan of a row group after the row cap ended the read; no column reaches it.
     private static final RowGroupBatches AFTER_END =
-            new RowGroupBatches(-1, null, false, false, 0, 0, 0, 0, 0, false);
+            new RowGroupBatches(-1, null, false, false, 0, 0, 0, 0, 0, false, -1);
 
     private final int capacity;
     private final boolean endsAtRowGroups;
@@ -59,6 +59,8 @@ final class BatchPlan {
     private long capLeft;
     /// Whether the row cap has ended the read.
     private boolean ended;
+    /// The rows the plan takes from every row group planned so far.
+    private long plannedRows;
 
     /// @param capacity the read's batch capacity, in rows
     /// @param endsAtRowGroups whether every batch ends at the end of its row group
@@ -126,7 +128,8 @@ final class BatchPlan {
             return AFTER_END;
         }
         if (keptRows == 0) {
-            return new RowGroupBatches(workItemIndex, fileName, flag, false, 0, 0, capacity, 0, 0, false);
+            return new RowGroupBatches(workItemIndex, fileName, flag, false, 0, 0, capacity, 0, 0, false,
+                    plannedRows);
         }
         if (filtered && !alwaysMatches) {
             capHeld = false;
@@ -156,8 +159,10 @@ final class BatchPlan {
         openRows = lastOpen ? rowsInLastBatch : 0;
         openFileIndex = fileIndex;
         openAlwaysMatches = flag;
+        long rowsBefore = plannedRows;
+        plannedRows += rows;
         return new RowGroupBatches(workItemIndex, fileName, flag, closesOpenBatch, keptRows,
-                firstRows, capacity, segmentCount, lastOpen ? -lastRows : lastRows, endsRead);
+                firstRows, capacity, segmentCount, lastOpen ? -lastRows : lastRows, endsRead, rowsBefore);
     }
 
     /// The batches of one row group, as segments of its kept rows in row order. The first segment
@@ -177,9 +182,11 @@ final class BatchPlan {
     /// @param signedLastRows rows of the last segment, negated when the segment leaves its batch
     ///        open
     /// @param endsRead whether the row cap ends the read at the end of the last segment
+    /// @param readRowsBefore the rows the plan takes from every row group before this one, which
+    ///        is the read's row this row group's first planned row is at
     record RowGroupBatches(int workItemIndex, String fileName, boolean alwaysMatches,
                            boolean closesOpenBatch, long keptRows, int firstRows, int capacity,
-                           int segmentCount, int signedLastRows, boolean endsRead) {
+                           int segmentCount, int signedLastRows, boolean endsRead, long readRowsBefore) {
 
         /// Rows of segment `i`.
         int segmentRows(int i) {

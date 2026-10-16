@@ -32,6 +32,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.ColumnWorker;
 import dev.hardwood.internal.reader.PrefetchTasks;
+import dev.hardwood.internal.reader.ScheduledColumn;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnProjection;
@@ -67,6 +68,8 @@ class ParentCloseTest {
 
     /// Where a close stops a child reader's column workers.
     private static final String WORKER_CLOSE = ColumnWorker.class.getName() + "#close";
+    /// Where a close stops a fixed-width column of a column read.
+    private static final String SCHEDULED_CLOSE = ScheduledColumn.class.getName() + "#close";
     /// Where a close waits for the speculative tasks a read has started.
     private static final String AWAIT_PREFETCHES = PrefetchTasks.class.getName() + "#awaitAll";
     /// Where a close waits for the child builds already under way.
@@ -181,7 +184,7 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, WORKER_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, WORKER_CLOSE, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
         consumer.join();
 
         assertThat(file.violations).isEmpty();
