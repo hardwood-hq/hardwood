@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -20,16 +21,16 @@ import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
-/// A flat fixed-width column whose pages a [ReadScheduler] submits to the decode pool, in row
-/// order with the read's other scheduled columns, and whose page tasks decode straight into the
-/// column's batches.
+/// A flat column whose pages a [ReadScheduler] submits to the decode pool, in row order with the
+/// read's other scheduled columns, and whose page tasks decode straight into the column's batches.
 ///
 /// - The **fetcher**, a virtual thread, pulls the column's pages from its [PageSource], which does
 ///   every `InputFile` access, places each into the [Cell]s of the read's batch plan ([Placer])
 ///   and queues it for the scheduler. It keeps at most [#FETCH_AHEAD] pages queued.
 /// - A **page task**, on the decode pool, decodes its page and fills its segments, allocating a
 ///   cell on the first fill that reaches it; the task that fills a cell's last segment completes
-///   it and publishes what can be published.
+///   it and publishes what can be published. A binary column's task first measures the bytes of
+///   each of its segments, and sizes each cell whose last measure that is ([BinaryFill]).
 /// - **Publishing** takes the completed cells at the head of the column's publish order into its
 ///   [BatchExchange], without waiting. A cell that finds no room stays at the head, and the
 ///   consumer publishes it when it takes a batch ([BatchExchange#setRoomListener]).
@@ -55,6 +56,11 @@ public final class ScheduledColumn implements ColumnPipeline {
     private final ReadScheduler scheduler;
     /// The column's filter fragment, run on each batch as it completes; `null` for none.
     private final ColumnBatchMatcher columnFilter;
+    /// Whether the column is binary, its cells [Cell#measured].
+    private final boolean binary;
+    /// Raised once a reader needed the views of deferred dictionary values; a binary column builds
+    /// them as its cells complete from then on.
+    private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
 
     // === Guarded by `lock` ===
     private final ReentrantLock lock = new ReentrantLock();
@@ -66,6 +72,9 @@ public final class ScheduledColumn implements ColumnPipeline {
     /// Cells whose seal came after their last fill, which the fetcher completes once it has
     /// released the lock.
     private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
+    /// Measured cells whose seal came after their last measure, which the fetcher sizes once it
+    /// has released the lock.
+    private final ArrayDeque<Cell> sealedSizable = new ArrayDeque<>();
 
     // === Read by the scheduler ===
     /// The read's row the column's next page starts at or after.
@@ -120,17 +129,13 @@ public final class ScheduledColumn implements ColumnPipeline {
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
-        this.placer = new Placer(new PlacerSink(), batchCapacity);
+        this.binary = switch (column.type()) {
+            case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> false;
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> true;
+        };
+        this.placer = new Placer(new PlacerSink(), batchCapacity, binary);
         exchange.setRoomListener(this::roomPossible);
         scheduler.add(this);
-    }
-
-    /// Whether `column`, read flat, is one a [ScheduledColumn] reads: a fixed-width column.
-    public static boolean reads(ColumnSchema column) {
-        return switch (column.type()) {
-            case INT32, INT64, FLOAT, DOUBLE, BOOLEAN -> true;
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> false;
-        };
     }
 
     /// Starts the fetcher. Called by the scheduler.
@@ -388,22 +393,41 @@ public final class ScheduledColumn implements ColumnPipeline {
         completeSealed();
     }
 
-    /// Completes the cells the fetcher's placement sealed after their last fill, outside the
-    /// lock: completing a cell runs the column's filter fragment.
+    /// Sizes and completes the cells the fetcher's placement sealed after their last measure or
+    /// fill, outside the lock: sizing a cell allocates its bytes, and completing it runs the
+    /// column's filter fragment.
     private void completeSealed() {
         while (true) {
-            Cell cell;
+            Cell sizable;
+            Cell complete = null;
             lock.lock();
             try {
-                cell = sealedComplete.pollFirst();
+                sizable = sealedSizable.pollFirst();
+                if (sizable == null) {
+                    complete = sealedComplete.pollFirst();
+                }
             }
             finally {
                 lock.unlock();
             }
-            if (cell == null) {
+            if (sizable == null && complete == null) {
                 return;
             }
-            completeAndPublish(cell);
+            try {
+                if (sizable != null) {
+                    size(sizable);
+                }
+                else {
+                    completeAndPublish(complete);
+                }
+            }
+            catch (RuntimeException e) {
+                // The cell cannot complete, and a failure queued behind it would never be raised
+                PageTask page = (sizable != null ? sizable : complete).lastPage();
+                signalError(ColumnWorker.placeFailure(e, column, pageSource.footersSupplied(), page.fileName,
+                        page.rowGroup, page.pageIndex));
+                return;
+            }
         }
     }
 
@@ -417,6 +441,9 @@ public final class ScheduledColumn implements ColumnPipeline {
 
         @Override
         public void sealed(Cell cell) {
+            if (cell.measured && cell.unsized.decrementAndGet() == 0) {
+                sealedSizable.addLast(cell);
+            }
             if (cell.pending.decrementAndGet() == 0) {
                 sealedComplete.addLast(cell);
             }
@@ -437,8 +464,12 @@ public final class ScheduledColumn implements ColumnPipeline {
             if (done) {
                 return;
             }
-            PageInfo info = page.info;
             PageDecoder.LevelScratch scratch = SCRATCH.get();
+            if (binary) {
+                runBinaryPage(page, scratch);
+                return;
+            }
+            PageInfo info = page.info;
             FlatPageValues values = null;
             Page decoded = null;
             if (info.isNullPlaceholder()) {
@@ -458,9 +489,7 @@ public final class ScheduledColumn implements ColumnPipeline {
                 Segment segment = page.segments.get(i);
                 Cell cell = segment.cell;
                 FlatFill.fill(segment, values, decoded, cell.allocate(exchange, column).values, maxDefinitionLevel);
-                if (cell.pending.decrementAndGet() == 0) {
-                    completeAndPublish(cell);
-                }
+                filled(cell);
             }
         }
         catch (Exception e) {
@@ -473,6 +502,63 @@ public final class ScheduledColumn implements ColumnPipeline {
         }
         finally {
             taskEnded();
+        }
+    }
+
+    /// Decodes a page of a binary column, measures the bytes of its segments, sizes the cells whose
+    /// last measure that is, and fills its segments. Every segment is measured before any is
+    /// filled, so that a cell this page's measure sizes is sized before the page fills it.
+    private void runBinaryPage(PageTask page, PageDecoder.LevelScratch scratch) {
+        PageInfo info = page.info;
+        BinaryPageValues values = info.isNullPlaceholder()
+                ? null
+                : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch);
+        if (values == null) {
+            Page decoded = info.isNullPlaceholder()
+                    ? page.decoder.nullPage(info.placeholderNumValues())
+                    : page.decoder.decodePage(info.pageData(), info.dictionary(), scratch);
+            values = BinaryPageValues.of(decoded, scratch);
+        }
+        checkRows(info, values.size());
+        List<Segment> segments = page.segments;
+        for (int i = 0; i < segments.size(); i++) {
+            Segment segment = segments.get(i);
+            segment.bytes = BinaryFill.measure(segment, values);
+            if (segment.cell.unsized.decrementAndGet() == 0) {
+                size(segment.cell);
+            }
+        }
+        for (int i = 0; i < segments.size(); i++) {
+            if (done) {
+                return;
+            }
+            Segment segment = segments.get(i);
+            Cell cell = segment.cell;
+            BinaryBatchValues out = (BinaryBatchValues) cell.allocate(exchange, column).values;
+            if (BinaryFill.fill(segment, values, out, maxDefinitionLevel)) {
+                filled(cell);
+            }
+        }
+    }
+
+    /// Sizes a measured cell, writes the bytes of the segments that parked before it was sized,
+    /// and gives up the sizing's token, completing the cell if that was the last.
+    private void size(Cell cell) {
+        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(exchange, column).values;
+        List<Segment> parked = BinaryFill.size(cell, out);
+        if (parked != null) {
+            for (int i = 0; i < parked.size(); i++) {
+                BinaryFill.unpark(parked.get(i), out);
+                filled(cell);
+            }
+        }
+        filled(cell);
+    }
+
+    /// Counts one of the cell's tokens given up, and completes the cell at its last.
+    private void filled(Cell cell) {
+        if (cell.pending.decrementAndGet() == 0) {
+            completeAndPublish(cell);
         }
     }
 
@@ -500,6 +586,13 @@ public final class ScheduledColumn implements ColumnPipeline {
         batch.validity = validity == null || validity.length == words ? validity : Arrays.copyOf(validity, words);
         batch.fileName = cell.fileName;
         batch.filterAlwaysMatches = cell.alwaysMatches;
+        if (batch.values instanceof BinaryBatchValues values) {
+            BinaryFill.finish(cell, values, viewDemand);
+            // Views are built here once a reader needed them, or when the filter reads every one.
+            if (viewDemand.requested || (columnFilter != null && columnFilter.readsEveryValueView())) {
+                values.ensureViews();
+            }
+        }
         if (columnFilter != null) {
             testFilter(batch, records);
         }

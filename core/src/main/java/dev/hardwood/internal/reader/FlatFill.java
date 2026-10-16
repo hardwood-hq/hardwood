@@ -42,13 +42,26 @@ final class FlatFill {
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
     static void fill(Segment segment, FlatPageValues values, Page page, Object out, int maxDefinitionLevel) {
+        ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
+        forEachRun(segment, (pageRow, destPos, length) -> run(values, page, out, pageRow, destPos, length, validity));
+    }
+
+    /// Writes a run of a segment's values: page rows `[pageRow, pageRow + length)` to the cell's
+    /// values `[destPos, destPos + length)`.
+    @FunctionalInterface
+    interface Run {
+        void write(int pageRow, int destPos, int length);
+    }
+
+    /// Walks the segment's kept records `[recordStart, recordEnd)` through its page's mask, in
+    /// page order, as runs of consecutive page rows.
+    static void forEachRun(Segment segment, Run run) {
         PageRowMask mask = segment.page.info.mask();
         int from = segment.recordStart;
         int to = segment.recordEnd;
         int dest = segment.cellOffset;
-        ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
         if (mask.isAll()) {
-            run(values, page, out, from, dest, to - from, validity);
+            run.write(from, dest, to - from);
             return;
         }
         int kept = 0;
@@ -58,7 +71,7 @@ final class FlatFill {
             int lo = Math.max(from, kept);
             int hi = Math.min(to, kept + length);
             if (lo < hi) {
-                run(values, page, out, start + (lo - kept), dest + (lo - from), hi - lo, validity);
+                run.write(start + (lo - kept), dest + (lo - from), hi - lo);
             }
             kept += length;
         }
@@ -100,7 +113,7 @@ final class FlatFill {
     }
 
     /// Writes one segment's validity bits, run by run, into its cell's bitmap.
-    private static final class ValidityWriter {
+    static final class ValidityWriter {
 
         private final Segment segment;
         private final int maxDefinitionLevel;
