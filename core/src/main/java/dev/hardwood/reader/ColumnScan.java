@@ -38,11 +38,6 @@ import dev.hardwood.schema.FileSchema;
 /// [ColumnReader] that is its only view. The views take up each step after it.
 final class ColumnScan implements Closeable {
 
-    /// Whether flat fixed-width columns are read by [ReadScheduler]; `false` reads every column
-    /// through a [dev.hardwood.internal.reader.ColumnWorker], for tests comparing the two.
-    private static final boolean SCHEDULED =
-            !"false".equalsIgnoreCase(System.getProperty("hardwood.internal.scheduled"));
-
     private final ColumnCursor[] cursors;
     private final int payloadCount;
     /// `null` for an unfiltered read.
@@ -82,7 +77,7 @@ final class ColumnScan implements Closeable {
         int columnCount = decoded.getProjectedColumnCount();
         // Every cursor's worker closes its batches where the read's batch plan does.
         rowGroupIterator.planBatches(batchSize, 0);
-        ReadScheduler scheduler = SCHEDULED
+        ReadScheduler scheduler = ReadScheduler.ENABLED
                 ? new ReadScheduler(context, batchSize, budgetRows)
                 : null;
         ColumnCursor[] cursors = new ColumnCursor[columnCount];

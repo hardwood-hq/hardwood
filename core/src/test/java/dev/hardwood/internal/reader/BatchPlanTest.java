@@ -415,7 +415,7 @@ class BatchPlanTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
             ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
             try (ScheduledColumn scheduled = new ScheduledColumn(scheduler, source, exchange, column, 64,
-                    context.decompressorFactory())) {
+                    context.decompressorFactory(), null)) {
                 scheduler.start();
                 while (exchange.poll() != null) {
                     // drained

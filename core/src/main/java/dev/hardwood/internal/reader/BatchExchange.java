@@ -22,17 +22,19 @@ import dev.hardwood.jfr.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Exchange buffer between a [ColumnWorker] drain thread and the consumer.
+/// Exchange buffer between a column's pipeline, a [ColumnWorker]'s drain or a
+/// [ScheduledColumn]'s page tasks, and the consumer.
 ///
 /// Two modes are available:
 ///
 /// - **Recycling** (`BatchExchange.recycling()`): pre-allocates batch holders that cycle
-///   between drain and consumer via `freeQueue` and `readyQueue`. No per-batch allocation.
-///   Used by [FlatRowReader] and [NestedRowReader] where the consumer returns batches
-///   after reading.
+///   between producer and consumer via `freeQueue` and `readyQueue`. A drain reuses them and
+///   allocates none per batch; a scheduled column takes a free holder when there is one and a
+///   new one from the factory otherwise ([#newBatch]). Used by [FlatRowReader] and
+///   [NestedRowReader] where the consumer returns batches after reading.
 ///
 /// - **Detaching** (`BatchExchange.detaching()`): allocates a fresh batch each time
-///   the drain needs one via the `batchFactory`. The consumer keeps ownership of each
+///   the producer needs one via the `batchFactory`. The consumer keeps ownership of each
 ///   batch (the arrays are not recycled). Back-pressure comes from a limit on the rows
 ///   the ready queue holds. Used by [ColumnReader] where the caller retains the arrays
 ///   between batches.
@@ -57,8 +59,8 @@ public class BatchExchange<B> {
     /// dictionary never allocates it at that size.
     public static final int BINARY_BYTES_PER_VALUE_HINT = 32;
 
-    /// A mutable batch holder for flat columns. Pre-allocated and reused — no per-batch allocation.
-    /// The drain writes into it, the consumer reads from it.
+    /// A mutable batch holder for flat columns, reused in recycling mode. The column's pipeline
+    /// writes into it, the consumer reads from it.
     ///
     /// `validity` carries set-bit-= -present semantics: a set bit at position
     /// `i` means the leaf value at that position is present. Packed into
@@ -133,9 +135,12 @@ public class BatchExchange<B> {
     ///
     /// Three batches are pre-allocated (`READY_QUEUE_CAPACITY + 1`): one filling
     /// plus up to two queued. The consumer must return consumed batches to `freeQueue()`.
+    /// A scheduled column fills holders past those three while it decodes ahead
+    /// ([#newBatch]); the free queue keeps at most three of the holders returned.
     ///
     /// @param columnName column name for error messages
-    /// @param batchFactory creates the initial batch holders
+    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    ///        needs beyond them
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
     public static <B> BatchExchange<B> recycling(String columnName, Supplier<B> batchFactory) {
@@ -146,7 +151,7 @@ public class BatchExchange<B> {
             freeQueue.add(batchFactory.get());
         }
 
-        return new BatchExchange<>(columnName, readyQueue, freeQueue, null, null, 0);
+        return new BatchExchange<>(columnName, readyQueue, freeQueue, batchFactory, null, 0);
     }
 
     /// Creates a detaching exchange that allocates a fresh batch each time.
@@ -268,16 +273,16 @@ public class BatchExchange<B> {
         return queue(batch, rows);
     }
 
-    /// Queues the batch if it keeps the ready queue within `readyRowLimit` rows, without waiting.
-    /// An empty queue takes any batch. Detaching mode only, and for one publisher at a time: the
-    /// consumer only ever takes rows out, so the room this checks is still there when it queues.
+    /// Queues the batch without waiting, if the ready queue has room: in detaching mode, if it
+    /// keeps the queue within `readyRowLimit` rows, an empty queue taking any batch; in recycling
+    /// mode, if the bounded queue has a free slot. For one publisher at a time: the consumer only
+    /// ever takes batches out, so the room this checks is still there when it queues.
     ///
     /// @return whether the batch was queued; if not, the [#setRoomListener] listener runs once
     ///         the consumer has taken a batch
     boolean tryPublish(B batch) {
         if (batchRows == null) {
-            throw new IllegalStateException("tryPublish() is only valid in detaching mode for column '"
-                    + columnName + "'");
+            return readyQueue.offer(batch);
         }
         long rows = rowsOf(batch);
         long queued = readyRows.get();
@@ -285,6 +290,14 @@ public class BatchExchange<B> {
             return false;
         }
         return queue(batch, rows);
+    }
+
+    /// A batch for a worker that publishes without waiting ([#tryPublish]) to fill: a returned
+    /// holder in recycling mode when one is free, a new one otherwise. Its arrays are the
+    /// returned holder's, or none.
+    B newBatch() {
+        B free = freeQueue != null ? freeQueue.poll() : null;
+        return free != null ? free : batchFactory.get();
     }
 
     /// Sets what runs on the consumer's thread each time it takes a batch: for a worker whose
@@ -302,16 +315,19 @@ public class BatchExchange<B> {
     /// Accounts for a batch the consumer has taken, and wakes a drain waiting for room once the
     /// queue is down to `drainWakeRows`. The sentinel and an empty poll are passed through.
     private Object taken(Object batch) {
-        if (batchRows != null && batch != null && batch != END_OF_STREAM) {
+        if (batch == null || batch == END_OF_STREAM) {
+            return batch;
+        }
+        if (batchRows != null) {
             @SuppressWarnings("unchecked")
             long left = readyRows.addAndGet(-rowsOf((B) batch));
             if (left <= drainWakeRows && waitingDrain.get() != null) {
                 wakeDrain();
             }
-            Runnable listener = roomListener;
-            if (listener != null) {
-                listener.run();
-            }
+        }
+        Runnable listener = roomListener;
+        if (listener != null) {
+            listener.run();
         }
         return batch;
     }

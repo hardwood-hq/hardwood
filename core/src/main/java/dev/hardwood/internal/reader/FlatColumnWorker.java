@@ -83,7 +83,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// Writes the mask a matcher would produce when every record matches: all-ones
     /// for `[0, recordCount)` bits, tail bits of the last active word zeroed, words
     /// beyond the active range untouched.
-    private static void fillAllOnes(long[] words, int recordCount) {
+    static void fillAllOnes(long[] words, int recordCount) {
         int fullWords = recordCount >>> 6;
         int tail = recordCount & 63;
         Arrays.fill(words, 0, fullWords, -1L);

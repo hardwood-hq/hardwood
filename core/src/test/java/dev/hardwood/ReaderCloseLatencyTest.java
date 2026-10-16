@@ -8,6 +8,7 @@
 package dev.hardwood;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +44,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// adds up rather than overlapping, and the total goes linear in the projection width.
 ///
 /// Both consumer shapes have to be covered, because the two `BatchExchange` modes block their
-/// drain thread at *different* points and so are separately breakable. [ColumnReaders] uses
+/// drain thread at *different* points and so are separately breakable. The column-reader cases
+/// read `INT64` columns, which the read's scheduler decodes instead of a drain, so they cover its
+/// close; the row-reader case reads `BYTE_ARRAY` columns, which keep their drains. [ColumnReaders] uses
 /// the detaching mode, whose drain blocks in `publish()` once its ready queue holds two full
 /// batches' worth of rows; [RowReader]
 /// uses the recycling mode, whose drain blocks in `takeBatch()` on an empty free pool. A
@@ -144,11 +147,13 @@ class ReaderCloseLatencyTest {
     /// [RowReader] recycles its batch holders, so its drain blocks in `takeBatch()` waiting for
     /// the consumer to hand a holder back, not in `publish()` waiting for ready-queue room.
     /// Releasing only the publish side leaves this path stalling per column, which is exactly
-    /// the regression the two cases above cannot see.
+    /// the regression the two cases above cannot see. Its file's columns are `BYTE_ARRAY`, which a
+    /// row read decodes through column workers and their drains; fixed-width columns go through
+    /// the read's scheduler, which no drain waits in.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void rowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {
-        byte[] file = writeSyntheticFile();
+        byte[] file = writeSyntheticBinaryFile();
         String[] columns = columnNames().toArray(new String[0]);
 
         try (Hardwood hardwood = Hardwood.create()) {
@@ -240,7 +245,8 @@ class ReaderCloseLatencyTest {
     }
 
     /// A synthetic file of `COLUMNS` required `INT64` columns and `ROWS` rows. Nothing about
-    /// the values matters, only that every projected column has a chunk to decode.
+    /// the values matters, only that every projected column has a chunk to decode. The read's
+    /// scheduler decodes these columns ([dev.hardwood.internal.reader.ReadScheduler]).
     private static byte[] writeSyntheticFile() throws Exception {
         FileSchema.Builder schema = FileSchema.builder("close_scaling");
         for (String name : columnNames()) {
@@ -257,6 +263,30 @@ class ReaderCloseLatencyTest {
             writer.columnWriter().writeBatch(batch -> {
                 for (String name : columnNames()) {
                     batch.longs(name, values);
+                }
+            });
+        }
+        return InMemoryFiles.toByteArray(out);
+    }
+
+    /// The same shape with required `BYTE_ARRAY` columns, which a row read decodes through a column
+    /// worker whose drain blocks in `takeBatch()` on the recycling exchange.
+    private static byte[] writeSyntheticBinaryFile() throws Exception {
+        FileSchema.Builder schema = FileSchema.builder("close_scaling_binary");
+        for (String name : columnNames()) {
+            schema.addColumn(name, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED);
+        }
+
+        byte[][] values = new byte[ROWS][];
+        for (int i = 0; i < ROWS; i++) {
+            values[i] = Long.toString(i).getBytes(StandardCharsets.US_ASCII);
+        }
+
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema.build())) {
+            writer.columnWriter().writeBatch(batch -> {
+                for (String name : columnNames()) {
+                    batch.bytes(name, values);
                 }
             });
         }

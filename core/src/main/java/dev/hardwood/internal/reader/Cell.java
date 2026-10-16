@@ -113,19 +113,22 @@ final class Cell {
         return segment;
     }
 
-    /// Creates the batch and its value array, unless a task already did. Runs on the first task
-    /// that reaches the cell; another that reaches it meanwhile parks on the cell's lock until the
-    /// array exists, rather than spinning while it is zeroed, and the lock orders the array's
-    /// creation before its writes into it.
-    BatchExchange.Batch allocate(ColumnSchema column) {
+    /// Takes the cell's batch from `exchange` and gives it a value array of at least [#capacity]
+    /// values, unless a task already did: a returned holder's array when it is large enough, a new
+    /// one otherwise. Runs on the first task that reaches the cell; another that reaches it
+    /// meanwhile parks on the cell's lock until the array exists, rather than spinning while it is
+    /// zeroed, and the lock orders the array's creation before its writes into it.
+    BatchExchange.Batch allocate(BatchExchange<BatchExchange.Batch> exchange, ColumnSchema column) {
         if (!allocated) {
             allocation.lock();
             try {
                 if (!allocated) {
-                    BatchExchange.Batch created = new BatchExchange.Batch();
-                    created.values = BatchExchange.allocateArray(column, capacity);
-                    created.capacity = capacity;
-                    batch = created;
+                    BatchExchange.Batch taken = exchange.newBatch();
+                    if (taken.values == null || taken.capacity < capacity) {
+                        taken.values = BatchExchange.allocateArray(column, capacity);
+                        taken.capacity = capacity;
+                    }
+                    batch = taken;
                     allocated = true;
                 }
             }
