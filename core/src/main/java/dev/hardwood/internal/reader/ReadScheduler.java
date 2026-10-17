@@ -47,8 +47,8 @@ public final class ReadScheduler {
     private static final int PAGES_PER_THREAD = atLeastOne("hardwood.internal.pagesPerThread", 2);
     private static final int WINDOW_BATCHES = atLeastOne("hardwood.internal.windowBatches", 8);
 
-    /// Whether flat fixed-width columns are read by a scheduler; `false` reads every column through
-    /// a [ColumnWorker], for tests comparing the two.
+    /// Whether flat columns are read by a scheduler; `false` reads every column through a
+    /// [ColumnWorker], for tests comparing the two.
     public static final boolean ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("hardwood.internal.scheduled"));
 

@@ -40,6 +40,8 @@ final class Placer {
 
     private final Sink sink;
     private final int batchCapacity;
+    /// Whether the cells are [Cell#measured].
+    private final boolean measured;
 
     /// The batches of the row group being placed, `null` before the first page.
     private BatchPlan.RowGroupBatches rowGroupBatches;
@@ -57,9 +59,11 @@ final class Placer {
     private boolean stopped;
 
     /// @param batchCapacity the read's batch capacity, which every row group's batches must have
-    Placer(Sink sink, int batchCapacity) {
+    /// @param measured whether the cells are sized from their pages' measures ([Cell#measured])
+    Placer(Sink sink, int batchCapacity, boolean measured) {
         this.sink = sink;
         this.batchCapacity = batchCapacity;
+        this.measured = measured;
     }
 
     /// Places the next page of the column: enters its row group if it starts one, then places its
@@ -128,7 +132,7 @@ final class Placer {
         boolean closes = rowGroupBatches.closes(segment);
         Cell cell = new Cell(rowGroupBatches.fileName(), rowGroupBatches.alwaysMatches(),
                 closes ? segmentRowsLeft : Cell.UNKNOWN_RECORDS, closes ? segmentRowsLeft : batchCapacity,
-                firstRow);
+                firstRow, measured);
         sink.opened(cell);
         openCell = cell;
         return cell;

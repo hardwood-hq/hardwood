@@ -212,9 +212,9 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     /// Creates a flat v3 pipeline and returns a [RowReader].
     ///
-    /// Wires up `RowGroupIterator → PageSource → ColumnWorker or ScheduledColumn → BatchExchange →
-    /// FlatRowReader`, a [ScheduledColumn] for each fixed-width column and a [ColumnWorker] for
-    /// every other, starts them and initializes the reader. A read with no row group left once
+    /// Wires up `RowGroupIterator → PageSource → ScheduledColumn → BatchExchange → FlatRowReader`,
+    /// a [ScheduledColumn] for each column, or a [ColumnWorker] for each when the scheduler is
+    /// switched off ([ReadScheduler#ENABLED]), starts them and initializes the reader. A read with no row group left once
     /// its leading row groups' bloom filters and dictionaries are probed
     /// ([RowGroupIterator#hasLiveWorkItem]) starts no worker and is exhausted from the start. A filter is installed on
     /// whichever path can carry it — per batch on the drain side, per record otherwise —
@@ -324,7 +324,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                     });
             ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             buffers[i] = buffer;
-            if (scheduler != null && ScheduledColumn.reads(columnSchema)) {
+            if (scheduler != null) {
                 workers[i] = new ScheduledColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
                         context.decompressorFactory(), columnFilter);
                 continue;

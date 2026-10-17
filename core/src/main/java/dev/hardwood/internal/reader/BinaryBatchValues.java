@@ -31,6 +31,16 @@ import dev.hardwood.row.PqInterval;
 ///
 /// `bytes` starts empty and grows on demand: a batch whose values all come from one
 /// small dictionary holds little more than that dictionary's bytes.
+///
+/// A batch is either assembled in value order, by appending, or filled positionally by the
+/// segments of a scheduled column's cell ([#prepareForFill], [BinaryFill]): each segment writes
+/// its own values' entry ids, views and bytes at its own positions, so the segments are
+/// independent of each other and of the order they are written in. The view arrays and the
+/// entry ids are installed by the first segment that writes them, under the batch's monitor; the
+/// plain values' bytes take `[0, plainBytes)` of `bytes`, sized once every segment is measured
+/// ([#prepareBytes]). The views of dictionary values are not written by the fill: they are built
+/// when a reader first needs them ([#ensureViews]), and a reader of the entry ids alone never
+/// pays for them.
 public final class BinaryBatchValues {
 
     private static final byte[] EMPTY = new byte[0];
@@ -170,6 +180,76 @@ public final class BinaryBatchValues {
         viewedDictionary = null;
         deferredEnd = 0;
         viewsPending = starts == null;
+    }
+
+    /// Readies a slot for a positional fill: its arrays are kept, its contents are not. Runs
+    /// before any segment writes.
+    void prepareForFill() {
+        byteCount = 0;
+        dictionary = null;
+        viewedDictionary = null;
+        appendedDictionaryBytes = 0;
+        deferredEnd = 0;
+        viewDemand = null;
+        viewsPending = true;
+    }
+
+    /// Installs the view arrays for a segment that writes views, unless a segment already has.
+    /// A segment reads them with [#fillStarts] and [#fillEnds] after this.
+    synchronized void installViews() {
+        if (starts == null) {
+            starts = new int[capacity];
+            ends = new int[capacity];
+        }
+    }
+
+    /// The view arrays, for a segment that ran [#installViews].
+    int[] fillStarts() {
+        return starts;
+    }
+
+    int[] fillEnds() {
+        return ends;
+    }
+
+    /// Adopts `dict` as the dictionary of the batch's entry ids, unless a segment already has, and
+    /// returns the ids array the segment writes into.
+    ///
+    /// @throws IllegalStateException if the batch already holds the ids of another dictionary
+    synchronized int[] installDictionary(Dictionary.ByteArrayDictionary dict) {
+        if (dictionary == null) {
+            dictionary = dict;
+            if (dictIndices == null || dictIndices.length < capacity) {
+                dictIndices = new int[capacity];
+            }
+        }
+        else if (dictionary != dict) {
+            throw twoDictionaries();
+        }
+        return dictIndices;
+    }
+
+    /// Gives the plain values' bytes `[0, plainBytes)` of the byte buffer, reusing it when it is
+    /// large enough. Runs once, when the cell is sized, before any segment writes its bytes.
+    void prepareBytes(int plainBytes) {
+        if (bytes.length < plainBytes) {
+            bytes = new byte[plainBytes];
+        }
+        byteCount = plainBytes;
+    }
+
+    /// The byte buffer, for a segment that writes its bytes once [#prepareBytes] ran.
+    byte[] fillBytes() {
+        return bytes;
+    }
+
+    /// Ends a positional fill of `valueCount` values, once every segment is written: the
+    /// dictionary values' views are built when a reader first needs them, and building them
+    /// raises `demand`.
+    void finishFill(int valueCount, ViewDemand demand) {
+        viewDemand = demand;
+        deferredEnd = dictionary != null ? valueCount : 0;
+        viewsPending = starts == null || deferredEnd > 0;
     }
 
     /// Records `[destPos, destPos + length)` as dictionary values whose views are built when a
@@ -544,6 +624,12 @@ public final class BinaryBatchValues {
         return base;
     }
 
+    /// The failure of a batch whose bytes would exceed 2 GB at value `valueIdx`.
+    static IllegalStateException bufferOverflow(int valueIdx) {
+        return new IllegalStateException("Binary batch buffer would exceed int32 (~2 GB) at value " + valueIdx
+                + "; reduce the batch size for this column.");
+    }
+
     private static IllegalStateException twoDictionaries() {
         return new IllegalStateException("A batch holds values of two column chunks' dictionaries");
     }
@@ -552,9 +638,7 @@ public final class BinaryBatchValues {
     /// [#bytesPerValueHint]; a dictionary copy takes what it needs.
     private void ensureBytes(long needed, int valueIdx, boolean valueAppend) {
         if (needed > Integer.MAX_VALUE) {
-            throw new IllegalStateException(
-                    "Binary batch buffer would exceed int32 (~2 GB) at value " + valueIdx
-                    + "; reduce the batch size for this column.");
+            throw bufferOverflow(valueIdx);
         }
         if (needed > bytes.length) {
             long hint = valueAppend ? (long) bytesPerValueHint * capacity : 0L;
