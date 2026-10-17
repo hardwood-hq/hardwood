@@ -126,8 +126,8 @@ class FlatAppendTest {
             InMemoryOutputFile shreddedOut = OutputFile.inMemory();
             flatOut.create();
             shreddedOut.create();
-            ColumnChunkBuffer.Flushed flatChunk = flat.encodeTo(ChunkSink.to(flatOut), schema.getColumn(0));
-            ColumnChunkBuffer.Flushed shreddedChunk = shredded.encodeTo(ChunkSink.to(shreddedOut), schema.getColumn(0));
+            ColumnChunkBuffer.Flushed flatChunk = flat.encodeTo(ChunkSink.to(flatOut), schema.getColumn(0), null);
+            ColumnChunkBuffer.Flushed shreddedChunk = shredded.encodeTo(ChunkSink.to(shreddedOut), schema.getColumn(0), null);
             assertThat(bytes(flatOut)).isEqualTo(bytes(shreddedOut));
             assertThat(flatChunk).usingRecursiveComparison().isEqualTo(shreddedChunk);
             flat.reset();

@@ -344,14 +344,14 @@ The row-group targets close row groups as well; a row group ends at a target or 
 
 ## Writer Threads
 
-Each batch's values are copied into the row group's column chunks in parallel, and at each row-group flush the column chunks are encoded and compressed in parallel, on the threads of a `HardwoodContext` and on the thread that called the write. The chunks are written in schema order. The file is byte-identical to one written on a single thread.
+Each batch's values are copied into the row group's column chunks in parallel, and at each row-group flush the column chunks are encoded and compressed in parallel, on the threads of a `HardwoodContext` and on the thread that called the write. Under a codec other than `UNCOMPRESSED` and with more than one available processor, the pages of one chunk are also compressed in parallel. The chunks are written in schema order. The file is byte-identical to one written on a single thread.
 
 | Factory | Threads |
 |---|---|
-| `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor on its first write of more than one column, and closes it on `close()` or `abort()` |
+| `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor when it first needs one: on its first write of more than one column with more than one available processor, otherwise on its first flush of more than one column, or of one column under a codec other than `UNCOMPRESSED` with more than one available processor. It closes the context on `close()` or `abort()` |
 | `create(out, schema, config, context)` | The threads of `context`. The caller closes `context` after the writer; one context can serve several writers and readers |
 
-A schema of one column is copied and encoded on the calling thread alone. With one available processor, values are copied on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
+A schema of one column is copied on the calling thread alone, and encoded on it alone under `UNCOMPRESSED` or with one available processor. With one available processor, values are copied on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
 
 ## Finishing and Abandoning a File
 

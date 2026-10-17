@@ -241,7 +241,7 @@ class RowGroupBufferStoreCapacityTest {
             if (buffer.isEmpty()) {
                 return;
             }
-            rowGroups.add(buffer.flushTo(out, null, 0).rowGroup());
+            rowGroups.add(buffer.flushTo(out, null, 0, false).rowGroup());
             buffer.reset();
         }
 

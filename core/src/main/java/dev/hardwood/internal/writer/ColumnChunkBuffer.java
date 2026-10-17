@@ -162,7 +162,6 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// buffer from 64 bytes to the stream's size, three times per page.
     private final RleBitPackingHybridEncoder rle = new RleBitPackingHybridEncoder(0);
     private long numValues;        // total level entries across the chunk's pages
-    private long dataPagesUncompressedSize; // sum of header + uncompressed body across data pages
     private long dictionaryPageUncompressedSize; // header + uncompressed body of the dictionary page
 
     private final Compressor compressor;
@@ -626,7 +625,6 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         entryCount = 0;
         numValues = 0;
         presentCount = 0;
-        dataPagesUncompressedSize = 0;
         dictionaryPageUncompressedSize = 0;
         dictionaryAlive = values.dictionaryCapable();
         cardinalityKnown = true;
@@ -746,9 +744,13 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// `sink`, and returns its metadata and page index with every offset counted from the chunk's
     /// first byte; [Flushed#at] places them in the file.
     ///
-    /// Touches nothing but this chunk's own state and the shared, stateless [Compressor], so the
-    /// chunks of one row group can be encoded on different threads.
-    Flushed encodeTo(ChunkSink sink, ColumnSchema column) throws IOException {
+    /// Touches nothing but this chunk's own state, the shared, stateless [Compressor], and copies
+    /// of its page bodies handed to `handoff`, so the chunks of one row group can be encoded on
+    /// different threads.
+    ///
+    /// @param handoff where page bodies are handed to idle workers, or `null` to compress every
+    ///        page on the calling thread
+    Flushed encodeTo(ChunkSink sink, ColumnSchema column, PageCompression handoff) throws IOException {
         if (abandonedAtVerdict) {
             recoverDictionary();
         }
@@ -775,7 +777,6 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
             dictionaryUncompressedSize = dictionaryPageUncompressedSize;
             sink.write(dictionaryPage, 0, dictionaryPage.length, false);
         }
-        long dataPagesCompressedSize = 0;
         // What a value costs is settled now that the encoding is: an index against the
         // dictionary, or the value itself. Read once for the whole chunk where every value costs
         // the same, which is every column but a variable-width `BYTE_ARRAY` one.
@@ -792,49 +793,56 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         SizeStatisticsBuilder sizes = new SizeStatisticsBuilder(column);
         byte[] repetitions = maxRepLevel > 0 ? repLevels.array() : null;
         byte[] definitions = maxDefLevel > 0 ? defLevels.array() : null;
-        List<PageLocation> pageLocations = new ArrayList<>();
+        DataPageWriter pages = new DataPageWriter(sink, codec, compressor, handoff, dataPageOffset);
         int dataPageCount = 0;
         int entryFrom = 0;
         int valueFrom = 0;
         long firstRow = 0;
-        while (entryFrom < entryCount) {
-            long cut = pageCut(entryFrom, valueFrom, uniformValueBits, pageOverheadBits, valueOffsets);
-            int entries = (int) (cut >>> Integer.SIZE);
-            int valueCount = (int) cut;
-            long nulls = entries - valueCount;
-            int maxIndex = 0;
-            if (trackEntries) {
-                int distinct = collectPageEntries(valueFrom, valueCount, dictionarySize);
-                maxIndex = pageMaxIndex;
-                columnIndex.add(values.dictionaryPageStatistics(pageEntries, pageEntryOccurrences, distinct,
-                        valueCount, nulls));
+        try {
+            while (entryFrom < entryCount) {
+                long cut = pageCut(entryFrom, valueFrom, uniformValueBits, pageOverheadBits, valueOffsets);
+                int entries = (int) (cut >>> Integer.SIZE);
+                int valueCount = (int) cut;
+                long nulls = entries - valueCount;
+                int maxIndex = 0;
+                if (trackEntries) {
+                    int distinct = collectPageEntries(valueFrom, valueCount, dictionarySize);
+                    maxIndex = pageMaxIndex;
+                    columnIndex.add(values.dictionaryPageStatistics(pageEntries, pageEntryOccurrences, distinct,
+                            valueCount, nulls));
+                }
+                else if (hasDictionary) {
+                    maxIndex = maxIndex(valueFrom, valueCount);
+                    columnIndex.add(values.pageStatistics(indices, valueFrom, valueCount, nulls));
+                }
+                else {
+                    columnIndex.add(values.pageStatistics(null, valueFrom, valueCount, nulls));
+                }
+                long unencodedBytes = sizes.countsBytes()
+                        ? values.unencodedBytes(hasDictionary ? indices : null, valueFrom, valueCount)
+                        : 0;
+                sizes.add(repetitions, definitions, entryFrom, entries, unencodedBytes);
+                buildBody(entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
+                pages.write(body, entries, dictionarySize > 0 ? Encoding.RLE_DICTIONARY : valueEncoding(), firstRow);
+                dataPageCount++;
+                firstRow += records(entryFrom, entries);
+                entryFrom += entries;
+                valueFrom += valueCount;
+                numValues += entries;
             }
-            else if (hasDictionary) {
-                maxIndex = maxIndex(valueFrom, valueCount);
-                columnIndex.add(values.pageStatistics(indices, valueFrom, valueCount, nulls));
-            }
-            else {
-                columnIndex.add(values.pageStatistics(null, valueFrom, valueCount, nulls));
-            }
-            long unencodedBytes = sizes.countsBytes()
-                    ? values.unencodedBytes(hasDictionary ? indices : null, valueFrom, valueCount)
-                    : 0;
-            sizes.add(repetitions, definitions, entryFrom, entries, unencodedBytes);
-            long pageBytes = writeDataPage(sink, entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
-            pageLocations.add(new PageLocation(dataPageOffset + dataPagesCompressedSize,
-                    Math.toIntExact(pageBytes), firstRow));
-            dataPagesCompressedSize += pageBytes;
-            dataPageCount++;
-            firstRow += records(entryFrom, entries);
-            entryFrom += entries;
-            valueFrom += valueCount;
-            numValues += entries;
+            pages.finish();
+        }
+        catch (Throwable t) {
+            // No other thread may still compress one of this chunk's bodies once the failure
+            // leaves.
+            pages.abandon();
+            throw t;
         }
         // Page headers are stored uncompressed either way; only the bodies differ, so the
         // compressed total is what was actually written and the uncompressed total restores
         // each body to its pre-compression size.
-        long totalCompressed = dictionaryCompressedSize + dataPagesCompressedSize;
-        long totalUncompressed = dictionaryUncompressedSize + dataPagesUncompressedSize;
+        long totalCompressed = dictionaryCompressedSize + pages.storedBytes();
+        long totalUncompressed = dictionaryUncompressedSize + pages.uncompressedBytes();
         ColumnMetaData metaData = new ColumnMetaData(
                 type,
                 encodings(hasDictionary),
@@ -858,7 +866,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 sizes.build());
         return new Flushed(metaData,
                 columnIndex.build(sizes.repetitionLevelHistograms(), sizes.definitionLevelHistograms()),
-                new OffsetIndex(List.copyOf(pageLocations), sizes.unencodedByteArrayDataBytes()),
+                new OffsetIndex(List.copyOf(pages.locations()), sizes.unencodedByteArrayDataBytes()),
                 bloomFilter(hasDictionary, distinctCount));
     }
 
@@ -1010,41 +1018,6 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     private static long pageCut(int entries, int valueCount) {
         return ((long) entries << Integer.SIZE) | Integer.toUnsignedLong(valueCount);
-    }
-
-    /// Encodes one planned page and hands it to `sink`, returning the bytes written. Pages go out
-    /// one by one: the chunk's encoding is settled before any of them is produced, so nothing has
-    /// to be revisited once written.
-    private long writeDataPage(ChunkSink sink, int entryFrom, int entries, int valueFrom, int valueCount,
-                               int dictionarySize, int maxIndex) throws IOException {
-        buildBody(entryFrom, entries, valueFrom, valueCount, dictionarySize, maxIndex);
-        int uncompressedLength = body.length();
-        // UNCOMPRESSED stores the body as it stands, so the page is written straight out of the
-        // body buffer; every other codec produces its own array.
-        byte[] storedArray;
-        int storedLength;
-        if (codec == CompressionCodec.UNCOMPRESSED) {
-            storedArray = body.array();
-            storedLength = uncompressedLength;
-        }
-        else {
-            storedArray = compressor.compress(body.array(), 0, uncompressedLength);
-            storedLength = storedArray.length;
-        }
-        // CRC-32 over the page body as stored on disk (compressed), matching what the reader
-        // validates.
-        CRC32 crc = new CRC32();
-        crc.update(storedArray, 0, storedLength);
-        ThriftCompactWriter header = new ThriftCompactWriter();
-        Encoding valuesEncoding = dictionarySize > 0 ? Encoding.RLE_DICTIONARY : valueEncoding();
-        PageHeaderWriter.writeDataPageV1(header, entries, uncompressedLength, storedLength,
-                (int) crc.getValue(), valuesEncoding);
-        byte[] headerBytes = header.toByteArray();
-        sink.write(headerBytes, 0, headerBytes.length, false);
-        // The body buffer is overwritten by the next page; a compressor's output is not.
-        sink.write(storedArray, 0, storedLength, storedArray == body.array());
-        dataPagesUncompressedSize += headerBytes.length + uncompressedLength;
-        return (long) headerBytes.length + storedLength;
     }
 
     /// Frames one page's body: the repetition and definition level streams (each RLE, each

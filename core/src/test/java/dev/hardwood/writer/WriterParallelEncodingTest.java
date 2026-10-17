@@ -9,6 +9,7 @@ package dev.hardwood.writer;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
@@ -86,6 +87,101 @@ class WriterParallelEncodingTest {
 
         try (HardwoodContext context = HardwoodContext.create(8)) {
             assertThat(writeRows(schema, config, context)).isEqualTo(serial);
+        }
+    }
+
+    /// A chunk's pages are compressed on the pool once a worker has no chunk of its own, so a
+    /// single chunk spreads across threads, and the file is the one the caller writes alone. Each
+    /// page takes a little while, so workers find bodies to take.
+    @Test
+    void compressesTheOnlyChunksPagesOnThePool() throws Exception {
+        AtomicInteger handedOff = new AtomicInteger();
+        Compressor recording = new TestCompressor() {
+            @Override
+            public byte[] compress(byte[] data, int offset, int length) {
+                if (handedOff()) {
+                    handedOff.incrementAndGet();
+                }
+                pause();
+                return Arrays.copyOfRange(data, offset, offset + length);
+            }
+        };
+        byte[] serial = onBusyPool(context -> writeIds(context, recording));
+        assertThat(handedOff).hasValue(0);
+
+        try (HardwoodContext context = HardwoodContext.create(4)) {
+            for (int run = 0; run < 3; run++) {
+                assertThat(writeIds(context, recording)).as("run %d", run).isEqualTo(serial);
+            }
+        }
+        assertThat(handedOff).hasPositiveValue();
+    }
+
+    /// A page handed off fails on the worker that took it; its chunk raises the failure when the
+    /// page is due.
+    @Test
+    void reportsAHandedOffPageFailureUnchanged() throws Exception {
+        Compressor failingHandedOff = new TestCompressor() {
+            @Override
+            public byte[] compress(byte[] data, int offset, int length) {
+                if (handedOff()) {
+                    throw new ParquetWriteException("handed-off page failed");
+                }
+                pause();
+                return Arrays.copyOfRange(data, offset, offset + length);
+            }
+        };
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (HardwoodContext context = HardwoodContext.create(4)) {
+            ParquetFileWriter writer = ParquetFileWriter.create(out, idSchema(), pagePerBatch(), context,
+                    failingHandedOff);
+            fillIds(writer);
+
+            assertTimeoutPreemptively(NO_HANG, () -> assertThatThrownBy(writer::endRowGroup)
+                    .isInstanceOf(ParquetWriteException.class)
+                    .hasMessage("handed-off page failed"));
+            writer.close();
+        }
+        assertThatThrownBy(out::buffer)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("OutputFile was discarded");
+    }
+
+    /// One page fails while other threads compress the chunk's other pages, slowly; none may still
+    /// be compressing once the failure leaves the writer. Which thread takes which page varies, so
+    /// the failing page is chosen by its content: the page of a `PLAIN` `INT64` chunk starting
+    /// with id 10,000.
+    @Test
+    void waitsForHandedOffPagesBeforeReportingAFailure() throws Exception {
+        AtomicInteger compressing = new AtomicInteger();
+        Compressor failingOnePage = new TestCompressor() {
+            @Override
+            public byte[] compress(byte[] data, int offset, int length) {
+                if (ByteBuffer.wrap(data, offset, Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).getLong() == 10 * BATCH) {
+                    throw new ParquetWriteException("page failed");
+                }
+                compressing.incrementAndGet();
+                try {
+                    sleep();
+                    return Arrays.copyOfRange(data, offset, offset + length);
+                }
+                finally {
+                    compressing.decrementAndGet();
+                }
+            }
+        };
+        for (int run = 0; run < 3; run++) {
+            try (HardwoodContext context = HardwoodContext.create(4)) {
+                ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.inMemory(), idSchema(), pagePerBatch(),
+                        context, failingOnePage);
+                fillIds(writer);
+
+                assertTimeoutPreemptively(NO_HANG, () -> assertThatThrownBy(writer::endRowGroup)
+                        .isInstanceOf(ParquetWriteException.class)
+                        .hasMessage("page failed"));
+                assertThat(compressing).as("run %d", run).hasValue(0);
+                writer.close();
+            }
         }
     }
 
@@ -224,7 +320,7 @@ class WriterParallelEncodingTest {
     }
 
     /// A schema of several columns is rejected at its first append, a one-column schema, which
-    /// appends and encodes on the caller alone, at its first flush.
+    /// appends on the caller alone, at its first flush.
     @ParameterizedTest
     @ValueSource(booleans = { false, true })
     void rejectsAWriteOnAClosedContext(boolean oneColumn) throws Exception {
@@ -251,6 +347,38 @@ class WriterParallelEncodingTest {
         assertThatThrownBy(out::buffer)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("OutputFile was discarded");
+    }
+
+    private static FileSchema idSchema() {
+        return FileSchema.builder("schema").addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED).build();
+    }
+
+    /// One row group of many pages, so a single chunk has pages to hand off. `GZIP` names a codec
+    /// other than `UNCOMPRESSED`, so the test's compressor runs.
+    private static WriterConfig pagePerBatch() {
+        return WriterConfig.builder()
+                .codec(CompressionCodec.GZIP)
+                .encoding(ColumnEncoding.PLAIN)
+                .pageTargetRows(BATCH)
+                .build();
+    }
+
+    private static byte[] writeIds(HardwoodContext context, Compressor compressor) throws IOException {
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, idSchema(), pagePerBatch(), context, compressor)) {
+            fillIds(writer);
+        }
+        return bytes(out);
+    }
+
+    private static void fillIds(ParquetFileWriter writer) throws IOException {
+        for (int from = 0; from < RECORDS; from += BATCH) {
+            long[] ids = new long[BATCH];
+            for (int r = 0; r < BATCH; r++) {
+                ids[r] = from + r;
+            }
+            writer.columnWriter().writeBatch(batch -> batch.longs("id", ids));
+        }
     }
 
     /// A row group per batch, so a flush happens inside the write. `GZIP` names a codec other than
@@ -394,6 +522,22 @@ class WriterParallelEncodingTest {
                 if (!latch.await(30, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("Timed out waiting for the other thread");
                 }
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        }
+
+        /// Whether the calling thread compresses a body another chunk's thread handed off.
+        static boolean handedOff() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    f -> f.getClassName().endsWith(".PageCompression") && f.getMethodName().equals("help")));
+        }
+
+        static void pause() {
+            try {
+                Thread.sleep(2);
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

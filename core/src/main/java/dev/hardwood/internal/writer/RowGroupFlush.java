@@ -30,6 +30,11 @@ import dev.hardwood.schema.FileSchema;
 /// a chunk does not change its bytes, and the drain order fixes their place, so the file is the
 /// same whatever the pool does.
 ///
+/// A worker that finds no chunk left to claim compresses page bodies the chunks still being
+/// encoded hand off ([PageCompression]) until every chunk is done, so a flush is not bounded by
+/// its most expensive chunk. The caller does not: compressing a page while it waits would hold
+/// the drain up by that page once the chunk it waits for is done.
+///
 /// The caller never waits for a worker task to start, only for a chunk a worker has claimed to
 /// finish, so a pool busy with other work slows the flush down to the caller's own pace but does
 /// not stall it. A task that starts after the flush finds nothing left to claim.
@@ -45,14 +50,22 @@ final class RowGroupFlush {
     private final AtomicInteger next = new AtomicInteger();
     /// Each chunk's encoding, completed by whichever thread claimed it, normally or not.
     private final List<CompletableFuture<Encoded>> encoded;
+    /// Chunks whose encoding has completed, normally or not.
+    private final AtomicInteger completed = new AtomicInteger();
+    /// Set once claiming has stopped on a failure, after which no unclaimed chunk completes.
+    private volatile boolean stopped;
+    /// Where chunks hand page bodies to idle workers; `null` where pages are not compressed.
+    private final PageCompression handoff;
 
     /// A chunk encoded ahead of its turn: its metadata with chunk-relative offsets, and its bytes.
     private record Encoded(ColumnChunkBuffer.Flushed flushed, ChunkSink.Buffered bytes) {
     }
 
-    RowGroupFlush(ColumnChunkBuffer[] columns, FileSchema schema) {
+    /// @param handOffPages whether idle workers compress page bodies the chunks hand off
+    RowGroupFlush(ColumnChunkBuffer[] columns, FileSchema schema, boolean handOffPages) {
         this.columns = columns;
         this.schema = schema;
+        this.handoff = handOffPages ? new PageCompression() : null;
         this.encoded = new ArrayList<>(columns.length);
         for (int c = 0; c < columns.length; c++) {
             encoded.add(new CompletableFuture<>());
@@ -90,7 +103,8 @@ final class RowGroupFlush {
         }
     }
 
-    /// A worker task: claims and buffers chunks until none is left or the flush has failed.
+    /// A worker task: claims and buffers chunks until none is left or the flush has failed, then
+    /// compresses the bodies the remaining chunks hand off until they are done.
     private void work() {
         for (int c = next.getAndIncrement(); c < columns.length; c = next.getAndIncrement()) {
             try {
@@ -101,6 +115,15 @@ final class RowGroupFlush {
                 return;
             }
         }
+        if (handoff != null) {
+            handoff.help(this::finished);
+        }
+    }
+
+    /// Whether no chunk is left to hand a body off: every one has completed, or claiming has
+    /// stopped on a failure.
+    private boolean finished() {
+        return stopped || completed.get() == columns.length;
     }
 
     /// Writes chunk `d` to `out`, encoding chunks on the calling thread while `d` is not ready.
@@ -134,7 +157,7 @@ final class RowGroupFlush {
     /// for like a success.
     private Encoded encode(int c, ChunkSink sink) throws IOException {
         try {
-            Encoded result = new Encoded(columns[c].encodeTo(sink, schema.getColumn(c)),
+            Encoded result = new Encoded(columns[c].encodeTo(sink, schema.getColumn(c), handoff),
                     sink instanceof ChunkSink.Buffered buffered ? buffered : null);
             encoded.get(c).complete(result);
             return result;
@@ -143,12 +166,21 @@ final class RowGroupFlush {
             encoded.get(c).completeExceptionally(t);
             throw t;
         }
+        finally {
+            if (completed.incrementAndGet() == columns.length && handoff != null) {
+                handoff.wakeAll();
+            }
+        }
     }
 
     /// Stops claiming and waits for every chunk already claimed, whatever its outcome. A claim
     /// either precedes the `getAndSet` and returns an index below what it returns, or follows it
     /// and returns one past the last chunk, so the chunks below it are exactly those claimed.
     private void stop() {
+        stopped = true;
+        if (handoff != null) {
+            handoff.wakeAll();
+        }
         int claimed = Math.min(next.getAndSet(columns.length), columns.length);
         for (int c = 0; c < claimed; c++) {
             encoded.get(c).exceptionally(t -> null).join();

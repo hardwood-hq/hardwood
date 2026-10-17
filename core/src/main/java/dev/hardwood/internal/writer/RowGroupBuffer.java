@@ -313,11 +313,15 @@ public final class RowGroupBuffer {
     /// Encodes the buffered column chunks, on up to `workers` tasks of `executor` besides the
     /// calling thread, writes them to `out` in schema order, and returns the row group's metadata,
     /// with the page index and Bloom filter of each chunk, which the writer places after the last
-    /// row group. The file is the same whatever `workers` is; see [RowGroupFlush].
+    /// row group. The file is the same whatever `workers` and `handOffPages` are; see
+    /// [RowGroupFlush].
     ///
     /// @param executor runs the worker tasks; unused where `workers` is `0`
-    public FlushedRowGroup flushTo(OutputFile out, ExecutorService executor, int workers) throws IOException {
-        List<ColumnChunkBuffer.Flushed> written = new RowGroupFlush(columns, schema).writeTo(out, executor, workers);
+    /// @param handOffPages whether a worker with no chunk left compresses the page bodies of the
+    ///        chunks still being encoded
+    public FlushedRowGroup flushTo(OutputFile out, ExecutorService executor, int workers, boolean handOffPages)
+            throws IOException {
+        List<ColumnChunkBuffer.Flushed> written = new RowGroupFlush(columns, schema, handOffPages).writeTo(out, executor, workers);
         List<ColumnChunk> chunks = new ArrayList<>(columns.length);
         List<ColumnIndex> columnIndexes = new ArrayList<>(columns.length);
         List<OffsetIndex> offsetIndexes = new ArrayList<>(columns.length);

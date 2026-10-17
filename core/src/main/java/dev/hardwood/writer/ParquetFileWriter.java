@@ -46,6 +46,7 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.ColumnOrder;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
@@ -78,8 +79,8 @@ import dev.hardwood.schema.FileSchema;
 /// A batch's values are copied into the row group's column chunks in parallel, and at each flush
 /// the chunks are encoded and compressed in parallel, on the thread pool of a [HardwoodContext]
 /// and on the calling thread, and written in schema order; the file is the same as from one
-/// thread. A writer opened without a context creates one on its first write of more than one
-/// column, and closes it with the writer.
+/// thread. A writer opened without a context creates one when it first needs pool threads, and
+/// closes it with the writer.
 ///
 /// The file is produced front to back and is valid only after `close()` returns. A writer whose
 /// write has thrown accepts no more data, and `close()` discards its output rather than
@@ -122,8 +123,8 @@ public final class ParquetFileWriter implements Closeable {
     private long numRows;
 
     /// The pool that appends and encodes column chunks beside the caller. Created on first use
-    /// where the caller passed none, a one-column schema never needing it, and then closed with
-    /// the writer.
+    /// where the caller passed none, an uncompressed one-column schema never needing it, and then
+    /// closed with the writer.
     private HardwoodContextImpl context;
     private final boolean ownsContext;
     /// The workers that append each slice of a batch beside the caller, started on first use.
@@ -132,6 +133,10 @@ public final class ParquetFileWriter implements Closeable {
     /// schema, and not with a single available processor, where a slice is too short for a worker
     /// to gain anything on the processor the caller needs.
     private final boolean appendsInParallel;
+    /// Whether a flush's workers compress the page bodies of chunks still being encoded: only
+    /// under a codec that compresses, and not with a single available processor, where a worker
+    /// would compete with the chunk's own thread for it.
+    private final boolean handsOffPages;
 
     /// Where the writer is in its lifecycle. A writer fails only while open: a flush that throws
     /// inside [#close()] leaves it closed, so its output is discarded once.
@@ -159,7 +164,9 @@ public final class ParquetFileWriter implements Closeable {
         this.schema = schema;
         this.config = config;
         this.shredder = new RecordShredder(schema);
-        this.appendsInParallel = schema.getColumnCount() > 1 && Runtime.getRuntime().availableProcessors() > 1;
+        boolean multiprocessor = Runtime.getRuntime().availableProcessors() > 1;
+        this.appendsInParallel = schema.getColumnCount() > 1 && multiprocessor;
+        this.handsOffPages = config.codec() != CompressionCodec.UNCOMPRESSED && multiprocessor;
         this.compressor = compressor;
         this.ranges = LogicalTypeValueRange.forSchema(schema);
         // One buffer serves every row group: flushing it resets it in place, so the writer's
@@ -704,13 +711,17 @@ public final class ParquetFileWriter implements Closeable {
             parallelAppend.retire();
         }
         requireOpenContext();
+        // The calling thread encodes too. A pool thread per column beyond the first is the most
+        // that can be busy with chunks; where workers take the pages of the chunks still being
+        // encoded, the whole pool can be.
+        int flushHelpers = handsOffPages ? Integer.MAX_VALUE : schema.getColumnCount() - 1;
         RowGroupBuffer.FlushedRowGroup rowGroup;
-        if (schema.getColumnCount() == 1) {
-            rowGroup = current.flushTo(out, null, 0);
+        if (flushHelpers == 0) {
+            rowGroup = current.flushTo(out, null, 0, false);
         }
         else {
             HardwoodContextImpl pool = encodingContext();
-            rowGroup = current.flushTo(out, pool.executor(), helpers(pool));
+            rowGroup = current.flushTo(out, pool.executor(), Math.min(pool.threads(), flushHelpers), handsOffPages);
         }
         rowGroups.add(rowGroup);
         numRows += rowGroup.rowGroup().numRows();
@@ -726,15 +737,12 @@ public final class ParquetFileWriter implements Closeable {
         requireOpenContext();
         if (parallelAppend == null) {
             HardwoodContextImpl pool = encodingContext();
-            parallelAppend = new ParallelAppend(schema.getColumnCount(), pool.executor(), helpers(pool));
+            // The calling thread appends a column too, so a pool thread per column beyond the
+            // first is the most that can be busy.
+            parallelAppend = new ParallelAppend(schema.getColumnCount(), pool.executor(),
+                    Math.min(pool.threads(), schema.getColumnCount() - 1));
         }
         return parallelAppend;
-    }
-
-    /// The pool threads that can be busy with one row group beside the calling thread, which
-    /// takes a column too: one per column beyond the first, at most the pool's size.
-    private int helpers(HardwoodContextImpl pool) {
-        return Math.min(pool.threads(), schema.getColumnCount() - 1);
     }
 
     private void requireOpenContext() {
