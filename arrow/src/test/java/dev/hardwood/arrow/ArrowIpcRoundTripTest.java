@@ -10,13 +10,19 @@ package dev.hardwood.arrow;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.channels.Channels;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowFileReader;
+import org.apache.arrow.vector.ipc.ArrowFileWriter;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.ipc.ArrowStreamWriter;
+import org.apache.arrow.vector.ipc.SeekableReadChannel;
+import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.FieldSource;
 
@@ -60,6 +66,31 @@ class ArrowIpcRoundTripTest {
              VectorSchemaRoot actual = readAll(back, allocator)) {
             // Batches end at row-group boundaries too, so there are at least as many as the size implies.
             assertThat(batches).isGreaterThanOrEqualTo((expected.getRowCount() + 2) / 3);
+            assertSameTable(expected, actual);
+        }
+    }
+
+    /// The file format, over the nested fixture: the writer's blocks carry the container
+    /// nodes and buffers, and what comes back is what a plain read of the file gives.
+    @Test
+    void fileRoundTripCarriesNestedBatches() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture("nested")));
+             ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator).batchSize(2).build();
+             ArrowFileWriter writer = new ArrowFileWriter(reader.getVectorSchemaRoot(), reader,
+                     Channels.newChannel(bytes))) {
+            writer.start();
+            while (reader.loadNextBatch()) {
+                writer.writeBatch();
+            }
+            writer.end();
+        }
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture("nested")));
+             ArrowBatchReader direct = ArrowReaders.batchReader(fileReader, allocator);
+             VectorSchemaRoot expected = readAll(direct, allocator);
+             ArrowFileReader back = new ArrowFileReader(
+                     new SeekableReadChannel(new ByteArrayReadableSeekableByteChannel(bytes.toByteArray())), allocator);
+             VectorSchemaRoot actual = readAll(back, allocator)) {
             assertSameTable(expected, actual);
         }
     }

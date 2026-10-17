@@ -95,14 +95,21 @@ class ArrowBatchReaderTest {
     void fieldIdsAreCarriedAsFieldMetadata() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture("field_ids")));
              ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
-                     .projection(ColumnProjection.columns("c", "a", "b", "zero"))
+                     .projection(ColumnProjection.columns("c", "a", "b", "zero", "m"))
                      .build()) {
             List<Field> fields = reader.getVectorSchemaRoot().getSchema().getFields();
-            assertThat(fields).extracting(Field::getName).containsExactly("c", "a", "b", "zero");
+            assertThat(fields).extracting(Field::getName).containsExactly("c", "a", "b", "zero", "m");
             assertThat(fields.get(0).getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "42"));
             assertThat(fields.get(1).getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "7"));
             assertThat(fields.get(2).getMetadata()).isEmpty();
             assertThat(fields.get(3).getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "0"));
+            // The map, its key and its value keep their ids; the entries struct carries none.
+            Field m = fields.get(4);
+            assertThat(m.getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "50"));
+            Field entries = m.getChildren().get(0);
+            assertThat(entries.getMetadata()).isEmpty();
+            assertThat(entries.getChildren().get(0).getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "52"));
+            assertThat(entries.getChildren().get(1).getMetadata()).isEqualTo(Map.of(ArrowFixtures.FIELD_ID_KEY, "53"));
         }
     }
 
@@ -123,7 +130,7 @@ class ArrowBatchReaderTest {
     // ==================== Projection and filtering ====================
 
     @Test
-    void projectionOrdersAndRepeatsColumns() throws IOException {
+    void projectionOrdersColumnsAndCollapsesRepeats() throws IOException {
         try (VectorSchemaRoot expected = expected("scalars", allocator);
              ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture("scalars")));
              ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
@@ -131,16 +138,35 @@ class ArrowBatchReaderTest {
                      .build();
              VectorSchemaRoot actual = readAll(reader, allocator)) {
             assertThat(actual.getSchema().getFields()).extracting(Field::getName)
-                    .containsExactly("text", "i32_req", "text", "dec256");
+                    .containsExactly("text", "i32_req", "dec256");
             List<List<Object>> expectedRows = new ArrayList<>();
             for (List<Object> row : rows(expected)) {
                 expectedRows.add(Arrays.asList(
                         row.get(index(expected, "text")),
                         row.get(index(expected, "i32_req")),
-                        row.get(index(expected, "text")),
                         row.get(index(expected, "dec256"))));
             }
             assertThat(rows(actual)).isEqualTo(expectedRows);
+        }
+    }
+
+    /// A projection into a struct keeps the struct around the children it names, in the
+    /// order it names them, with the struct's own nulls.
+    @Test
+    void nestedProjectionKeepsTheRequestedChildren() throws IOException {
+        Path file = coreFixture("deep_nested_struct_test");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
+                     .projection(ColumnProjection.columns("account.organization.name", "customer_id"))
+                     .build();
+             VectorSchemaRoot root = readAll(reader, allocator)) {
+            assertThat(root.getSchema().getFields()).extracting(Field::getName).containsExactly("account", "customer_id");
+            assertThat(root.getSchema().findField("account").getChildren()).extracting(Field::getName)
+                    .containsExactly("organization");
+            assertThat(root.getVector("account").getObject(0).toString()).isEqualTo("{\"organization\":{\"name\":\"Acme Corp\"}}");
+            assertThat(root.getVector("account").getObject(2).toString()).isEqualTo("{}");
+            assertThat(root.getVector("account").isNull(3)).isTrue();
+            assertThat(rows(root).stream().map(row -> row.get(1)).toList()).containsExactly(1, 2, 3, 4);
         }
     }
 
@@ -195,20 +221,37 @@ class ArrowBatchReaderTest {
     // ==================== Rejections ====================
 
     @Test
-    void nestedColumnsAreRejectedBeforeAnyWorkerStarts() throws IOException {
-        Path file = coreFixture("deep_nested_struct_test");
+    void variantColumnsAreRejectedBeforeAnyWorkerStarts() throws IOException {
+        Path file = coreFixture("avro_variant_identity_test");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file))) {
             assertThatThrownBy(() -> ArrowReaders.batchReader(fileReader, allocator))
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("Column 'account.id' is nested: hardwood-arrow reads non-repeated primitive columns "
-                            + "directly below the root");
-            // The scalar columns of the same file read.
+                    .hasMessage("Column 'real_variant' is a Variant group, which hardwood-arrow does not serve");
+            assertThatThrownBy(() -> ArrowReaders.buildBatchReader(fileReader, allocator)
+                    .projection(ColumnProjection.columns("variant_container"))
+                    .build())
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("Column 'variant_container.real_nested_variant' is a Variant group, which hardwood-arrow "
+                            + "does not serve");
+            // A group of the same shape without the annotation is a struct like any other.
             try (ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
-                    .projection(ColumnProjection.columns("customer_id", "name"))
+                    .projection(ColumnProjection.columns("plain_top", "plain_list"))
                     .build();
                  VectorSchemaRoot root = readAll(reader, allocator)) {
                 assertThat(root.getRowCount()).isGreaterThan(0);
             }
+        }
+    }
+
+    @Test
+    void partialMapProjectionIsRejected() throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture("nested")))) {
+            assertThatThrownBy(() -> ArrowReaders.buildBatchReader(fileReader, allocator)
+                    .projection(ColumnProjection.columns("props.key_value.value"))
+                    .build())
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("Column 'props' is a MAP group of which only the key or only the value is projected: "
+                            + "project the map as a whole");
         }
     }
 

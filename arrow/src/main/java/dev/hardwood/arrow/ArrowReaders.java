@@ -25,10 +25,10 @@ import dev.hardwood.schema.ColumnProjection;
 /// column; [#buildBatchReader(ParquetFileReader, BufferAllocator)] returns a builder for
 /// projection, filter and batch-size configuration.
 ///
-/// The reader serves non-repeated primitive columns directly below the file's root. A
-/// projection that selects a struct, list, map or Variant group, a field inside one, or a
-/// repeated primitive fails at `build()`; a projection of the file's scalar columns reads them
-/// whatever else the file holds.
+/// The reader serves primitive columns and the structs, lists and maps around them; a
+/// `repeated` field outside a `LIST` or `MAP` group reads as a list. A projection that selects
+/// a Variant group, or a map's key without its value or value without its key, fails at
+/// `build()`; a projection that leaves them out reads the rest of the file.
 ///
 /// ```java
 /// try (BufferAllocator allocator = new RootAllocator();
@@ -54,8 +54,8 @@ public final class ArrowReaders {
     ///
     /// @param reader the file to read
     /// @param allocator the allocator every Arrow buffer is taken from
-    /// @throws UnsupportedOperationException if the file holds a column the reader does not
-    ///         serve; see [ArrowReaders]
+    /// @throws UnsupportedOperationException if the file holds a Variant group or a map with no
+    ///         value; see [ArrowReaders]
     public static ArrowBatchReader batchReader(ParquetFileReader reader, BufferAllocator allocator)
             throws IOException {
         return buildBatchReader(reader, allocator).build();
@@ -88,9 +88,9 @@ public final class ArrowReaders {
             this.allocator = allocator;
         }
 
-        /// Restrict reading to the given columns, in the order they are named. Default: all
-        /// columns. Names are Parquet column names; a name that selects a nested or repeated
-        /// column fails at [#build()].
+        /// Restrict reading to the given columns, in the order they are first named. Default:
+        /// all columns. Names are Parquet column or group names, dotted into groups; a name
+        /// that selects a Variant group fails at [#build()].
         public BatchReaderBuilder projection(ColumnProjection projection) {
             if (projection == null) {
                 throw new IllegalArgumentException("projection must not be null");
@@ -119,7 +119,8 @@ public final class ArrowReaders {
         }
 
         /// @throws IllegalArgumentException if a projected name is not in the schema
-        /// @throws UnsupportedOperationException if a selected column is nested, repeated, of a
+        /// @throws UnsupportedOperationException if a selected node is a Variant group, a map
+        ///         with only one of its key and value selected or with no value, a column of a
         ///         type the reader does not map, or a `DECIMAL` wider than Arrow's decimals
         /// @throws dev.hardwood.reader.SchemaIncompatibleException if a `FIXED_LEN_BYTE_ARRAY`
         ///         column declares no positive width
@@ -129,7 +130,7 @@ public final class ArrowReaders {
             // worker per projected column, which a rejection afterwards would orphan with no
             // ArrowBatchReader to close them.
             ArrowPlan plan = ArrowSchemaConverter.plan(fileReader.getFileSchema(),
-                    fileReader.getFileMetaData().schema(), projection);
+                    fileReader.getFileMetaData().schema(), fileReader.getFileMetaData().keyValueMetadata(), projection);
             ParquetFileReader.ColumnReadersBuilder underlying = fileReader.buildColumnReaders(projection);
             if (filter != null) {
                 underlying.filter(filter);

@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -62,6 +63,8 @@ import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.MapVector;
+import org.apache.arrow.vector.complex.impl.UnionMapWriter;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.ipc.ArrowStreamWriter;
 import org.apache.arrow.vector.ipc.WriteChannel;
@@ -203,6 +206,7 @@ final class ArrowFixtures {
         writeEmpty();
         writeFieldIds();
         writeCounters();
+        writeNested();
         written = true;
     }
 
@@ -338,6 +342,79 @@ final class ArrowFixtures {
 
     static final int COUNTER_ROWS = 34;
 
+    /// Five rows of every nesting shape Hardwood's writer produces, with a null or an empty
+    /// container at every level somewhere: an optional and a required struct, optional and
+    /// required lists, a map, a list of lists, a list of structs holding lists, and a struct
+    /// in a struct.
+    private static void writeNested() throws IOException {
+        FileSchema schema = FileSchema.builder("nested")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("address", RepetitionType.OPTIONAL, s -> s
+                        .addColumn("street", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                        .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .struct("home", RepetitionType.REQUIRED, s -> s
+                        .addColumn("zip", PhysicalType.INT32, RepetitionType.REQUIRED))
+                .list("phones", RepetitionType.OPTIONAL, e -> e.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .list("tags", RepetitionType.REQUIRED, e -> e.primitive(PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        LogicalType.string()))
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .list("matrix", RepetitionType.OPTIONAL, e -> e.list(RepetitionType.OPTIONAL,
+                        inner -> inner.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                .list("contacts", RepetitionType.OPTIONAL, e -> e.struct(RepetitionType.OPTIONAL, s -> s
+                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, LogicalType.string())
+                        .list("nums", RepetitionType.OPTIONAL, n -> n.primitive(PhysicalType.INT64,
+                                RepetitionType.OPTIONAL))))
+                .struct("owner", RepetitionType.OPTIONAL, s -> s
+                        .struct("place", RepetitionType.OPTIONAL, p -> p
+                                .addColumn("city", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL, LogicalType.string())))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file("nested")), schema,
+                WriterConfig.builder().encoding(ColumnEncoding.PLAIN).build())) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .ints("id", new int[]{ 1, 2, 3, 4, 5 })
+                    // {Main, 10001}, null, {Elm, null}, {"", 3}, null
+                    .struct("address", Validity.ofNulls(new boolean[]{ false, true, false, false, true }))
+                    .bytes("address.street", utf8(new String[]{ "Main", "", "Elm", "", "" }))
+                    .ints("address.zip", new int[]{ 10001, 0, 0, 3, 0 }, new boolean[]{ false, true, true, false, true })
+                    .ints("home.zip", new int[]{ 1, 2, 3, 4, 5 })
+                    // [1, 2], [], null, [3, null, 5], []
+                    .list("phones", new int[]{ 0, 2, 2, 2, 5, 5 },
+                            Validity.ofNulls(new boolean[]{ false, false, true, false, false }))
+                    .ints("phones.list.element", new int[]{ 1, 2, 3, 0, 5 },
+                            new boolean[]{ false, false, false, true, false })
+                    // [a], [], [b, c], [], [d]
+                    .list("tags", new int[]{ 0, 1, 1, 3, 3, 4 })
+                    .bytes("tags.list.element", utf8(new String[]{ "a", "b", "c", "d" }))
+                    // {k1: 1, k2: null}, null, {}, {k3: 3}, {k4: 4, k5: 5}
+                    .map("props", new int[]{ 0, 2, 2, 2, 3, 5 },
+                            Validity.ofNulls(new boolean[]{ false, true, false, false, false }))
+                    .bytes("props.key_value.key", utf8(new String[]{ "k1", "k2", "k3", "k4", "k5" }))
+                    .ints("props.key_value.value", new int[]{ 1, 0, 3, 4, 5 },
+                            new boolean[]{ false, true, false, false, false })
+                    // [[1, 2], []], null, [null, [3]], [], [[null]]
+                    .list("matrix", new int[]{ 0, 2, 2, 4, 4, 5 },
+                            Validity.ofNulls(new boolean[]{ false, true, false, false, false }))
+                    .list("matrix.list.element", new int[]{ 0, 2, 2, 2, 3, 4 },
+                            Validity.ofNulls(new boolean[]{ false, false, true, false, false }))
+                    .ints("matrix.list.element.list.element", new int[]{ 1, 2, 3, 0 },
+                            new boolean[]{ false, false, false, true })
+                    // [{A, [1, 2]}, null], [], null, [{B, null}], [{C, []}]
+                    .list("contacts", new int[]{ 0, 2, 2, 2, 3, 4 },
+                            Validity.ofNulls(new boolean[]{ false, false, true, false, false }))
+                    .struct("contacts.list.element", Validity.ofNulls(new boolean[]{ false, true, false, false }))
+                    .bytes("contacts.list.element.name", utf8(new String[]{ "A", "", "B", "C" }))
+                    .list("contacts.list.element.nums", new int[]{ 0, 2, 2, 2, 2 },
+                            Validity.ofNulls(new boolean[]{ false, true, true, false }))
+                    .longs("contacts.list.element.nums.list.element", new long[]{ 1, 2 })
+                    // {place: {X}}, {place: null}, null, {place: {null}}, {place: {Y}}
+                    .struct("owner", Validity.ofNulls(new boolean[]{ false, false, true, false, false }))
+                    .struct("owner.place", Validity.ofNulls(new boolean[]{ false, true, true, false, false }))
+                    .bytes("owner.place.city", utf8(new String[]{ "X", "", "", "", "Y" }),
+                            new boolean[]{ false, true, true, true, false }));
+        }
+    }
+
     /// Two `REQUIRED` `INT64` columns over 34 rows, `n` counting up and `m` counting down: with a
     /// batch size of 17 and a filter keeping `n >= 16`, the first batch holds one row and the
     /// second seventeen, which is the shape that once failed an allocator while replacing a
@@ -359,11 +436,20 @@ final class ArrowFixtures {
         }
     }
 
-    /// Four columns of which three carry a Parquet field id, one of them zero, written by Arrow
-    /// C++ through `arrow-dataset`, since Hardwood's writer does not write field ids: Arrow C++
-    /// takes them from the fields' `PARQUET:field_id` metadata. A negative id cannot be written
-    /// this way either, since Arrow C++ writes none for it.
+    /// Four columns of which three carry a Parquet field id, one of them zero, and a map with
+    /// an id on the map, its key and its value, written by Arrow C++ through `arrow-dataset`,
+    /// since Hardwood's writer does not write field ids: Arrow C++ takes them from the fields'
+    /// `PARQUET:field_id` metadata. A negative id cannot be written this way, since Arrow C++
+    /// writes none for it, and neither can an id on the `key_value` group, which Arrow C++
+    /// drops from the entries struct's metadata; the converter's handling of one is a unit
+    /// test.
     private static void writeFieldIds() throws IOException {
+        Field key = new Field("key", new FieldType(false, new ArrowType.Int(32, true), null, Map.of(FIELD_ID_KEY, "52")),
+                null);
+        Field value = new Field("value", new FieldType(true, new ArrowType.Int(64, true), null,
+                Map.of(FIELD_ID_KEY, "53")), null);
+        Field entries = new Field("entries", new FieldType(false, ArrowType.Struct.INSTANCE, null, null),
+                List.of(key, value));
         Schema schema = new Schema(List.of(
                 new Field("a", new FieldType(true, new ArrowType.Int(32, true), null, Map.of(FIELD_ID_KEY, "7")),
                         null),
@@ -371,24 +457,38 @@ final class ArrowFixtures {
                 new Field("c", new FieldType(true, new ArrowType.Int(64, true), null, Map.of(FIELD_ID_KEY, "42")),
                         null),
                 new Field("zero", new FieldType(true, new ArrowType.Int(32, true), null, Map.of(FIELD_ID_KEY, "0")),
-                        null)));
+                        null),
+                new Field("m", new FieldType(true, new ArrowType.Map(false), null, Map.of(FIELD_ID_KEY, "50")),
+                        List.of(entries))));
         // Arrow C++ writes into a directory it requires to be empty, under the name `data_0`.
         Path directory = DIRECTORY.resolve("field_ids");
         Files.deleteIfExists(directory.resolve("data_0"));
         Files.createDirectories(directory);
-        try (BufferAllocator allocator = new RootAllocator();
-             VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
+        BufferAllocator allocator = new RootAllocator();
+        try (VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
             root.allocateNew();
             IntVector a = (IntVector) root.getVector("a");
             VarCharVector b = (VarCharVector) root.getVector("b");
             BigIntVector c = (BigIntVector) root.getVector("c");
             IntVector zero = (IntVector) root.getVector("zero");
+            UnionMapWriter m = ((MapVector) root.getVector("m")).getWriter();
             for (int i = 0; i < 3; i++) {
                 a.setSafe(i, i);
                 b.setSafe(i, utf8("row-" + i));
                 c.setSafe(i, 10L * i);
                 zero.setSafe(i, -i);
+                // {0: 0}, {1: 10, 2: 20}, {3: 30, 4: 40, 5: 50}
+                m.setPosition(i);
+                m.startMap();
+                for (int k = i * (i + 1) / 2; k < (i + 1) * (i + 2) / 2; k++) {
+                    m.startEntry();
+                    m.key().integer().writeInt(k);
+                    m.value().bigInt().writeBigInt(10L * k);
+                    m.endEntry();
+                }
+                m.endMap();
             }
+            m.setValueCount(3);
             root.setRowCount(3);
             ByteArrayOutputStream ipc = new ByteArrayOutputStream();
             try (ArrowStreamWriter writer = new ArrowStreamWriter(root, null, ipc)) {
@@ -401,7 +501,23 @@ final class ArrowFixtures {
                 DatasetFileWriter.write(allocator, reader, FileFormat.PARQUET, directory.toUri().toString());
             }
         }
+        awaitRelease(allocator);
+        allocator.close();
         Files.move(directory.resolve("data_0"), file("field_ids"), StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    /// Arrow C++'s writer takes the batches of the exported stream on threads of its own and
+    /// may release the last of them after `write` has returned; closing the allocator before
+    /// that reports them leaked.
+    private static void awaitRelease(BufferAllocator allocator) {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (allocator.getAllocatedMemory() > 0 && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        if (allocator.getAllocatedMemory() > 0) {
+            throw new IllegalStateException("Arrow C++ did not release the exported arrays within 10 seconds: "
+                    + allocator.toVerboseString());
+        }
     }
 
     // ==================== Expected Arrow tables ====================

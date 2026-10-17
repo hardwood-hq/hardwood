@@ -11,7 +11,7 @@
 -->
 # Arrow Support
 
-The `hardwood-arrow` module reads the primitive columns of a Parquet file as Arrow `VectorSchemaRoot` batches through Arrow Java's `ArrowReader` contract, so Arrow's IPC writers, the C Data Interface and anything else built on `ArrowReader` consume the batches unchanged. Add it alongside `hardwood-core` and one of Arrow's memory backends:
+The `hardwood-arrow` module reads the columns of a Parquet file as Arrow `VectorSchemaRoot` batches through Arrow Java's `ArrowReader` contract, so Arrow's IPC writers, the C Data Interface and anything else built on `ArrowReader` consume the batches unchanged. Add it alongside `hardwood-core` and one of Arrow's memory backends:
 
 ```xml
 <dependency>
@@ -78,11 +78,11 @@ ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
     .build();
 ```
 
-The settings have the semantics of [`ColumnReaders`](column-reader.md): every batch holds the rows matching the filter, which may name a column the projection leaves out, nested ones included; the batch size caps the rows per batch, and a batch also ends at every row-group boundary of a file with a binary column; a multi-file `ParquetFileReader` reads as one stream. The root's schema is available before the first batch: one field per projected name in the order the projection lists them, a name listed twice giving two fields.
+The settings have the semantics of [`ColumnReaders`](column-reader.md): every batch holds the rows matching the filter, which may name a column the projection leaves out, nested ones included; the batch size caps the rows per batch, and a batch also ends at every row-group boundary of a file with a binary column; a multi-file `ParquetFileReader` reads as one stream. The root's schema is available before the first batch: one field per projected top-level field in the order the projection first names them; a name listed twice gives one field, and a projection into a group keeps the group around the children it names.
 
 ## Columns the reader serves
 
-The reader serves `REQUIRED` and `OPTIONAL` primitive columns directly below the file's root. A projection that selects a struct, list, map or Variant group, a field inside one (`address.city`, a map's value, a Variant's `metadata`), or a `repeated` primitive fails at `build()` with an `UnsupportedOperationException` naming the column, before any column worker starts. `ArrowReaders.batchReader` projects every column, so on a file holding a nested column it fails the same way; a projection of the file's primitive columns reads them whatever else the file holds.
+The reader serves primitive columns and the groups around them: structs, `LIST` and `MAP` groups in every encoding the format allows, and `repeated` fields outside a `LIST` or `MAP` group, which read as non-nullable lists. A Variant group, shredded or not, is not served: a projection that selects one, or a group containing one, fails at `build()` with an `UnsupportedOperationException` naming the group, before any column worker starts, as does a projection that selects a map's key without its value or its value without its key. `ArrowReaders.batchReader` projects every column, so on a file holding a Variant group it fails the same way; a projection that leaves the group out reads the rest of the file.
 
 ## Type mapping
 
@@ -98,8 +98,12 @@ The Arrow type of a column follows from its physical type and annotation alone, 
 | `BYTE_ARRAY` | `Binary`; `STRING` and `JSON` as `Utf8`; `ENUM`, `BSON`, `GEOMETRY` and `GEOGRAPHY` as `Binary`; `DECIMAL(p, s)` as `Decimal128` for `p` up to 38 and `Decimal256` above |
 | `FIXED_LEN_BYTE_ARRAY(n)` | `FixedSizeBinary(n)`, also for `UUID`, `INTERVAL` and `TIMESTAMP` over 12 bytes; `FLOAT16` as `Float16`; `DECIMAL(p, s)` as for `BYTE_ARRAY` |
 | any type annotated `NULL` | `Null` |
+| unannotated group, `FILE` group | `Struct` of the projected children |
+| `LIST` group | `List` of its element, in the three-level and the legacy two-level encodings alike |
+| `MAP` group | `Map` whose entries struct, named `entries`, holds the key and the value |
+| `repeated` field outside a `LIST` or `MAP` group | non-nullable `List` of non-nullable elements |
 
-A field is nullable when its column is `OPTIONAL`. A column with a Parquet field id of zero or more carries it as the field's `PARQUET:field_id` metadata, as Arrow C++ records it; a negative id is treated as none.
+A field is nullable when its column or group is `OPTIONAL`; a list's element, a map's value and a struct's child follow their own repetition, and a map's key and entries are never nullable. A column or group with a Parquet field id of zero or more carries it as the field's `PARQUET:field_id` metadata, as Arrow C++ 19 records it; a negative id is treated as none. A map's `entries` struct and the element of a `repeated` primitive outside a `LIST` or `MAP` group carry no id. The file's key-value metadata becomes the schema's metadata, except the `ARROW:schema` entry, which is neither read nor carried.
 
 Values are converted where the layouts differ, with every present value checked: an `INT(8)` or `INT(16)` value outside its range, a decimal payload wider than its precision allows, or a value stored in a column annotated `NULL` fails the batch with a `ParquetReadException`, and an `INT96` timestamp outside the range of a 64-bit nanosecond count with an `UnsupportedOperationException`. A `DECIMAL(p, s)` with `p` above 76, or declared over more `FIXED_LEN_BYTE_ARRAY` bytes than the Arrow decimal of its precision holds, fails at `build()`.
 

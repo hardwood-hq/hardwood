@@ -33,19 +33,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ArrowSchemaConverterTest {
 
     private static ArrowPlan plan(FileSchema schema, ColumnProjection projection) {
-        return ArrowSchemaConverter.plan(schema, schema.toSchemaElements(), projection);
+        return ArrowSchemaConverter.plan(schema, schema.toSchemaElements(), Map.of(), projection);
     }
 
-    private static ArrowPlan.Entry single(PhysicalType type, LogicalType annotation) {
+    private static ArrowPlan.Node single(PhysicalType type, LogicalType annotation) {
         FileSchema schema = FileSchema.builder("root").addColumn("c", type, OPTIONAL, annotation).build();
-        return plan(schema, ColumnProjection.all()).entries().get(0);
+        return plan(schema, ColumnProjection.all()).roots().get(0);
     }
 
-    private static ArrowPlan.Entry singleFixed(int width, LogicalType annotation) {
+    private static ArrowPlan.Node singleFixed(int width, LogicalType annotation) {
         FileSchema schema = FileSchema.builder("root")
                 .addColumn("c", PhysicalType.FIXED_LEN_BYTE_ARRAY, OPTIONAL, width, annotation)
                 .build();
-        return plan(schema, ColumnProjection.all()).entries().get(0);
+        return plan(schema, ColumnProjection.all()).roots().get(0);
     }
 
     @Test
@@ -184,7 +184,7 @@ class ArrowSchemaConverterTest {
                 new SchemaElement("zero", PhysicalType.INT32, null, OPTIONAL, null, null, null, null, 0, null),
                 new SchemaElement("negative", PhysicalType.INT32, null, OPTIONAL, null, null, null, null, -7, null));
         FileSchema schema = FileSchema.fromSchemaElements(elements);
-        ArrowPlan plan = ArrowSchemaConverter.plan(schema, elements,
+        ArrowPlan plan = ArrowSchemaConverter.plan(schema, elements, Map.of(),
                 ColumnProjection.columns("a", "b", "zero", "negative"));
         List<Field> fields = plan.schema().getFields();
         assertThat(fields.get(0).getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "7"));
@@ -193,59 +193,156 @@ class ArrowSchemaConverterTest {
         assertThat(fields.get(3).getMetadata()).isEmpty();
     }
 
+    /// A name may hold a dot, so the ids are looked up by path components: a top-level
+    /// `account.id` and the `id` inside `account` keep their own.
     @Test
-    void entriesFollowTheProjectionIncludingRepeats() {
+    void fieldIdsOfDottedNamesDoNotCollide() {
+        List<SchemaElement> elements = List.of(
+                SchemaElement.root("root", 2),
+                new SchemaElement("account.id", PhysicalType.INT32, null, OPTIONAL, null, null, null, null, 101, null),
+                new SchemaElement("account", null, null, OPTIONAL, 1, null, null, null, null, null),
+                new SchemaElement("id", PhysicalType.INT32, null, OPTIONAL, null, null, null, null, 202, null));
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+        ArrowPlan plan = ArrowSchemaConverter.plan(schema, elements, Map.of(), ColumnProjection.all());
+        List<Field> fields = plan.schema().getFields();
+        assertThat(fields).extracting(Field::getName).containsExactly("account.id", "account");
+        assertThat(fields.get(0).getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "101"));
+        assertThat(fields.get(1).getMetadata()).isEmpty();
+        assertThat(fields.get(1).getChildren().get(0).getMetadata())
+                .isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "202"));
+    }
+
+    /// The `key_value` group's id goes nowhere: Arrow C++ leaves the `entries` struct without
+    /// metadata, while the map, its key and its value keep theirs.
+    @Test
+    void mapEntriesCarryNoFieldId() {
+        List<SchemaElement> elements = List.of(
+                SchemaElement.root("root", 1),
+                new SchemaElement("m", null, null, OPTIONAL, 1, null, null, null, 20, LogicalType.map()),
+                new SchemaElement("key_value", null, null, RepetitionType.REPEATED, 2, null, null, null, 21, null),
+                new SchemaElement("key", PhysicalType.INT32, null, REQUIRED, null, null, null, null, 22, null),
+                new SchemaElement("value", PhysicalType.INT64, null, OPTIONAL, null, null, null, null, 23, null));
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+        ArrowPlan plan = ArrowSchemaConverter.plan(schema, elements, Map.of(), ColumnProjection.all());
+        Field m = plan.schema().getFields().get(0);
+        assertThat(m.getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "20"));
+        Field entries = m.getChildren().get(0);
+        assertThat(entries.getMetadata()).isEmpty();
+        assertThat(entries.getChildren().get(0).getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "22"));
+        assertThat(entries.getChildren().get(1).getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "23"));
+    }
+
+    @Test
+    void rootsFollowTheProjectionAndCollapseRepeats() {
         FileSchema schema = FileSchema.builder("root")
                 .addColumn("a", PhysicalType.INT32, OPTIONAL)
                 .addColumn("b", PhysicalType.INT64, OPTIONAL)
                 .build();
         ArrowPlan plan = plan(schema, ColumnProjection.columns("b", "a", "b"));
-        assertThat(plan.schema().getFields()).extracting(Field::getName).containsExactly("b", "a", "b");
-        assertThat(plan.entries()).extracting(entry -> entry.source().name()).containsExactly("b", "a", "b");
+        assertThat(plan.schema().getFields()).extracting(Field::getName).containsExactly("b", "a");
+        assertThat(plan.roots()).extracting(ArrowPlan.Node::position).containsExactly(0, 1);
+    }
+
+    /// Groups map to Arrow's nested types, each owning the layer the leaf readers report for
+    /// it: a required struct none, an optional struct a validity layer, a list or map a
+    /// repeated layer.
+    @Test
+    void groupsMapToNestedTypesWithTheirLayers() {
+        FileSchema schema = FileSchema.builder("root")
+                .struct("address", OPTIONAL, s -> s
+                        .addColumn("city", PhysicalType.BYTE_ARRAY, OPTIONAL, LogicalType.string())
+                        .struct("geo", REQUIRED, g -> g.addColumn("lat", PhysicalType.DOUBLE, REQUIRED)))
+                .list("tags", REQUIRED, e -> e.primitive(PhysicalType.BYTE_ARRAY, OPTIONAL, LogicalType.string()))
+                .map("attrs", OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
+                        v -> v.primitive(PhysicalType.INT32, OPTIONAL))
+                .list("rows", OPTIONAL, e -> e.struct(OPTIONAL, s -> s
+                        .list("cells", OPTIONAL, c -> c.primitive(PhysicalType.INT32, OPTIONAL))))
+                .build();
+        ArrowPlan plan = plan(schema, ColumnProjection.all());
+        List<Field> fields = plan.schema().getFields();
+        assertThat(fields).extracting(Field::getName).containsExactly("address", "tags", "attrs", "rows");
+
+        Field address = fields.get(0);
+        assertThat(address.getType()).isEqualTo(ArrowType.Struct.INSTANCE);
+        assertThat(address.isNullable()).isTrue();
+        assertThat(address.getChildren()).extracting(Field::getName).containsExactly("city", "geo");
+        assertThat(address.getChildren().get(1).isNullable()).isFalse();
+        ArrowPlan.Node addressNode = plan.roots().get(0);
+        assertThat(addressNode.shape()).isEqualTo(ArrowPlan.Shape.STRUCT);
+        assertThat(addressNode.layer()).isEqualTo(0);
+        assertThat(addressNode.children().get(1).layer()).isEqualTo(-1);
+
+        Field tags = fields.get(1);
+        assertThat(tags.getType()).isEqualTo(ArrowType.List.INSTANCE);
+        assertThat(tags.isNullable()).isFalse();
+        assertThat(tags.getChildren().get(0).getName()).isEqualTo("element");
+        assertThat(tags.getChildren().get(0).isNullable()).isTrue();
+        assertThat(plan.roots().get(1).layer()).isEqualTo(0);
+
+        Field attrs = fields.get(2);
+        assertThat(attrs.getType()).isEqualTo(new ArrowType.Map(false));
+        Field entries = attrs.getChildren().get(0);
+        assertThat(entries.getName()).isEqualTo("entries");
+        assertThat(entries.isNullable()).isFalse();
+        assertThat(entries.getChildren()).extracting(Field::getName).containsExactly("key", "value");
+        assertThat(entries.getChildren().get(0).isNullable()).isFalse();
+        assertThat(entries.getChildren().get(1).isNullable()).isTrue();
+
+        ArrowPlan.Node rows = plan.roots().get(3);
+        assertThat(rows.shape()).isEqualTo(ArrowPlan.Shape.LIST);
+        assertThat(rows.layer()).isEqualTo(0);
+        ArrowPlan.Node element = rows.children().get(0);
+        assertThat(element.shape()).isEqualTo(ArrowPlan.Shape.STRUCT);
+        assertThat(element.layer()).isEqualTo(1);
+        ArrowPlan.Node cells = element.children().get(0);
+        assertThat(cells.shape()).isEqualTo(ArrowPlan.Shape.LIST);
+        assertThat(cells.layer()).isEqualTo(2);
     }
 
     @Test
-    void nestedAndRepeatedColumnsAreRejectedByPath() {
+    void partialMapProjectionIsRejected() {
         FileSchema schema = FileSchema.builder("root")
-                .addColumn("id", PhysicalType.INT32, REQUIRED)
-                .struct("address", OPTIONAL, s -> s.addColumn("city", PhysicalType.BYTE_ARRAY, OPTIONAL,
-                        LogicalType.string()))
-                .struct("home", REQUIRED, s -> s.addColumn("zip", PhysicalType.INT32, REQUIRED))
-                .list("tags", OPTIONAL, e -> e.primitive(PhysicalType.BYTE_ARRAY, OPTIONAL, LogicalType.string()))
                 .map("attrs", OPTIONAL, PhysicalType.BYTE_ARRAY, LogicalType.string(),
                         v -> v.primitive(PhysicalType.INT32, OPTIONAL))
                 .build();
-        // The builder declares no bare repeated primitive, which a file may still hold.
-        FileSchema repeated = FileSchema.fromSchemaElements(List.of(
-                SchemaElement.root("root", 1),
-                new SchemaElement("hits", PhysicalType.INT32, null, RepetitionType.REPEATED, null, null, null, null,
-                        null, null)));
-        assertThat(plan(schema, ColumnProjection.columns("id")).entries()).hasSize(1);
+        assertThat(plan(schema, ColumnProjection.columns("attrs")).roots()).hasSize(1);
+        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("attrs.key_value.key")))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Column 'attrs' is a MAP group of which only the key or only the value is projected: "
+                        + "project the map as a whole");
+    }
 
-        String nested = "' is nested: hardwood-arrow reads non-repeated primitive columns directly below the root";
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("address")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'address.city" + nested);
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("address.city")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'address.city" + nested);
-        // A REQUIRED struct contributes no layer, and its leaf is still not a top-level column.
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("home.zip")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'home.zip" + nested);
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("tags")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'tags.list.element" + nested);
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.columns("attrs")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'attrs.key_value.key" + nested);
-        assertThatThrownBy(() -> plan(repeated, ColumnProjection.columns("hits")))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'hits' is repeated: hardwood-arrow reads non-repeated primitive columns "
-                        + "directly below the root");
-        assertThatThrownBy(() -> plan(schema, ColumnProjection.all()))
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("Column 'address.city" + nested);
+    /// A bare repeated primitive is a list of present elements, and a bare repeated group a
+    /// list of present structs; the legacy two-level list element contributes no layer of
+    /// its own. The field's id sits on the list, and on the struct of a group, but not on the
+    /// synthetic element of a primitive, as Arrow C++ places it.
+    @Test
+    void bareRepeatedFieldsAreLists() {
+        List<SchemaElement> elements = List.of(
+                SchemaElement.root("root", 2),
+                new SchemaElement("hits", PhysicalType.INT32, null, RepetitionType.REPEATED, null, null, null, null,
+                        11, null),
+                new SchemaElement("pairs", null, null, RepetitionType.REPEATED, 1, null, null, null, 12, null),
+                new SchemaElement("x", PhysicalType.INT32, null, OPTIONAL, null, null, null, null, 13, null));
+        FileSchema schema = FileSchema.fromSchemaElements(elements);
+        ArrowPlan plan = ArrowSchemaConverter.plan(schema, elements, Map.of(), ColumnProjection.all());
+        Field hits = plan.schema().getFields().get(0);
+        assertThat(hits.getType()).isEqualTo(ArrowType.List.INSTANCE);
+        assertThat(hits.isNullable()).isFalse();
+        assertThat(hits.getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "11"));
+        assertThat(hits.getChildren().get(0).getName()).isEqualTo("hits");
+        assertThat(hits.getChildren().get(0).isNullable()).isFalse();
+        assertThat(hits.getChildren().get(0).getMetadata()).isEmpty();
+        assertThat(plan.roots().get(0).layer()).isEqualTo(0);
+        Field pairs = plan.schema().getFields().get(1);
+        assertThat(pairs.getType()).isEqualTo(ArrowType.List.INSTANCE);
+        assertThat(pairs.getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "12"));
+        Field pair = pairs.getChildren().get(0);
+        assertThat(pair.getType()).isEqualTo(ArrowType.Struct.INSTANCE);
+        assertThat(pair.isNullable()).isFalse();
+        assertThat(pair.getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "12"));
+        assertThat(pair.getChildren().get(0).getMetadata()).isEqualTo(Map.of(ArrowSchemaConverter.FIELD_ID_KEY, "13"));
+        assertThat(plan.roots().get(1).children().get(0).layer()).isEqualTo(-1);
     }
 
     @Test
@@ -263,12 +360,12 @@ class ArrowSchemaConverterTest {
                 new SchemaElement("f", PhysicalType.FIXED_LEN_BYTE_ARRAY, null, OPTIONAL, null, null, null, null,
                         null, null));
         FileSchema schema = FileSchema.fromSchemaElements(elements);
-        assertThatThrownBy(() -> ArrowSchemaConverter.plan(schema, elements, ColumnProjection.all()))
+        assertThatThrownBy(() -> ArrowSchemaConverter.plan(schema, elements, Map.of(), ColumnProjection.all()))
                 .isInstanceOf(SchemaIncompatibleException.class)
                 .hasMessage("Column 'f' is a FIXED_LEN_BYTE_ARRAY that declares no type length");
     }
 
-    private static void assertMapping(ArrowPlan.Entry entry, ArrowType type, ScalarKind kind) {
+    private static void assertMapping(ArrowPlan.Node entry, ArrowType type, ScalarKind kind) {
         assertThat(entry.field().getType()).isEqualTo(type);
         assertThat(entry.kind()).isEqualTo(kind);
     }

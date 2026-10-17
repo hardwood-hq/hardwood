@@ -69,9 +69,8 @@ public final class BatchLoader {
         List<ArrowFieldNode> nodes = new ArrayList<>();
         List<ArrowBuf> buffers = new ArrayList<>();
         try {
-            List<ArrowPlan.Entry> entries = plan.entries();
-            for (int position = 0; position < entries.size(); position++) {
-                loadColumn(entries.get(position), columns.getColumnReader(position), rows, allocator, nodes, buffers);
+            for (ArrowPlan.Node root : plan.roots()) {
+                loadNode(root, rows, columns, allocator, nodes, buffers);
             }
             // The batch retains every buffer; the references this method holds are released below.
             return new ArrowRecordBatch(rows, nodes, buffers);
@@ -83,16 +82,66 @@ public final class BatchLoader {
         }
     }
 
-    private static void loadColumn(ArrowPlan.Entry entry, ColumnReader reader, int rows, BufferAllocator allocator,
+    /// Appends the node and buffers of `node` and its descendants, in the depth-first order
+    /// Arrow's `VectorLoader` consumes them. `count` is the number of items at the node's
+    /// scope: the batch's records at the top, a list's entries below it.
+    private static void loadNode(ArrowPlan.Node node, int count, ColumnReaders columns, BufferAllocator allocator,
             List<ArrowFieldNode> nodes, List<ArrowBuf> buffers) {
-        int count = reader.getValueCount();
-        if (count != rows) {
-            throw new IllegalStateException("Column '" + entry.source().fieldPath() + "' holds " + count
-                    + " values in a batch of " + rows + " records");
+        switch (node.shape()) {
+            case LEAF -> loadLeaf(node, columns.getColumnReader(node.position()), count, allocator, nodes, buffers);
+            case STRUCT -> {
+                Validity validity = node.hasLayer()
+                        ? columns.getColumnReader(node.position()).getLayerValidity(node.layer())
+                        : Validity.NO_NULLS;
+                nodes.add(new ArrowFieldNode(count, validity.nullCount(count)));
+                buffers.add(validityBuffer(validity, count, allocator));
+                for (ArrowPlan.Node child : node.children()) {
+                    loadNode(child, count, columns, allocator, nodes, buffers);
+                }
+            }
+            case LIST -> {
+                int entries = loadOffsets(node, count, columns, allocator, nodes, buffers);
+                loadNode(node.children().get(0), entries, columns, allocator, nodes, buffers);
+            }
+            case MAP -> {
+                int entries = loadOffsets(node, count, columns, allocator, nodes, buffers);
+                // The entries struct Arrow puts between a map and its key and value is always present.
+                nodes.add(new ArrowFieldNode(entries, 0));
+                buffers.add(validityBuffer(Validity.NO_NULLS, entries, allocator));
+                loadNode(node.children().get(0), entries, columns, allocator, nodes, buffers);
+                loadNode(node.children().get(1), entries, columns, allocator, nodes, buffers);
+            }
+        }
+    }
+
+    /// The validity and offsets of a list or map, from its layer on its anchor leaf, and the
+    /// number of entries the offsets end at.
+    private static int loadOffsets(ArrowPlan.Node node, int count, ColumnReaders columns, BufferAllocator allocator,
+            List<ArrowFieldNode> nodes, List<ArrowBuf> buffers) {
+        ColumnReader anchor = columns.getColumnReader(node.position());
+        Validity validity = anchor.getLayerValidity(node.layer());
+        int[] offsets = anchor.getLayerOffsets(node.layer());
+        if (offsets.length != count + 1) {
+            throw new IllegalStateException("Column '" + node.field().getName() + "' reports " + (offsets.length - 1)
+                    + " items at layer " + node.layer() + " in a scope of " + count);
+        }
+        nodes.add(new ArrowFieldNode(count, validity.nullCount(count)));
+        buffers.add(validityBuffer(validity, count, allocator));
+        buffers.add(ints(offsets, count + 1, allocator));
+        return offsets[count];
+    }
+
+    private static void loadLeaf(ArrowPlan.Node entry, ColumnReader reader, int count, BufferAllocator allocator,
+            List<ArrowFieldNode> nodes, List<ArrowBuf> buffers) {
+        ColumnSchema column = reader.getColumnSchema();
+        int values = reader.getValueCount();
+        if (values != count) {
+            throw new IllegalStateException("Column '" + column.fieldPath() + "' holds " + values
+                    + " values in a scope of " + count);
         }
         Validity validity = reader.getLeafValidity();
         if (entry.kind() == ScalarKind.NULL) {
-            requireAllNull(entry.source(), validity, count);
+            requireAllNull(column, validity, count);
             nodes.add(new ArrowFieldNode(count, count));
             return;
         }
@@ -101,21 +150,21 @@ public final class BatchLoader {
         switch (entry.kind()) {
             case BOOLEAN -> buffers.add(booleans(reader.getBooleans(), validity, count, allocator));
             case INT32 -> buffers.add(ints(reader.getInts(), count, allocator));
-            case INT8 -> buffers.add(narrowed(reader, entry.source(), validity, count, allocator, 1,
+            case INT8 -> buffers.add(narrowed(reader, column, validity, count, allocator, 1,
                     Byte.MIN_VALUE, Byte.MAX_VALUE));
-            case INT16 -> buffers.add(narrowed(reader, entry.source(), validity, count, allocator, 2,
+            case INT16 -> buffers.add(narrowed(reader, column, validity, count, allocator, 2,
                     Short.MIN_VALUE, Short.MAX_VALUE));
-            case UINT8 -> buffers.add(narrowed(reader, entry.source(), validity, count, allocator, 1, 0, 0xFF));
-            case UINT16 -> buffers.add(narrowed(reader, entry.source(), validity, count, allocator, 2, 0, 0xFFFF));
+            case UINT8 -> buffers.add(narrowed(reader, column, validity, count, allocator, 1, 0, 0xFF));
+            case UINT16 -> buffers.add(narrowed(reader, column, validity, count, allocator, 2, 0, 0xFFFF));
             case INT64 -> buffers.add(longs(reader.getLongs(), count, allocator));
             case FLOAT -> buffers.add(floats(reader.getFloats(), count, allocator));
             case DOUBLE -> buffers.add(doubles(reader.getDoubles(), count, allocator));
             case DECIMAL_INT32 -> buffers.add(decimalLongs(widened(reader.getInts(), count), validity, count, allocator));
             case DECIMAL_INT64 -> buffers.add(decimalLongs(reader.getLongs(), validity, count, allocator));
-            case DECIMAL_BYTES -> buffers.add(decimalBytes(reader, entry, validity, count, allocator));
-            case INT96_TIMESTAMP -> buffers.add(int96Timestamps(reader, entry.source(), validity, count, allocator));
-            case BINARY -> binary(reader, entry.source(), validity, count, allocator, buffers);
-            case FIXED_BINARY -> buffers.add(fixedBinary(reader, entry, validity, count, allocator));
+            case DECIMAL_BYTES -> buffers.add(decimalBytes(reader, entry, column, validity, count, allocator));
+            case INT96_TIMESTAMP -> buffers.add(int96Timestamps(reader, column, validity, count, allocator));
+            case BINARY -> binary(reader, column, validity, count, allocator, buffers);
+            case FIXED_BINARY -> buffers.add(fixedBinary(reader, column, validity, count, allocator));
             case NULL -> throw new IllegalStateException("NULL columns carry no buffers");
         }
     }
@@ -302,8 +351,8 @@ public final class BatchLoader {
         buffer.setLong(offset + Long.BYTES, unscaled < 0 ? -1L : 0L);
     }
 
-    private static ArrowBuf decimalBytes(ColumnReader reader, ArrowPlan.Entry entry, Validity validity, int count,
-            BufferAllocator allocator) {
+    private static ArrowBuf decimalBytes(ColumnReader reader, ArrowPlan.Node entry, ColumnSchema column,
+            Validity validity, int count, BufferAllocator allocator) {
         int width = ((ArrowType.Decimal) entry.field().getType()).getBitWidth() / Byte.SIZE;
         byte[] bytes = reader.getBinaryValues();
         int[] starts = reader.getBinaryStarts();
@@ -319,8 +368,8 @@ public final class BatchLoader {
                 int end = ends[i];
                 int length = end - start;
                 if (length > width) {
-                    throw new ParquetReadException("Column '" + entry.source().fieldPath() + "' is annotated "
-                            + entry.source().logicalType() + " but holds a " + length + "-byte value at row " + i
+                    throw new ParquetReadException("Column '" + column.fieldPath() + "' is annotated "
+                            + column.logicalType() + " but holds a " + length + "-byte value at row " + i
                             + ", wider than the " + width + " bytes its precision allows");
                 }
                 byte sign = length > 0 && bytes[start] < 0 ? (byte) 0xFF : 0;
@@ -386,9 +435,9 @@ public final class BatchLoader {
         return seconds * NANOS_PER_SECOND + remainder;
     }
 
-    private static ArrowBuf fixedBinary(ColumnReader reader, ArrowPlan.Entry entry, Validity validity, int count,
+    private static ArrowBuf fixedBinary(ColumnReader reader, ColumnSchema column, Validity validity, int count,
             BufferAllocator allocator) {
-        int width = entry.source().typeLength();
+        int width = column.typeLength();
         byte[] bytes = reader.getBinaryValues();
         int[] starts = reader.getBinaryStarts();
         int[] ends = reader.getBinaryEnds();
@@ -399,7 +448,7 @@ public final class BatchLoader {
                     continue;
                 }
                 int start = starts[i];
-                requireWidth(entry.source(), i, ends[i] - start, width);
+                requireWidth(column, i, ends[i] - start, width);
                 buffer.setBytes((long) i * width, bytes, start, width);
             }
             return buffer;

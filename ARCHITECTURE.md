@@ -114,7 +114,7 @@ Each decoded column (the projection plus any filter-only predicate columns) has 
 | `s3` | Reading from and writing to S3-compatible object storage |
 | `aws-auth` | Bridges the AWS SDK credential chain to Hardwood's credential types |
 | `avro` | Reading rows as Avro `GenericRecord`s |
-| `arrow` | Reading primitive columns as Arrow `VectorSchemaRoot` batches |
+| `arrow` | Reading columns as Arrow `VectorSchemaRoot` batches |
 | `cli` | The `hardwood` command-line tool, including the `dive` TUI |
 | `parquet-java-compat` | parquet-java API compatibility layer without parquet-java or Hadoop dependencies |
 | `integration-test` | Tests of `hardwood-core` consumed as a packaged dependency, on the Java 21 baseline |

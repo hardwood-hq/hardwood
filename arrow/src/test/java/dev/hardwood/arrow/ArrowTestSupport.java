@@ -16,6 +16,9 @@ import java.util.List;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.compare.Range;
+import org.apache.arrow.vector.compare.RangeEqualsVisitor;
+import org.apache.arrow.vector.compare.TypeEqualsVisitor;
 import org.apache.arrow.vector.compare.VectorEqualsVisitor;
 import org.apache.arrow.vector.ipc.ArrowReader;
 import org.apache.arrow.vector.util.Text;
@@ -114,6 +117,30 @@ final class ArrowTestSupport {
                     .isEqualTo(expectedVector.getNullCount());
             assertThat(VectorEqualsVisitor.vectorEquals(expectedVector, actualVector))
                     .as("column %s: expected %s but was %s", expectedVector.getName(),
+                            column(expectedVector), column(actualVector))
+                    .isTrue();
+        }
+    }
+
+    /// Asserts that `actual`'s vectors equal `expected`'s in type, null count and values, with
+    /// field names and metadata left out of the comparison, since a file carrying an
+    /// `ARROW:schema` entry has Arrow C++ restore the names it recorded.
+    static void assertSameTableIgnoringNames(VectorSchemaRoot expected, VectorSchemaRoot actual) {
+        assertThat(actual.getFieldVectors()).hasSameSizeAs(expected.getFieldVectors());
+        assertThat(actual.getRowCount()).isEqualTo(expected.getRowCount());
+        for (int i = 0; i < expected.getFieldVectors().size(); i++) {
+            FieldVector expectedVector = expected.getVector(i);
+            FieldVector actualVector = actual.getVector(i);
+            assertThat(new TypeEqualsVisitor(expectedVector, false, false).equals(actualVector))
+                    .as("type of %s: expected %s but was %s", actualVector.getName(), expectedVector.getField(),
+                            actualVector.getField())
+                    .isTrue();
+            assertThat(actualVector.getNullCount())
+                    .as("null count of %s", actualVector.getName())
+                    .isEqualTo(expectedVector.getNullCount());
+            RangeEqualsVisitor values = new RangeEqualsVisitor(expectedVector, actualVector, (left, right) -> true);
+            assertThat(values.rangeEquals(new Range(0, 0, expectedVector.getValueCount())))
+                    .as("column %s: expected %s but was %s", actualVector.getName(),
                             column(expectedVector), column(actualVector))
                     .isTrue();
         }

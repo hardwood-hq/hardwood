@@ -6,7 +6,7 @@
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
 
-/// Apache Arrow integration for reading Parquet columns as Arrow
+/// Apache Arrow integration for reading Parquet columns, nested ones included, as Arrow
 /// [org.apache.arrow.vector.VectorSchemaRoot] batches.
 ///
 /// [ArrowReaders] provides factory methods for creating readers with optional
