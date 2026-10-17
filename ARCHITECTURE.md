@@ -42,6 +42,7 @@ flowchart LR
 
     subgraph consumers["Consumers"]
         AVRO_BINDING
+        ARROW_BINDING
         CLI_VALUE_RENDERING
         CLI_LOGGING
         DIVE_ARCHITECTURE
@@ -65,6 +66,7 @@ flowchart LR
     PREDICATE_MODEL --> STATISTICS_PRUNING
     RECORD_FILTERING -. runs inside .-> READ_PIPELINE
     ROW_READER --> AVRO_BINDING
+    COLUMN_READER --> ARROW_BINDING
     ROW_READER --> CLI_VALUE_RENDERING
     FILE_METADATA --> DIVE_ARCHITECTURE
     ROW_READER --> DIVE_ARCHITECTURE
@@ -81,7 +83,7 @@ flowchart LR
 | Filtering | [PREDICATE_MODEL.md](_designs/PREDICATE_MODEL.md) (the `FilterPredicate` API and its resolution), [STATISTICS_PRUNING.md](_designs/STATISTICS_PRUNING.md) (pruning row groups and pages from metadata), [RECORD_FILTERING.md](_designs/RECORD_FILTERING.md) (exact row filtering on both readers), [DICTIONARY_SPACE_EVALUATION.md](_designs/DICTIONARY_SPACE_EVALUATION.md) (binary predicates decided once per dictionary entry) |
 | I/O and metadata | [INPUT_FILES.md](_designs/INPUT_FILES.md), [S3_STORAGE.md](_designs/S3_STORAGE.md), [FETCH_PLANNING.md](_designs/FETCH_PLANNING.md) (which bytes a read requests), [FILE_METADATA.md](_designs/FILE_METADATA.md) (footer, Thrift parsing, page index), [EXCEPTION_MODEL.md](_designs/EXCEPTION_MODEL.md) |
 | Writer | [WRITER.md](_designs/WRITER.md) (write model, row-group lifecycle, memory), [WRITER_INPUT.md](_designs/WRITER_INPUT.md) (schema builder, `ColumnBatch`, shredding, `RowWriter`), [WRITER_ENCODING.md](_designs/WRITER_ENCODING.md) (page layout, dictionary selection, codecs, statistics), [WRITER_VALIDATION.md](_designs/WRITER_VALIDATION.md) (interop gate) |
-| Types | [LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md) (annotations, timestamps, Variant, geospatial), [AVRO_BINDING.md](_designs/AVRO_BINDING.md) (`hardwood-avro`) |
+| Types | [LOGICAL_TYPES.md](_designs/LOGICAL_TYPES.md) (annotations, timestamps, Variant, geospatial), [AVRO_BINDING.md](_designs/AVRO_BINDING.md) (`hardwood-avro`), [ARROW_BINDING.md](_designs/ARROW_BINDING.md) (`hardwood-arrow`) |
 | CLI | [DIVE_ARCHITECTURE.md](_designs/DIVE_ARCHITECTURE.md), [DIVE_UI_RULES.md](_designs/DIVE_UI_RULES.md), [CLI_VALUE_RENDERING.md](_designs/CLI_VALUE_RENDERING.md), [CLI_LOGGING.md](_designs/CLI_LOGGING.md) (stdout, stderr and log records) |
 | Project | [DOCUMENTATION.md](_designs/DOCUMENTATION.md), [BUILD_INFRASTRUCTURE.md](_designs/BUILD_INFRASTRUCTURE.md), [TESTING.md](TESTING.md), [PERFORMANCE.md](PERFORMANCE.md), [NATIVE_BUILD.md](NATIVE_BUILD.md), [FORMAT_COVERAGE.md](FORMAT_COVERAGE.md) |
 
@@ -112,6 +114,7 @@ Each decoded column (the projection plus any filter-only predicate columns) has 
 | `s3` | Reading from and writing to S3-compatible object storage |
 | `aws-auth` | Bridges the AWS SDK credential chain to Hardwood's credential types |
 | `avro` | Reading rows as Avro `GenericRecord`s |
+| `arrow` | Reading primitive columns as Arrow `VectorSchemaRoot` batches |
 | `cli` | The `hardwood` command-line tool, including the `dive` TUI |
 | `parquet-java-compat` | parquet-java API compatibility layer without parquet-java or Hadoop dependencies |
 | `integration-test` | Tests of `hardwood-core` consumed as a packaged dependency, on the Java 21 baseline |

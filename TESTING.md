@@ -152,6 +152,10 @@ A new differential case extends `tools/simple-datagen.py` with a fixture carryin
 
 The `parquet-testing-runner` module uses parquet-java as the reference instead of DuckDB: `ParquetComparisonTest` compares Hardwood's rows field by field against parquet-java for every file in the [apache/parquet-testing](https://github.com/apache/parquet-testing) repository (cloned on first use by `ParquetTestingRepoCloner`), and the writer interop tests (`WriterInteropTest` and its nested and logical-type siblings) read Hardwood-written files back through parquet-java.
 
+### The Arrow comparison
+
+`hardwood-arrow` compares against Arrow C++'s own Parquet reader, in memory: `ArrowDatasetOracleTest` scans a file through `arrow-dataset`, Arrow Java's JNI binding to that reader (a test dependency bundling the native library for Linux, macOS and Windows), takes the batches over the C Data Interface, and requires the module's schema, null counts and vectors to equal them. The module's own fixtures are written at test time under `arrow/target/arrow-fixtures`, by Hardwood's writer and, for a file with field ids, by Arrow C++ through the same binding; the other shapes that writer cannot produce come from core's checked-in fixtures.
+
 ## Manual S3 testing
 
 The steps below run a local S3-compatible endpoint via [s3proxy](https://github.com/gaul/s3proxy) and exercise the CLI against it. Useful for verifying S3 behaviour without an AWS account, and for testing the native binary's S3 path (see also [NATIVE_BUILD.md](NATIVE_BUILD.md)).

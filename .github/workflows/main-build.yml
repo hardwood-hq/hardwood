@@ -65,10 +65,10 @@ jobs:
         # Removing them makes such a gap a build error.
         run: rm -rf ~/.m2/repository/dev/hardwood
 
-      - name: 'Build and install BOMs, test-support, core, avro and parquet-testing-runner'
+      - name: 'Build and install BOMs, test-support, core, avro, arrow and parquet-testing-runner'
         # parquet-testing-runner depends on core alone, so it builds here, after core,
         # rather than paying for a job of its own.
-        run: ./mvnw -B -fae clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro,:hardwood-parquet-testing-runner
+        run: ./mvnw -B -fae clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro,:hardwood-arrow,:hardwood-parquet-testing-runner
 
   build-modules:
     runs-on: ubuntu-latest
