@@ -55,9 +55,9 @@ shared pool matters, since all the files draw on the same workers. See
 
 ## Writing
 
-A writer copies values into the open row group on the thread that calls it. When the row group is flushed, its column chunks are encoded and compressed in parallel: the pool threads of a `HardwoodContext` and the calling thread each take the next chunk not yet claimed, and the chunks are written in schema order, so the file is the same as one written on a single thread. A writer opened without a context creates its own for the duration of the write; `ParquetFileWriter.create(out, schema, config, context)` uses yours, so writers and readers can draw on one pool.
+A writer copies a batch's values into the open row group in parallel: the pool threads of a `HardwoodContext` and the calling thread each take the next column not yet claimed, and `writeBatch` returns once every column holds its values. When the row group is flushed, its column chunks are encoded and compressed in parallel the same way, a chunk at a time, and written in schema order. The file is the same as one written on a single thread. A writer opened without a context creates its own for the duration of the write; `ParquetFileWriter.create(out, schema, config, context)` uses yours, so writers and readers can draw on one pool.
 
-Encoding and compression make up most of a write with a compressing codec such as `ZSTD`, and less of an uncompressed one, where copying values into the row group dominates; the copying stays on the calling thread. A schema of many columns spreads its flush across all the threads. A schema of a few columns is bounded by its most expensive column chunk, since a chunk is encoded by one thread.
+A schema of many columns spreads both the copying and the flush across all the threads. A schema of a few columns is bounded by its most expensive column, since a column is copied and a chunk encoded by one thread. Between two batches, the pool threads that copied values wait for the next batch for at most a millisecond before returning to the pool, and they return at once when a row group is flushed or the writer is closed. While batches keep arriving, each such thread goes to the back of the pool's queue every millisecond, so other work queued on a shared context runs in between.
 
 ## Guidelines for your code
 

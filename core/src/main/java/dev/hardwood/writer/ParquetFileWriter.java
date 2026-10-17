@@ -38,6 +38,7 @@ import dev.hardwood.internal.thrift.OffsetIndexWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.internal.writer.ColumnSource;
 import dev.hardwood.internal.writer.LogicalTypeValueRange;
+import dev.hardwood.internal.writer.ParallelAppend;
 import dev.hardwood.internal.writer.RecordShredder;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.internal.writer.WriterSchemaShape;
@@ -74,10 +75,11 @@ import dev.hardwood.schema.FileSchema;
 /// body is compressed with the configured codec (`ZSTD` by default). All of these are
 /// configurable through [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
-/// At each flush the row group's column chunks are encoded and compressed in parallel, on the
-/// thread pool of a [HardwoodContext] and on the calling thread, and written in schema order; the
-/// file is the same as from one thread. A writer opened without a context creates one on its first
-/// flush of more than one column, and closes it with the writer.
+/// A batch's values are copied into the row group's column chunks in parallel, and at each flush
+/// the chunks are encoded and compressed in parallel, on the thread pool of a [HardwoodContext]
+/// and on the calling thread, and written in schema order; the file is the same as from one
+/// thread. A writer opened without a context creates one on its first write of more than one
+/// column, and closes it with the writer.
 ///
 /// The file is produced front to back and is valid only after `close()` returns. A writer whose
 /// write has thrown accepts no more data, and `close()` discards its output rather than
@@ -119,10 +121,17 @@ public final class ParquetFileWriter implements Closeable {
     private final RowGroupBuffer current;
     private long numRows;
 
-    /// The pool that encodes column chunks beside the caller. Created on first use where the
-    /// caller passed none, a one-column schema never needing it, and then closed with the writer.
+    /// The pool that appends and encodes column chunks beside the caller. Created on first use
+    /// where the caller passed none, a one-column schema never needing it, and then closed with
+    /// the writer.
     private HardwoodContextImpl context;
     private final boolean ownsContext;
+    /// The workers that append each slice of a batch beside the caller, started on first use.
+    private ParallelAppend parallelAppend;
+    /// Whether a batch's columns are appended beside the caller at all: not for a one-column
+    /// schema, and not with a single available processor, where a slice is too short for a worker
+    /// to gain anything on the processor the caller needs.
+    private final boolean appendsInParallel;
 
     /// Where the writer is in its lifecycle. A writer fails only while open: a flush that throws
     /// inside [#close()] leaves it closed, so its output is discarded once.
@@ -150,6 +159,7 @@ public final class ParquetFileWriter implements Closeable {
         this.schema = schema;
         this.config = config;
         this.shredder = new RecordShredder(schema);
+        this.appendsInParallel = schema.getColumnCount() > 1 && Runtime.getRuntime().availableProcessors() > 1;
         this.compressor = compressor;
         this.ranges = LogicalTypeValueRange.forSchema(schema);
         // One buffer serves every row group: flushing it resets it in place, so the writer's
@@ -210,8 +220,8 @@ public final class ParquetFileWriter implements Closeable {
         return create(out, schema, config, null, () -> new CompressorFactory().getCompressor(config.codec()));
     }
 
-    /// Opens a writer that encodes column chunks on the thread pool of `context`, writing the
-    /// leading magic bytes.
+    /// Opens a writer that appends and encodes column chunks on the thread pool of `context`,
+    /// writing the leading magic bytes.
     ///
     /// The caller keeps ownership of `context` and closes it after the writer. Several writers,
     /// and readers, may share one context.
@@ -219,7 +229,7 @@ public final class ParquetFileWriter implements Closeable {
     /// @param out the destination
     /// @param schema the schema to write
     /// @param config the writer configuration
-    /// @param context the context whose threads encode column chunks
+    /// @param context the context whose threads append and encode column chunks
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
     /// @throws UnsupportedOperationException if the schema has a column of an unsupported
@@ -553,7 +563,7 @@ public final class ParquetFileWriter implements Closeable {
             shredder.bind(sources, batch.validities(), batch.structValidities(),
                     batch.listValidities(), batch.listOffsets());
             batch.markConsumed();
-            current.append(shredder, sources, this::flushRowGroup);
+            current.append(shredder, sources, parallelAppend(), this::flushRowGroup);
         }
         catch (Throwable t) {
             markFailed();
@@ -673,8 +683,12 @@ public final class ParquetFileWriter implements Closeable {
         }
     }
 
-    /// Closes the context the writer created for itself, if it did.
+    /// Sends the append workers away and closes the context the writer created for itself, if it
+    /// did.
     private void releaseContext() {
+        if (parallelAppend != null) {
+            parallelAppend.retire();
+        }
         if (ownsContext && context != null) {
             context.close();
         }
@@ -685,28 +699,53 @@ public final class ParquetFileWriter implements Closeable {
         if (current.isEmpty()) {
             return;
         }
-        // The calling thread encodes too, so a pool thread per column beyond the first is the
-        // most that can be busy.
-        int helpers = schema.getColumnCount() - 1;
-        if (context != null && context.executor().isShutdown()) {
-            throw new IllegalStateException(
-                    "The HardwoodContext this writer encodes on is closed; close the writer before its context");
+        if (parallelAppend != null) {
+            // The flush's encoding tasks need the pool threads append workers wait on.
+            parallelAppend.retire();
         }
+        requireOpenContext();
         RowGroupBuffer.FlushedRowGroup rowGroup;
-        if (helpers == 0) {
+        if (schema.getColumnCount() == 1) {
             rowGroup = current.flushTo(out, null, 0);
         }
         else {
             HardwoodContextImpl pool = encodingContext();
-            rowGroup = current.flushTo(out, pool.executor(), Math.min(pool.threads(), helpers));
+            rowGroup = current.flushTo(out, pool.executor(), helpers(pool));
         }
         rowGroups.add(rowGroup);
         numRows += rowGroup.rowGroup().numRows();
         current.reset();
     }
 
-    /// The context whose pool encodes column chunks, created on first use where the caller gave
-    /// none.
+    /// The workers that append each slice of a batch beside the caller, or `null` where the caller
+    /// appends alone ([#appendsInParallel]).
+    private ParallelAppend parallelAppend() {
+        if (!appendsInParallel) {
+            return null;
+        }
+        requireOpenContext();
+        if (parallelAppend == null) {
+            HardwoodContextImpl pool = encodingContext();
+            parallelAppend = new ParallelAppend(schema.getColumnCount(), pool.executor(), helpers(pool));
+        }
+        return parallelAppend;
+    }
+
+    /// The pool threads that can be busy with one row group beside the calling thread, which
+    /// takes a column too: one per column beyond the first, at most the pool's size.
+    private int helpers(HardwoodContextImpl pool) {
+        return Math.min(pool.threads(), schema.getColumnCount() - 1);
+    }
+
+    private void requireOpenContext() {
+        if (context != null && context.executor().isShutdown()) {
+            throw new IllegalStateException(
+                    "The HardwoodContext this writer encodes on is closed; close the writer before its context");
+        }
+    }
+
+    /// The context whose pool appends and encodes column chunks, created on first use where the
+    /// caller gave none.
     private HardwoodContextImpl encodingContext() {
         if (context == null) {
             context = HardwoodContextImpl.create();

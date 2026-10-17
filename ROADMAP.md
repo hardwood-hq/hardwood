@@ -535,7 +535,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] `FieldPath` abstraction for nested column addressing
 - [ ] Comprehensive error handling
 - [ ] Input validation
-- [x] Parallel writing support (a row group's column chunks encoded in parallel at flush; see `_designs/WRITER.md`)
+- [x] Parallel writing support (a batch's columns appended in parallel, and a row group's column chunks encoded in parallel at flush; see `_designs/WRITER.md`)
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
 
 ### Interactive CLI (`hardwood dive`)

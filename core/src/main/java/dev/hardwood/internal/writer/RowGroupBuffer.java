@@ -104,12 +104,22 @@ public final class RowGroupBuffer {
     /// group far past its target, which no measurement of the records already appended could
     /// anticipate.
     ///
+    /// A slice is appended to every column before the next is sized, on the workers of `parallel`
+    /// and the calling thread where it is given. Within a slice a column reads only its own source,
+    /// the shredder and the projection published before the slice, and writes only its own chunk,
+    /// so which thread appends it does not change what it holds. What reads every column (the
+    /// slice's bound, what the row group retains, the cut and the projection) runs on the calling
+    /// thread between slices.
+    ///
     /// @param shredder bound to the current batch
     /// @param sources the current batch's value sources, one per column
+    /// @param parallel appends each slice's columns in parallel, or `null` to append them on the
+    ///        calling thread alone
     /// @param flush writes out and resets the row group each time it is cut
     /// @throws IllegalArgumentException if a record is more than an empty row group's stores can
     ///         take
-    public void append(RecordShredder shredder, ColumnSource[] sources, Flush flush) throws IOException {
+    public void append(RecordShredder shredder, ColumnSource[] sources, ParallelAppend parallel, Flush flush)
+            throws IOException {
         int rows = shredder.recordCount();
         int pos = 0;
         // Carried across iterations: what the row group holds after a slice is also the room the
@@ -125,7 +135,7 @@ public final class RowGroupBuffer {
                 retained = cut(flush);
                 continue;
             }
-            appendRecords(shredder, sources, pos, slice);
+            appendRecords(shredder, sources, parallel, pos, slice);
             pos += slice;
             retained = retainedBytes();
             peakRetainedBytes = Math.max(peakRetainedBytes, retained);
@@ -159,9 +169,15 @@ public final class RowGroupBuffer {
     }
 
     /// Shreds the same record range into every column and advances the row count.
-    private void appendRecords(RecordShredder shredder, ColumnSource[] sources, int from, int count) {
-        for (int c = 0; c < columns.length; c++) {
-            columns[c].append(shredder, sources[c], c, from, count);
+    private void appendRecords(RecordShredder shredder, ColumnSource[] sources, ParallelAppend parallel, int from,
+                               int count) {
+        if (parallel == null) {
+            for (int c = 0; c < columns.length; c++) {
+                columns[c].append(shredder, sources[c], c, from, count);
+            }
+        }
+        else {
+            parallel.append(c -> columns[c].append(shredder, sources[c], c, from, count));
         }
         rowCount += count;
     }

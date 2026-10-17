@@ -191,7 +191,7 @@ class RowGroupBufferStoreCapacityTest {
         // and again without the append ever advancing.
         RowGroupBuffer.Flush keepsRecords = () -> {
         };
-        assertThatThrownBy(() -> buffered.buffer.append(buffered.shredder, sources, keepsRecords))
+        assertThatThrownBy(() -> buffered.buffer.append(buffered.shredder, sources, null, keepsRecords))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("A row group flush left 10 records buffered");
     }
@@ -234,7 +234,7 @@ class RowGroupBufferStoreCapacityTest {
         void append(Map<String, int[]> listOffsets, ColumnSource source) throws IOException {
             ColumnSource[] sources = { source };
             shredder.bind(sources, new Validity[1], Map.of(), Map.of(), listOffsets);
-            buffer.append(shredder, sources, this::flush);
+            buffer.append(shredder, sources, null, this::flush);
         }
 
         void flush() throws IOException {

@@ -38,8 +38,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
-/// The column chunks of a row group are encoded on a [HardwoodContext]'s pool and the calling
-/// thread together, and the file does not depend on which thread encoded what.
+/// The column chunks of a row group are appended to and encoded on a [HardwoodContext]'s pool and
+/// the calling thread together, and the file does not depend on which thread did what.
 class WriterParallelEncodingTest {
 
     private static final Duration NO_HANG = Duration.ofSeconds(60);
@@ -57,19 +57,7 @@ class WriterParallelEncodingTest {
                 .rowGroupTargetRows(5_000)
                 .bloomFilter("id")
                 .build();
-        // A pool whose one thread is held by other work never runs a worker task, so the caller
-        // encodes every chunk itself: the single-threaded write. It also shows that a busy pool
-        // slows the flush down to the caller's pace without stalling it.
-        byte[] serial;
-        try (HardwoodContext busy = HardwoodContext.create(1)) {
-            CountDownLatch release = new CountDownLatch(1);
-            busy.executor().submit(() -> {
-                release.await();
-                return null;
-            });
-            serial = assertTimeoutPreemptively(NO_HANG, () -> write(config, busy));
-            release.countDown();
-        }
+        byte[] serial = onBusyPool(context -> write(config, context));
 
         for (int threads : new int[] { 1, 2, 8 }) {
             try (HardwoodContext context = HardwoodContext.create(threads)) {
@@ -83,6 +71,22 @@ class WriterParallelEncodingTest {
             fill(writer);
         }
         assertThat(bytes(out)).as("the writer's own context").isEqualTo(serial);
+    }
+
+    /// The row layer submits its staged records through the same append and flush.
+    @Test
+    void writesTheSameRowsWhateverThePoolDoes() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(5_000).build();
+        byte[] serial = onBusyPool(context -> writeRows(schema, config, context));
+
+        try (HardwoodContext context = HardwoodContext.create(8)) {
+            assertThat(writeRows(schema, config, context)).isEqualTo(serial);
+        }
     }
 
     @Test
@@ -219,10 +223,11 @@ class WriterParallelEncodingTest {
         }
     }
 
-    /// A one-column schema encodes on the caller alone, and is rejected all the same.
+    /// A schema of several columns is rejected at its first append, a one-column schema, which
+    /// appends and encodes on the caller alone, at its first flush.
     @ParameterizedTest
     @ValueSource(booleans = { false, true })
-    void rejectsAFlushOnAClosedContext(boolean oneColumn) throws Exception {
+    void rejectsAWriteOnAClosedContext(boolean oneColumn) throws Exception {
         FileSchema schema = oneColumn
                 ? FileSchema.builder("schema").addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED).build()
                 : schema();
@@ -269,6 +274,44 @@ class WriterParallelEncodingTest {
                         .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
                         .addColumn("y", PhysicalType.FLOAT, RepetitionType.OPTIONAL))
                 .build();
+    }
+
+    /// Writes on a pool whose one thread is held by other work and so never runs a worker task:
+    /// the caller appends and encodes every chunk itself, the single-threaded write. It also shows
+    /// that a busy pool slows a write down to the caller's pace without stalling it.
+    private static byte[] onBusyPool(Write write) throws Exception {
+        try (HardwoodContext busy = HardwoodContext.create(1)) {
+            CountDownLatch release = new CountDownLatch(1);
+            busy.executor().submit(() -> {
+                release.await();
+                return null;
+            });
+            byte[] bytes = assertTimeoutPreemptively(NO_HANG, () -> write.to(busy));
+            release.countDown();
+            return bytes;
+        }
+    }
+
+    @FunctionalInterface
+    private interface Write {
+
+        byte[] to(HardwoodContext context) throws IOException;
+    }
+
+    private static byte[] writeRows(FileSchema schema, WriterConfig config, HardwoodContext context)
+            throws IOException {
+        Random random = new Random(1523);
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config, context)) {
+            RowWriter rows = writer.rowWriter();
+            for (int r = 0; r < RECORDS; r++) {
+                long id = r;
+                String name = "name-" + random.nextInt(50);
+                double score = random.nextDouble();
+                rows.writeRow(row -> row.setLong("id", id).setString("name", name).setDouble("score", score));
+            }
+        }
+        return bytes(out);
     }
 
     private static byte[] write(WriterConfig config, HardwoodContext context) throws IOException {

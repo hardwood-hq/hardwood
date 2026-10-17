@@ -342,16 +342,16 @@ The row-group targets close row groups as well; a row group ends at a target or 
 
 `endRowGroup()` and `close()` throw `IllegalStateException` when called from inside a `writeBatch` or `writeRow` filler. Any exception from `endRowGroup()` fails the writer.
 
-## Encoding Threads
+## Writer Threads
 
-At each row-group flush, the column chunks are encoded and compressed in parallel on the threads of a `HardwoodContext` and on the thread that called the write, then written in schema order. The file is byte-identical to one written on a single thread. Values are copied into the row group on the calling thread.
+Each batch's values are copied into the row group's column chunks in parallel, and at each row-group flush the column chunks are encoded and compressed in parallel, on the threads of a `HardwoodContext` and on the thread that called the write. The chunks are written in schema order. The file is byte-identical to one written on a single thread.
 
 | Factory | Threads |
 |---|---|
-| `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor on its first flush of more than one column, and closes it on `close()` or `abort()` |
+| `create(out, schema)`, `create(out, schema, config)` | The writer creates a context with one thread per available processor on its first write of more than one column, and closes it on `close()` or `abort()` |
 | `create(out, schema, config, context)` | The threads of `context`. The caller closes `context` after the writer; one context can serve several writers and readers |
 
-A schema of one column is encoded on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
+A schema of one column is copied and encoded on the calling thread alone. With one available processor, values are copied on the calling thread alone. A `ParquetFileWriter` is still driven from one thread at a time.
 
 ## Finishing and Abandoning a File
 
