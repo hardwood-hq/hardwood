@@ -29,7 +29,7 @@ import dev.hardwood.s3.S3CredentialsProvider;
 ///
 /// Encapsulates credential resolution, SigV4 signing, URI construction,
 /// and HTTP transport. Used by [dev.hardwood.s3.S3InputFile] for reads, by
-/// [S3OutputFile] for uploads, and by test infrastructure.
+/// [dev.hardwood.s3.S3OutputFile] for uploads, and by test infrastructure.
 public final class S3Api {
 
     private static final int HTTP_INTERNAL_SERVER_ERROR = 500;
@@ -163,7 +163,7 @@ public final class S3Api {
     }
 
     /// Sends a PUT request uploading the first `length` bytes of `body` as the whole object.
-    void putObject(String bucket, String key, byte[] body, int length) throws IOException {
+    public void putObject(String bucket, String key, byte[] body, int length) throws IOException {
         String description = "PUT s3://" + bucket + "/" + key;
         sendWrite("PUT", objectUri(bucket, key), body, length, 200, description);
     }
@@ -171,7 +171,7 @@ public final class S3Api {
     // ==================== Multipart upload ====================
 
     /// Starts a multipart upload and returns its upload ID.
-    String createMultipartUpload(String bucket, String key) throws IOException {
+    public String createMultipartUpload(String bucket, String key) throws IOException {
         String description = "Create multipart upload s3://" + bucket + "/" + key;
         HttpResponse<byte[]> response = sendWrite("POST", URI.create(objectUri(bucket, key) + "?uploads="),
                 new byte[0], 0, 200, description);
@@ -179,7 +179,7 @@ public final class S3Api {
     }
 
     /// Uploads the first `length` bytes of `body` as part `partNumber` and returns its `ETag`.
-    String uploadPart(String bucket, String key, String uploadId, int partNumber, byte[] body, int length)
+    public String uploadPart(String bucket, String key, String uploadId, int partNumber, byte[] body, int length)
             throws IOException {
         String description = "Upload part " + partNumber + " of s3://" + bucket + "/" + key;
         URI uri = uploadUri(bucket, key, "partNumber=" + partNumber + "&uploadId=" + Aws4Signer.uriEncode(uploadId));
@@ -189,7 +189,7 @@ public final class S3Api {
     }
 
     /// Completes a multipart upload from its parts, in part-number order.
-    void completeMultipartUpload(String bucket, String key, String uploadId, List<S3Xml.Part> parts)
+    public void completeMultipartUpload(String bucket, String key, String uploadId, List<S3Xml.Part> parts)
             throws IOException {
         String description = "Complete multipart upload s3://" + bucket + "/" + key;
         byte[] body = S3Xml.completionBody(parts);
@@ -214,7 +214,7 @@ public final class S3Api {
 
     /// Aborts a multipart upload, releasing its parts. An upload that no longer exists counts as
     /// aborted.
-    void abortMultipartUpload(String bucket, String key, String uploadId) throws IOException {
+    public void abortMultipartUpload(String bucket, String key, String uploadId) throws IOException {
         String description = "Abort multipart upload s3://" + bucket + "/" + key;
         URI uri = uploadUri(bucket, key, "uploadId=" + Aws4Signer.uriEncode(uploadId));
         HttpResponse<byte[]> response = sendWithRetry(

@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.s3.internal;
+package dev.hardwood.s3;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -19,6 +19,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.s3.internal.S3Api;
+import dev.hardwood.s3.internal.S3Xml;
 
 /// An [OutputFile] that writes one S3 object as a multipart upload, with up to
 /// [#MAX_UPLOADS_IN_FLIGHT] parts uploading while the writer goes on filling the next.
@@ -42,7 +44,7 @@ public final class S3OutputFile implements OutputFile {
     public static final int MAX_PART_SIZE = Integer.MAX_VALUE - 8;
 
     /// The most parts one multipart upload may have.
-    static final int MAX_PARTS = 10_000;
+    public static final int MAX_PARTS = 10_000;
 
     /// The most parts of one output uploading at once.
     static final int MAX_UPLOADS_IN_FLIGHT = 4;
@@ -65,7 +67,7 @@ public final class S3OutputFile implements OutputFile {
     private String uploadId;
     private ExecutorService uploads;
 
-    public S3OutputFile(S3Api api, String bucket, String key, int partSize) {
+    S3OutputFile(S3Api api, String bucket, String key, int partSize) {
         this.api = Objects.requireNonNull(api, "api");
         this.bucket = Objects.requireNonNull(bucket, "bucket");
         this.key = Objects.requireNonNull(key, "key");

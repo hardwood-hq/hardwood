@@ -17,14 +17,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import dev.hardwood.OutputFile;
 import dev.hardwood.s3.internal.S3Api;
-import dev.hardwood.s3.internal.S3OutputFile;
 
 /// A configured connection to an S3-compatible object store.
 ///
 /// Holds the region, endpoint, credentials (or anonymous access), and HTTP client needed
-/// to create [S3InputFile] and [OutputFile] instances. Reuse a single `S3Source` across
+/// to create [S3InputFile] and [S3OutputFile] instances. Reuse a single `S3Source` across
 /// multiple files for connection pooling and credential reuse.
 ///
 /// **URL styles:**
@@ -68,7 +66,7 @@ public final class S3Source implements Closeable {
         return inputFile(parsed[0], parsed[1]);
     }
 
-    /// Creates an [OutputFile] that writes the object at the given bucket and key, for
+    /// Creates an [S3OutputFile] that writes the object at the given bucket and key, for
     /// [dev.hardwood.writer.ParquetFileWriter].
     ///
     /// The output collects the file in parts of [Builder#uploadPartSize(int)] bytes. An object
@@ -82,7 +80,7 @@ public final class S3Source implements Closeable {
     /// object may have been published although close throws.
     ///
     /// @throws IllegalStateException if the source sends requests unsigned ([Builder#anonymous()])
-    public OutputFile outputFile(String bucket, String key) {
+    public S3OutputFile outputFile(String bucket, String key) {
         Objects.requireNonNull(bucket, "bucket must not be null");
         Objects.requireNonNull(key, "key must not be null");
         if (api.anonymous()) {
@@ -91,9 +89,9 @@ public final class S3Source implements Closeable {
         return new S3OutputFile(api, bucket, key, uploadPartSize);
     }
 
-    /// Creates an [OutputFile] from an `s3://bucket/key` URI. See
+    /// Creates an [S3OutputFile] from an `s3://bucket/key` URI. See
     /// [#outputFile(String, String)].
-    public OutputFile outputFile(String uri) {
+    public S3OutputFile outputFile(String uri) {
         Objects.requireNonNull(uri, "uri must not be null");
         String[] parsed = parseS3Uri(uri);
         return outputFile(parsed[0], parsed[1]);
