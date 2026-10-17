@@ -49,6 +49,8 @@ class ParallelFillValidityTest {
             .build()
             .getColumn(0);
 
+    private static final BatchExchange<BatchExchange.Batch> EXCHANGE = BatchExchange.detachingFlat("v", 1024);
+
     /// The decoded page of each segment's page task in the current round.
     private static final AtomicReference<Map<PageTask, Page>> PAGES = new AtomicReference<>();
 
@@ -106,7 +108,7 @@ class ParallelFillValidityTest {
                 List<Segment> segments = current.get();
                 for (int s = thread; s < segments.size(); s += THREADS) {
                     Segment segment = segments.get(s);
-                    FlatFill.fill(segment, null, PAGES.get().get(segment.page), segment.cell.allocate(COLUMN).values, 1);
+                    FlatFill.fill(segment, null, PAGES.get().get(segment.page), segment.cell.allocate(EXCHANGE, COLUMN).values, 1);
                 }
             }
             catch (Throwable t) {
@@ -125,7 +127,7 @@ class ParallelFillValidityTest {
         }
         BatchPlan.RowGroupBatches rowGroup = new BatchPlan(total, false, false, 0).plan(0, 0, "f.parquet", false, total);
         Cell cell = new Cell("f.parquet", false, total, total, 0);
-        cell.allocate(COLUMN);
+        cell.allocate(EXCHANGE, COLUMN);
         Map<PageTask, Page> pages = new IdentityHashMap<>();
 
         long[] expected = new long[(total + 63) >>> 6];

@@ -615,7 +615,8 @@ public class ParquetFileReader implements Closeable {
         // projection sizes the same whichever reader reads it.
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
         RowReader reader = schema.isFlatSchema()
-                ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize)
+                ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize,
+                        budgetRows(projection.decoded(), rowGroups))
                 : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
                         filter, maxRows, batchSize);
         return trackedChild(rowGroupIterator, reader);
