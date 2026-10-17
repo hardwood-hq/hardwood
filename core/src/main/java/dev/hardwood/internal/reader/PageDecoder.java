@@ -77,6 +77,15 @@ public class PageDecoder {
             }
             return bytePrefix;
         }
+
+        private int[] recordStarts;
+
+        int[] recordStarts(int size) {
+            if (recordStarts == null || recordStarts.length < size) {
+                recordStarts = new int[size];
+            }
+            return recordStarts;
+        }
     }
 
     private final ColumnMetaData columnMetaData;

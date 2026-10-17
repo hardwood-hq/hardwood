@@ -41,7 +41,7 @@ import dev.hardwood.schema.FileSchema;
 public final class NestedRowReader implements FileAwareRowReader {
 
     private final BatchExchange<NestedBatch>[] exchanges;
-    private final NestedColumnWorker[] columnWorkers;
+    private final ColumnPipeline[] columnWorkers;
     private final int columnCount;
 
     private final FileSchema fileSchema;
@@ -94,7 +94,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     private boolean exhausted;
     private boolean closed;
 
-    NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
+    NestedRowReader(BatchExchange<NestedBatch>[] exchanges, ColumnPipeline[] columnWorkers,
                     FileSchema fileSchema, ProjectedSchema payload, NestedBatchDataView dataView,
                     long maxMatchedRows, RowMatcher recordMatcher, PredicateView predicateView,
                     RecordFilterTally tally, RowGroupIterator rowGroupIterator) {
@@ -129,8 +129,9 @@ public final class NestedRowReader implements FileAwareRowReader {
 
     /// Creates a nested v3 pipeline and returns a [RowReader].
     ///
-    /// Wires up `RowGroupIterator → PageSource → NestedColumnWorker → BatchExchange →
-    /// NestedRowReader`, starts all column workers, and initializes the reader.
+    /// Wires up `RowGroupIterator → PageSource → ScheduledNestedColumn → BatchExchange →
+    /// NestedRowReader`, a [ScheduledNestedColumn] for each column, or a [NestedColumnWorker] for
+    /// each when the scheduler is switched off, starts them, and initializes the reader.
     /// When a filter is present, the reader evaluates it a record at a time.
     ///
     /// @param rowGroupIterator pre-configured iterator
@@ -145,6 +146,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     ///                prove match in full, and the reader counts matches from the first
     ///                row group they do not.
     /// @param batchSize records per batch, already resolved by the caller
+    /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#budgetRows])
     /// @return a [NestedRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
@@ -153,7 +155,8 @@ public final class NestedRowReader implements FileAwareRowReader {
                             boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
                             long maxRows,
-                            int batchSize) throws IOException {
+                            int batchSize,
+                            long budgetRows) throws IOException {
         ProjectedSchema decoded = projection.decoded();
         int projectedColumnCount = decoded.getProjectedColumnCount();
 
@@ -185,7 +188,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         if (!rowGroupIterator.hasLiveWorkItem()) {
             @SuppressWarnings("unchecked")
             BatchExchange<NestedBatch>[] none = new BatchExchange[0];
-            NestedRowReader reader = new NestedRowReader(none, new NestedColumnWorker[0], schema,
+            NestedRowReader reader = new NestedRowReader(none, new ColumnPipeline[0], schema,
                     projection.payload(), dataView, readerMatchLimit, recordMatcher, predicateView, tally,
                     rowGroupIterator);
             reader.exhausted = true;
@@ -201,7 +204,10 @@ public final class NestedRowReader implements FileAwareRowReader {
         // beyond the first file: statistics reach the reader per row group, on
         // NestedBatch.filterAlwaysMatches (see #1107).
         rowGroupIterator.planBatches(batchSize, maxRows);
-        NestedColumnWorker[] workers = new NestedColumnWorker[projectedColumnCount];
+        ColumnPipeline[] workers = new ColumnPipeline[projectedColumnCount];
+        ReadScheduler scheduler = ReadScheduler.ENABLED
+                ? new ReadScheduler(context, batchSize, budgetRows)
+                : null;
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
 
@@ -211,22 +217,27 @@ public final class NestedRowReader implements FileAwareRowReader {
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
-            BatchExchange<NestedBatch> buffer = BatchExchange.recycling(
-                    columnSchema.name(), () -> {
-                        NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
-                        return b;
-                    });
+            // A batch's arrays are allocated for it when it is filled, so a holder comes without any.
+            BatchExchange<NestedBatch> buffer = BatchExchange.recycling(columnSchema.name(), NestedBatch::new);
             NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                     schema.getRootNode(), columnSchema.columnIndex());
+            buffers[i] = buffer;
+            if (scheduler != null) {
+                workers[i] = new ScheduledNestedColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
+                        context.decompressorFactory(), layers, NestedColumnWorker.IndexMode.ALL_ITEMS,
+                        fixedListFastPathEnabled);
+                continue;
+            }
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(),
                     layers, NestedColumnWorker.IndexMode.ALL_ITEMS, fixedListFastPathEnabled);
 
-            buffers[i] = buffer;
             workers[i] = worker;
             worker.start();
+        }
+        if (scheduler != null && scheduler.hasColumns()) {
+            scheduler.start();
         }
 
         NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projection.payload(), dataView,
@@ -502,10 +513,10 @@ public final class NestedRowReader implements FileAwareRowReader {
                 tally.close();
             }
             if (columnWorkers != null) {
-                for (NestedColumnWorker worker : columnWorkers) {
+                for (ColumnPipeline worker : columnWorkers) {
                     worker.requestStop();
                 }
-                for (NestedColumnWorker worker : columnWorkers) {
+                for (ColumnPipeline worker : columnWorkers) {
                     worker.close();
                 }
             }

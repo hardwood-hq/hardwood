@@ -20,7 +20,8 @@ import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
 import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RowGroupIterator;
-import dev.hardwood.internal.reader.ScheduledColumn;
+import dev.hardwood.internal.reader.ScheduledFlatColumn;
+import dev.hardwood.internal.reader.ScheduledNestedColumn;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -63,9 +64,9 @@ final class ColumnCursor {
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
     /// detached, so every batch the cursor hands out is fresh and never reused. The batches
-    /// close where the batch plan of `rowGroupIterator` closes them. A flat column is a
-    /// [ScheduledColumn] added to `scheduler`, which starts it; `scheduler` is `null` when the
-    /// scheduler is switched off.
+    /// close where the batch plan of `rowGroupIterator` closes them. The column is a
+    /// [dev.hardwood.internal.reader.ScheduledColumn] added to `scheduler`, which starts it;
+    /// `scheduler` is `null` when the scheduler is switched off.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
@@ -79,9 +80,14 @@ final class ColumnCursor {
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
 
         if (isNested(layers, column)) {
-            // The nested worker publishes its own copy of the values, so a batch is
+            // A nested batch's arrays are allocated for it when it is filled, so a batch is
             // handed out without any.
             BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
+            if (scheduler != null) {
+                ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, pageSource, exchange, column,
+                        batchSize, context.decompressorFactory(), layers, indexMode, fixedListFastPathEnabled);
+                return new ColumnCursor(column, null, exchange, scheduled);
+            }
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), context.executor(),
@@ -93,7 +99,7 @@ final class ColumnCursor {
         // rows the batch plan puts in it.
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
         if (scheduler != null) {
-            ScheduledColumn scheduled = new ScheduledColumn(scheduler, pageSource, exchange, column, batchSize,
+            ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, pageSource, exchange, column, batchSize,
                     context.decompressorFactory(), null);
             return new ColumnCursor(column, exchange, null, scheduled);
         }

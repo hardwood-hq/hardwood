@@ -78,7 +78,7 @@ class ScheduledColumnCloseTest {
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchCapacity);
             ReadScheduler scheduler = new ReadScheduler(context, batchCapacity, batchCapacity);
-            ScheduledColumn scheduled = new ScheduledColumn(scheduler, stallingSource, exchange, column,
+            ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, stallingSource, exchange, column,
                     batchCapacity, context.decompressorFactory(), null);
             scheduler.start();
             assertThat(readStalled.await(5, TimeUnit.SECONDS)).as("the fetcher is held inside a page read").isTrue();
@@ -129,12 +129,12 @@ class ScheduledColumnCloseTest {
             CountDownLatch readsStalled = new CountDownLatch(2);
             CountDownLatch release = new CountDownLatch(1);
             ReadScheduler scheduler = new ReadScheduler(context, batchCapacity, batchCapacity);
-            ScheduledColumn first = stalledColumn(scheduler, iterator, 0, schema.getColumn(0),
+            ScheduledFlatColumn first = stalledColumn(scheduler, iterator, 0, schema.getColumn(0),
                     BatchExchange.detachingFlat(schema.getColumn(0).name(), batchCapacity), batchCapacity, readsStalled,
                     release, context);
             BatchExchange<BatchExchange.Batch> secondExchange = BatchExchange.detachingFlat(
                     schema.getColumn(1).name(), batchCapacity);
-            ScheduledColumn second = stalledColumn(scheduler, iterator, 1, schema.getColumn(1), secondExchange,
+            ScheduledFlatColumn second = stalledColumn(scheduler, iterator, 1, schema.getColumn(1), secondExchange,
                     batchCapacity, readsStalled, release, context);
             scheduler.start();
             assertThat(readsStalled.await(5, TimeUnit.SECONDS)).as("both fetchers are held inside a page read")
@@ -162,7 +162,7 @@ class ScheduledColumnCloseTest {
 
     /// A column of `scheduler` whose fetcher's first page read counts `stalled` down and is held
     /// until `release`.
-    private static ScheduledColumn stalledColumn(ReadScheduler scheduler, RowGroupIterator iterator, int index,
+    private static ScheduledFlatColumn stalledColumn(ReadScheduler scheduler, RowGroupIterator iterator, int index,
                                                      ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange,
                                                      int batchCapacity, CountDownLatch stalled, CountDownLatch release,
                                                      HardwoodContextImpl context) {
@@ -184,7 +184,7 @@ class ScheduledColumnCloseTest {
                 return super.next();
             }
         };
-        return new ScheduledColumn(scheduler, source, exchange, column, batchCapacity,
+        return new ScheduledFlatColumn(scheduler, source, exchange, column, batchCapacity,
                 context.decompressorFactory(), null);
     }
 

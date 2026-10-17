@@ -325,7 +325,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             buffers[i] = buffer;
             if (scheduler != null) {
-                workers[i] = new ScheduledColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
+                workers[i] = new ScheduledFlatColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
                         context.decompressorFactory(), columnFilter);
                 continue;
             }

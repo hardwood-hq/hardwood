@@ -618,7 +618,7 @@ public class ParquetFileReader implements Closeable {
                 ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize,
                         budgetRows(projection.decoded(), rowGroups))
                 : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
-                        filter, maxRows, batchSize);
+                        filter, maxRows, batchSize, budgetRows(projection.decoded(), rowGroups));
         return trackedChild(rowGroupIterator, reader);
     }
 

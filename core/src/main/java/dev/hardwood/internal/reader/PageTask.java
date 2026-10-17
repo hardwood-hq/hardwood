@@ -16,7 +16,7 @@ import java.util.List;
 ///
 /// The fetcher creates and places it, and the read's scheduler hands it to its task through the
 /// executor, which orders the fetcher's writes before the task's reads.
-final class PageTask {
+class PageTask {
 
     final PageInfo info;
     /// The file, row group and page ordinal the page came from, which a failure met while
@@ -31,6 +31,11 @@ final class PageTask {
     /// The read's row, counted in kept rows over every row group before, of the page's first kept
     /// record. Pages reach the decode pool in this order across the read's columns.
     final long firstRow;
+    /// The read's row after the page's last record, in its only element: known from its
+    /// metadata's record count, or once it is placed for a page whose metadata gives none;
+    /// [Long#MAX_VALUE] until then. Guarded by the column lock. Its column's read-ahead holds this
+    /// and not the task, which keeps a nested page's decoded arrays.
+    final long[] endRow = new long[1];
 
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
@@ -44,6 +49,8 @@ final class PageTask {
         this.batches = batches;
         this.decoder = decoder;
         this.firstRow = firstRow;
+        int records = info.records();
+        this.endRow[0] = records == PageInfo.UNKNOWN_RECORDS ? Long.MAX_VALUE : firstRow + records;
     }
 
     /// Whether the page stands for a row group the column is not read in.

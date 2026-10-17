@@ -5,7 +5,7 @@ Describes what `ColumnReader` exposes and how a batch reaches it: the layer mode
 Related documents:
 
 - [READ_PIPELINE.md](READ_PIPELINE.md): how pages become published batches (row-group iteration, `PageSource`, `ColumnWorker`, `BatchExchange`, threading, batch sizing, `ReaderConfig`)
-- [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (index modes, the drain-side real view, bulk copy, the fixed-size-list fast path)
+- [NESTED_DECODE.md](NESTED_DECODE.md): how definition and repetition levels become nested batches (cells, index modes, the real view built before publish, the fixed-size-list fast path)
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders and dictionaries
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): exact filtering on the column readers (selection and compaction)
 - [ROW_READER.md](ROW_READER.md): the row readers
@@ -133,14 +133,14 @@ Where the view is built depends on the read:
 
 | Read | Built by | Leaf values |
 |---|---|---|
-| Unfiltered | the drain, before publish (`IndexMode.REAL_VIEW`) | gathered on the drain into `NestedBatch.realValues`; raw levels are dropped |
-| Unfiltered, all-present batch | the drain, offsets only, no validity or gather map | pass through |
+| Unfiltered | the thread that fills the batch, before publish (`IndexMode.REAL_VIEW`) | gathered there into `NestedBatch.realValues`; raw levels are dropped |
+| Unfiltered, all-present batch | the filling thread, offsets only, no validity or gather map | pass through |
 | Fixed-size-list batch | arithmetic offsets, no validity | pass through |
 | Filtered | `ColumnReader`, lazily on first access, from the compacted levels (`IndexMode.REAL_VIEW_KEEP_LEVELS`) | gathered on first access |
 
-Building on the drain keeps the per-batch level scan off the single consumer thread. The drain-side modes and the fixed-size-list fast path are described in [NESTED_DECODE.md](NESTED_DECODE.md); the compaction that forces the lazy path is in [RECORD_FILTERING.md](RECORD_FILTERING.md).
+Building the view before publish keeps the per-batch level scan off the single consumer thread. The index modes and the fixed-size-list fast path are described in [NESTED_DECODE.md](NESTED_DECODE.md); the compaction that forces the lazy path is in [RECORD_FILTERING.md](RECORD_FILTERING.md).
 
-**Routing.** A column whose chain contributes any layer, or whose leaf repeats, decodes through `NestedColumnWorker`, because per-layer validity needs definition levels. A column with no layer takes `FlatColumnWorker`, publishes a `BatchExchange.Batch` with a typed value array and one leaf bitmap, and has no real view: its leaf array and validity are already real-items. `ColumnCursor.isNested` holds the rule, and `ColumnReader` applies the same rule to choose its accessor path.
+**Routing.** A column whose chain contributes any layer, or whose leaf repeats, decodes through its levels (`ScheduledNestedColumn`), because per-layer validity needs definition levels. A column with no layer is a flat scheduled column (`ScheduledFlatColumn`), publishes a `BatchExchange.Batch` with a typed value array and one leaf bitmap, and has no real view: its leaf array and validity are already real-items. `ColumnCursor.isNested` holds the rule, and `ColumnReader` applies the same rule to choose its accessor path.
 
 Tests: `ColumnReaderLayerModelTest`, `FixedSizeListFastPathReadTest`, `ColumnReaderExactFilterTest`.
 

@@ -445,122 +445,17 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
     }
 
-    /// Computes index structures (element validity and layer-indexed
-    /// multi-level offsets) on the batch before it is published. Set bits
-    /// indicate **present** values; `null` validity references mean every
-    /// item at that scope is present in this batch.
-    ///
-    /// `multiLevelOffsets` is indexed by **layer** (one slot per `STRUCT` /
-    /// `REPEATED` layer). `multiLevelOffsets[k]` is `null` for `STRUCT`
-    /// layers and sentinel-suffixed for `REPEATED` layers.
+    /// Computes the batch's index structures before it is published ([NestedIndex]). The
+    /// `REAL_VIEW` path builds them from the accumulators, which hold the batch's levels for
+    /// `[0, valueCount)` until the counts reset after publish, since the batch carries none.
     private void computeIndex(NestedBatch batch) {
         if (indexMode == IndexMode.REAL_VIEW) {
-            // Unfiltered ColumnReader: the consumer reads only the real-items view
-            // and values, so build both here on the drain (off the serial consumer)
-            // and skip the all-items index. An all-present batch has no phantom
-            // positions, so its offsets equal the all-items offsets: build just the
-            // lean offsets view (no per-layer validity or gather map) and pass the
-            // dense values through. A batch with phantom positions builds the full
-            // view and gathers the real leaf values. Building the view eagerly on the
-            // drain keeps reconstruction off the serial consumer for both shapes: a
-            // structural read gets its offsets without a consumer-side scan, and a
-            // flat leaf read simply ignores them.
-            boolean allPresent = batch.fixedListK > 0 || batch.allPresent
-                    || allDefsMax(batch.valueCount);
-            if (allPresent) {
-                batch.realValues = batch.values;
-                // With no phantom positions the real-items offsets equal the all-items
-                // offsets, so build just the boundaries (skipping the full projection's
-                // per-layer presence, leaf-validity, and gather-map work). A structural
-                // consumer reads these drain-built offsets without a consumer-side scan;
-                // a flat leaf consumer ignores them.
-                batch.realView = buildAllPresentView(batch);
-            }
-            else {
-                NestedLevelComputer.RealView rv = buildRealView(batch);
-                batch.realView = rv;
-                int[] map = rv.realToRawLeaf();
-                batch.realValues = map != null ? LeafCompaction.compact(batch.values, map) : batch.values;
-            }
-            batch.elementValidity = null;
-            batch.multiLevelOffsets = null;
-            return;
-        }
-        batch.realView = null;
-        batch.realValues = null;
-
-        if (indexMode == IndexMode.REAL_VIEW_KEEP_LEVELS) {
-            // Exact-filtered ColumnReader: applySelection compacts the batch from the
-            // raw levels (kept above) before the consumer reads it, then the consumer
-            // rebuilds the view lazily. Nothing is derived on the drain here; the
-            // all-items index is skipped, and the SelectionEngine derives the element
-            // validity of the predicate columns itself.
-            batch.elementValidity = null;
-            batch.multiLevelOffsets = null;
-            return;
-        }
-
-        if (batch.fixedListK > 0) {
-            // All elements present, boundaries at multiples of k: no validity and
-            // arithmetic layer offsets, skipping the O(valueCount) level scans.
-            batch.elementValidity = null;
-            batch.multiLevelOffsets = NestedLevelComputer.fixedListLayerOffsets(
-                    batch.fixedListK, batch.recordCount, layers);
-            return;
-        }
-
-        int[] defLevels = batch.definitionLevels;
-        int valueCount = batch.valueCount;
-
-        batch.elementValidity = NestedLevelComputer.computeElementValidity(
-                defLevels, valueCount, maxDefinitionLevel);
-
-        if (layers != null && layers.count() > 0 && valueCount > 0) {
-            batch.multiLevelOffsets = NestedLevelComputer.computeLayerOffsets(
-                    batch.repetitionLevels, valueCount, batch.recordCount, layers);
+            NestedIndex.compute(batch, nestedDefLevels, nestedRepLevels, maxDefinitionLevel, layers, indexMode);
         }
         else {
-            batch.multiLevelOffsets = null;
+            NestedIndex.compute(batch, batch.definitionLevels, batch.repetitionLevels, maxDefinitionLevel, layers,
+                    indexMode);
         }
-    }
-
-    /// True when every leaf in the batch is present (def at max) — no null/empty
-    /// parents, so a flat consumer needs neither compaction nor per-layer offsets.
-    private boolean allDefsMax(int n) {
-        for (int i = 0; i < n; i++) {
-            if (nestedDefLevels[i] != maxDefinitionLevel) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /// Full real-items view for a batch with phantom (null/empty parent) positions,
-    /// built on the drain so the serial consumer reads it without a scan. Scans the
-    /// def/rep levels from the accumulators ([#nestedDefLevels] / [#nestedRepLevels],
-    /// still intact for `[0, valueCount)` until the counts reset after publish) rather
-    /// than the batch, so the `REAL_VIEW` path can leave the batch's level arrays
-    /// `null`. An all-present batch takes the cheaper [#buildAllPresentView] instead.
-    private NestedLevelComputer.RealView buildRealView(NestedBatch batch) {
-        return NestedLevelComputer.computeRealView(
-                nestedDefLevels, nestedRepLevels,
-                batch.valueCount, batch.recordCount, maxDefinitionLevel, layers);
-    }
-
-    /// Lean real-items view for an all-present batch: only the layer offsets, which
-    /// (absent phantom positions) equal the all-items offsets. Every validity is
-    /// `null` (all present) and `realToRawLeaf` is `null` (the dense values are the
-    /// real-leaf values). Cheaper than [#buildRealView] — no per-layer presence,
-    /// leaf-validity, or gather-map scan — so a flat leaf consumer pays little for it
-    /// while a structural consumer reads the list boundaries off the drain.
-    private NestedLevelComputer.RealView buildAllPresentView(NestedBatch batch) {
-        int layerCount = layers.count();
-        int[][] offsets = batch.fixedListK > 0
-                ? NestedLevelComputer.fixedListLayerOffsets(batch.fixedListK, batch.recordCount, layers)
-                : NestedLevelComputer.computeLayerOffsets(
-                        nestedRepLevels, batch.valueCount, batch.recordCount, layers);
-        return new NestedLevelComputer.RealView(
-                offsets, new long[layerCount][], null, batch.valueCount, null);
     }
 
     // ==================== Nested Helpers ====================
