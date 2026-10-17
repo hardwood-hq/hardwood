@@ -217,6 +217,15 @@ abstract class ValueEncoder {
     /// Releases the dictionary's entries, keeping the capacity it reached for the next chunk.
     abstract void dropDictionary();
 
+    /// Offers the stored values `[from, to)` to `sketch` by their 64-bit `XxHash64`.
+    abstract void sketchStored(int from, int to, HyperLogLog sketch);
+
+    /// Interns every stored value into the dictionary, which the caller has emptied, writing value
+    /// `i`'s index to `indices[i]`, and empties the store: the inverse of resolving each index
+    /// through [#storeDictionaryValue]. `indices` holds at least as many slots as the store holds
+    /// values.
+    abstract void reinternStored(int[] indices);
+
     /// The number of distinct dictionary values assigned so far.
     abstract int dictionarySize();
 

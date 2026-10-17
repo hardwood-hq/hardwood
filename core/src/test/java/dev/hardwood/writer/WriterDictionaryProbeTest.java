@@ -7,6 +7,8 @@
  */
 package dev.hardwood.writer;
 
+import java.util.Random;
+
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InMemoryOutputFile;
@@ -16,6 +18,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -31,9 +34,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// front-loaded must keep its dictionary rather than be judged on its first few thousand values.
 class WriterDictionaryProbeTest {
 
-    /// Present values before the first probe, and the doubling step after it. Mirrors the
-    /// constants in `ColumnChunkBuffer`; a test that hard-codes them is the point, since moving
-    /// them changes where a chunk decides.
+    /// Present values before the first probe of a chunk with room for many values, and the
+    /// doubling step after it. Mirrors the constants in `ColumnChunkBuffer`; a test that
+    /// hard-codes them is the point, since moving them changes where a chunk decides.
     private static final int FIRST_PROBE = 8_192;
     private static final int SECOND_PROBE = 2 * FIRST_PROBE;
 
@@ -157,7 +160,108 @@ class WriterDictionaryProbeTest {
         }
     }
 
+    /// A chunk the row target holds to 6,000 records probes at a quarter of them and gives an
+    /// all-distinct dictionary up at half, where a fixed schedule would not probe at all.
+    @Test
+    void chunkCutByTheRowTargetProbesWithinIt() throws Exception {
+        int[] values = new int[6_000];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i * 31 + 5;
+        }
+
+        ColumnMetaData meta = writeAndRead(values, WriterConfig.builder().rowGroupTargetRows(values.length).build());
+
+        assertThat(meta.encodings()).doesNotContain(Encoding.RLE_DICTIONARY);
+        assertThat(meta.statistics().distinctCount()).as("distinct_count").isNull();
+    }
+
+    /// Interning an all-distinct `INT32` retains about six times its four bytes, so under a small
+    /// byte target a row group that never probes is cut at about 11,000 records. Probing within
+    /// the chunk's budget gives the dictionary up early, after which a value costs its width, and
+    /// the same target holds several times the records.
+    @Test
+    void chunkUnderASmallByteTargetStopsInterningAndHoldsMoreRecords() throws Exception {
+        int[] values = new int[200_000];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i * 31 + 5;
+        }
+        InMemoryOutputFile out = write(values, WriterConfig.builder().rowGroupBufferTargetBytes(256 * 1024).build());
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
+            RowGroup first = reader.getFileMetaData().rowGroups().get(0);
+            assertThat(first.numRows()).isGreaterThan(SECOND_PROBE);
+            assertThat(first.columns().get(0).metaData().statistics().distinctCount()).as("distinct_count").isNull();
+            assertThat(readInts(reader, values.length)).containsExactly(values);
+        }
+    }
+
+    /// Distinct through both probes, so the dictionary is given up, and repeating afterwards. The
+    /// sketch at flush counts few enough distinct values for a dictionary to win, so flush interns
+    /// the chunk again and the exact comparison keeps the dictionary, which states the exact count.
+    @Test
+    void frontLoadedColumnGivenUpAtAProbeIsRecoveredAtFlush() throws Exception {
+        // 60,000 records would probe at 15,000; the cap holds the probes to 8,192 and 16,384, both
+        // inside the 30,500 distinct values.
+        long[] values = new long[60_000];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = (i < 30_500 ? i : i % 30_500) * 7919L + 3;
+        }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(values.length).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneLongColumn(), config)) {
+            writer.columnWriter().writeBatch(batch -> batch.longs(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY);
+            assertThat(meta.statistics().distinctCount()).as("distinct_count").isEqualTo(30_500L);
+            long[] read = new long[values.length];
+            int written = 0;
+            try (ColumnReader column = reader.columnReader(0)) {
+                while (column.nextBatch()) {
+                    System.arraycopy(column.getLongs(), 0, read, written, column.getValueCount());
+                    written += column.getValueCount();
+                }
+            }
+            assertThat(read).containsExactly(values);
+        }
+    }
+
+    /// Values drawn uniformly from 14,000, in chunks of 8,192: a dictionary loses on the chunk's
+    /// first few thousand values, nearly all new, and wins over the chunk, whose distinct ratio
+    /// falls as it fills. The probes see the count growing ever more slowly and keep interning,
+    /// so every chunk is decided at flush and keeps its dictionary.
+    @Test
+    void columnWhoseDistinctRatioFallsKeepsItsDictionaryInSmallChunks() throws Exception {
+        int rows = 8_192;
+        long[] values = new long[8 * rows];
+        Random random = new Random(7);
+        for (int i = 0; i < values.length; i++) {
+            values[i] = random.nextInt(14_000) * 7919L;
+        }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(rows).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneLongColumn(), config)) {
+            writer.columnWriter().writeBatch(batch -> batch.longs(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(out.buffer()))) {
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(8).allSatisfy(group -> {
+                ColumnMetaData meta = group.columns().get(0).metaData();
+                assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY);
+                assertThat(meta.statistics().distinctCount()).as("distinct_count").isNotNull();
+            });
+        }
+    }
+
     // ==================== Helpers ====================
+
+    private static FileSchema oneLongColumn() {
+        return FileSchema.builder("m")
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+    }
 
     private static FileSchema oneIntColumn() {
         return FileSchema.builder("m")
@@ -166,15 +270,23 @@ class WriterDictionaryProbeTest {
     }
 
     private static InMemoryOutputFile write(int[] values) throws Exception {
+        return write(values, WriterConfig.defaults());
+    }
+
+    private static InMemoryOutputFile write(int[] values, WriterConfig config) throws Exception {
         InMemoryOutputFile out = OutputFile.inMemory();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneIntColumn())) {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneIntColumn(), config)) {
             writer.columnWriter().writeBatch(batch -> batch.ints(0, values));
         }
         return out;
     }
 
     private static ColumnMetaData writeAndRead(int[] values) throws Exception {
-        InMemoryOutputFile out = write(values);
+        return writeAndRead(values, WriterConfig.defaults());
+    }
+
+    private static ColumnMetaData writeAndRead(int[] values, WriterConfig config) throws Exception {
+        InMemoryOutputFile out = write(values, config);
         try (ParquetFileReader reader = ParquetFileReader.open(
                 InputFile.of(out.buffer()))) {
             assertThat(reader.getFileMetaData().rowGroups())

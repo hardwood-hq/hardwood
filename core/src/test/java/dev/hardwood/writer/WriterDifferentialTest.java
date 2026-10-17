@@ -321,6 +321,46 @@ class WriterDifferentialTest {
         assertThat(actual).containsExactlyElementsOf(expected);
     }
 
+    /// A dictionary given up at a probe and interned again at flush, from every value the chunk
+    /// stored.
+    @Test
+    void duckDbReadsDictionaryInternedAgainAtFlush(@TempDir Path dir) throws Exception {
+        int n = 60_000;
+        long[] v = new long[n];
+        int[] r = new int[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = (i < 30_500 ? i : i % 30_500) * 7919L + 3;
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+
+        Path file = dir.resolve("recovered.parquet");
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(n).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.ints(0, r).longs(1, v));
+        }
+
+        List<Long> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getLong("v"));
+            }
+        }
+
+        List<Long> expected = new ArrayList<>(n);
+        for (long value : v) {
+            expected.add(value);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
+
     @Test
     void duckDbReadsPlainChunkOfHighCardinalityColumn(@TempDir Path dir) throws Exception {
         // Every value distinct, so the chunk is written PLAIN with no dictionary page. DuckDB

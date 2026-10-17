@@ -175,6 +175,25 @@ final class BinaryValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void sketchStored(int from, int to, HyperLogLog sketch) {
+        byte[] data = plainData.array();
+        for (int i = from; i < to; i++) {
+            int start = plainOffsets[i];
+            sketch.offer(XxHash64.hash(data, start, plainOffsets[i + 1] - start));
+        }
+    }
+
+    @Override
+    void reinternStored(int[] indices) {
+        byte[] data = plainData.array();
+        for (int i = 0; i < plainCount; i++) {
+            indices[i] = dictionary.intern(data, plainOffsets[i], plainOffsets[i + 1]);
+        }
+        plainCount = 0;
+        plainData.reset();
+    }
+
+    @Override
     long dictionaryPlainBytes() {
         // The dictionary body is PLAIN: raw bytes for FIXED_LEN_BYTE_ARRAY, each value behind a
         // 4-byte length prefix for BYTE_ARRAY.

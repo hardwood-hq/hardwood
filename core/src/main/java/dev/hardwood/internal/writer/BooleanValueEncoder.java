@@ -95,6 +95,16 @@ final class BooleanValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void sketchStored(int from, int to, HyperLogLog sketch) {
+        throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
+    }
+
+    @Override
+    void reinternStored(int[] indices) {
+        throw new UnsupportedOperationException("BOOLEAN columns are never dictionary-encoded");
+    }
+
+    @Override
     long dictionaryPlainBytes() {
         return 0;
     }

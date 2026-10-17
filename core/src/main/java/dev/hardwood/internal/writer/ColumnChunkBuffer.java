@@ -89,12 +89,15 @@ import dev.hardwood.writer.ColumnEncoding;
 /// page's largest index rather than the dictionary's final size, so a page whose values sit low
 /// in the dictionary pays only for the bits they need.
 ///
-/// That same comparison also runs **while values arrive**, over the prefix the chunk holds, at
-/// 8192 present values and doubling from there. A dictionary losing two probes running is given
-/// up on the spot, so a column whose values are all distinct stops interning after a few
-/// thousand of them rather than hashing a row group's worth into a table flush would reject.
-/// The produced file is unaffected — a chunk abandoned early is one the flush comparison would
-/// have decided against, and carries the same encoding either way.
+/// **While values arrive**, the dictionary is judged first at a quarter of the values the chunk is
+/// projected to hold, between 1,024 and 8,192, then each time the values it holds double
+/// ([#probeDictionary]): its distinct count is
+/// extrapolated to the projected length, and a dictionary predicted to lose there twice in a row is
+/// given up, so a column whose values are all distinct stops interning early rather than hashing a
+/// row group's worth into a table flush would reject. A
+/// prefix can misjudge the chunk: at flush, a chunk given up at a verdict estimates its distinct
+/// values from a sketch of what it stored ([HyperLogLog]) and is interned again where a
+/// dictionary might win, the exact comparison then deciding.
 ///
 /// Under any other policy the encoding is settled before a value arrives: no dictionary is built,
 /// so the chunk pays neither the interning nor the index array and states no `distinct_count`.
@@ -172,22 +175,55 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// which it can no longer state its cardinality and writes no `distinct_count`.
     private boolean cardinalityKnown = true;
 
-    /// Present-value count at which this chunk's dictionary is next weighed against `PLAIN`,
-    /// doubling after each probe. Counted in values rather than pages, a chunk's pages not
-    /// existing until it is flushed.
-    private int nextProbeValues = FIRST_PROBE_VALUES;
-    /// Consecutive probes at which the dictionary was losing. The dictionary is given up on the
-    /// second, which is what keeps a column whose distinct values are front-loaded — all
-    /// distinct through one probe, repeating afterwards — from losing a dictionary that pays.
-    private int losingProbes;
+    /// Present-value count at which this chunk next acts on its dictionary: first to calibrate, then
+    /// to judge it, at a quarter of the values it is projected to hold and doubling from there.
+    /// Counted in values rather than pages, a chunk's pages not existing until it is flushed.
+    private int nextProbeValues = CALIBRATION_VALUES;
+    /// Whether this chunk has estimated what it will hold from what interning costs it.
+    private boolean calibrated;
+    /// The values the chunk is projected to hold when its row group is cut: estimated at
+    /// calibration, then the row group's projection at each slice end ([#publishProjection]).
+    private long projectedValues;
+    /// Verdicts taken so far; the first falls at a fraction of the projection, which a later
+    /// projection may move until it is taken.
+    private int verdicts;
+    /// The interned values and distinct values at the previous verdict, or at calibration before
+    /// the first, from which a verdict extrapolates where the distinct count is heading.
+    private int anchorValues;
+    private int anchorDistinct;
+    /// Records of a repeated column begun in this chunk, from which its values per record convert
+    /// the row group's record counts into values.
+    private int recordCount;
+    /// Consecutive verdicts at which the dictionary was predicted to lose. The dictionary is given
+    /// up on the second: one reading of a short prefix can mistake a column whose distinct values
+    /// are front-loaded, or a noisy one, for one that keeps minting new values.
+    private int losingVerdicts;
 
-    /// Present values a chunk holds before its dictionary is first weighed against `PLAIN`. Far
-    /// enough in that the dictionary's fixed cost is fairly sampled and the index bit width has
-    /// settled; early enough that a chunk which abandons here never interns the rest.
-    private static final int FIRST_PROBE_VALUES = 8192;
+    /// Interned values at which a chunk measures what interning costs it per value, from which it
+    /// estimates what it will hold before any slice has ended ([#calibrate]).
+    static final int CALIBRATION_VALUES = 512;
 
-    /// Consecutive losing probes that give the dictionary up.
-    private static final int LOSING_PROBES_TO_ABANDON = 2;
+    /// Bounds on the first verdict, which falls at a quarter of the values the chunk is projected to
+    /// hold: the lower keeps a short prefix's noise from reading as a trend, the upper keeps a chunk
+    /// with room for many values from interning far before it is first judged.
+    static final int MIN_FIRST_VERDICT_VALUES = 1024;
+    static final int MAX_FIRST_VERDICT_VALUES = 8192;
+
+    /// The share of the projected values at which the first verdict falls.
+    private static final int FIRST_VERDICT_DIVISOR = 4;
+
+    /// Consecutive losing verdicts that give the dictionary up.
+    private static final int LOSING_VERDICTS_TO_ABANDON = 2;
+
+    /// The equal share of the row group's byte target this chunk can expect to hold, and the
+    /// row group's record target: together they bound how many values the chunk will take until
+    /// the row group projects it.
+    private final long budgetBytes;
+    private final int targetRows;
+
+    /// Whether a verdict gave the dictionary up, so flush sketches the stored values and interns the
+    /// chunk again where the dictionary might have won after all.
+    private boolean abandonedAtVerdict;
 
     /// This column's resolved encoding policy. [ColumnEncoding#AUTO] leaves the choice to the
     /// size comparison at flush; anything else names the encoding every chunk of this column
@@ -217,9 +253,13 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param storeCapacity the most any of this chunk's `int`-indexed stores may hold
     /// @param bloomFilterFpp the false-positive probability of the column's Bloom filter, or
     ///        [#NO_BLOOM_FILTER]
+    /// @param budgetBytesPerColumn the row group's byte target divided among its columns
+    /// @param targetRows the records at which the row group is cut
     ColumnChunkBuffer(ColumnSchema column, int pageTargetBytes, int pageTargetRows, long budgetBytesPerColumn,
-                      ColumnEncoding encoding, int statisticsTruncationLength,
+                      int targetRows, ColumnEncoding encoding, int statisticsTruncationLength,
                       Compressor compressor, CompressionCodec codec, int storeCapacity, double bloomFilterFpp) {
+        this.budgetBytes = budgetBytesPerColumn;
+        this.targetRows = targetRows;
         this.type = column.type();
         this.maxDefLevel = column.maxDefinitionLevel();
         this.maxRepLevel = column.maxRepetitionLevel();
@@ -305,7 +345,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     /// Appends the run of present values `[from, from + count)`, interned or stored as [#accept]
     /// takes each one. Interning goes in steps that end where `accept` would act on a value
-    /// before taking the next: at the next probe of the dictionary, and before the value that
+    /// before taking the next: at the next verdict on the dictionary, and before the value that
     /// could fill it.
     private void appendPresent(int from, int count) {
         if (defLevels != null) {
@@ -316,8 +356,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         while (remaining > 0) {
             int taken = remaining;
             if (dictionaryAlive) {
-                // Doubling takes the probe count past `Integer.MAX_VALUE` once a chunk has held a
-                // billion values, after which no index count reaches it and no probe fires.
+                // Doubling takes the verdict count past `Integer.MAX_VALUE` once a chunk has held a
+                // billion values, after which no index count reaches it and no verdict is taken.
                 int toProbe = nextProbeValues > 0 ? nextProbeValues - indexCount : Integer.MAX_VALUE;
                 // Each value adds at most one entry, so a step this long cannot assign the last
                 // index before its final value.
@@ -362,6 +402,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     @Override
     public void accept(int repetitionLevel, int definitionLevel, int valueIndex) {
         boolean present = valueIndex >= 0;
+        if (repetitionLevel == 0) {
+            recordCount++;
+        }
         if (maxRepLevel > 0) {
             repLevels.write(repetitionLevel);
         }
@@ -386,8 +429,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 plainCount++;
             }
             presentCount++;
-            // After the count takes this value, so the probe weighs exactly what the chunk
-            // holds — the same predicate flush applies, on a prefix.
+            // After the count takes this value, so the verdict weighs exactly what the chunk
+            // holds.
             if (dictionaryAlive && indexCount == nextProbeValues) {
                 probeDictionary();
             }
@@ -395,30 +438,166 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         entryCount++;
     }
 
-    /// Weighs the dictionary against `PLAIN` over the values interned so far and gives it up once
-    /// it has lost [#LOSING_PROBES_TO_ABANDON] probes in a row, so a column whose values are all
-    /// distinct stops interning after a few thousand of them instead of hashing a row group's
-    /// worth into a table the flush comparison then rejects.
-    ///
-    /// Losing twice in a row rather than once is what separates a column that is genuinely
-    /// all-distinct from one whose distinct values are merely front-loaded. The latter looks the
-    /// same at the first probe and has stopped minting new values by the second, where its
-    /// distinct ratio has halved and the comparison has swung back to the dictionary; it keeps
-    /// what it has and is decided at flush, as it is when no probe fires at all.
+    /// Calibrates on the first call and judges the dictionary on every later one: it is predicted
+    /// over the values the chunk is projected to hold ([#mayWinAt]), and given up on the second
+    /// consecutive prediction that it loses. A verdict reads the projection the row group last
+    /// published, which every column holds alike, so it does not depend on where in the slice the
+    /// chunk is appended.
     private void probeDictionary() {
-        if (dictionaryWins()) {
-            losingProbes = 0;
-        }
-        else if (++losingProbes == LOSING_PROBES_TO_ABANDON) {
-            giveUpDictionary();
+        if (!calibrated) {
+            calibrate();
             return;
         }
-        nextProbeValues *= 2;
+        verdicts++;
+        long horizon = Math.max(indexCount, projectedValues);
+        boolean loses = !mayWinAt(horizon, anchorValues, anchorDistinct);
+        if (loses && ++losingVerdicts == LOSING_VERDICTS_TO_ABANDON) {
+            abandonDictionary();
+            return;
+        }
+        if (!loses) {
+            losingVerdicts = 0;
+        }
+        anchorValues = indexCount;
+        anchorDistinct = values.dictionarySize();
+        nextProbeValues = (int) Math.min(Integer.MAX_VALUE, 2L * indexCount);
+    }
+
+    /// Takes the row group's projection of the records it holds when it is cut, at the end of a
+    /// slice, as the values this chunk will hold at its values per record. Before the first verdict
+    /// it also moves that verdict to a quarter of the new projection, or to the next value where
+    /// the chunk is already past it.
+    ///
+    /// @param projectedRecords the records the row group is projected to hold when it is cut
+    void publishProjection(long projectedRecords) {
+        projectedValues = (long) (projectedRecords * valuesPerRecord());
+        if (calibrated && verdicts == 0 && dictionaryAlive) {
+            nextProbeValues = Math.max(indexCount + 1, firstVerdict());
+        }
+    }
+
+    private int firstVerdict() {
+        return (int) Math.clamp(projectedValues / FIRST_VERDICT_DIVISOR, MIN_FIRST_VERDICT_VALUES, MAX_FIRST_VERDICT_VALUES);
+    }
+
+    /// Present values per record: one for a column that repeats nowhere, at most one where it is
+    /// null, and what the chunk has seen so far for a repeated one.
+    private double valuesPerRecord() {
+        return maxRepLevel == 0 ? 1 : (double) presentCount / Math.max(1, recordCount);
+    }
+
+    /// Whether the dictionary is predicted to win over `horizon` values, from `distinctThen`
+    /// distinct values at `valuesThen` and what the chunk holds now.
+    ///
+    /// A column drawing from a bounded set of values mints new ones ever more slowly, so its
+    /// distinct ratio falls as the chunk fills and a dictionary that loses on a prefix can win over
+    /// the chunk. Values drawn uniformly from `D` distinct ones reach `D(1 − e^(−n/D))` after `n`;
+    /// the growth between the two points fixes `D`, and the curve through the current point gives
+    /// the count at `horizon`. A count that grew as fast as the values extrapolates linearly. The
+    /// prediction errs towards the dictionary on data that saturates faster than uniform draws,
+    /// which keeps the chunk interning and leaves the decision to the exact comparison at flush.
+    private boolean mayWinAt(long horizon, int valuesThen, int distinctThen) {
+        int valuesNow = indexCount;
+        int distinctNow = values.dictionarySize();
+        double growth = (double) distinctNow / distinctThen;
+        double span = (double) valuesNow / valuesThen;
+        double distinct;
+        if (growth >= span) {
+            distinct = (double) distinctNow * horizon / valuesNow;
+        }
+        else if (growth <= 1) {
+            distinct = distinctNow;
+        }
+        else {
+            double d = uniformRange(valuesThen, valuesNow, growth);
+            distinct = distinctNow * -Math.expm1(-horizon / d) / -Math.expm1(-valuesNow / d);
+        }
+        double entryBits = (double) values.dictionaryPlainBytes() * Byte.SIZE / distinctNow;
+        double plainBits = (double) values.plainValueBits(presentCount) / presentCount;
+        double dictionaryBits = distinct * entryBits
+                + (double) horizon * LevelEncoder.bitWidth((int) Math.min(Math.ceil(distinct) - 1, Integer.MAX_VALUE));
+        return dictionaryBits < horizon * plainBits;
+    }
+
+    /// The `D` for which uniform draws from `D` values grow by `growth` from `valuesThen` draws
+    /// to `valuesNow`: a growth that rises with `D`, from 1 towards `valuesNow / valuesThen`,
+    /// so a bisection on its logarithm finds it.
+    private static double uniformRange(int valuesThen, int valuesNow, double growth) {
+        double low = Math.log(valuesThen * 1e-3);
+        double high = Math.log(valuesNow * 1e9);
+        for (int i = 0; i < 64; i++) {
+            double mid = (low + high) / 2;
+            double d = Math.exp(mid);
+            double atMid = -Math.expm1(-valuesNow / d) / -Math.expm1(-valuesThen / d);
+            if (atMid < growth) {
+                low = mid;
+            }
+            else {
+                high = mid;
+            }
+        }
+        return Math.exp((low + high) / 2);
+    }
+
+    /// Estimates the values this chunk will hold until the row group first projects them, and sets
+    /// the first verdict at a quarter of that, within [#MIN_FIRST_VERDICT_VALUES] and
+    /// [#MAX_FIRST_VERDICT_VALUES].
+    ///
+    /// What a value costs is measured rather than derived from the type: a dictionary entry's
+    /// cost depends on value lengths the schema does not state. The estimate takes the chunk's
+    /// equal share of the row group's byte target and its record target; a projection the row
+    /// group has already published takes precedence.
+    private void calibrate() {
+        calibrated = true;
+        // The value side as held, and the levels at their per-entry charge: a flat run's levels
+        // are filled ahead of its values, so the level stores are not yet where the values are.
+        long held = Math.max(1, values.retainedBytes() + (long) indexCount * (Integer.BYTES + levelBytesPerEntry));
+        // Divided first where the product would overflow, a target that large leaving the
+        // estimate far above the cap either way.
+        long fromBudget = budgetBytes <= Long.MAX_VALUE / indexCount
+                ? budgetBytes * indexCount / held
+                : budgetBytes / held * indexCount;
+        if (projectedValues == 0) {
+            projectedValues = Math.min(fromBudget, (long) (targetRows * valuesPerRecord()));
+        }
+        anchorValues = indexCount;
+        anchorDistinct = values.dictionarySize();
+        nextProbeValues = Math.max(indexCount + 1, firstVerdict());
+    }
+
+    /// Gives the dictionary up after its second losing verdict, leaving flush to tell whether a
+    /// dictionary might win over the whole chunk after all.
+    private void abandonDictionary() {
+        giveUpDictionary();
+        abandonedAtVerdict = true;
+    }
+
+    /// Interns the chunk again where a sketch of its stored values says a dictionary might win
+    /// over the whole chunk; the flush comparison then decides on the exact count. A chunk whose
+    /// values could fill the dictionary's table is not recovered.
+    private void recoverDictionary() {
+        abandonedAtVerdict = false;
+        if (plainCount >= LAST_DICTIONARY_INDEX) {
+            return;
+        }
+        HyperLogLog sketch = new HyperLogLog();
+        values.sketchStored(0, plainCount, sketch);
+        if (!sketch.dictionaryMightWin(presentCount, ceilDiv(values.plainValueBits(presentCount), Byte.SIZE))) {
+            return;
+        }
+        if (indices.length < plainCount) {
+            indices = new int[ValueEncoder.grownCapacity(indices.length, plainCount)];
+        }
+        values.reinternStored(indices);
+        indexCount = plainCount;
+        plainCount = 0;
+        dictionaryAlive = true;
+        cardinalityKnown = true;
     }
 
     /// Turns the values interned so far back into stored values and releases the dictionary, so
-    /// the chunk carries its values once rather than twice. Called when a probe has found the
-    /// dictionary losing twice running, and at flush when the comparison decides against it.
+    /// the chunk carries its values once rather than twice. Called when two verdicts in a row
+    /// predict the dictionary losing, and at flush when the comparison decides against it.
     private void giveUpDictionary() {
         for (int i = 0; i < indexCount; i++) {
             values.storeDictionaryValue(indices[i]);
@@ -451,8 +630,15 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         dictionaryPageUncompressedSize = 0;
         dictionaryAlive = values.dictionaryCapable();
         cardinalityKnown = true;
-        nextProbeValues = FIRST_PROBE_VALUES;
-        losingProbes = 0;
+        nextProbeValues = CALIBRATION_VALUES;
+        calibrated = false;
+        projectedValues = 0;
+        verdicts = 0;
+        anchorValues = 0;
+        anchorDistinct = 0;
+        recordCount = 0;
+        losingVerdicts = 0;
+        abandonedAtVerdict = false;
     }
 
     /// The bytes this chunk retains: its level streams a byte per entry, its dictionary indices,
@@ -563,6 +749,9 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// Touches nothing but this chunk's own state and the shared, stateless [Compressor], so the
     /// chunks of one row group can be encoded on different threads.
     Flushed encodeTo(ChunkSink sink, ColumnSchema column) throws IOException {
+        if (abandonedAtVerdict) {
+            recoverDictionary();
+        }
         // Read the cardinality before the dictionary can be given up below: a chunk that still
         // has the structure it counted with can state the count exactly, whichever encoding the
         // comparison then chooses.

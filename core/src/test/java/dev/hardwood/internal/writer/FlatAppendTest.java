@@ -44,6 +44,7 @@ class FlatAppendTest {
 
     private static final int RECORDS_PER_BATCH = 20_000;
     private static final int BATCHES = 2;
+    private static final int CHUNK_RECORDS = RECORDS_PER_BATCH * BATCHES;
 
     /// Where the column sits: its own repetition and the optional structs around it.
     enum Shape {
@@ -62,7 +63,11 @@ class FlatAppendTest {
         ALL_DISTINCT,
         /// Distinct through the first probe, repeating after: the dictionary loses the first probe
         /// and wins the second, so it survives.
-        FRONT_LOADED
+        FRONT_LOADED,
+        /// Distinct through both probes, then repeating the chunk's first values: the dictionary
+        /// is given up at a probe, and the types whose dictionary wins over the chunk are interned
+        /// again at flush.
+        RECOVERED
     }
 
     static Stream<Arguments> cases() {
@@ -110,6 +115,10 @@ class FlatAppendTest {
                     flat.append(shredder, source, 0, from, count);
                     shredded.appendShredded(shredder, source, 0, from, count);
                     from += count;
+                    // As the row group does at a slice's end, with the chunk's own length as the
+                    // projection, so both paths are judged against the same one.
+                    flat.publishProjection(CHUNK_RECORDS);
+                    shredded.publishProjection(CHUNK_RECORDS);
                 }
             }
             assertThat(flat.retainedBytes()).isEqualTo(shredded.retainedBytes());
@@ -129,7 +138,7 @@ class FlatAppendTest {
     private static ColumnChunkBuffer buffer(FileSchema schema, ColumnEncoding encoding, double bloomFilterFpp) {
         // Small pages, so a chunk has many and the page cuts are compared too.
         return new ColumnChunkBuffer(schema.getColumn(0), 4096, WriterConfig.DEFAULT_PAGE_TARGET_ROWS, 1 << 20,
-                encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
+                RowGroupBuffer.MAX_ROWS, encoding, 64, new CompressorFactory().getCompressor(CompressionCodec.UNCOMPRESSED),
                 CompressionCodec.UNCOMPRESSED, RowGroupBuffer.MAX_STORE_CAPACITY, bloomFilterFpp);
     }
 
@@ -212,6 +221,11 @@ class FlatAppendTest {
                 case FEW -> record % 7;
                 case ALL_DISTINCT -> record;
                 case FRONT_LOADED -> record < 9_000 ? record : record % 50;
+                case RECOVERED -> {
+                    int chunkStart = record - record % CHUNK_RECORDS;
+                    int position = record % CHUNK_RECORDS;
+                    yield position < 24_000 ? record : chunkStart + position % 5_000;
+                }
             };
         }
         return switch (type) {

@@ -134,15 +134,23 @@ A chunk that loses resolves its interned indices back into stored values (`Colum
 
 ### Early abandonment
 
-The same comparison also runs while values arrive, over the prefix the chunk holds, at a fixed schedule of present-value counts that doubles from a first probe of a few thousand values (`FIRST_PROBE_VALUES`). A dictionary losing **two consecutive probes** is given up on the spot, so a column whose values are all distinct stops interning at its second probe instead of hashing a row group's worth into a table the flush comparison would reject.
+While values arrive, the chunk judges its dictionary first at a quarter of the values it is projected to hold, but at no fewer than 1,024 and no more than 8,192 values, then each time the values it holds double. A chunk projected to hold 131,072 values is judged at 8,192, 16,384, 32,768, 65,536 and 131,072. A verdict extrapolates the chunk's distinct count to the projected length and asks the flush comparison of that count; a dictionary predicted to lose **at two verdicts in a row** is given up, so an all-distinct column stops interning early instead of hashing a row group's worth into a table flush would reject. Two verdicts rather than one keep a short prefix's noise from reading as a trend, and give a front-loaded column a second, longer look (`ColumnChunkBuffer.probeDictionary`).
 
-The probe is the flush predicate evaluated earlier against the same fields, through the same `giveUpDictionary`. Where prefix and chunk agree the produced file is byte-identical and only the work differs. The schedule counts present values because a chunk has no pages until flush.
+**The extrapolation.** A column drawing from a bounded set mints new values ever more slowly, so a dictionary losing on a prefix can win over the chunk. A verdict fits uniform draws from `D` values, whose distinct count after `n` draws is `D(1 − e^(−n/D))`, to the count at the previous verdict and the count now, and reads the curve at the projected length; a count that grew as fast as the values extrapolates linearly (`ColumnChunkBuffer.mayWinAt`). Data that saturates faster than the model errs towards keeping the dictionary, which costs interning, never the exact decision.
 
-Two consecutive losses, rather than one, protect a column whose distinct values are front-loaded: all distinct through the first probe and repeating afterwards. Such a column has stopped minting values by the second probe, its distinct ratio has halved, and the comparison has swung back to the dictionary; it keeps its dictionary and is decided at flush. The predicate is not a knife edge: for a fixed-width type of width `W` the dictionary loses only when the distinct ratio exceeds about `1 − b/(8W)` for index bit width `b`, which is where the ratio is also stable. A column that looks all-distinct through the second probe and saturates only later is the residual risk: it is written `PLAIN` where a dictionary would have paid. The file is correct either way.
+**The projection.** Under a byte target the columns depend on each other: a row group is cut when what all its columns retain reaches the target, interning an all-distinct value retains several times its width, so whether one column keeps its dictionary changes how many records the row group holds, and with it how long every other chunk is. At the end of each slice, when every column holds the same records, the row group projects the records it will hold when cut from how far what it retains is from the byte target, within the record target, and publishes that to every chunk, which converts it at its own values per record (`RowGroupBuffer.publishProjection`). A verdict reads the last published projection, so it does not depend on where in the schema the column sits, and reads the other columns' cost: a column among cheap neighbours looks further ahead than its equal share of the target. Before the first slice ends, the chunk estimates the projection itself from what interning has cost it over its first few hundred values and its equal share of the targets (`ColumnChunkBuffer.calibrate`), the cost measured rather than derived from the type because a binary entry's cost depends on lengths the schema does not state.
 
-A chunk abandoned early states no `distinct_count`, having thrown away what it counted with. Probe state is per chunk and resets with each row group.
+### Recovery at flush
 
-### What bounds a dictionary
+A column distinct through both verdicts and repeating only later is given up wrongly, and extrapolation cannot see it. At flush, a chunk given up at a verdict therefore estimates its distinct values with a HyperLogLog sketch over every value it stored (`HyperLogLog`), and is interned again where the estimate says a dictionary might win; the exact comparison then decides. A value hashes the same at every occurrence, so the estimate depends on the set of values and not on their order: later values repeating the prefix and later values repeating among themselves read alike. The sketch holds 16,384 one-byte registers and is read with Ertl's improved estimator, for an error of about 0.8% whatever the chunk's length or distinct count, and the estimate is read two standard errors low, so a chunk near the break-even is interned again and decided exactly. It runs while the chunk is encoded, so it costs the append path nothing, retains nothing against the byte target, and runs in parallel across chunks. It decides only whether to pay for the re-intern, so a wrong estimate costs work or a missed dictionary, never a different file for the same input.
+
+A chunk given up and not recovered states no `distinct_count`. Verdict state is per chunk and resets with each row group.
+
+The estimate charges each distinct value the chunk's average stored width. For a fixed-width type that is exact, so a dictionary given up wrongly is recovered unless the count errs past the margin, and the misses that remain are chunks within about the margin of the break-even. For `BYTE_ARRAY`, distinct values much shorter than the values that repeat make the dictionary look larger than it is, and such a chunk can be missed further from the break-even. A kept dictionary never loses: it is always decided exactly at flush.
+
+Tests: `WriterDictionaryProbeTest`, `FlatAppendTest`, `ValueEncoderReinternTest`, `HyperLogLogTest`, `WriterDictionaryDecisionAuditTest`.
+
+### Dictionary size
 
 A dictionary has no size limit of its own beyond the structural ones: a chunk gives its dictionary up when the hash table is full (`DictionaryEncoder.MAX_SIZE`, the last size whose next resize fits an `int`; untested, the limit being out of a test's reach), and the flush comparison never chooses a dictionary whose page body would exceed a store's capacity. Otherwise it is part of what the chunk retains, and what a row group retains is what `rowGroupBufferTargetBytes` is compared against ([WRITER.md](WRITER.md)), so a large dictionary spends the row group's budget and the row group is cut sooner. The byte target bounds memory without deciding an encoding: a column whose dictionary is large but pays keeps it. The probes bound work: they stop a losing dictionary from growing. A limit that forced `PLAIN` would conflate the two, writing a column just past it `PLAIN` however well a dictionary would have paid.
 
@@ -254,7 +262,7 @@ The count is written only where it is exact, since the format asks for the count
 
 - an `AUTO` chunk that still holds its dictionary at flush states the dictionary size, whichever encoding the comparison then chooses;
 - a `BOOLEAN` chunk states it under any policy, knowing its cardinality without a dictionary;
-- a chunk abandoned by the probes or by a full dictionary table, and a chunk under a named policy, state none.
+- a chunk abandoned by the probes and not recovered at flush, a chunk whose dictionary table filled, and a chunk under a named policy, state none.
 
 `FLOAT` and `DOUBLE` values are interned by raw bit pattern, so `-0.0` and `+0.0`, and `NaN`s of different payloads, are distinct dictionary entries and count separately.
 
@@ -337,7 +345,7 @@ Tests: `WriterBloomFilterTest`, `SplitBlockBloomFilterBuilderTest`, `WriterBloom
 
 ## Boundaries
 
-- **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
+- **`distinct_count`** is absent for a chunk that gave its dictionary up before flush (to the probes, without recovery, or a full table) and for a named-policy chunk other than `BOOLEAN` (#982).
 - **`GeospatialStatistics`** is not written. Bounding-box pushdown therefore prunes nothing in a Hardwood-written `GEOMETRY` or `GEOGRAPHY` column.
 - **Data page V2** is not produced; every data page is V1.
 - **Per-row-group settings.** The codec and the named policies hold for the whole file. The writer does not choose a codec per chunk, which `ColumnMetaData.codec` would permit.

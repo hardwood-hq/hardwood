@@ -1,0 +1,12 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+# Expected misses of WriterDictionaryDecisionAuditTest: one line per case where AUTO wrote a chunk
+# PLAIN that a dictionary would have made smaller, with the missed chunks and the bytes they cost.
+# A case without misses has no line. AUTO never keeps a losing dictionary; that is asserted, not
+# listed.

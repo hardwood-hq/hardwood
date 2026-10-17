@@ -89,7 +89,7 @@ public final class RowGroupBuffer {
         long budgetBytesPerColumn = rowGroupBufferTargetBytes / columns.length;
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageTargetBytes, pageTargetRows, budgetBytesPerColumn,
-                    encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
+                    targetRows, encodings[c], statisticsTruncationLength, compressor, codec, storeCapacity, bloomFilterFpps[c]);
         }
     }
 
@@ -133,6 +133,19 @@ public final class RowGroupBuffer {
             if (retained >= targetBytes || rowCount >= targetRows) {
                 retained = cut(flush);
             }
+            else {
+                publishProjection(retained);
+            }
+        }
+    }
+
+    /// Publishes to every chunk one projection of the records the row group holds when it is cut,
+    /// taken now that the slice is in every column: the records so far, scaled by how far what it
+    /// retains is from the byte target, within the record target.
+    private void publishProjection(long retained) {
+        long projected = (long) Math.min(targetRows, (double) rowCount * targetBytes / Math.max(1, retained));
+        for (ColumnChunkBuffer column : columns) {
+            column.publishProjection(projected);
         }
     }
 

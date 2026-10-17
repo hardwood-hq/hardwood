@@ -145,6 +145,23 @@ final class FloatValueEncoder extends ValueEncoder {
     }
 
     @Override
+    void sketchStored(int from, int to, HyperLogLog sketch) {
+        for (int i = from; i < to; i++) {
+            sketch.offer(XxHash64.hash(plain[i]));
+        }
+    }
+
+    @Override
+    void reinternStored(int[] indices) {
+        for (int i = 0; i < plainCount; i++) {
+            int value = Float.floatToRawIntBits(plain[i]);
+            int index = dictionary.indexOf(value);
+            indices[i] = index >= 0 ? index : dictionary.add(value);
+        }
+        plainCount = 0;
+    }
+
+    @Override
     long dictionaryPlainBytes() {
         return (long) dictionary.size() * Integer.BYTES;
     }

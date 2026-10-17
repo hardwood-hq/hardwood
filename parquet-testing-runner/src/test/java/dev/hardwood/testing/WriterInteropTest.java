@@ -397,6 +397,41 @@ class WriterInteropTest {
         }
     }
 
+    /// A chunk whose dictionary was given up at a probe and interned again at flush: distinct
+    /// through both probes, repeating the first values after them. Its dictionary page and index
+    /// stream are rebuilt from the values the chunk stored, so the gate holds them to a strict
+    /// reader, together with the exact count the rebuilt dictionary states.
+    @Test
+    void dictionaryInternedAgainAtFlush(@TempDir Path dir) throws IOException {
+        int rows = 60_000;
+        int distinct = 30_500;
+        long[] values = new long[rows];
+        for (int r = 0; r < rows; r++) {
+            values[r] = (r < distinct ? r : r % distinct) * 7919L + 3;
+        }
+
+        Path file = dir.resolve("recovered.parquet");
+        FileSchema schema = FileSchema.builder("interop")
+                .addColumn(COLUMN, PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetRows(rows).build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.longs(COLUMN, values));
+        }
+
+        ColumnChunkMetaData chunk = ParquetJavaReader.readFooter(file).getBlocks().get(0).getColumns().get(0);
+        assertThat(chunk.hasDictionaryPage()).as("the chunk carries a dictionary page").isTrue();
+        assertThat(chunk.getEncodingStats().getDataEncodings()).as("data page encodings")
+                .containsExactly(Encoding.RLE_DICTIONARY);
+        assertThat(ParquetJavaReader.readDistinctCounts(file)).containsExactly((long) distinct);
+
+        List<Group> read = ParquetJavaReader.readGroups(file);
+        assertThat(read).as("row count").hasSize(rows);
+        for (int r = 0; r < rows; r++) {
+            assertThat(read.get(r).getLong(COLUMN, 0)).as("row %d", r).isEqualTo(values[r]);
+        }
+    }
+
     /// Why `BROTLI` is absent from the codec axis, asserted rather than left as a comment.
     ///
     /// parquet-java resolves the codec by name through Hadoop's `CompressionCodec` registry, and
