@@ -45,7 +45,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// A segment of plain bytes that its page fills before its cell is sized cannot write them yet:
 /// it writes them to an array of its own and parks there ([#park]), and the sizing copies them
 /// into place. Every other array of a measured cell is plan-sized, so no other fill waits.
-final class Cell {
+final class Cell implements ScheduledCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
     static final int UNKNOWN_RECORDS = -1;
@@ -89,7 +89,7 @@ final class Cell {
     /// with.
     private PageTask lastPage;
     /// Guarded by the column lock: whether the cell is completed and waits to be published.
-    boolean completed;
+    private boolean completed;
 
     /// Which task completes the cell; see the class description.
     final AtomicInteger pending;
@@ -165,8 +165,24 @@ final class Cell {
         return batch;
     }
 
+    @Override
+    public long firstRow() {
+        return firstRow;
+    }
+
+    @Override
+    public boolean isCompleted() {
+        return completed;
+    }
+
+    @Override
+    public void markCompleted() {
+        completed = true;
+    }
+
     /// The batch, once [#allocate] ran.
-    BatchExchange.Batch batch() {
+    @Override
+    public BatchExchange.Batch batch() {
         return batch;
     }
 
@@ -200,10 +216,8 @@ final class Cell {
         return taken;
     }
 
-    /// Drops what the cell references once it is published. A page usually spans several cells
-    /// and reaches each through its segments until its last cell is published; a published cell
-    /// that kept its batch would keep the batch's arrays alive as long as the page.
-    void release() {
+    @Override
+    public void release() {
         segments.clear();
         lastPage = null;
         batch = null;

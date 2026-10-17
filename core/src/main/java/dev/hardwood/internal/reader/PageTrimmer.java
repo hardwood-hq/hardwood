@@ -10,9 +10,9 @@ package dev.hardwood.internal.reader;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Trims a decoded page to the records its [PageRowMask] keeps, so the page reaches
-/// assembly unmasked. [NestedColumnWorker] trims every masked page on the decode thread,
-/// and its assembly then keeps every value it is given. Flat columns are not trimmed:
-/// [FlatColumnWorker] copies each kept interval during assembly.
+/// assembly unmasked. A nested column trims every masked page on its page's task
+/// ([ScheduledNestedColumn], or [NestedColumnWorker]'s decode task), and then keeps every value
+/// it is given. Flat columns are not trimmed: their fills copy each kept interval.
 ///
 /// Keeping masks out of assembly matters for nested columns: a masked page there would put a
 /// second, rarely taken shape into the JIT profile of the per-value loop that every other
@@ -22,8 +22,8 @@ import dev.hardwood.reader.ParquetReadException;
 /// A page's values, definition levels, repetition levels and dictionary indices are indexed
 /// by leaf position, so trimming moves the kept positions to the front of each array, in
 /// place, and shortens the page's [Page#size()]. The arrays belong to the page being
-/// trimmed: values are allocated per page, and the level arrays are the decode slot's
-/// scratch, which is not reused before the page is drained.
+/// trimmed: values are allocated per page, and the level arrays are the page's own scratch
+/// ([NestedPageTask]) or the decode slot's, which is not reused before the page is drained.
 ///
 /// Record `0` of the mask is the record the page's first value starts, so a masked page must
 /// begin a record.

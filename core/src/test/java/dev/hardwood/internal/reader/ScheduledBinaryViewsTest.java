@@ -107,7 +107,7 @@ class ScheduledBinaryViewsTest {
                         return b;
                     }, batch -> batch.capacity, 10);
             ReadScheduler scheduler = new ReadScheduler(context, 10, 10);
-            ScheduledColumn scheduled = new ScheduledColumn(scheduler, new PageSource(iterator, 0), exchange, column,
+            ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, new PageSource(iterator, 0), exchange, column,
                     10, context.decompressorFactory(), filter);
             scheduler.start();
 

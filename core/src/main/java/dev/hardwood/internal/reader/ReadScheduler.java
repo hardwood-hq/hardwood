@@ -60,7 +60,7 @@ public final class ReadScheduler {
     private final int pagesInFlight;
     private final int batchCapacity;
     private final long capRows;
-    private final List<ScheduledColumn> columns = new ArrayList<>();
+    private final List<ScheduledColumn<?>> columns = new ArrayList<>();
     private final AtomicInteger submitted = new AtomicInteger();
     /// Calls to [#submit()] not yet served; the caller that raises it from zero submits.
     private final AtomicInteger submitting = new AtomicInteger();
@@ -85,7 +85,7 @@ public final class ReadScheduler {
     }
 
     /// Adds a column; called by its constructor, before [#start()].
-    void add(ScheduledColumn column) {
+    void add(ScheduledColumn<?> column) {
         if (started) {
             throw new IllegalStateException("The scheduler has started");
         }
@@ -100,7 +100,7 @@ public final class ReadScheduler {
     /// Starts every column's fetcher. Must be called once, after every column was added.
     public void start() {
         started = true;
-        for (ScheduledColumn column : columns) {
+        for (ScheduledColumn<?> column : columns) {
             column.start();
         }
     }
@@ -119,7 +119,7 @@ public final class ReadScheduler {
             }
             catch (RuntimeException | Error e) {
                 // Nothing else submits the columns' pages: every column ends with the failure
-                for (ScheduledColumn column : columns) {
+                for (ScheduledColumn<?> column : columns) {
                     column.fail(e);
                 }
                 throw e;
@@ -134,7 +134,7 @@ public final class ReadScheduler {
     }
 
     private void submitReady() {
-        ScheduledColumn next;
+        ScheduledColumn<?> next;
         while ((next = next()) != null) {
             PageTask page = next.takeReady();
             if (page == null) {
@@ -145,7 +145,7 @@ public final class ReadScheduler {
             if (observer != null) {
                 observer.accept(page, inFlight);
             }
-            ScheduledColumn column = next;
+            ScheduledColumn<?> column = next;
             try {
                 context.executor().execute(() -> column.runPage(page));
             }
@@ -156,8 +156,8 @@ public final class ReadScheduler {
     }
 
     /// The column whose queued page is to be submitted now, `null` if none is.
-    private ScheduledColumn next() {
-        ScheduledColumn best = null;
+    private ScheduledColumn<?> next() {
+        ScheduledColumn<?> best = null;
         long bestRow = Long.MAX_VALUE;
         // The lowest row a column with nothing queued may yet queue a page at. Its next row is
         // read before its queue, and a page queued later starts at or after it.
@@ -165,7 +165,7 @@ public final class ReadScheduler {
         // The read's first row a column has not published: the slowest column's
         long readPublished = Long.MAX_VALUE;
         for (int i = 0; i < columns.size(); i++) {
-            ScheduledColumn column = columns.get(i);
+            ScheduledColumn<?> column = columns.get(i);
             if (column.isDone()) {
                 continue;
             }
@@ -188,8 +188,10 @@ public final class ReadScheduler {
     }
 
     /// Whether a page of `column` starting at the read's row `row` is within the read-ahead depth.
-    private boolean withinDepth(ScheduledColumn column, long row, long readPublished) {
-        if (row - column.publishedRow() < batchCapacity) {
+    /// A page starting at most one batch capacity past the column's first unpublished row always is:
+    /// a column with repetition seals its open cell only on the page holding the next record start.
+    private boolean withinDepth(ScheduledColumn<?> column, long row, long readPublished) {
+        if (row - column.publishedRow() <= batchCapacity) {
             return true;
         }
         long ahead = row - readPublished;

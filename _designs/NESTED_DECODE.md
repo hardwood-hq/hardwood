@@ -1,10 +1,10 @@
 # Nested decode
 
-Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding and its pooled scratch, the drain's per-batch assembly, what each `IndexMode` derives, the real-items view built on the drain, and the two fast paths that skip per-element work (the all-present page bulk copy and the fixed-size-list fast path).
+Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding, how a scheduled column's cells are measured, placed and filled, what each `IndexMode` derives, the real-items view, and the fixed-size-list fast path.
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): the worker pipeline, threading, reorder buffer and batch sizing
+- [READ_PIPELINE.md](READ_PIPELINE.md): the scheduled columns, threading, the batch plan and batch sizing
 - [COLUMN_READER.md](COLUMN_READER.md): what `ColumnReader` exposes (layers, offsets, `Validity`, variable-length leaves, the cursor and scan)
 - [ROW_READER.md](ROW_READER.md): how `NestedRowReader` reads the all-items batch
 - [VALUE_DECODE.md](VALUE_DECODE.md): value decoders, dictionaries and leaf kinds
@@ -13,14 +13,14 @@ Related documents:
 
 ## Which columns are nested
 
-A column is decoded by `NestedColumnWorker` into `NestedBatch`es when:
+A column is decoded through its levels into `NestedBatch`es, by a `ScheduledNestedColumn`, when:
 
 | Reader | Condition |
 |---|---|
 | `ColumnReader` / `ColumnReaders` | the column has at least one layer or `maxRepetitionLevel > 0` (`ColumnCursor.isNested`). A leaf below required groups only is flat. |
 | `NestedRowReader` | every projected column, flat or not, once `FileSchema.isFlatSchema()` is false. |
 
-All other columns go through `FlatColumnWorker` (see [READ_PIPELINE.md](READ_PIPELINE.md)).
+All other columns are flat scheduled columns (see [READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)).
 
 ## Schema to layers
 
@@ -67,19 +67,13 @@ Tests: `ColumnReaderLayerModelTest`, `UnannotatedRepeatedListTest`, `LegacyTwoLe
 - **Repetition levels** are always materialised for a column with `maxRepetitionLevel > 0`, except on a page the [fixed-size-list fast path](#fixed-size-list-fast-path) takes.
 - **Definition levels** go through the all-present gate: `RleBitPackingHybridDecoder.isSingleRleRunOf(maxDef, numValues)` inspects one run header and value. When the stream is a single RLE run of `maxDef` covering every value, no array is produced and the page's definition levels are `null`. A `null` array is the reader-wide all-present convention, shared with required columns (`Page.allPresent()`); value decoders read densely from it.
 
-**Pooled scratch.** Level arrays are borrowed from a `PageDecoder.LevelScratch`, not allocated per page. `ColumnWorker` owns one `LevelScratch` per reorder-buffer slot and passes the slot's holder to `decodePage`; the holder grows its arrays in place when a page needs more and otherwise hands back the same arrays. The two-argument `decodePage` overload used by tooling and tests passes a fresh holder. The pooling rests on three facts:
+**Page-owned levels.** A nested page's task decodes its levels into a `PageDecoder.LevelScratch` the page owns (`NestedPageTask.scratch`), which also holds its record starts and the byte prefix of its plain binary values. The page keeps them past its task, until every cell it is placed into is filled ([Cells](#cells)), so they cannot be the pool thread's scratch. A level array can be longer than its page, and so can every position-indexed array of a trimmed page ([Masked pages](#masked-pages)): no consumer reads `array.length`; every consumer scans `page.size()` or an explicit count, and `SimdOperations.countNonNulls` takes an explicit length.
 
-| Fact | Why it holds |
-|---|---|
-| One decode at a time per holder | A slot is resubmitted only once the drain has consumed its previous page (the retriever throttle; see [READ_PIPELINE.md](READ_PIPELINE.md)). `PageDecoder` holds no scratch state of its own. |
-| Page level arrays die with assembly | The drain copies what it needs into its own accumulators during the synchronous assemble call; `REAL_VIEW_KEEP_LEVELS` keeps copies of the accumulators, never the page arrays. |
-| No consumer reads `array.length` | A pooled array can be longer than the page, and so can every position-indexed array of a trimmed page ([Masked pages](#masked-pages)). Every consumer scans `page.size()` or an explicit count; `SimdOperations.countNonNulls` takes an explicit length. |
-
-Tests: `FixedSizeListEngagementTest` (scratch reuse across pages), `SimdOperationsTest` (stale tail ignored). The single-decode-per-holder exclusion is untested.
+Tests: `SimdOperationsTest` (stale tail ignored).
 
 ## Masked pages
 
-A page row mask ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking)) on a nested column is applied on the page's decode task, not on the drain (`NestedColumnWorker.prepareDecodedPage`); a flat column keeps its mask to the drain, which copies each kept interval. `PageTrimmer` moves the positions of the kept records to the front of the page's value, dictionary-index and level arrays, in place, and shortens `page.size()`. Assembly therefore only ever sees unmasked pages: its paths have one shape whatever masks the read carries, and a trimmed page whose leaves are all present takes the bulk copy.
+A page row mask ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking)) on a nested column is applied on the page's task, before the page is measured; a flat column's fill copies each kept interval instead. `PageTrimmer` moves the positions of the kept records to the front of the page's value, dictionary-index and level arrays, in place, and shortens `page.size()`. Measuring, placing and filling therefore only ever see unmasked pages, and have one shape whatever masks the read carries.
 
 Where a record starts depends on the page:
 
@@ -91,80 +85,75 @@ Where a record starts depends on the page:
 
 On a regular page, record `0` is the one its first value opens, so a masked page whose first repetition level is not `0` fails the read with a `ParquetReadException`.
 
-Trimming in place relies on the page owning its arrays. Value and dictionary-index arrays are allocated per decoded page. Level arrays are the slot's scratch, which is not handed to another decode until the drain has consumed the page ([pooled scratch](#level-decode-and-scratch)). A value array pooled across pages would let one page's trim corrupt another. Untested.
+Trimming in place relies on the page owning its arrays. Value and dictionary-index arrays are allocated per decoded page, and level arrays are the page's own ([page-owned levels](#level-decode-and-scratch)). A value array pooled across pages would let one page's trim corrupt another. Untested.
 
 Tests: `PageTrimmerTest`, `NestedV2NoIndexMaskingTest`, `MisalignedPageBoundariesTest`.
 
-## Assembly on the drain
+## Cells
 
-The drain thread assembles decoded pages into a batch through reusable accumulators: a typed value array, definition and repetition level arrays, and record offsets. `NestedColumnWorker.assemblePage` routes each page to one of three paths:
+A nested column's batches are built from cells of the read's batch plan ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). Where a page's records start, and how many values each holds, only its levels say, so a page is placed into cells once its task has decoded and measured it, and a cell is filled only once every page placed into it is measured.
 
-| Page | Path |
+**Measure** (`PageMeasure`, on the page's task, after a masked page is trimmed). The page's values, its records and where each starts, and the values before its first record start:
+
+| Page | Records |
 |---|---|
-| `fixedListK > 0` | fixed-width assembly ([Fixed-size-list fast path](#fixed-size-list-fast-path)) |
-| all-present, not byte-array | whole-page bulk copy ([All-present page bulk copy](#all-present-page-bulk-copy)) |
-| anything else | per-element: each position copies its value and both levels |
+| `fixedListK > 0` | one per `k` values |
+| no repetition levels (no repeated ancestor) | one per value |
+| anything else | one per repetition level `0`; the values before the first are the page's leading values |
 
-Invariants every path keeps:
+and, for a binary leaf, the bytes of any range of its plain values. A page whose metadata gives a record count (a column without repetition) that disagrees with its levels fails the read.
 
-- **Records are never split across batches.** A record opens at each `repLevel == 0`; a batch holding the records the batch plan gives it is published at the next record boundary, at the next row group or at the end of the stream. Batch boundaries are therefore the plan's, which every column shares and which keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
-- **Masks are applied before assembly.** A masked page arrives trimmed to its kept records ([Masked pages](#masked-pages)), so every path keeps every value it is given.
-- **A published batch owns its arrays.** The accumulators are reused for the next batch, so publish copies the value, level and offset arrays out (`trimValues`, including the bytes prefix of a variable-length leaf). The one exception hands the accumulator itself to the batch and allocates a fresh one ([Fixed-size-list fast path](#fixed-size-list-fast-path)).
-- **The column's first repetition level is `0`.** The first level a worker assembles is checked once per read: when it is not `0`, the column's first page of the read fails with a `ParquetReadException`. Later pages are checked only when masked, since trimming needs each masked page to open a record ([Masked pages](#masked-pages)).
+**Placement** (`Placer`, under the column lock, in page order). The placer splits a page's records into one `NestedSegment` per batch they fall into, each a record range and the value range those records hold; a page's leading values go, as a segment of no records, into the cell holding the previous page's last record. A cell of a column without repetition is sealed as soon as its last planned record is placed; a cell of a column with repetition is sealed at the next record start, at the end of its row group where the plan closes its batch there, or at the end of the read, since its last record's values can follow on later pages.
 
-`NestedBatch.allPresent` records whether every page contributing to the batch passed the all-present gate. A page that spans a publish passes its status on to the next batch.
+**Fill** (`NestedFill`, outside the lock, on the thread whose placement sealed the cell or another that takes it first off the column's sealed cells). The cell's arrays are allocated once at their final size: values and levels at the sum of its segments' values, record offsets at its records, a binary leaf's byte buffer at the sum of its segments' plain bytes. Each segment's values are one contiguous run of its page, so a segment copies its values, levels and record offsets by `System.arraycopy`, a level fill where its page has none (definition levels of an all-present page, repetition levels of a column without repetition), and per value only for binary values: each plain value's bytes and view, or each dictionary value's entry id, whose view is built when a reader first needs it ([COLUMN_READER.md](COLUMN_READER.md#variable-length)). The thread then computes the batch's index ([Index modes](#index-modes)) and completes the cell. A page keeps its arrays until every cell it is placed into is filled; a filled cell drops its segments, so a cell waiting for room in the exchange holds only its own arrays.
 
-Tests: `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
+Invariants:
+
+- **Records are never split across batches.** Batch boundaries are the plan's, which every column shares and which keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
+- **Masks are applied before measuring.** A masked page is trimmed to its kept records ([Masked pages](#masked-pages)), so every segment keeps every value it is given.
+- **A batch's arrays are its own, at the size it holds.** The cell allocates them for its batch alone, so a published batch shares no array with another, and no array is grown or copied out at publish.
+- **Every column chunk begins with a record.** A chunk's first page with values whose first repetition level is not `0` fails the read with a `ParquetReadException`, placed at that page: a record never spans two row groups. Later pages may begin inside a record, unless masked, since trimming needs each masked page to open a record ([Masked pages](#masked-pages)).
+
+`NestedBatch.allPresent` records whether every page with a segment in the batch passed the all-present gate.
+
+**Column worker.** With the scheduler switched off (the internal property `hardwood.internal.scheduled`, for tests that compare the two), a `NestedColumnWorker` assembles the same batches on a drain thread through reusable accumulators, which it grows as they fill and copies out at publish. It copies an all-present page in bulk, any other page per element, and counts towards a batch's `allPresent` the page whose first record start closes it.
+
+Tests: `ScheduledNestedColumnTest`, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
 
 ## Index modes
 
-Before publishing, `computeIndex` derives per-batch structures on the drain, off the serial consumer. What it derives is fixed per worker by an `IndexMode` the constructing reader chooses:
+Before a cell's batch is published, `NestedIndex.compute` derives per-batch structures on the thread that filled it, off the serial consumer. What it derives is fixed per column by an `IndexMode` the constructing reader chooses:
 
-| Mode | Reader | Batch carries | Derived on the drain |
+| Mode | Reader | Batch carries | Derived before publish |
 |---|---|---|---|
 | `ALL_ITEMS` | `NestedRowReader` | raw definition and repetition levels | `elementValidity` and layer-indexed `multiLevelOffsets` over **all items**: a null or empty container keeps a phantom position in the next layer's index |
-| `REAL_VIEW` | unfiltered `ColumnReader` (`ColumnScan.open` without a filter) | no levels; `realView`, `realValues` | the real-items view ([Real view on the drain](#real-view-on-the-drain)); the all-items index is skipped |
+| `REAL_VIEW` | unfiltered `ColumnReader` (`ColumnScan.open` without a filter) | no levels; `realView`, `realValues` | the real-items view ([Real view](#real-view)); the all-items index is skipped |
 | `REAL_VIEW_KEEP_LEVELS` | filtered `ColumnReader` | raw levels | nothing: the batch is compacted by record selection before any view is built |
 
 The two reader families read disjoint batch state: the all-items path reads raw levels through `NestedBatchIndex` and the row views (`PqListImpl`, `PqStructImpl`, `PqMapImpl`, `NestedBatchDataView`, `VariantShredReassembler`); the column path reads only the real-items view and values. `REAL_VIEW` drops the levels because no `ColumnReader` accessor reads them; adding one would require keeping them, or rebuilding them, on that mode.
 
 On a fixed-width batch every mode skips the level scans: `ALL_ITEMS` gets `multiLevelOffsets` from `fixedListLayerOffsets` and `null` validity.
 
-## Real view on the drain
+## Real view
 
-The real-items view (`NestedLevelComputer.RealView`) is what `ColumnReader` exposes: per-layer offsets and validity with phantom positions removed, leaf validity, and `realToRawLeaf`, the map from each real leaf to its raw position (`null` when the map would be the identity). It is a pure function of the batch's levels, record count, max definition level and layers, so the drain can build it from its accumulators, which remain valid for `[0, valueCount)` until the counts reset after publish.
+The real-items view (`NestedLevelComputer.RealView`) is what `ColumnReader` exposes: per-layer offsets and validity with phantom positions removed, leaf validity, and `realToRawLeaf`, the map from each real leaf to its raw position (`null` when the map would be the identity). It is a pure function of the batch's levels, record count, max definition level and layers. On `REAL_VIEW` the batch carries no levels: the fill writes the levels the view reads to the filling thread's scratch instead, the repetition levels of a column with repetition and the definition levels of a batch that is not all present, and builds the view from them.
 
-On `REAL_VIEW` the drain builds one of two views:
+On `REAL_VIEW` the fill builds one of two views:
 
 | Batch | View | Leaf values |
 |---|---|---|
-| All-present: `fixedListK > 0`, or `allPresent`, or every accumulated definition level at max | **Lean view**: layer offsets only (`computeLayerOffsets`, or `fixedListLayerOffsets` for a fixed-width batch), every validity `null`, `realToRawLeaf` `null` | `realValues` = the batch values |
+| All-present: `fixedListK > 0`, or `allPresent`, or every definition level at max | **Lean view**: layer offsets only (`computeLayerOffsets`, or `fixedListLayerOffsets` for a fixed-width batch), every validity `null`, `realToRawLeaf` `null` | `realValues` = the batch values |
 | Has phantom positions | Full `computeRealView` | compacted through `realToRawLeaf` by `LeafCompaction`; passed through when the map is the identity |
 
 An all-present batch has no phantom positions, so its real-items offsets equal the all-items offsets and every validity is trivially all-present; the lean view is the full view without the per-layer presence, leaf-validity and gather-map work. It is built unconditionally, so a structural read (`getLayerOffsets`, `getLayerValidity`) finds its offsets ready and a flat leaf read (the embedding-vector pattern) ignores them.
 
-**Consumer.** `ColumnReader.ensureRealView()` returns the drain's `realView` when set. Otherwise the batch came from record selection (`ColumnScan.compactNestedBatch`, which slices the raw levels and values per kept record and carries no view), and the reader builds the view lazily from the sliced levels, or arithmetically for a fixed-width batch (`fixedListRealView`). Leaf values resolve in the same order: `realValues` from the drain, else the batch values when `realToRawLeaf` is `null`, else a compacted copy.
+**Consumer.** `ColumnReader.ensureRealView()` returns the batch's `realView` when set. Otherwise the batch came from record selection (`ColumnScan.compactNestedBatch`, which slices the raw levels and values per kept record and carries no view), and the reader builds the view lazily from the sliced levels, or arithmetically for a fixed-width batch (`fixedListRealView`). Leaf values resolve in the same order: the batch's `realValues`, else the batch values when `realToRawLeaf` is `null`, else a compacted copy.
 
 Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeListFastPathReadTest`, `DifferentialReadTest`.
 
-## All-present page bulk copy
-
-A page whose leaves are all present stores its values as one contiguous block, 1:1 with page positions; the repetition levels group them into records but do not move them. The regular path copies such a page in bulk instead of per element. The property is presence, not shape: lists of any length, maps, structs, and non-repeated columns assembled by the nested worker qualify alike.
-
-**Gate** (`assembleRegularPage`), evaluated once per page, both required:
-
-- `page.allPresent()`: the definition-level array is `null` (the O(1) gate above, or a column with `maxDefinitionLevel == 0`).
-- The page is not a `Page.BinaryPage`: `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves append into a shared byte buffer and stay per element.
-
-A page that fails any condition takes the per-element path in full; there is no sub-page run detection.
-
-**Assembly** (`assembleAllPresentPage`). The page is walked once over its repetition levels to open records and to publish at the batch-capacity boundary exactly as the per-element path would; the values and levels of each batch's run are then flushed in bulk (`flushRun`): values by one `System.arraycopy` per run, definition levels by a constant fill of `maxDefinitionLevel`, repetition levels by `System.arraycopy` (or a fill of `0` for a non-repeated column). The accumulator levels are filled in every index mode, since `REAL_VIEW` builds its offsets from them before dropping them at publish. The output batch is identical to what the per-element path produces for the same page; no test forces one page through both paths to compare them (untested).
-
-Tests: `DifferentialReadTest`, `WideListBatchBoundTest`, `ColumnReaderLayerModelTest`.
-
 ## Fixed-size-list fast path
 
-A `LIST` column in which every row is a present list of exactly `k` present elements (embedding vectors, Arrow `FixedSizeList` / `FixedShapeTensor` written as 3-level `LIST`) carries a repetition stream of `0` followed by `k − 1` ones per row and a constant definition stream. The fast path recognises that shape from the level bytes, decodes only the values, and assembles the batch with arithmetic offsets `[0, k, 2k, …]`, producing the same public output as the regular path.
+A `LIST` column in which every row is a present list of exactly `k` present elements (embedding vectors, Arrow `FixedSizeList` / `FixedShapeTensor` written as 3-level `LIST`) carries a repetition stream of `0` followed by `k − 1` ones per row and a constant definition stream. The fast path recognises that shape from the level bytes, decodes only the values, and builds the batch with arithmetic offsets `[0, k, 2k, …]`, producing the same public output as the regular path.
 
 ### Gate
 
@@ -185,20 +174,18 @@ The `maxDefinitionLevel == 1` exclusion covers a bare unannotated `repeated <pri
 
 ### Representation and fallback
 
-A fixed-width batch has `fixedListK > 0`, `null` definition and repetition levels, and implicit offsets. Its level accumulators are not grown while it stays fixed-width; only the value array grows.
+A fixed-width batch has `fixedListK > 0`, `null` definition and repetition levels, and implicit offsets; its values are exactly its records times `k`.
 
-Batches cut at the same rows in every column, at the flush points every column evaluates identically ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). A change of page shape is not one of them, so the assembler never publishes early on one. When an open fixed-width batch meets a regular page or a different `k`, `materializeFixedWidthBatchLevels` converts it to the regular representation in place (every element present, each record a `0` then `k − 1` ones) and keeps filling it; a fixed-width page arriving in an already-regular batch is written with the same synthesized levels. A published batch is thus wholly fixed-width with one `k`, or wholly regular.
+Batches cut at the same rows in every column ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and a change of page shape is not one of those rows. A cell is fixed-width when every page with a segment in it is a fixed-size-list page of the same `k`; in any other cell a fixed-size-list page writes the levels it omits (every element present, each record a `0` then `k − 1` ones). A published batch is thus wholly fixed-width with one `k`, or wholly regular.
 
-A masked fixed-width page arrives trimmed to its kept records, still consecutive `k`-runs, and is copied in batch-capacity chunks with one `copyValueRun` per chunk. Record selection on a filtered read keeps whole records, so `compactNestedBatch` keeps `fixedListK` and the view is rebuilt arithmetically.
-
-**Value hand-off.** A fresh fixed-width batch sizes its value accumulator to exactly `batchCapacity × k`. When the batch publishes full, that array becomes the batch's values and the next batch starts on a fresh array, so the values are copied once (page to batch) as on the flat path. A partial batch (file tail, row cap) or a batch that fell back is trimmed as usual.
+A masked fixed-width page is trimmed to its kept records, still consecutive `k`-runs. Record selection on a filtered read keeps whole records, so `compactNestedBatch` keeps `fixedListK` and the view is rebuilt arithmetically.
 
 Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeListFastPathReadTest`, `DifferentialFixedSizeListTest`.
 
 ## Boundaries
 
-- **Partially present pages** take the per-element path in full; bulk-copying present runs inside such pages is #750.
-- **Non-repeated columns** in a nested row read are assembled by `NestedColumnWorker` and pay the levels machinery (with the bulk copy when all-present); direct addressing for them is #732.
+- **Page arrays.** A nested page is decoded into arrays of its own, which its cells copy from: a page's values outlive its task until every cell it is placed into is filled, and its decompressed bytes are the decompressor's for the length of the task only.
+- **Non-repeated columns** in a nested row read are decoded through levels and pay the levels machinery; direct addressing for them is #732.
 - **Fixed-size list, 2-level required lists and bare repeated primitives** (`maxDefinitionLevel == 1` with a `REPEATED` leaf) take the regular path; #808.
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.
 - **Fixed-size list element types** are limited to fixed-width primitives; byte-array-backed leaves (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) and nullable elements take the regular path.
