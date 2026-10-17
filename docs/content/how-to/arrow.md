@@ -82,7 +82,9 @@ The settings have the semantics of [`ColumnReaders`](column-reader.md): every ba
 
 ## Columns the reader serves
 
-The reader serves primitive columns and the groups around them: structs, `LIST` and `MAP` groups in every encoding the format allows, and `repeated` fields outside a `LIST` or `MAP` group, which read as non-nullable lists. A Variant group, shredded or not, is not served: a projection that selects one, or a group containing one, fails at `build()` with an `UnsupportedOperationException` naming the group, before any column worker starts, as does a projection that selects a map's key without its value or its value without its key. `ArrowReaders.batchReader` projects every column, so on a file holding a Variant group it fails the same way; a projection that leaves the group out reads the rest of the file.
+The reader serves primitive columns and the groups around them: structs, `LIST` and `MAP` groups in every encoding the format allows, `repeated` fields outside a `LIST` or `MAP` group, which read as non-nullable lists, and Variant groups, which read as the struct of the fields they store. A projection that selects a map's key without its value or its value without its key fails at `build()` with an `UnsupportedOperationException` naming the map, before any column worker starts. A `repeated` Variant group outside a `LIST` or `MAP` group is the one shape core's readers refuse, and a projection touching one fails at `build()` with core's own error; a projection that leaves it out reads the rest of the file.
+
+A Variant value arrives as its `metadata` and `value` bytes, plus the `typed_value` field of a shredded Variant as the file stores it: the reader reassembles nothing, so a shredded value's canonical bytes are only available through `RowReader.getVariant` (see [Read Variant Columns](variant.md)). The struct's layout is the storage of Arrow's Variant extension type, which a consumer may register over the field; the reader does not apply it.
 
 ## Type mapping
 
@@ -102,6 +104,7 @@ The Arrow type of a column follows from its physical type and annotation alone, 
 | `LIST` group | `List` of its element, in the three-level and the legacy two-level encodings alike |
 | `MAP` group | `Map` whose entries struct, named `entries`, holds the key and the value |
 | `repeated` field outside a `LIST` or `MAP` group | non-nullable `List` of non-nullable elements |
+| `VARIANT` group | `Struct` of `metadata`, `value` and, when shredded, `typed_value` as stored |
 
 A field is nullable when its column or group is `OPTIONAL`; a list's element, a map's value and a struct's child follow their own repetition, and a map's key and entries are never nullable. A column or group with a Parquet field id of zero or more carries it as the field's `PARQUET:field_id` metadata, as Arrow C++ 19 records it; a negative id is treated as none. A map's `entries` struct and the element of a `repeated` primitive outside a `LIST` or `MAP` group carry no id. The file's key-value metadata becomes the schema's metadata, except the `ARROW:schema` entry, which is neither read nor carried.
 

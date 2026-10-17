@@ -299,6 +299,26 @@ class ArrowSchemaConverterTest {
         assertThat(cells.layer()).isEqualTo(2);
     }
 
+    /// A Variant group is the struct of the fields it stores: the storage of Arrow's Variant
+    /// extension type, which is not applied.
+    @Test
+    void variantGroupsAreTheirStorageStruct() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("root", 1),
+                new SchemaElement("v", null, null, OPTIONAL, 3, null, null, null, null, LogicalType.variant(1)),
+                new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null, REQUIRED, null, null, null, null, null, null),
+                new SchemaElement("value", PhysicalType.BYTE_ARRAY, null, OPTIONAL, null, null, null, null, null, null),
+                new SchemaElement("typed_value", PhysicalType.INT64, null, OPTIONAL, null, null, null, null, null,
+                        null)));
+        ArrowPlan plan = plan(schema, ColumnProjection.all());
+        Field v = plan.schema().getFields().get(0);
+        assertThat(v.getType()).isEqualTo(ArrowType.Struct.INSTANCE);
+        assertThat(v.isNullable()).isTrue();
+        assertThat(v.getChildren()).extracting(Field::getName).containsExactly("metadata", "value", "typed_value");
+        assertThat(v.getChildren()).extracting(Field::isNullable).containsExactly(false, true, true);
+        assertThat(plan.roots().get(0).layer()).isEqualTo(0);
+    }
+
     @Test
     void partialMapProjectionIsRejected() {
         FileSchema schema = FileSchema.builder("root")

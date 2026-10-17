@@ -21,6 +21,7 @@ import org.apache.arrow.vector.BaseVariableWidthVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.util.TransferPair;
 import org.junit.jupiter.api.AfterEach;
@@ -220,25 +221,39 @@ class ArrowBatchReaderTest {
 
     // ==================== Rejections ====================
 
+    /// A Variant group reads as the struct of the fields it stores, metadata and value and,
+    /// when shredded, typed_value, which is the storage of Arrow's Variant extension type.
     @Test
-    void variantColumnsAreRejectedBeforeAnyWorkerStarts() throws IOException {
-        Path file = coreFixture("avro_variant_identity_test");
+    void variantGroupsReadAsTheStructTheyStore() throws IOException {
+        Path file = coreFixture("variant_shredded_test");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             ArrowBatchReader reader = ArrowReaders.batchReader(fileReader, allocator);
+             VectorSchemaRoot root = readAll(reader, allocator)) {
+            Field var = root.getSchema().findField("var");
+            assertThat(var.getType()).isEqualTo(ArrowType.Struct.INSTANCE);
+            assertThat(var.getChildren()).extracting(Field::getName).containsExactly("metadata", "value", "typed_value");
+            assertThat(var.getChildren()).extracting(Field::getType)
+                    .containsExactly(ArrowType.Binary.INSTANCE, ArrowType.Binary.INSTANCE, new ArrowType.Int(64, true));
+            assertThat(root.getRowCount()).isEqualTo(4);
+        }
+    }
+
+    /// A repeated Variant group outside a list or map is the one shape core refuses to read,
+    /// and the refusal is core's.
+    @Test
+    void bareRepeatedVariantGroupIsRefusedByCore() throws IOException {
+        Path file = coreFixture("repeated_variant_group_test");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file))) {
             assertThatThrownBy(() -> ArrowReaders.batchReader(fileReader, allocator))
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("Column 'real_variant' is a Variant group, which hardwood-arrow does not serve");
-            assertThatThrownBy(() -> ArrowReaders.buildBatchReader(fileReader, allocator)
-                    .projection(ColumnProjection.columns("variant_container"))
-                    .build())
-                    .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("Column 'variant_container.real_nested_variant' is a Variant group, which hardwood-arrow "
-                            + "does not serve");
-            // A group of the same shape without the annotation is a struct like any other.
+                    .hasMessage("[repeated_variant_group_test.parquet] Repeated group 'foo' is annotated "
+                            + "VARIANT(1) outside a LIST or MAP group; a list of variants in this form "
+                            + "is not supported");
             try (ArrowBatchReader reader = ArrowReaders.buildBatchReader(fileReader, allocator)
-                    .projection(ColumnProjection.columns("plain_top", "plain_list"))
+                    .projection(ColumnProjection.columns("id"))
                     .build();
                  VectorSchemaRoot root = readAll(reader, allocator)) {
-                assertThat(root.getRowCount()).isGreaterThan(0);
+                assertThat(root.getRowCount()).isEqualTo(1);
             }
         }
     }

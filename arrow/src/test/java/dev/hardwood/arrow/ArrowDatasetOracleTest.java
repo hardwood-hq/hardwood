@@ -71,7 +71,8 @@ class ArrowDatasetOracleTest {
                 coreFixture("unannotated_repeated_nested_test"),
                 coreFixture("unannotated_repeated_annotated_list_test"),
                 coreFixture("unannotated_repeated_group_annotated_list_test"),
-                coreFixture("unannotated_repeated_group_empty_annotated_list_test"));
+                coreFixture("unannotated_repeated_group_empty_annotated_list_test"),
+                coreFixture("repeated_variant_group_plain_test"));
     }
 
     /// Core's nested fixtures, written by PyArrow with an `ARROW:schema` entry that Arrow C++
@@ -89,7 +90,8 @@ class ArrowDatasetOracleTest {
                 "list_basic_test", "primitive_lists_test", "nested_struct_test", "optional_struct_optional_leaf_test",
                 "struct_then_primitive_test", "shared_leaf_name_test", "wide_struct_test", "nested_list_struct_test",
                 "list_of_list_of_struct_test", "dict_nested_repeats", "local_timestamp_test",
-                "nested_logical_accessors")
+                "nested_logical_accessors", "variant_test", "variant_shredded_test", "variant_shredded_in_struct_test",
+                "variant_in_repeated_test", "variant_attributes_example", "convert_variant_null_test")
                 .map(ArrowTestSupport::coreFixture);
     }
 

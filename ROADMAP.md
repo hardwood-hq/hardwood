@@ -478,7 +478,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Scalar logical conversions: narrow and unsigned integers, temporal types, decimals over every carrier, `INT96`, `FLOAT16`, `UUID` and `NULL`
 - [x] IPC stream and file output through Arrow's writers, C Data export queried by DuckDB
 - [x] Nested output: structs, lists, maps and bare repeated fields, each group's buffers from a layer of the leaf readers beneath it
-- [ ] Variant output
+- [x] Variant groups as the struct they store, the storage of Arrow's Variant extension type
+- [ ] Shredded Variant values reassembled to canonical bytes, and the Variant extension type applied
 - [ ] Dictionary-encoded Arrow output
 - [ ] `ARROW:schema` restoration (large offsets, zones, extension types)
 - [ ] Arrow IPC as a `hardwood convert` output format

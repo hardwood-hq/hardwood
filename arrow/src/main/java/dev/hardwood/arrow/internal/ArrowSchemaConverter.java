@@ -41,7 +41,8 @@ import dev.hardwood.schema.SchemaNode;
 /// The mapping follows the metadata-free conversion of Arrow C++'s Parquet reader: no
 /// `ARROW:schema` entry is consulted and no extension type is inferred, so a `UUID` column is
 /// a `FixedSizeBinary(16)`, a `JSON` column a `Utf8`, an `ENUM` column a `Binary`. Groups map to
-/// `Struct`, `List` and `Map`; a Variant group is refused.
+/// `Struct`, `List` and `Map`; a Variant group is the struct of the fields it stores, which is
+/// the storage of Arrow's Variant extension type, applied by nobody here.
 ///
 /// A group's validity and offsets come from a layer of the leaf columns beneath it, so the
 /// conversion derives, for every node, which layer of the layer model it owns, by the rule
@@ -91,10 +92,10 @@ public final class ArrowSchemaConverter {
     /// @param projection the requested columns
     /// @return the schema and plan, one root per projected top-level field in request order
     /// @throws IllegalArgumentException if a projected name is not in the schema
-    /// @throws UnsupportedOperationException if a selected node is a Variant group, a map
-    ///         with only one of its key and value selected or with no value, a `LIST` group
-    ///         with no element, a column of a type the module does not map, or a `DECIMAL`
-    ///         wider than Arrow's decimals
+    /// @throws UnsupportedOperationException if a selected node is a map with only one of its
+    ///         key and value selected or with no value, a `LIST` group with no element, a
+    ///         column of a type the module does not map, or a `DECIMAL` wider than Arrow's
+    ///         decimals
     /// @throws dev.hardwood.reader.SchemaIncompatibleException if a `FIXED_LEN_BYTE_ARRAY`
     ///         column declares no positive width
     public static ArrowPlan plan(FileSchema schema, List<SchemaElement> elements, Map<String, String> keyValueMetadata,
@@ -231,10 +232,6 @@ public final class ArrowSchemaConverter {
 
     private static ArrowPlan.Node group(Context context, SchemaNode.GroupNode group, List<String> path,
             boolean parentIsListOrMap, List<LayerKind> layers) {
-        if (group.isVariant()) {
-            throw new UnsupportedOperationException("Column '" + path
-                    + "' is a Variant group, which hardwood-arrow does not serve");
-        }
         if (group.isList()) {
             return list(context, group, path, layers);
         }

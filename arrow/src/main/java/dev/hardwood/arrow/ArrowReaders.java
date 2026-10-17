@@ -26,9 +26,10 @@ import dev.hardwood.schema.ColumnProjection;
 /// projection, filter and batch-size configuration.
 ///
 /// The reader serves primitive columns and the structs, lists and maps around them; a
-/// `repeated` field outside a `LIST` or `MAP` group reads as a list. A projection that selects
-/// a Variant group, or a map's key without its value or value without its key, fails at
-/// `build()`; a projection that leaves them out reads the rest of the file.
+/// `repeated` field outside a `LIST` or `MAP` group reads as a list, and a Variant group as
+/// the struct of the fields it stores. A projection that selects a map's key without its
+/// value or value without its key fails at `build()`; a projection that leaves the map out
+/// reads the rest of the file.
 ///
 /// ```java
 /// try (BufferAllocator allocator = new RootAllocator();
@@ -54,8 +55,8 @@ public final class ArrowReaders {
     ///
     /// @param reader the file to read
     /// @param allocator the allocator every Arrow buffer is taken from
-    /// @throws UnsupportedOperationException if the file holds a Variant group or a map with no
-    ///         value; see [ArrowReaders]
+    /// @throws UnsupportedOperationException if the file holds a map with no value, or a
+    ///         repeated Variant group outside a list or map, which core refuses; see [ArrowReaders]
     public static ArrowBatchReader batchReader(ParquetFileReader reader, BufferAllocator allocator)
             throws IOException {
         return buildBatchReader(reader, allocator).build();
@@ -89,8 +90,7 @@ public final class ArrowReaders {
         }
 
         /// Restrict reading to the given columns, in the order they are first named. Default:
-        /// all columns. Names are Parquet column or group names, dotted into groups; a name
-        /// that selects a Variant group fails at [#build()].
+        /// all columns. Names are Parquet column or group names, dotted into groups.
         public BatchReaderBuilder projection(ColumnProjection projection) {
             if (projection == null) {
                 throw new IllegalArgumentException("projection must not be null");
@@ -119,9 +119,10 @@ public final class ArrowReaders {
         }
 
         /// @throws IllegalArgumentException if a projected name is not in the schema
-        /// @throws UnsupportedOperationException if a selected node is a Variant group, a map
-        ///         with only one of its key and value selected or with no value, a column of a
-        ///         type the reader does not map, or a `DECIMAL` wider than Arrow's decimals
+        /// @throws UnsupportedOperationException if a selected node is a map with only one of
+        ///         its key and value selected or with no value, a repeated Variant group outside
+        ///         a list or map, a column of a type the reader does not map, or a `DECIMAL`
+        ///         wider than Arrow's decimals
         /// @throws dev.hardwood.reader.SchemaIncompatibleException if a `FIXED_LEN_BYTE_ARRAY`
         ///         column declares no positive width
         public ArrowBatchReader build() throws IOException {
