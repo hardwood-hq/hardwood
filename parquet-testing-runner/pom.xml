@@ -71,6 +71,46 @@
         </plugins>
       </build>
     </profile>
+    <!--
+      The comparison against parquet-java runs a second time at a batch capacity of 7, through
+      the internal `hardwood.internal.batchSize` property that replaces the auto batch size, so
+      pages span many batches and batches many pages. Activated on the absence of `test` for the
+      reason given above.
+    -->
+    <profile>
+      <id>small-batches</id>
+      <activation>
+        <property>
+          <name>!test</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>small-batches-7</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <includes>
+                    <include>**/ParquetComparisonTest.java</include>
+                  </includes>
+                  <systemPropertyVariables>
+                    <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
+                  </systemPropertyVariables>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-small-batches-7</reportsDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 
   <dependencyManagement>

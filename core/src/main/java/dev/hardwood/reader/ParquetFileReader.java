@@ -95,6 +95,9 @@ public class ParquetFileReader implements Closeable {
     /// positive count.
     private static final int AUTO_BATCH_SIZE = 0;
 
+    /// Internal system property replacing the auto batch size, see [#resolveBatchSize].
+    private static final String BATCH_SIZE_OVERRIDE_PROPERTY = "hardwood.internal.batchSize";
+
     private final List<InputFile> inputFiles;
     private final FileMetaData firstFileMetaData;
     private final FileMetadataCache fileMetadataCache;
@@ -696,7 +699,8 @@ public class ParquetFileReader implements Closeable {
                 return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected);
             }
             ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups)));
+                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups),
+                    budgetRows(projected, rowGroups)));
             return new ColumnRead(scan, projected);
         }
 
@@ -724,7 +728,8 @@ public class ParquetFileReader implements Closeable {
         // Size against the decoded columns — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups)));
+                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
+                budgetRows(decoded, rowGroups)));
         return new ColumnRead(scan, readProjection.payload());
     }
 
@@ -800,12 +805,44 @@ public class ParquetFileReader implements Closeable {
     /// verbatim; the [#AUTO_BATCH_SIZE] sentinel is turned into a byte-budgeted
     /// size derived from the projected column widths scaled by their list fan-out
     /// (from `rowGroups` metadata), the same logic the `RowReader` path uses, so
-    /// both regimes agree.
+    /// both regimes agree. The internal system property `hardwood.internal.batchSize`,
+    /// read on every call, replaces the auto size; the test suites use it to run at
+    /// small batch capacities.
     private int resolveBatchSize(int requested, ProjectedSchema projected, List<RowGroup> rowGroups) {
-        return requested > 0
-                ? requested
-                : BatchSizing.computeOptimalBatchSize(projected,
-                        BatchSizing.valuesPerRow(projected, rowGroups), availableRows(rowGroups));
+        if (requested > 0) {
+            return requested;
+        }
+        String override = System.getProperty(BATCH_SIZE_OVERRIDE_PROPERTY);
+        if (override != null) {
+            return parseBatchSizeOverride(override);
+        }
+        return BatchSizing.computeOptimalBatchSize(projected,
+                BatchSizing.valuesPerRow(projected, rowGroups), availableRows(rowGroups));
+    }
+
+    /// The rows of the read's batch byte budget, which bound its scheduler's read-ahead
+    /// ([BatchSizing#budgetRows]), from the same metadata [#resolveBatchSize] sizes batches by.
+    private static long budgetRows(ProjectedSchema projected, List<RowGroup> rowGroups) {
+        return BatchSizing.budgetRows(projected, BatchSizing.valuesPerRow(projected, rowGroups));
+    }
+
+    /// Parses the value of [#BATCH_SIZE_OVERRIDE_PROPERTY], rejecting one that is not a
+    /// positive record count rather than falling back to the auto size, which would run a
+    /// suite at the default capacity while it claims to run at a small one.
+    private static int parseBatchSizeOverride(String override) {
+        int size;
+        try {
+            size = Integer.parseInt(override);
+        }
+        catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    BATCH_SIZE_OVERRIDE_PROPERTY + " must be a positive record count, but was: " + override, e);
+        }
+        if (size <= 0) {
+            throw new IllegalArgumentException(
+                    BATCH_SIZE_OVERRIDE_PROPERTY + " must be a positive record count, but was: " + override);
+        }
+        return size;
     }
 
     /// An upper bound on the rows a read over `firstFileRowGroups` produces, or

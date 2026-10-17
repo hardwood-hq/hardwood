@@ -1,6 +1,6 @@
 # Read pipeline
 
-Describes how a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the threads that run it, back-pressure, batch sizing, the batch plan, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`.
+Describes how a read turns the row groups it has planned into published batches: the shared `RowGroupIterator`, the per-column `PageSource` → `ColumnWorker` → `BatchExchange` chain, the scheduled columns of a column read (`ReadScheduler`, `ScheduledColumn`), the threads that run them, back-pressure, batch sizing, the batch plan, row-group and file transitions, multi-file planning, row limits, error propagation, teardown and `ReaderConfig`.
 
 Related documents:
 
@@ -20,10 +20,12 @@ Every data reader (`FlatRowReader`, `NestedRowReader`, a `ColumnReaders` group, 
 |---|---|---|
 | `RowGroupIterator` | one per data reader | Plans the work list of `(file, row group)` pairs a file at a time, caches per-row-group metadata, fetch plans and batches (`BatchPlan`), prefetches the next row group and the next footer |
 | `PageSource` | one per decoded column | Walks the work list with its own cursor and yields that column's `PageInfo`s, draining each row group's `FetchPlan` |
-| `ColumnWorker` | one per decoded column | Decodes pages in parallel and assembles them into batches, in file order (`FlatColumnWorker`, `NestedColumnWorker`) |
+| `ColumnWorker` | one per decoded column not scheduled | Decodes pages in parallel and assembles them into batches, in file order (`FlatColumnWorker`, `NestedColumnWorker`) |
+| `ScheduledColumn` | one per scheduled column | Places its pages into the cells of the batch plan; its page tasks decode them straight into the batches ([Scheduled columns](#scheduled-columns)) |
+| `ReadScheduler` | one per column read with a scheduled column | Submits the pages of the read's scheduled columns to the decode pool in row order |
 | `BatchExchange` | one per decoded column | Bounded hand-off of published batches from the worker to the consumer |
 
-The decoded columns are the projection plus any filter-only predicate columns (`ReadProjection.decoded()`, see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)).
+The decoded columns are the projection plus any filter-only predicate columns (`ReadProjection.decoded()`, see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)). In a column read (`ColumnScan`), a flat column of a fixed-width physical type is a scheduled column; every other column, and every column of a row reader, has a `ColumnWorker`. Both kinds publish batches cut by the read's one batch plan into a `BatchExchange`, so a read mixes them freely.
 
 **Ownership.** `ParquetFileReader` reads the first file's footer at `open`/`openAll` and owns the input files and a `FileMetadataCache` of parsed footers. When that fails, it closes every input file, and the context when the call created it, before the exception propagates, attaching close failures as suppressed. Each data reader it builds gets its own `RowGroupIterator` sharing that cache; the parent tracks the child until the child closes the iterator, and closing a child releases the iterator's caches and its tracking entry but leaves the files to the parent. Closing the parent closes every child still open, then the metadata cache, an owned context and the files, so no child's worker or speculative task reads a file after it is closed; it attempts every input file, throws the first close failure and suppresses the later ones under it. A child build holds the shared side of the parent's lifecycle lock and the parent's close the exclusive side: the close waits for the builds under way, each of which, finding the parent closed, closes the child it made and fails, and a build started after the close fails at once. An iterator built outside a `ParquetFileReader` owns its files and closes them.
 
@@ -36,6 +38,9 @@ Tests: `MultiFileRowReaderTest`, `IteratorTrackingTest`, `ParentCloseTest`.
 | Retriever (virtual) | one per decoded column | whole read | Pulls pages from the `PageSource`, which plans files, computes fetch plans and fetches page bytes on demand; submits decode tasks; throttles |
 | Drain (virtual) | one per decoded column | whole read | Takes decoded pages in sequence order, assembles batches, runs drain-side filter fragments, publishes |
 | Decode task | up to the reorder depth per column | one page | Decompresses and decodes one page on the `HardwoodContext` pool, trims a masked nested page to its kept records ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)), stores the result, wakes the drain |
+| Fetcher (virtual) | one per scheduled column | whole read | Pulls pages from the `PageSource`, places them into cells, queues them for the scheduler |
+| Scheduler (virtual) | one per read with a scheduled column | whole read | Submits the queued pages of the read's scheduled columns in row order, within the read-ahead bounds |
+| Page task | up to the read-ahead bound per read | one page | Decodes one page of a scheduled column into its cells on the `HardwoodContext` pool, completes and publishes the cells it finishes |
 | Speculative task | as triggered | one step | On the common `ForkJoinPool` (a new thread per task when its parallelism is below 2): the next file's footer load, the next row group's fetch plans and first-chunk prefetch, one-ahead chunk and region prefetches. The iterator's `PrefetchTasks` tracks all but the footer load, which the `FileMetadataCache` tracks |
 | Consumer | the caller's thread | caller-managed | Polls every column's exchange and reads the batches |
 
@@ -45,7 +50,7 @@ Decode runs only on the context's fixed platform-thread pool (`HardwoodContext.c
 
 **Speculative work never reports a failure.** A failed plan or chunk prefetch leaves its plan or chunk unfetched, and the demand path repeats the work; a failed footer load stays cached in the `FileMetadataCache`, and the demand path rethrows it. Either way the failure is raised to a caller that is waiting for it. Work whose failure must surface stays off the speculative task: resolving the next work item, which validates the next file's schema, runs on the retriever before the speculative task is started, and the iterator keeps a failure there for the demand path to rethrow.
 
-**Every wait is bounded.** The retriever's throttle, the drain's wait for a decode task, and the exchange's queue operations on both sides are timed waits; the unparks and the exchange's end-of-stream sentinel make the common case immediate, and the bound guarantees a waiter is released at all. Untimed parks after timed parks on a virtual thread can be stranded by the runtime (JDK-8369227, fixed in 25.0.3 and 26.0.1), leaving a drain parked forever with its page already decoded.
+**Every wait is bounded.** The retriever's throttle, the drain's wait for a decode task, the fetcher's and the scheduler's waits, and the exchange's queue operations on both sides are timed waits; the unparks and the exchange's end-of-stream sentinel make the common case immediate, and the bound guarantees a waiter is released at all. Untimed parks after timed parks on a virtual thread can be stranded by the runtime (JDK-8369227, fixed in 25.0.3 and 26.0.1), leaving a drain parked forever with its page already decoded.
 
 Tests: `ColumnWorkerTest`, `ReaderCloseLatencyTest`, `ReaderEofLatencyTest`, `BatchExchangeTest`, `BatchExchangeRowLimitTest`.
 
@@ -112,6 +117,8 @@ The exchange holds a ready queue (drain → consumer) and, in recycling mode, a 
 | Recycling (`BatchExchange.recycling`) | `FlatRowReader`, `NestedRowReader` | A fixed pool of one more holder than the ready queue holds, allocated up front | Two batches | Returns each batch (`recycle`) when it moves to the next; a batch's arrays are valid until then |
 | Detaching (`BatchExchange.detaching`) | `ColumnCursor` (column readers) | A fresh batch per publish | Two full batches' worth of rows | Owns every batch it takes; the arrays are never reused ([column-reader.md](../docs/content/how-to/column-reader.md#retaining-and-handing-off-batch-arrays)) |
 
+A scheduled column publishes into a detaching exchange without waiting (`tryPublish`): an empty queue takes any batch, and a batch that would take the queue past its limit is not queued. The consumer runs the column's room listener after each batch it takes, which publishes the batches that waited ([Scheduled columns](#scheduled-columns)).
+
 **Detaching limit.** A batch ends early at a row group or a file ([When a batch closes](#when-a-batch-closes)), so a read over small row groups publishes many short batches. The detaching limit counts rows, so the queue holds what two full batches hold however the batches are cut, and a drain whose batch would take it past that waits until the consumer has taken it down to one full batch's worth. A flat batch counts the rows its arrays were allocated for rather than the rows it holds, since a batch left open into the next row group gets full-size arrays and can still end short, at a file, at a change of the always-match flag in a filtered read, or at the end of the stream; a nested batch's arrays are trimmed to its rows when it is published. Each wake-up of a waiting drain is paid on the consumer's thread; with the limit in rows, a drain is woken once per batch capacity of rows consumed rather than once per batch. A batch of no rows counts as one, so the limit also bounds the number of queued batches.
 
 **Consumer protocol.** `poll()` tries a non-blocking poll first and reads the `finished` flag only after a poll comes back empty, so every batch published before `finish()` is delivered before the end is reported. `finish()` also offers an end-of-stream sentinel, which queues behind every batch and releases a consumer already waiting; it is best effort (the recycling queue, when full, has no room, and then the consumer has batches to take and is not waiting). In detaching mode `finish()` also wakes a drain waiting for room. A `BatchWait` JFR event spans only the timed wait, so its duration is the consumer's stall.
@@ -136,6 +143,41 @@ Tests: `MultiFilePlanningTest`, `S3SelectiveReadJfrIT` (s3).
 ### Slow and fast columns
 
 All columns submit decode tasks to the one context pool, and balancing follows from that plus per-column back-pressure; there is no balancing logic. A column with expensive pages keeps up to `MAX_INFLIGHT_PAGES` tasks queued and so holds more of the pool's threads. A column with cheap pages fills its exchange; its drain blocks, its retriever throttles and stops submitting, and the pool's capacity goes to the queued tasks of the slow column. When the consumer takes the fast column's batch, it resumes in a burst. Untested.
+
+## Scheduled columns
+
+```
+PageSource.next() ─→ fetcher ─→ Placer: segments into cells ─→ queue (per column)
+                                                                   │
+                     scheduler: lowest first row across the read's queues, within bounds
+                                                                   │ submit
+                     page task (context pool): decode into cells ─→ complete ─→ publish in plan order
+                                                                   │ tryPublish
+                                              consumer ←── readyQueue (BatchExchange, detaching)
+```
+
+**Placement.** The fetcher takes each `PageInfo` from its `PageSource` and places it, under the column lock, with the column's `Placer`: following the row group's batches from the batch plan, it splits the page's kept records into one `Segment` per batch they fall into, opens a `Cell` at a batch's first record and seals it when the batch holds every record the plan puts in it. A flat page's kept records are known from its metadata (`PageInfo.records()`), so a page is placed before it is decoded. A boundary marker places nothing and closes the batch where the plan closes it. Placement checks the column against the plan as the drain does ("Batch plan mismatch"). The placed page joins the column's queue, which the fetcher keeps short.
+
+**Row order.** Every page carries the read's row of its first kept record: the plan's rows before its row group (`RowGroupBatches.readRowsBefore`) plus the kept records the column placed before it in the row group. Every column computes it from the one plan, so the rows of two columns compare. The scheduler submits the queued page with the lowest row, and waits for a column whose queue is empty and whose next page may start lower. The pool runs tasks in arrival order, so the tasks of the batch the consumer waits for are queued ahead of every read-ahead task, whatever the number of columns and their page sizes.
+
+**Read-ahead** is bounded per read, never per column:
+
+| Bound | Counts | Size |
+|---|---|---|
+| Pages in flight | page tasks submitted and not finished, across the read's columns | a few per decode thread |
+| Window | rows between a page's first row and the first row any column has not published | several batches; while a decode thread has no task, several batches of the read's byte budget |
+
+`BatchSizing.MAX_BATCH` cuts the batches of a narrow read short of the rows its byte budget would give (`BatchSizing.budgetRows`), so a window in batches holds fewer bytes for a narrow read than for a wide one, and a narrow read of pages spanning several batches keeps fewer pages in flight than the pool has threads. While the batch the slowest column publishes next waits for decoding (the cell at the head of its publish order is not complete) and a decode thread has no scheduled page task, counted over every read sharing the context (`HardwoodContextImpl.hasIdleDecodeThread`), the window counts its batches in budget rows instead. A read whose next batch is complete and waits for room in the exchange is bound by its consumer, and a pool that this read or others keep busy has no thread to give; neither gains from reading further ahead, and the extra read-ahead costs memory traffic. A page may extend past the window, so a page spanning more batches than the window holds is not held back by its own span. The window is at least one batch, which is what keeps the read live: the column whose first unpublished row is lowest has every page of that batch within the window, and a cell completes once its page tasks have run. A column whose cells are all published counts from the row its next page starts at or after, so a filter-only column skipping row groups does not hold the window back.
+
+**Cells.** A cell owns its batch and allocates its arrays at the size the plan gives, on the first page task that reaches it (`Cell.allocate`); the other tasks wait for that allocation on the cell's monitor. A segment is written by its page's task alone. Segments of one cell are filled concurrently and write disjoint ranges of its values; a word of the validity bitmap can hold bits of two neighbouring segments, and a segment writes the words at its edges with an atomic OR (`FlatFill`). The cell completes exactly once, on the task that fills its last segment or on the fetcher when the seal comes last: a pending count starts at one for the seal, gains one per segment placed and loses one per segment filled and one at the seal.
+
+**Decoding.** A `V1` data page of a fixed-width numeric column, `PLAIN` or dictionary-encoded, is read in place by its fill (`PageDecoder.decodeFlat`, `FlatPageValues`): its values go from the decompressed page, or from the dictionary through the page's ids, straight into the cells, with no page-sized value array. Every other page (`V2`, `BYTE_STREAM_SPLIT`, delta, `BOOLEAN`, a null placeholder) is decoded into a page as the decode task does it, and its fill copies from the page. The ids and definition levels live in the pool thread's scratch for the length of the task. A page that holds a different number of values than the rows its metadata gave its placement fails the read before it fills anything.
+
+**Publishing.** Each column publishes its completed cells in plan order (`BatchExchange.tryPublish`), without waiting: a cell that finds the ready queue at its limit stays at the head of the column's publish order, and the consumer publishes it on its own thread when it takes a batch (`BatchExchange.setRoomListener`). No pool thread waits on the exchange, and no publish is queued behind read-ahead on the pool. A published cell drops its segments and its batch, which a page spanning several cells would otherwise keep alive.
+
+**Failures and close.** A page task's failure, placed with its page's file, row group and ordinal, ends the column's read at once. A fetcher's failure is raised once every cell before it is published: a page whose placement failed part way is still decoded into the cells it was placed into. A failure between work items seals the open cell first, as the drain publishes its partial batch, and one inside a work item abandons it. A failure of the scheduler itself ends every scheduled column's read. A decode pool that refuses a page task, which a closed `HardwoodContext` does, ends the read with an `IllegalStateException` whose cause is the refusal; the context's close lets the tasks already queued run, so no column waits for a task that never runs. `ScheduledColumn.close()` sets `done`, joins the fetcher and waits for every page task submitted for the column; a task is counted before its submission reads `done`, so a submission racing the close is either refused or waited for. The scheduler exits once every column is closed or done.
+
+Tests: `ReadSchedulerTest`, `ParallelFillValidityTest`, `BatchPlanTest`, `FilterOnlyColumnSkipTest`, `ContextClosedMidReadTest`, `ReaderCloseLatencyTest`, and the result-comparing suites, which read every fixture through the column readers at small batch capacities.
 
 ## Batch sizing
 
@@ -252,7 +294,7 @@ Sizing the decode pool is a resource concern and stays on the context. A behavio
 | `hardwood.fixed-list-fast-path` | `false` (opt-in) | Transitional: the default flips once the path is trusted, then the key is retired | The fixed-size-list decode fast path ([NESTED_DECODE.md](NESTED_DECODE.md)) |
 | `hardwood.metadata-filtering` | `true` | Permanent escape hatch for files with unreliable metadata | Every metadata-derived filter decision ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) |
 
-A stable knob that needs a typed contract stays typed on its builder and out of the map, as `batchSize(int)` does on the column-reader builders. The `hardwood.internal.*` system properties (reorder depth, coalescing span, sequential chunk size, page-index window budget) are tuning overrides and not part of `ReaderConfig`. The user-facing option reference is [reader.md](../docs/content/reference/reader.md#reader-options).
+A stable knob that needs a typed contract stays typed on its builder and out of the map, as `batchSize(int)` does on the column-reader builders. The `hardwood.internal.*` system properties (reorder depth, coalescing span, sequential chunk size, page-index window budget, and `hardwood.internal.batchSize`, which replaces the auto batch size so the test suites can run at small batch capacities) are overrides for tuning and testing and not part of `ReaderConfig`. The user-facing option reference is [reader.md](../docs/content/reference/reader.md#reader-options).
 
 Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 
@@ -260,7 +302,7 @@ Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 
 - **Read-ahead beyond the throttle (#370).** The throttle counts pages in the reorder buffer only; the batches in the exchange add to the per-column horizon.
 - **Files stay open until the reader closes (#100).** A multi-file read releases no file as it moves past it.
-- **Single-threaded mode (#1022).** A read always uses the retriever, drain and decode threads, even on a one-thread context.
+- **Single-threaded mode (#1022).** A read always uses the retriever, drain and decode threads, or the fetcher, scheduler and page tasks, even on a one-thread context.
 - **Schema drift across files (#941).** Every file must match the reference schema for the columns a read touches.
 - **`BYTE_ARRAY` width estimate (#899).** Batch sizing guesses a fixed width per `BYTE_ARRAY` value instead of reading the recorded unencoded size.
 - **Row caps on the column readers (#433).** `ColumnReaderBuilder` and `ColumnReadersBuilder` have no `head`, so no cap reaches their workers.

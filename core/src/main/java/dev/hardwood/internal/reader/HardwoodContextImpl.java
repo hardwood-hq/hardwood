@@ -32,6 +32,8 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     private final ExecutorService executor;
     private final int threads;
+    /// Scheduled page tasks submitted and not ended, across every read sharing the context.
+    private final AtomicInteger pageTasks = new AtomicInteger();
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
     private final MetadataSource metadataSource;
@@ -106,14 +108,39 @@ public class HardwoodContextImpl implements HardwoodContext {
         return threads;
     }
 
+    /// Counts a scheduled page task submitted to the decode pool, by any read sharing the context.
+    /// Its scheduler counts it as ended ([#pageTaskEnded]) before it is woken to submit the next.
+    void pageTaskSubmitted() {
+        pageTasks.incrementAndGet();
+    }
+
+    /// Counts a scheduled page task ended.
+    void pageTaskEnded() {
+        pageTasks.decrementAndGet();
+    }
+
+    /// Scheduled page tasks submitted and not ended; for tests.
+    int pageTasksInFlight() {
+        return pageTasks.get();
+    }
+
+    /// Whether the scheduled page tasks of every read sharing the context leave a decode thread
+    /// without a task. A column worker's decode tasks are not counted.
+    boolean hasIdleDecodeThread() {
+        return pageTasks.get() < threads;
+    }
+
     /// Get the decompressor factory.
     public DecompressorFactory decompressorFactory() {
         return decompressorFactory;
     }
 
+    /// Shuts the pool down, letting the tasks already queued run: a reader still reading counts
+    /// each task it submitted and waits for it when it closes, and its tasks return at once once
+    /// the rejection of its next submission has ended its read.
     @Override
     public void close() {
-        executor.shutdownNow();
+        executor.shutdown();
         try {
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }

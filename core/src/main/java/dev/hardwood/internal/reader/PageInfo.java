@@ -29,18 +29,26 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// The [#BOUNDARY_MARKER] stands in for a whole row group of a column that is
 /// not read there ([SkippedColumnFetchPlan]). It carries no bytes, no metadata
-/// and no rows; the worker assembles nothing for it and only closes the batch
+/// and no rows; the worker places nothing for it and only closes the batch
 /// in progress where its siblings close theirs.
 ///
 /// The optional [#mask()] selects which records of the decoded page are kept.
 /// Defaults to [PageRowMask#ALL] (keep everything); the filter-pushdown path
 /// attaches a tighter mask when the page only partially overlaps the matching
 /// rows. A masked nested page is trimmed to its kept records when it is decoded
-/// ([PageTrimmer]); a flat column's assembly copies the kept intervals.
+/// ([PageTrimmer]); a flat column's fill copies the kept intervals.
+///
+/// [#records()] is the number of records the page contributes after its mask, from the page's
+/// metadata: its header or its offset index row span. It is known for a column without
+/// repetition, whose records are its values, and [#UNKNOWN_RECORDS] otherwise: a column with
+/// repetition counts its records from its repetition levels once the page is decoded.
 public class PageInfo {
 
+    /// [#records()] of a page whose records only its repetition levels give.
+    public static final int UNKNOWN_RECORDS = -1;
+
     /// The one page of a column that is not read in a row group. See [SkippedColumnFetchPlan].
-    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL);
+    public static final PageInfo BOUNDARY_MARKER = new PageInfo(null, null, null, null, 0, PageRowMask.ALL, 0);
 
     private final ByteBuffer pageData;
     private final ColumnSchema columnSchema;
@@ -48,23 +56,23 @@ public class PageInfo {
     private final Dictionary dictionary;
     private final int placeholderNumValues;
     private final PageRowMask mask;
+    private final int records;
 
-    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
-                    ColumnMetaData columnMetaData, Dictionary dictionary) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, PageRowMask.ALL);
-    }
-
+    /// @param records the records the page contributes after `mask`, or [#UNKNOWN_RECORDS]
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary,
-                    PageRowMask mask) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask);
+                    PageRowMask mask, int records) {
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, records);
     }
 
     private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues, PageRowMask mask) {
+                     int placeholderNumValues, PageRowMask mask, int records) {
         if (mask == null) {
             throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
+        }
+        if (records < UNKNOWN_RECORDS) {
+            throw new IllegalArgumentException("records must not be negative, got " + records);
         }
         this.pageData = pageData;
         this.columnSchema = columnSchema;
@@ -72,18 +80,21 @@ public class PageInfo {
         this.dictionary = dictionary;
         this.placeholderNumValues = placeholderNumValues;
         this.mask = mask;
+        this.records = records;
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
     /// values can be substituted with nulls because inline page stats proved they
     /// cannot match the active predicate. Only valid for columns with
     /// `maxDefinitionLevel > 0`; callers must check before producing one.
+    ///
+    /// @param records the records the placeholder stands for, or [#UNKNOWN_RECORDS]
     public static PageInfo nullPlaceholder(int numValues, ColumnSchema columnSchema,
-                                            ColumnMetaData columnMetaData) {
+                                            ColumnMetaData columnMetaData, int records) {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, records);
     }
 
     /// Returns the page data buffer (header + compressed data), or `null` if this
@@ -122,5 +133,11 @@ public class PageInfo {
     /// otherwise a tighter mask coming from filter pushdown.
     public PageRowMask mask() {
         return mask;
+    }
+
+    /// The records the page contributes after its [#mask()], or [#UNKNOWN_RECORDS] for a column
+    /// with repetition. `0` for the [#BOUNDARY_MARKER].
+    public int records() {
+        return records;
     }
 }

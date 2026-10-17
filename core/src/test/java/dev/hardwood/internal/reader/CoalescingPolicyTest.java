@@ -50,7 +50,7 @@ class CoalescingPolicyTest {
     /// Two 100-byte pages, `gap` bytes apart.
     private static List<RowGroupIterator.NeededPage> pagesWithGap(int gap) {
         return List.of(
-                new RowGroupIterator.NeededPage(new PageLocation(4, 100, 0), PageRowMask.ALL, 0),
-                new RowGroupIterator.NeededPage(new PageLocation(104 + gap, 100, 10), PageRowMask.ALL, 1));
+                new RowGroupIterator.NeededPage(new PageLocation(4, 100, 0), PageRowMask.ALL, 0, 10),
+                new RowGroupIterator.NeededPage(new PageLocation(104 + gap, 100, 10), PageRowMask.ALL, 1, 10));
     }
 }

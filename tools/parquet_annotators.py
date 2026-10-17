@@ -37,6 +37,9 @@ Column chunk layout helpers:
   ineligible for dictionary predicate push-down.
 - `understate_data_page_offset` — leave the dictionary page's header out of
   `data_page_offset`, as DuckDB did before duckdb/duckdb#10829.
+- `recut_v1_pages` — cut a repeated column's V1 data pages at a fixed count of
+  level positions, so pages begin inside a record, as writers other than
+  PyArrow (parquet-mr before 1.11 among them) do without a page index.
 
 Legacy-only fixture helpers (set `converted_type` and clear `logicalType`):
 - `annotate_columns_as_legacy_converted_type` — for primitive columns.
@@ -136,13 +139,6 @@ enum CompressionCodec {
 enum PageType { DATA_PAGE=0, INDEX_PAGE=1, DICTIONARY_PAGE=2, DATA_PAGE_V2=3 }
 enum BoundaryOrder { UNORDERED=0, ASCENDING=1, DESCENDING=2 }
 struct DictionaryPageHeader { 1: required i32 num_values; 2: required Encoding encoding; 3: optional bool is_sorted; }
-struct PageHeader {
-  1: required PageType type;
-  2: required i32 uncompressed_page_size;
-  3: required i32 compressed_page_size;
-  4: optional i32 crc;
-  7: optional DictionaryPageHeader dictionary_page_header;
-}
 struct Statistics {
   1: optional binary max;
   2: optional binary min;
@@ -153,6 +149,21 @@ struct Statistics {
   7: optional bool is_max_value_exact;
   8: optional bool is_min_value_exact;
   9: optional i64 nan_count;
+}
+struct DataPageHeader {
+  1: required i32 num_values;
+  2: required Encoding encoding;
+  3: required Encoding definition_level_encoding;
+  4: required Encoding repetition_level_encoding;
+  5: optional Statistics statistics;
+}
+struct PageHeader {
+  1: required PageType type;
+  2: required i32 uncompressed_page_size;
+  3: required i32 compressed_page_size;
+  4: optional i32 crc;
+  5: optional DataPageHeader data_page_header;
+  7: optional DictionaryPageHeader dictionary_page_header;
 }
 struct SizeStatistics {
   1: optional i64 unencoded_byte_array_data_bytes;
@@ -578,6 +589,191 @@ def _dictionary_header_length(data: bytes, offset: int) -> int:
     if data[offset:offset + len(encoded)] != encoded:
         raise ValueError(f"dictionary page header at offset {offset} holds a field the embedded IDL does not model")
     return len(encoded)
+
+
+def recut_v1_pages(path: str, column_path: str, max_rep: int, max_def: int,
+                   levels_per_page: int) -> None:
+    """Rewrite `path` so the column chunk at dotted `column_path` is cut into V1 data pages of
+    `levels_per_page` level positions each, wherever records fall.
+
+    PyArrow ends every page at a record boundary. Writers that do not, such as parquet-mr
+    before 1.11, produce pages whose first repetition level is not `0`: the page begins
+    inside the previous page's last record. The chunk must be the file's last column chunk,
+    uncompressed, `PLAIN`, with no dictionary page, no page index and no page statistics, so
+    nothing outside it moves and nothing inside it describes the old cut.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    if len(file_metadata.row_groups) != 1:
+        raise ValueError(f"{path} must have exactly one row group")
+    row_group = file_metadata.row_groups[0]
+    chunk = row_group.columns[-1]
+    meta_data = chunk.meta_data
+    if '.'.join(meta_data.path_in_schema) != column_path:
+        raise ValueError(f"{path}: '{column_path}' is not the last column chunk")
+    if meta_data.codec != _parquet.CompressionCodec.UNCOMPRESSED or meta_data.dictionary_page_offset is not None:
+        raise ValueError(f"{path}: '{column_path}' must be uncompressed and without a dictionary page")
+    if chunk.offset_index_offset is not None or chunk.column_index_offset is not None:
+        raise ValueError(f"{path}: '{column_path}' must have no page index")
+
+    start = meta_data.data_page_offset
+    end = start + meta_data.total_compressed_size
+    if end != len(data_before_footer):
+        raise ValueError(f"{path}: '{column_path}' is not followed directly by the footer")
+
+    rep_width = max_rep.bit_length()
+    def_width = max_def.bit_length()
+    reps, defs, values = [], [], []
+    offset = start
+    while offset < end:
+        header, header_length = _read_page_header(data_before_footer, offset)
+        if header.type != _parquet.PageType.DATA_PAGE or _has_statistics(header.data_page_header.statistics):
+            raise ValueError(f"{path}: '{column_path}' must hold V1 data pages without statistics")
+        if header.data_page_header.encoding != _parquet.Encoding.PLAIN:
+            raise ValueError(f"{path}: '{column_path}' must be PLAIN encoded")
+        body = data_before_footer[offset + header_length:offset + header_length + header.compressed_page_size]
+        count = header.data_page_header.num_values
+        position = 0
+        page_reps, position = _read_level_section(body, position, rep_width, count)
+        page_defs, position = _read_level_section(body, position, def_width, count)
+        present = sum(1 for d in page_defs if d == max_def)
+        values.extend(_read_plain_values(meta_data.type, body, position, present))
+        reps.extend(page_reps)
+        defs.extend(page_defs)
+        offset += header_length + header.compressed_page_size
+
+    if len(reps) != meta_data.num_values:
+        raise ValueError(f"{path}: '{column_path}' decoded {len(reps)} levels, metadata says {meta_data.num_values}")
+
+    pages = bytearray()
+    page_count = 0
+    value_index = 0
+    for first in range(0, len(reps), levels_per_page):
+        page_reps = reps[first:first + levels_per_page]
+        page_defs = defs[first:first + levels_per_page]
+        present = sum(1 for d in page_defs if d == max_def)
+        body = (_level_section(page_reps, rep_width) + _level_section(page_defs, def_width)
+                + b''.join(values[value_index:value_index + present]))
+        value_index += present
+        header = _parquet.PageHeader(
+            type=_parquet.PageType.DATA_PAGE,
+            uncompressed_page_size=len(body),
+            compressed_page_size=len(body),
+            data_page_header=_parquet.DataPageHeader(
+                num_values=len(page_reps),
+                encoding=_parquet.Encoding.PLAIN,
+                definition_level_encoding=_parquet.Encoding.RLE,
+                repetition_level_encoding=_parquet.Encoding.RLE))
+        out = TMemoryBuffer()
+        header.write(TCompactProtocolFactory().get_protocol(out))
+        pages += out.getvalue() + body
+        page_count += 1
+
+    growth = len(pages) - (end - start)
+    meta_data.total_compressed_size = len(pages)
+    meta_data.total_uncompressed_size = len(pages)
+    meta_data.encoding_stats = [_parquet.PageEncodingStats(
+        page_type=_parquet.PageType.DATA_PAGE, encoding=_parquet.Encoding.PLAIN, count=page_count)]
+    row_group.total_byte_size += growth
+    if row_group.total_compressed_size is not None:
+        row_group.total_compressed_size += growth
+
+    _write_parquet_footer(path, data_before_footer[:start] + bytes(pages), file_metadata)
+
+
+def _has_statistics(statistics) -> bool:
+    """Whether `statistics` states anything; PyArrow writes an empty struct when told not to
+    write statistics."""
+    return statistics is not None and any(value is not None for value in vars(statistics).values())
+
+
+def _read_page_header(data: bytes, offset: int):
+    """The page header at `offset` in `data` and its length in bytes."""
+    buffer = TMemoryBuffer(data[offset:offset + 1024])
+    header = _parquet.PageHeader()
+    header.read(TCompactProtocolFactory().get_protocol(buffer))
+    out = TMemoryBuffer()
+    header.write(TCompactProtocolFactory().get_protocol(out))
+    encoded = out.getvalue()
+    if data[offset:offset + len(encoded)] != encoded:
+        raise ValueError(f"page header at offset {offset} holds a field the embedded IDL does not model")
+    return header, len(encoded)
+
+
+def _read_level_section(body: bytes, position: int, bit_width: int, count: int):
+    """Decodes a V1 level section (a 4-byte length, then RLE/bit-packed hybrid runs) at
+    `position`; a zero `bit_width` has no section and every level is `0`."""
+    if bit_width == 0:
+        return [0] * count, position
+    length = struct.unpack_from('<I', body, position)[0]
+    position += 4
+    section_end = position + length
+    levels = []
+    byte_width = (bit_width + 7) // 8
+    while len(levels) < count:
+        header, position = _read_varint(body, position)
+        if header & 1:
+            groups = header >> 1
+            packed = body[position:position + groups * bit_width]
+            position += groups * bit_width
+            bits = int.from_bytes(packed, 'little')
+            for i in range(groups * 8):
+                levels.append((bits >> (i * bit_width)) & ((1 << bit_width) - 1))
+        else:
+            value = int.from_bytes(body[position:position + byte_width], 'little')
+            position += byte_width
+            levels.extend([value] * (header >> 1))
+    if position > section_end:
+        raise ValueError("level section overruns its length")
+    return levels[:count], section_end
+
+
+def _level_section(levels, bit_width: int) -> bytes:
+    """Encodes `levels` as a V1 level section of RLE runs; empty for a zero `bit_width`."""
+    if bit_width == 0:
+        return b''
+    byte_width = (bit_width + 7) // 8
+    runs = bytearray()
+    i = 0
+    while i < len(levels):
+        j = i
+        while j < len(levels) and levels[j] == levels[i]:
+            j += 1
+        runs += _varint((j - i) << 1) + levels[i].to_bytes(byte_width, 'little')
+        i = j
+    return struct.pack('<I', len(runs)) + bytes(runs)
+
+
+def _read_plain_values(physical_type, body: bytes, position: int, count: int):
+    """Splits `count` PLAIN values at `position` into their encoded bytes, one item per value."""
+    if physical_type != _parquet.Type.BYTE_ARRAY:
+        raise ValueError(f"only BYTE_ARRAY values are supported, not type {physical_type}")
+    values = []
+    for _ in range(count):
+        length = struct.unpack_from('<I', body, position)[0]
+        values.append(body[position:position + 4 + length])
+        position += 4 + length
+    return values
+
+
+def _read_varint(data: bytes, position: int):
+    result = 0
+    shift = 0
+    while True:
+        byte = data[position]
+        position += 1
+        result |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return result, position
+        shift += 7
+
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
 
 
 def drop_encoding_stats(path: str, column_name: str) -> None:

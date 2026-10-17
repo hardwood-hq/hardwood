@@ -11,14 +11,16 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 
 import dev.hardwood.internal.reader.BatchExchange;
-import dev.hardwood.internal.reader.ColumnWorker;
+import dev.hardwood.internal.reader.ColumnPipeline;
 import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
+import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.reader.ScheduledColumn;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -34,7 +36,7 @@ final class ColumnCursor {
     private final boolean nested;
     private final BatchExchange<BatchExchange.Batch> flatExchange;
     private final BatchExchange<NestedBatch> nestedExchange;
-    private final ColumnWorker<?> worker;
+    private final ColumnPipeline worker;
 
     private BatchExchange.Batch flatBatch;
     private NestedBatch nestedBatch;
@@ -42,7 +44,7 @@ final class ColumnCursor {
     private boolean closed;
 
     private ColumnCursor(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatExchange,
-                         BatchExchange<NestedBatch> nestedExchange, ColumnWorker<?> worker) {
+                         BatchExchange<NestedBatch> nestedExchange, ColumnPipeline worker) {
         this.column = column;
         this.nested = nestedExchange != null;
         this.flatExchange = flatExchange;
@@ -61,14 +63,17 @@ final class ColumnCursor {
     /// Starts the worker for `column`, which sits at `projectedColumnIndex` in the
     /// projection `rowGroupIterator` was initialised with. Batches are published
     /// detached, so every batch the cursor hands out is fresh and never reused. The batches
-    /// close where the batch plan of `rowGroupIterator` closes them.
+    /// close where the batch plan of `rowGroupIterator` closes them. A flat column a
+    /// [ScheduledColumn] reads is added to `scheduler`, which starts it; `scheduler` is `null`
+    /// when no column is read that way.
     static ColumnCursor create(ColumnSchema column, FileSchema schema,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
                                boolean fixedListFastPathEnabled,
                                int projectedColumnIndex,
                                int batchSize,
-                               NestedColumnWorker.IndexMode indexMode) {
+                               NestedColumnWorker.IndexMode indexMode,
+                               ReadScheduler scheduler) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), column.columnIndex());
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
@@ -87,6 +92,11 @@ final class ColumnCursor {
         // The flat worker gives a batch its values on the batch's first rows, sized to the
         // rows the batch plan puts in it.
         BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), batchSize);
+        if (scheduler != null && ScheduledColumn.reads(column)) {
+            ScheduledColumn scheduled = new ScheduledColumn(scheduler, pageSource, exchange, column, batchSize,
+                    context.decompressorFactory());
+            return new ColumnCursor(column, exchange, null, scheduled);
+        }
         FlatColumnWorker worker = new FlatColumnWorker(
                 pageSource, exchange, column, batchSize,
                 context.decompressorFactory(), context.executor(), null);
