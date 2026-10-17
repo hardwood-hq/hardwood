@@ -42,6 +42,7 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// Reader for one or more Parquet files.
 ///
@@ -588,10 +589,10 @@ public class ParquetFileReader implements Closeable {
 
     /// Creates a [RowReader] for the given pipeline components.
     ///
-    /// Selects [dev.hardwood.internal.reader.FlatRowReader] for flat schemas and
-    /// [dev.hardwood.internal.reader.NestedRowReader] for nested schemas.
-    /// Either evaluates a filter per batch on the drain side or per record in the
-    /// reader, by the predicate's shape.
+    /// Selects [FlatRowReader] when [#isFlatProjection] holds for the decoded columns,
+    /// and [NestedRowReader] otherwise. Columns the predicate adds and the caller did
+    /// not project count toward that choice. Either reader evaluates a filter per batch
+    /// on the drain side or per record in the reader, by the predicate's shape.
     ///
     /// @param rowGroupIterator initialized iterator over row groups
     /// @param schema file schema
@@ -611,11 +612,39 @@ public class ParquetFileReader implements Closeable {
         // Both paths size their batches through the one funnel the column readers use, so a
         // projection sizes the same whichever reader reads it.
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
-        RowReader reader = schema.isFlatSchema()
+        RowReader reader = isFlatProjection(schema, projection.decoded())
                 ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize)
                 : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
                         filter, maxRows, batchSize);
         return trackedChild(rowGroupIterator, reader);
+    }
+
+    /// Whether [FlatRowReader] can read `decoded`.
+    ///
+    /// Every decoded column has repetition level zero, and every decoded top-level field
+    /// is a [SchemaNode.PrimitiveNode]. Both are required: an unannotated repeated primitive
+    /// is a top-level primitive that still repeats, and a non-repeated leaf under a group
+    /// has repetition level zero while its top-level field is a group. Flat accessors address
+    /// leaves by leaf name, so a group field stays on [NestedRowReader].
+    ///
+    /// The test covers filter-only columns. [FlatRowReader] builds a flat column worker for
+    /// every decoded column, and its predicate view reads flat batches, so a scalar payload
+    /// filtered on a list or a struct stays on [NestedRowReader].
+    ///
+    /// [FileSchema#isFlatSchema] remains the test of the whole file.
+    private static boolean isFlatProjection(FileSchema schema, ProjectedSchema decoded) {
+        for (ColumnSchema column : decoded.getProjectedColumns()) {
+            if (column.maxRepetitionLevel() != 0) {
+                return false;
+            }
+        }
+        List<SchemaNode> rootChildren = schema.getRootNode().children();
+        for (int fieldIndex : decoded.getProjectedFieldIndices()) {
+            if (!(rootChildren.get(fieldIndex) instanceof SchemaNode.PrimitiveNode)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) throws IOException {
