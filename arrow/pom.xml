@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+     SPDX-License-Identifier: Apache-2.0
+
+     Copyright The original authors
+
+     Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>dev.hardwood</groupId>
+    <artifactId>hardwood-parent</artifactId>
+    <version>1.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>hardwood-arrow</artifactId>
+
+  <name>Hardwood Arrow</name>
+  <description>Apache Arrow VectorSchemaRoot support for Hardwood</description>
+  <url>https://hardwood.dev/</url>
+
+  <scm>
+    <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
+    <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
+    <url>https://github.com/hardwood-hq/hardwood/</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <properties>
+    <!-- Arrow Java's version is managed in hardwood-bom.
+         Arrow Java reaches into java.nio through reflection on every JDK since 16, and its
+         unsafe memory backend uses sun.misc.Unsafe, which JDK 24+ warns about by default. -->
+    <arrow.test.argLine>${test.argLine} --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED</arrow.test.argLine>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-test-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Not used by any code here. Declared so the reactor builds the Error Prone checks
+         before this module compiles: they reach javac through the compiler plugin's
+         annotationProcessorPaths, which the reactor does not read when ordering modules,
+         so under `-T` there is otherwise nothing stopping the two running at once. -->
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-error-prone-checks</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-vector</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-core</artifactId>
+    </dependency>
+
+    <!-- Test dependencies. The memory backend is the caller's choice; the tests use the
+         unsafe one. arrow-c-data exports the reader through the C Stream Interface so DuckDB
+         can read it. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-unsafe</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-c-data</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Arrow C++'s Parquet reader, through JNI: the oracle for the type mapping and the values. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-dataset</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.duckdb</groupId>
+      <artifactId>duckdb_jdbc</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Core's checked-in fixtures the DuckDB comparison reads include Snappy-compressed ones. -->
+    <dependency>
+      <groupId>org.xerial.snappy</groupId>
+      <artifactId>snappy-java</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-jpl</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-slf4j2-impl</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <argLine>${arrow.test.argLine}</argLine>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries combine.children="append">
+              <Automatic-Module-Name>dev.hardwood.arrow</Automatic-Module-Name>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

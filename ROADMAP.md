@@ -472,6 +472,20 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Shared value renderer across `print` / `convert` / `inspect` / `dive` (#1021)
 - [x] Control characters in displayed values sanitised (#865)
 
+### 11.5 Arrow support (`hardwood-arrow`) (#153)
+- [x] `ArrowSchemaConverter` — columns and groups to an Arrow `Schema`, following Arrow C++'s metadata-free mapping
+- [x] `ArrowBatchReader` — Arrow's `ArrowReader` over `ColumnReaders`: fixed-width, boolean and binary leaves, validity, projection, filtering, multi-file reads
+- [x] Scalar logical conversions: narrow and unsigned integers, temporal types, decimals over every carrier, `INT96`, `FLOAT16`, `UUID` and `NULL`
+- [x] IPC stream and file output through Arrow's writers, C Data export queried by DuckDB
+- [x] Nested output: structs, lists, maps and bare repeated fields, each group's buffers from a layer of the leaf readers beneath it
+- [x] Variant groups as the struct they store, the storage of Arrow's Variant extension type
+- [ ] Shredded Variant values reassembled to canonical bytes, and the Variant extension type applied
+- [ ] Dictionary-encoded Arrow output
+- [ ] `ARROW:schema` restoration (large offsets, zones, extension types)
+- [ ] Arrow IPC as a `hardwood convert` output format
+- [ ] Arrow-to-Parquet writing
+- [ ] Benchmark of the Arrow path against the raw `ColumnReaders` scan: fixed-width, plain and dictionary-backed binary, converting columns
+
 ---
 
 ## Milestones
