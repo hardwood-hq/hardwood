@@ -16,27 +16,36 @@ final class KeptRuns {
     private final int[] keptStarts;
     private final int[] lengths;
     private final int count;
+    private final boolean keepsLastValue;
 
-    private KeptRuns(int[] pageStarts, int[] keptStarts, int[] lengths, int count) {
+    private KeptRuns(int[] pageStarts, int[] keptStarts, int[] lengths, int count, boolean keepsLastValue) {
         this.pageStarts = pageStarts;
         this.keptStarts = keptStarts;
         this.lengths = lengths;
         this.count = count;
+        this.keepsLastValue = keepsLastValue;
     }
 
-    /// Runs `[pageStarts[i], pageStarts[i] + lengths[i])`, the first `count` of each array.
-    static KeptRuns of(int[] pageStarts, int[] lengths, int count) {
+    /// Runs `[pageStarts[i], pageStarts[i] + lengths[i])`, the first `count` of each array, of a
+    /// page of `pageSize` values.
+    static KeptRuns of(int[] pageStarts, int[] lengths, int count, int pageSize) {
         int[] keptStarts = new int[count];
         int kept = 0;
         for (int i = 0; i < count; i++) {
             keptStarts[i] = kept;
             kept += lengths[i];
         }
-        return new KeptRuns(pageStarts, keptStarts, lengths, count);
+        boolean keepsLastValue = count > 0 && pageStarts[count - 1] + lengths[count - 1] == pageSize;
+        return new KeptRuns(pageStarts, keptStarts, lengths, count, keepsLastValue);
     }
 
     int count() {
         return count;
+    }
+
+    /// Whether the last run ends at the page's last value: the mask keeps the page's last record.
+    boolean keepsLastValue() {
+        return keepsLastValue;
     }
 
     /// The run holding kept position `kept`.

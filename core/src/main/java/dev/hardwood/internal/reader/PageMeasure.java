@@ -24,6 +24,8 @@ import dev.hardwood.reader.ParquetReadException;
 ///   previous page ends with. Only a `V1` page with repetition can have any.
 /// - [#recordStart(int)]: where record `i` starts, in values.
 /// - [#bytes(int, int)]: the bytes of a range of plain binary values; `0` for any other page.
+/// - [#keepsLastRecord()]: whether the page's last record is kept, which the next page's leading
+///   values may continue.
 ///
 /// The record starts and the byte prefix live in the page's own [PageDecoder.LevelScratch], which
 /// the page keeps until its segments are filled.
@@ -128,6 +130,12 @@ final class PageMeasure {
             return 0;
         }
         return runs == null ? binary.bytes(from, to) : runs.bytes(binary, from, to);
+    }
+
+    /// Whether the page keeps its last record: it is not masked, or its mask keeps that record.
+    /// Values continuing a record the mask drops belong to no record the column holds.
+    boolean keepsLastRecord() {
+        return runs == null || runs.keepsLastValue();
     }
 
     /// Elements per record of a fixed-size-list page, `0` for any other page.

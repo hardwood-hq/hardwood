@@ -23,7 +23,9 @@ import dev.hardwood.reader.ParquetReadException;
 /// seals a batch at the next record start, at the end of the row group or at the end of the read,
 /// since a record's last values may lie on a later page: the values a page begins with before its
 /// first record start go, as a segment of no records, into the cell holding the previous page's
-/// last record. A column chunk whose first page begins inside a record fails, placed at that page.
+/// last record. A column chunk whose first page begins inside a record fails, placed at that page,
+/// and so does a page beginning inside a record the previous page's row mask drops or that begins
+/// on a page the read skips.
 ///
 /// Records past the row cap are not placed: once the cell the cap ends is sealed, the placer
 /// stops and reports the end of the read.
@@ -76,6 +78,11 @@ final class Placer<C> {
     private boolean openBatchSkipped;
     /// Whether a page with values has been placed in the current column chunk.
     private boolean chunkStarted;
+    /// Whether the last page placed in the current column chunk keeps its last record, which the
+    /// next page's leading values continue.
+    private boolean lastRecordKept;
+    /// The chunk ordinal of the last page placed in the current column chunk.
+    private int lastPageIndex;
     /// The cell of the batch holding the last record placed, `null` when that batch is sealed.
     private C openCell;
     private boolean stopped;
@@ -103,7 +110,9 @@ final class Placer<C> {
     ///
     /// @param repeated whether the column has repetition
     /// @return whether the column goes on
-    /// @throws ParquetReadException if the page begins its column chunk inside a record
+    /// @throws ParquetReadException if the page begins inside a record that its column chunk does
+    ///         not start before it, that begins on a page the read skips, or that the previous
+    ///         page's row mask drops
     boolean place(PageTask page, PageMeasure measure, boolean repeated) {
         if (!enter(page)) {
             return false;
@@ -192,6 +201,15 @@ final class Placer<C> {
                 throw new ParquetReadException("Invalid column chunk: first repetition level must be 0 but was "
                         + measure.firstRepetitionLevel());
             }
+            if (page.pageIndex != lastPageIndex + 1) {
+                throw new ParquetReadException("Invalid column chunk: first repetition level of page " + page.pageIndex
+                        + " must be 0 after page " + lastPageIndex + ", the last page read before it, but was "
+                        + measure.firstRepetitionLevel());
+            }
+            if (!lastRecordKept) {
+                throw new ParquetReadException("Invalid column chunk: first repetition level must be 0 after a page "
+                        + "whose row mask drops its last record, but was " + measure.firstRepetitionLevel());
+            }
             // The values continue the last record placed, which the open cell holds: a cell of a
             // column with repetition is sealed only at a record start or at the end of its chunk.
             if (openCell == null) {
@@ -200,6 +218,8 @@ final class Placer<C> {
             sink.add(openCell, page, 0, 0, 0, measure.leadingValues());
         }
         chunkStarted = true;
+        lastRecordKept = measure.keepsLastRecord();
+        lastPageIndex = page.pageIndex;
         int records = measure.records();
         int r = 0;
         while (r < records) {
