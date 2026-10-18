@@ -145,7 +145,7 @@ An all-present batch has no phantom positions, so its real-items offsets equal t
 
 **Consumer.** `ColumnReader.ensureRealView()` returns the batch's `realView` when set. Otherwise the batch came from record selection (`ColumnScan.compactNestedBatch`, which slices the raw levels and values per kept record and carries no view), and the reader builds the view lazily from the sliced levels, or arithmetically for a fixed-width batch (`fixedListRealView`). Leaf values resolve in the same order: the batch's `realValues`, else the batch values when `realToRawLeaf` is `null`, else a compacted copy.
 
-Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeListFastPathReadTest`, `DifferentialReadTest`.
+Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeListFastPathReadTest`, `DifferentialReadTest`, `RealViewEquivalenceTest`.
 
 ## Fixed-size-list fast path
 

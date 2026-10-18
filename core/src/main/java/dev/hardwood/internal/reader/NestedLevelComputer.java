@@ -386,119 +386,245 @@ public final class NestedLevelComputer {
     /// layer) are skipped from layer offsets and from the leaf-items axis;
     /// at `STRUCT` layers slots stay 1-to-1 with the parent (the design's
     /// "STRUCT does not expand or contract the item stream" rule).
+    ///
+    /// A position is an item of layer `k` when `rep <= itemRepThresholds[k]` and
+    /// `def >= itemDefThresholds[k]`. Each layer, and the leaf, takes a counting pass, which sizes
+    /// its arrays exactly and finds whether any of its items is absent, then a filling pass that
+    /// stores unconditionally at the next free slot and advances it by the item predicate, so a
+    /// position that is no item writes a slot the next item overwrites. No pass branches on the
+    /// levels.
     public static RealView computeRealView(int[] defLevels, int[] repLevels,
                                            int rawValueCount, int recordCount,
                                            int maxDefLevel, Layers layers) {
+        return repLevels == null
+                ? repetitionFreeView(defLevels, rawValueCount, maxDefLevel, layers)
+                : repeatedView(defLevels, repLevels, rawValueCount, maxDefLevel, layers);
+    }
+
+    /// The view of a column with repetition levels, built layer by layer as
+    /// [#computeRealView] describes.
+    private static RealView repeatedView(int[] defLevels, int[] reps, int rawValueCount, int maxDefLevel,
+                                         Layers layers) {
         int layerCount = layers.count();
         int[] itemDef = layers.itemDefThresholds();
         int[] itemRep = layers.itemRepThresholds();
+        int[] defThresholds = layers.defThresholds();
+        // Only a batch derived by record selection whose levels are all at the maximum comes
+        // without definition levels next to repetition levels.
+        int[] defs = defLevels != null ? defLevels : constantLevels(rawValueCount, maxDefLevel);
 
         int[][] offsets = new int[layerCount][];
-        for (int k = 0; k < layerCount; k++) {
-            if (layers.kinds()[k] == LayerKind.REPEATED) {
-                offsets[k] = new int[rawValueCount + 1];
-            }
-        }
         long[][] layerValidity = new long[layerCount][];
-        boolean[] layerHasAbsent = new boolean[layerCount];
-        int[] realCount = new int[layerCount + 1];
-
-        boolean leafCompacts = layerCount > 0 && itemDef[layerCount] > 0;
-        int[] realToRaw = leafCompacts ? new int[rawValueCount] : null;
-
-        long[] leafValidity = null;
-        boolean leafAnyAbsent = false;
-
-        for (int i = 0; i < rawValueCount; i++) {
-            int rep = repLevels != null ? repLevels[i] : 0;
-            int def = defLevels != null ? defLevels[i] : maxDefLevel;
-
-            for (int k = 0; k < layerCount; k++) {
-                if (rep <= itemRep[k] && def >= itemDef[k]) {
-                    int slot = realCount[k];
-                    if (layers.kinds()[k] == LayerKind.REPEATED) {
-                        offsets[k][slot] = realCount[k + 1];
-                    }
-                    boolean present = def >= layers.defThresholds()[k];
-                    if (!present) {
-                        if (layerValidity[k] == null) {
-                            layerValidity[k] = new long[(rawValueCount + 63) >>> 6];
-                            BitmapWords.setRange(layerValidity[k], 0, slot);
-                        }
-                        layerHasAbsent[k] = true;
-                    }
-                    else if (layerValidity[k] != null) {
-                        layerValidity[k][slot >>> 6] |= 1L << slot;
-                    }
-                    realCount[k]++;
-                }
-            }
-
-            // Leaf advance: a real leaf slot exists at this position iff every
-            // enclosing layer's content is reached. The rule unifies the
-            // STRUCT-only chain (always advance — leaf is sized to recordCount)
-            // and the REPEATED-bearing chain (advance only at content-reached
-            // positions — leaf is compacted).
-            if (rep <= itemRep[layerCount] && def >= itemDef[layerCount]) {
-                int slot = realCount[layerCount];
-                if (realToRaw != null) {
-                    realToRaw[slot] = i;
-                }
-                boolean leafPresent = def >= maxDefLevel;
-                if (!leafPresent) {
-                    if (leafValidity == null) {
-                        leafValidity = new long[(rawValueCount + 63) >>> 6];
-                        BitmapWords.setRange(leafValidity, 0, slot);
-                    }
-                    leafAnyAbsent = true;
-                }
-                else if (leafValidity != null) {
-                    leafValidity[slot >>> 6] |= 1L << slot;
-                }
-                realCount[layerCount]++;
-            }
-        }
-
         for (int k = 0; k < layerCount; k++) {
             if (layers.kinds()[k] == LayerKind.REPEATED) {
-                int n = realCount[k];
-                int[] trimmed = Arrays.copyOf(offsets[k], n + 1);
-                trimmed[n] = realCount[k + 1];
-                offsets[k] = trimmed;
+                offsets[k] = repeatedLayer(defs, reps, rawValueCount, itemRep[k], itemDef[k],
+                        itemRep[k + 1], itemDef[k + 1], defThresholds[k], layerValidity, k);
             }
-            if (!layerHasAbsent[k]) {
-                layerValidity[k] = null;
-            }
-            else if (layerValidity[k] != null) {
-                int n = realCount[k];
-                int wordsNeeded = (n + 63) >>> 6;
-                if (wordsNeeded < layerValidity[k].length) {
-                    layerValidity[k] = Arrays.copyOf(layerValidity[k], wordsNeeded);
-                }
+            else {
+                layerValidity[k] = structLayerValidity(defs, reps, rawValueCount, itemRep[k], itemDef[k],
+                        defThresholds[k]);
             }
         }
 
-        if (!leafAnyAbsent) {
-            leafValidity = null;
+        int leafRep = itemRep[layerCount];
+        int leafDef = itemDef[layerCount];
+        int leaves = 0;
+        int absentLeaves = 0;
+        for (int i = 0; i < rawValueCount; i++) {
+            int def = defs[i];
+            int item = reached(reps[i], leafRep, def, leafDef);
+            leaves += item;
+            absentLeaves += item & (atLeast(def, maxDefLevel) ^ 1);
         }
-        else if (leafValidity != null) {
-            int wordsNeeded = (realCount[layerCount] + 63) >>> 6;
-            if (wordsNeeded < leafValidity.length) {
-                leafValidity = Arrays.copyOf(leafValidity, wordsNeeded);
+        // `leaves == rawValueCount` means every raw position is a real leaf: no phantom
+        // (null/empty parent) positions, and the map would be the identity. It stays null, the
+        // pass-through signal a REPEATED-free chain uses, so the consumer reads the batch's
+        // (already per-batch fresh) value array directly instead of gathering a copy.
+        int[] realToRaw = leaves != rawValueCount ? new int[leaves] : null;
+        long[] leafValidity = absentLeaves != 0 ? new long[(leaves + 63) >>> 6] : null;
+        if (realToRaw != null || leafValidity != null) {
+            leafPass(defs, reps, leaves, leafRep, leafDef, maxDefLevel, realToRaw, leafValidity);
+        }
+        return new RealView(offsets, layerValidity, leafValidity, leaves, realToRaw);
+    }
+
+    /// The view of a column without repetition levels, whose layers are all `STRUCT` layers: every
+    /// position is an item of every layer and a leaf, so there are no offsets and no real-to-raw
+    /// map, and each validity marks the positions whose definition level reaches the layer's
+    /// threshold. `null` definition levels are all at the maximum.
+    private static RealView repetitionFreeView(int[] defs, int n, int maxDefLevel, Layers layers) {
+        int layerCount = layers.count();
+        int[] defThresholds = layers.defThresholds();
+        long[][] layerValidity = new long[layerCount][];
+        for (int k = 0; k < layerCount; k++) {
+            if (layers.kinds()[k] != LayerKind.STRUCT) {
+                throw new IllegalStateException("Layer " + k + " is " + layers.kinds()[k]
+                        + " but the batch has no repetition levels");
             }
+            layerValidity[k] = defs != null ? reaching(defs, n, defThresholds[k]) : null;
         }
-        int realLeafCount = realCount[layerCount];
-        int[] trimmedRealToRaw = null;
-        // `realToRaw` is sized to `rawValueCount`, so `realLeafCount == rawValueCount`
-        // means every raw position is a real leaf: no phantom (null/empty parent)
-        // positions, and the map is the identity `realToRaw[i] == i`. Leave it null —
-        // the identical pass-through signal a REPEATED-free chain uses — so the
-        // consumer reads the batch's (already per-batch fresh) value array directly
-        // instead of allocating and gathering a compacted copy.
-        if (realToRaw != null && realLeafCount != realToRaw.length) {
-            trimmedRealToRaw = Arrays.copyOf(realToRaw, realLeafCount);
+        long[] leafValidity = defs != null ? reaching(defs, n, maxDefLevel) : null;
+        return new RealView(new int[layerCount][], layerValidity, leafValidity, n, null);
+    }
+
+    /// The validity over all `n` positions marking those whose definition level is at least
+    /// `threshold`, `null` when every position reaches it.
+    private static long[] reaching(int[] defs, int n, int threshold) {
+        int absent = 0;
+        for (int i = 0; i < n; i++) {
+            absent += atLeast(defs[i], threshold) ^ 1;
         }
-        return new RealView(offsets, layerValidity, leafValidity, realLeafCount,
-                trimmedRealToRaw);
+        if (absent == 0) {
+            return null;
+        }
+        long[] validity = new long[(n + 63) >>> 6];
+        for (int w = 0; w < validity.length; w++) {
+            int base = w << 6;
+            int end = Math.min(64, n - base);
+            long word = 0;
+            for (int b = 0; b < end; b++) {
+                word |= (long) atLeast(defs[base + b], threshold) << b;
+            }
+            validity[w] = word;
+        }
+        return validity;
+    }
+
+    /// Fills the real-to-raw map of the `leaves` leaves and their validity, either of which may be
+    /// `null`. The pass ends at the last leaf, so every store is in bounds of arrays sized exactly.
+    private static void leafPass(int[] defs, int[] reps, int leaves, int leafRep, int leafDef, int maxDefLevel,
+                                 int[] realToRaw, long[] validity) {
+        int slot = 0;
+        long word = 0;
+        for (int i = 0; slot < leaves; i++) {
+            int def = defs[i];
+            int item = reached(reps[i], leafRep, def, leafDef);
+            if (realToRaw != null) {
+                realToRaw[slot] = i;
+            }
+            if (validity != null) {
+                word |= (long) (item & atLeast(def, maxDefLevel)) << slot;
+                if ((((slot + item) & 63) | (item ^ 1)) == 0) {
+                    validity[slot >>> 6] = word;
+                    word = 0;
+                }
+            }
+            slot += item;
+        }
+        if (validity != null && (slot & 63) != 0) {
+            validity[slot >>> 6] = word;
+        }
+    }
+
+    /// The sentinel-suffixed offsets of `REPEATED` layer `k` over its items, each item's offset
+    /// being the number of items of the next layer (or leaf) before it; stores the layer's
+    /// validity into `layerValidity[k]`, `null` when every item is present.
+    private static int[] repeatedLayer(int[] defs, int[] reps, int n, int itemRep, int itemDef,
+                                       int nextItemRep, int nextItemDef, int defThreshold,
+                                       long[][] layerValidity, int k) {
+        // A counting pass sizes the offsets exactly and finds whether any item is absent; it
+        // carries no state but its sums, so the compiler can vectorize it.
+        int items = 0;
+        int absentItems = 0;
+        for (int i = 0; i < n; i++) {
+            int def = defs[i];
+            int item = reached(reps[i], itemRep, def, itemDef);
+            items += item;
+            absentItems += item & (atLeast(def, defThreshold) ^ 1);
+        }
+        int[] offsets = new int[items + 1];
+        int slot = 0;
+        int next = 0;
+        if (absentItems == 0) {
+            for (int i = 0; i < n; i++) {
+                int rep = reps[i];
+                int def = defs[i];
+                int item = reached(rep, itemRep, def, itemDef);
+                offsets[slot] = next;
+                slot += item;
+                next += reached(rep, nextItemRep, def, nextItemDef);
+            }
+            layerValidity[k] = null;
+            offsets[items] = next;
+            return offsets;
+        }
+        long[] validity = new long[(items + 63) >>> 6];
+        long word = 0;
+        for (int i = 0; i < n; i++) {
+            int rep = reps[i];
+            int def = defs[i];
+            int item = reached(rep, itemRep, def, itemDef);
+            offsets[slot] = next;
+            word |= (long) (item & atLeast(def, defThreshold)) << slot;
+            int nextSlot = slot + item;
+            if (((nextSlot & 63) | (item ^ 1)) == 0) {
+                validity[slot >>> 6] = word;
+                word = 0;
+            }
+            slot = nextSlot;
+            next += reached(rep, nextItemRep, def, nextItemDef);
+        }
+        if ((slot & 63) != 0) {
+            validity[slot >>> 6] = word;
+        }
+        layerValidity[k] = validity;
+        offsets[items] = next;
+        return offsets;
+    }
+
+    /// The validity of a `STRUCT` layer over its items, `null` when every item is present. A
+    /// counting pass, which the compiler can vectorize, finds whether any item is absent and how
+    /// many items there are; most batches of most columns have no absent item.
+    private static long[] structLayerValidity(int[] defs, int[] reps, int n, int itemRep, int itemDef,
+                                              int defThreshold) {
+        int items = 0;
+        int absentItems = 0;
+        for (int i = 0; i < n; i++) {
+            int def = defs[i];
+            int item = reached(reps[i], itemRep, def, itemDef);
+            items += item;
+            absentItems += item & (atLeast(def, defThreshold) ^ 1);
+        }
+        if (absentItems == 0) {
+            return null;
+        }
+        long[] validity = new long[(items + 63) >>> 6];
+        int slot = 0;
+        long word = 0;
+        for (int i = 0; slot < items; i++) {
+            int def = defs[i];
+            int item = reached(reps[i], itemRep, def, itemDef);
+            word |= (long) (item & atLeast(def, defThreshold)) << slot;
+            if ((((slot + item) & 63) | (item ^ 1)) == 0) {
+                validity[slot >>> 6] = word;
+                word = 0;
+            }
+            slot += item;
+        }
+        if ((slot & 63) != 0) {
+            validity[slot >>> 6] = word;
+        }
+        return validity;
+    }
+
+    /// `1` when a position with levels `rep` and `def` is an item of the layer with thresholds
+    /// `itemRep` and `itemDef` (`rep <= itemRep` and `def >= itemDef`), else `0`: computed from sign
+    /// bits rather than compared, so no loop over the levels branches on them. Levels are small and
+    /// non-negative, so neither difference overflows.
+    private static int reached(int rep, int itemRep, int def, int itemDef) {
+        return ((itemRep - rep) | (def - itemDef)) >>> 31 ^ 1;
+    }
+
+    /// `1` when `def >= threshold`, else `0`, from the sign bit as [#reached] is.
+    private static int atLeast(int def, int threshold) {
+        return (def - threshold) >>> 31 ^ 1;
+    }
+
+    private static int[] constantLevels(int n, int level) {
+        int[] levels = new int[n];
+        if (level != 0) {
+            Arrays.fill(levels, level);
+        }
+        return levels;
     }
 }
