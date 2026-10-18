@@ -10,6 +10,7 @@ package dev.hardwood.internal.encoding;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.Random;
 
 import org.junit.jupiter.api.Test;
@@ -22,9 +23,11 @@ import dev.hardwood.reader.ParquetReadException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// [AlpDecoder] on pages built byte by byte, since no writer in the test toolchain emits ALP. The
-/// page layout and the decode arithmetic follow the format's `AlpEncoding.md`; the end-to-end
-/// check against another implementation's output is `AlpReadTest` in the parquet-testing runner.
+/// [AlpDecoder] on pages built byte by byte, since no writer in the test toolchain emits ALP: each
+/// page is checked ([AlpDecoder#validate]) and then decoded vector by vector
+/// ([AlpDecoder#decodeVector]), as an `ALP` page's reader does. The page layout and the decode
+/// arithmetic follow the format's `AlpEncoding.md`; the end-to-end check against another
+/// implementation's output is `AlpReadTest` in the parquet-testing runner.
 class AlpDecoderTest {
 
     private static final long[] NO_DELTAS = {};
@@ -120,18 +123,23 @@ class AlpDecoderTest {
                 1.6, 1.7000000000000002, -0.05, Double.POSITIVE_INFINITY, 0.02);
     }
 
-    /// The page holds the present values only; they land at the positions the definition levels
-    /// mark present, and the absent positions read as zero.
+    /// A vector decodes on its own, in any order: the last one, shorter than the others, first.
     @Test
-    void spreadsValuesToThePresentPositions() {
-        byte[] vector = floatVector(1, 0, 1, 2, new long[]{ 0, 1, 2 }, NO_POSITIONS, new int[0]);
-        byte[] page = page(10, 3, vector);
-        float[] values = { 9f, 9f, 9f, 9f, 9f, 9f };
+    void decodesTheLastPartialVectorOnItsOwn() {
+        byte[] first = doubleVector(1, 0, 10, 4, new long[]{ 0, 1, 2, 3, 4, 5, 6, 7 }, NO_POSITIONS, new long[0]);
+        byte[] last = doubleVector(2, 0, -5, 3, new long[]{ 0, 5, 7 }, new int[]{ 1 },
+                new long[]{ Double.doubleToRawLongBits(Double.POSITIVE_INFINITY) });
+        byte[] page = page(3, 11, first, last);
+        AlpDecoder decoder = new AlpDecoder(page, 0, page.length, 11, PhysicalType.DOUBLE);
+        decoder.validate();
+        double[] vector = new double[decoder.vectorSize()];
 
-        new AlpDecoder(page, 0, page.length, 3, PhysicalType.FLOAT)
-                .readFloats(values, new int[]{ 0, 1, 1, 0, 0, 1 }, 1);
+        int count = decoder.decodeVector(1, null, vector);
 
-        assertThat(values).containsExactly(0f, 0.1f, 0.2f, 0f, 0f, 0.3f);
+        assertThat(count).isEqualTo(3);
+        assertThat(Arrays.copyOf(vector, count)).containsExactly(-0.05, Double.POSITIVE_INFINITY, 0.02);
+        assertThat(decoder.decodeVector(0, null, vector)).isEqualTo(8);
+        assertThat(vector[7]).isEqualTo(1.7000000000000002);
     }
 
     @Test
@@ -150,9 +158,7 @@ class AlpDecoderTest {
         byte[] buffer = new byte[page.length + 40];
         new Random(7).nextBytes(buffer);
         System.arraycopy(page, 0, buffer, 5, page.length);
-        double[] values = new double[3];
-
-        new AlpDecoder(buffer, 5, 5 + page.length, 3, PhysicalType.DOUBLE).readDoubles(values, null, 0);
+        double[] values = decodeDoubles(buffer, 5, 5 + page.length, 3);
 
         assertThat(values).containsExactly(1.0, 1.1, 1.2000000000000002);
     }
@@ -350,14 +356,31 @@ class AlpDecoderTest {
     }
 
     private static double[] decodeDoubles(byte[] page, int numValues) {
+        return decodeDoubles(page, 0, page.length, numValues);
+    }
+
+    /// Checks the page, then decodes it vector by vector, as an `ALP` page's reader does.
+    private static double[] decodeDoubles(byte[] data, int offset, int limit, int numValues) {
+        AlpDecoder decoder = new AlpDecoder(data, offset, limit, numValues, PhysicalType.DOUBLE);
+        decoder.validate();
         double[] values = new double[numValues];
-        new AlpDecoder(page, 0, page.length, numValues, PhysicalType.DOUBLE).readDoubles(values, null, 0);
+        double[] vector = new double[decoder.vectorSize()];
+        for (int v = 0; v * decoder.vectorSize() < numValues; v++) {
+            int count = decoder.decodeVector(v, null, vector);
+            System.arraycopy(vector, 0, values, v * decoder.vectorSize(), count);
+        }
         return values;
     }
 
     private static float[] decodeFloats(byte[] page, int numValues) {
+        AlpDecoder decoder = new AlpDecoder(page, 0, page.length, numValues, PhysicalType.FLOAT);
+        decoder.validate();
         float[] values = new float[numValues];
-        new AlpDecoder(page, 0, page.length, numValues, PhysicalType.FLOAT).readFloats(values, null, 0);
+        float[] vector = new float[decoder.vectorSize()];
+        for (int v = 0; v * decoder.vectorSize() < numValues; v++) {
+            int count = decoder.decodeVector(v, vector, null);
+            System.arraycopy(vector, 0, values, v * decoder.vectorSize(), count);
+        }
         return values;
     }
 

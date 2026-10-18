@@ -14,11 +14,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.internal.reader.ReferencePageDecoder;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// [AlpEncoder] through [AlpDecoder]: every value has to come back bit for bit whatever pair the
+/// [AlpEncoder] through [AlpDecoder], as [ReferencePageDecoder] drives it: every value has to come
+/// back bit for bit whatever pair the
 /// encoder picks, so each case below is a round trip, and the size checks pin down that the pair
 /// it picks is a good one where the data has few decimal digits.
 class AlpEncoderTest {
@@ -265,8 +268,8 @@ class AlpEncoderTest {
 
     private static byte[] assertRoundTrip(double[] values) {
         byte[] page = encodeDoubles(new AlpEncoder(Double.BYTES), values);
-        double[] decoded = new double[values.length];
-        new AlpDecoder(page, 0, page.length, values.length, PhysicalType.DOUBLE).readDoubles(decoded, null, 0);
+        double[] decoded = (double[]) ReferencePageDecoder.decodeValues(Encoding.ALP, PhysicalType.DOUBLE, null, page,
+                0, page.length, values.length, null);
         for (int i = 0; i < values.length; i++) {
             assertThat(Double.doubleToRawLongBits(decoded[i]))
                     .as("value %d (%s)", i, values[i])
@@ -278,8 +281,8 @@ class AlpEncoderTest {
 
     private static byte[] assertRoundTrip(float[] values) {
         byte[] page = encodeFloats(new AlpEncoder(Float.BYTES), values);
-        float[] decoded = new float[values.length];
-        new AlpDecoder(page, 0, page.length, values.length, PhysicalType.FLOAT).readFloats(decoded, null, 0);
+        float[] decoded = (float[]) ReferencePageDecoder.decodeValues(Encoding.ALP, PhysicalType.FLOAT, null, page,
+                0, page.length, values.length, null);
         for (int i = 0; i < values.length; i++) {
             assertThat(Float.floatToRawIntBits(decoded[i]))
                     .as("value %d (%s)", i, values[i])

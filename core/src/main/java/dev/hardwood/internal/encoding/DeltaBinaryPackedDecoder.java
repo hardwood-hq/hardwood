@@ -30,7 +30,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// Supports INT32 and INT64 physical types.
 ///
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
-public class DeltaBinaryPackedDecoder implements ValueDecoder {
+public class DeltaBinaryPackedDecoder {
 
     /// Reads eight packed bytes in one go, in the little-endian order the bit layout uses.
     /// [RleBitPackingHybridDecoder] loads the same layout the same way.
@@ -172,6 +172,9 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     }
 
     /// Reads the next `count` values into `output[offset, offset + count)`, narrowed to INT32.
+    ///
+    /// The prefix sum is carried in a `long` and narrowed here, which is the wrap-around modulo
+    /// 2^32 the format calls for.
     public void readInts(int[] output, int offset, int count) {
         int out = offset;
         int end = offset + count;
@@ -204,71 +207,6 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
             int taken = Math.min(bufferFill - bufferPos, count);
             bufferPos += taken;
             count -= taken;
-        }
-    }
-
-    /// Read INT64 values directly into a primitive long array.
-    @Override
-    public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) {
-        if (definitionLevels == null) {
-            int out = 0;
-            while (out < output.length) {
-                if (bufferPos < bufferFill) {
-                    int taken = Math.min(bufferFill - bufferPos, output.length - out);
-                    System.arraycopy(buffer, bufferPos, output, out, taken);
-                    bufferPos += taken;
-                    out += taken;
-                }
-                else if (output.length - out >= buffer.length) {
-                    out += fillInto(output, out);
-                }
-                else {
-                    bufferFill = fillInto(buffer, 0);
-                    bufferPos = 0;
-                }
-            }
-        }
-        else {
-            for (int i = 0; i < output.length; i++) {
-                if (definitionLevels[i] == maxDefLevel) {
-                    output[i] = readLongValue();
-                }
-            }
-        }
-    }
-
-    /// Read INT32 values directly into a primitive int array.
-    ///
-    /// The prefix sum is carried in a `long` and narrowed here, which is the wrap-around modulo
-    /// 2^32 the format calls for.
-    @Override
-    public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) {
-        if (definitionLevels == null) {
-            int out = 0;
-            while (out < output.length) {
-                if (bufferPos < bufferFill) {
-                    int taken = Math.min(bufferFill - bufferPos, output.length - out);
-                    for (int i = 0; i < taken; i++) {
-                        output[out + i] = (int) buffer[bufferPos + i];
-                    }
-                    bufferPos += taken;
-                    out += taken;
-                }
-                else if (output.length - out >= buffer.length) {
-                    out += fillInto(output, out);
-                }
-                else {
-                    bufferFill = fillInto(buffer, 0);
-                    bufferPos = 0;
-                }
-            }
-        }
-        else {
-            for (int i = 0; i < output.length; i++) {
-                if (definitionLevels[i] == maxDefLevel) {
-                    output[i] = (int) readLongValue();
-                }
-            }
         }
     }
 

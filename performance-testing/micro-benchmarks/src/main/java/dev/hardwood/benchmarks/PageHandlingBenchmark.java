@@ -32,7 +32,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.Page;
+import dev.hardwood.internal.reader.InPlacePageReads;
 import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageIterator;
@@ -51,8 +51,8 @@ import dev.hardwood.schema.FileSchema;
 /// benchmark measures header discovery):
 ///
 /// - `a_decompressPages` — header parse + codec decompression only
-/// - `b_decodePages` — full [PageDecoder] page decode (decompression, levels,
-///   values)
+/// - `b_decodePages` — full page read: [PageDecoder]'s in-place entry point
+///   (decompression, levels) and the values written as a fill writes them
 ///
 /// The difference between the two is the pure decode cost.
 ///
@@ -76,6 +76,7 @@ public class PageHandlingBenchmark {
     private InputFile inputFile;
     private HardwoodContextImpl context;
     private List<PageInfo> allPages;
+    private final InPlacePageReads reads = new InPlacePageReads();
 
     @Setup
     public void setup() throws IOException {
@@ -157,8 +158,8 @@ public class PageHandlingBenchmark {
     public void b_decodePages(Blackhole blackhole) throws IOException {
         for (PageInfo pageInfo : allPages) {
             PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
-            Page page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
-            blackhole.consume(page);
+            blackhole.consume(reads.read(pageDecoder, pageInfo.columnSchema(), pageInfo.pageData(),
+                    pageInfo.dictionary()));
         }
     }
 }

@@ -34,7 +34,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// Supports FLOAT and DOUBLE physical types.
 ///
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/AlpEncoding.md">ALP Encoding</a>
-public class AlpDecoder implements ValueDecoder {
+public class AlpDecoder {
 
     private static final VarHandle LONG_LE =
             MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
@@ -45,7 +45,6 @@ public class AlpDecoder implements ValueDecoder {
 
     private final byte[] data;
     private final int limit;
-    private final PhysicalType type;
     /// Bytes per value: 4 for FLOAT, 8 for DOUBLE. Also the width of the frame of reference.
     private final int valueWidth;
     private final int vectorSize;
@@ -76,7 +75,6 @@ public class AlpDecoder implements ValueDecoder {
     public AlpDecoder(byte[] data, int offset, int limit, int numNonNullValues, PhysicalType type) {
         this.data = data;
         this.limit = limit;
-        this.type = type;
         this.valueWidth = switch (type) {
             case FLOAT -> Float.BYTES;
             case DOUBLE -> Double.BYTES;
@@ -116,31 +114,14 @@ public class AlpDecoder implements ValueDecoder {
         }
     }
 
-    @Override
-    public void readFloats(float[] output, int[] definitionLevels, int maxDefLevel) {
-        requireType(PhysicalType.FLOAT);
-        decodeVectors(output, null);
-        if (definitionLevels != null) {
-            spread(output, definitionLevels, maxDefLevel);
-        }
-    }
-
-    @Override
-    public void readDoubles(double[] output, int[] definitionLevels, int maxDefLevel) {
-        requireType(PhysicalType.DOUBLE);
-        decodeVectors(null, output);
-        if (definitionLevels != null) {
-            spread(output, definitionLevels, maxDefLevel);
-        }
-    }
-
     /// The values of each vector but the last.
     public int vectorSize() {
         return vectorSize;
     }
 
-    /// Checks every vector's header and that the vectors end the page, without decoding a value,
-    /// so that a page read later vector by vector ([#decodeVector]) fails where a full decode would.
+    /// Checks every vector's header, its exception positions, and that the vectors end the page,
+    /// without decoding a value, so that a page read later vector by vector ([#decodeVector])
+    /// fails when it is read.
     ///
     /// @throws ParquetReadException if a vector is malformed or the vectors do not end the page
     public void validate() {
@@ -178,36 +159,6 @@ public class AlpDecoder implements ValueDecoder {
             patchFloatExceptions(floats, 0, count, vector);
         }
         return count;
-    }
-
-    private void requireType(PhysicalType requested) {
-        if (type != requested) {
-            throw new IllegalStateException("ALP decoder for " + type + " cannot read " + requested + " values");
-        }
-    }
-
-    /// Decodes every vector onto the front of whichever of the two arrays is non-null, checking
-    /// that each vector starts where the previous one ended and that the last one ends the page.
-    private void decodeVectors(float[] floats, double[] doubles) {
-        long expectedOffset = (long) numVectors * AlpFormat.OFFSET_SIZE;
-        for (int vector = 0; vector < numVectors; vector++) {
-            int first = vector * vectorSize;
-            int count = Math.min(vectorSize, numElements - first);
-            expectedOffset = readVectorHeader(vector, expectedOffset, count);
-            if (doubles != null) {
-                decodeDoubles(doubles, first, count);
-                patchDoubleExceptions(doubles, first, count, vector);
-            }
-            else {
-                decodeFloats(floats, first, count);
-                patchFloatExceptions(floats, first, count, vector);
-            }
-        }
-        long leftover = limit - (offsetsStart + expectedOffset);
-        if (leftover != 0) {
-            throw new ParquetReadException("ALP value section does not end with its " + numVectors
-                    + " vectors; leftover bytes: " + leftover);
-        }
     }
 
     /// Reads and checks the header of `vector`, which holds `count` values, and sets the fields
@@ -364,33 +315,5 @@ public class AlpDecoder implements ValueDecoder {
                     + " is outside its " + count + " values");
         }
         return position;
-    }
-
-    /// Moves the values decoded onto the front of `output` out to the positions the definition
-    /// levels mark present, zeroing the others. Walking from the back, a value only ever moves to
-    /// a position at or after its own, so nothing is overwritten before it is moved; once the two
-    /// cursors meet, every position before them is present and already in place.
-    private void spread(double[] output, int[] definitionLevels, int maxDefLevel) {
-        int dense = numElements - 1;
-        for (int i = output.length - 1; i > dense; i--) {
-            if (definitionLevels[i] == maxDefLevel) {
-                output[i] = output[dense--];
-            }
-            else {
-                output[i] = 0;
-            }
-        }
-    }
-
-    private void spread(float[] output, int[] definitionLevels, int maxDefLevel) {
-        int dense = numElements - 1;
-        for (int i = output.length - 1; i > dense; i--) {
-            if (definitionLevels[i] == maxDefLevel) {
-                output[i] = output[dense--];
-            }
-            else {
-                output[i] = 0;
-            }
-        }
     }
 }

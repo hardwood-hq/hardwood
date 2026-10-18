@@ -215,8 +215,8 @@ public class Flba12TimestampDecodeBenchmark {
     // ==================== Helpers ====================
 
     /// The `INT64` arm's load. A native-width little-endian read, matching both the
-    /// extended-precision arm and what `PlainDecoder#readLongs` actually does (a bulk
-    /// `asLongBuffer` copy) — assembling it byte by byte here would hand the
+    /// extended-precision arm and what the `PLAIN` reader does (a little-endian
+    /// `VarHandle` read per value) — assembling it byte by byte here would hand the
     /// comparison to FLBA(12) on an implementation difference rather than a format
     /// one.
     private static final VarHandle LONG_LE =

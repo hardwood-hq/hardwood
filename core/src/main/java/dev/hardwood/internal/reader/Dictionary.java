@@ -7,11 +7,11 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import dev.hardwood.internal.encoding.PlainDecoder;
-import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
@@ -21,12 +21,6 @@ import dev.hardwood.reader.ParquetReadException;
 public sealed interface Dictionary {
 
     int size();
-
-    /// Decode dictionary values into a Page using the given index decoder.
-    /// This avoids megamorphic dispatch in the caller by moving type-specific
-    /// logic into the Dictionary implementation.
-    Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                    int[] definitionLevels, int[] repetitionLevels, int maxDefLevel);
 
     /// Parse dictionary values from decompressed data.
     ///
@@ -51,32 +45,36 @@ public sealed interface Dictionary {
     }
 
     private static Dictionary parseNumbers(byte[] data, int length, int numValues, PhysicalType type) {
-        PlainDecoder decoder = new PlainDecoder(data, 0, length, type, null);
-        Dictionary dictionary = switch (type) {
+        int width = type == PhysicalType.INT64 || type == PhysicalType.DOUBLE ? Long.BYTES : Integer.BYTES;
+        long bytes = (long) numValues * width;
+        if (bytes > length) {
+            throw new ParquetReadException("Unexpected EOF while reading " + type + " values");
+        }
+        requireConsumed(Math.toIntExact(length - bytes), numValues, type);
+        ByteBuffer buffer = ByteBuffer.wrap(data, 0, length).order(ByteOrder.LITTLE_ENDIAN);
+        return switch (type) {
             case INT32 -> {
                 int[] values = new int[numValues];
-                decoder.readInts(values, null, 0);
+                buffer.asIntBuffer().get(values);
                 yield new IntDictionary(values);
             }
             case INT64 -> {
                 long[] values = new long[numValues];
-                decoder.readLongs(values, null, 0);
+                buffer.asLongBuffer().get(values);
                 yield new LongDictionary(values);
             }
             case FLOAT -> {
                 float[] values = new float[numValues];
-                decoder.readFloats(values, null, 0);
+                buffer.asFloatBuffer().get(values);
                 yield new FloatDictionary(values);
             }
             case DOUBLE -> {
                 double[] values = new double[numValues];
-                decoder.readDoubles(values, null, 0);
+                buffer.asDoubleBuffer().get(values);
                 yield new DoubleDictionary(values);
             }
             default -> throw new IllegalArgumentException("Not a numeric physical type: " + type);
         };
-        requireConsumed(decoder.remaining(), numValues, type);
-        return dictionary;
     }
 
     /// The width of a `FIXED_LEN_BYTE_ARRAY` column's values. A file's declared width is
@@ -105,13 +103,6 @@ public sealed interface Dictionary {
             return values.length;
         }
 
-        @Override
-        public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                               int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            int[] output = new int[numValues];
-            indexDecoder.readDictionaryInts(output, values, definitionLevels, maxDefLevel);
-            return new Page.IntPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-        }
     }
 
     record LongDictionary(long[] values) implements Dictionary {
@@ -120,13 +111,6 @@ public sealed interface Dictionary {
             return values.length;
         }
 
-        @Override
-        public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                               int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            long[] output = new long[numValues];
-            indexDecoder.readDictionaryLongs(output, values, definitionLevels, maxDefLevel);
-            return new Page.LongPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-        }
     }
 
     record FloatDictionary(float[] values) implements Dictionary {
@@ -135,13 +119,6 @@ public sealed interface Dictionary {
             return values.length;
         }
 
-        @Override
-        public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                               int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            float[] output = new float[numValues];
-            indexDecoder.readDictionaryFloats(output, values, definitionLevels, maxDefLevel);
-            return new Page.FloatPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-        }
     }
 
     record DoubleDictionary(double[] values) implements Dictionary {
@@ -150,13 +127,6 @@ public sealed interface Dictionary {
             return values.length;
         }
 
-        @Override
-        public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                               int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            double[] output = new double[numValues];
-            indexDecoder.readDictionaryDoubles(output, values, definitionLevels, maxDefLevel);
-            return new Page.DoublePage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-        }
     }
 
     /// A class (not a record) so it can hold the lazily-materialised per-chunk
@@ -270,13 +240,5 @@ public sealed interface Dictionary {
             return s;
         }
 
-        @Override
-        public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
-                               int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
-            int[] dictIndices = new int[numValues];
-            indexDecoder.readDictionaryIndices(dictIndices, size(), definitionLevels, maxDefLevel);
-            return new Page.DictionaryByteArrayPage(this, dictIndices, definitionLevels, repetitionLevels,
-                    maxDefLevel, numValues);
-        }
     }
 }

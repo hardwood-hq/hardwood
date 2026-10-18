@@ -13,21 +13,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-import dev.hardwood.internal.encoding.simd.SimdOperations;
-import dev.hardwood.internal.encoding.simd.VectorSupport;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decoder for RLE/Bit-Packing Hybrid encoding.
 /// Used primarily for definition/repetition levels and dictionary indices.
 public class RleBitPackingHybridDecoder {
 
-    private static final SimdOperations SIMD_OPS = VectorSupport.operations();
     private static final VarHandle LONG_LE = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
-
-    // Thread-local reusable buffer for temporary index arrays in dictionary decoding.
-    // Safe because the executor is a fixed platform thread pool, so buffers persist
-    // across page decodes on the same thread with zero synchronization overhead.
-    private static final ThreadLocal<int[]> TEMP_INDICES = new ThreadLocal<>();
 
     private final byte[] data;
     private final ByteBuffer dataBuffer;
@@ -105,164 +97,6 @@ public class RleBitPackingHybridDecoder {
             throw new ParquetReadException("Insufficient RLE/Bit-Packing data: decoded "
                     + (count - remaining) + " of " + count + " requested values");
         }
-    }
-
-    // Type-specific dictionary lookups to avoid boxing
-
-    public void readDictionaryLongs(long[] output, long[] dictionary, int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, dictionary, indices, defLevels, maxDef);
-    }
-
-    public void readDictionaryDoubles(double[] output, double[] dictionary, int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, dictionary, indices, defLevels, maxDef);
-    }
-
-    public void readDictionaryInts(int[] output, int[] dictionary, int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, dictionary, indices, defLevels, maxDef);
-    }
-
-    public void readDictionaryFloats(float[] output, float[] dictionary, int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, dictionary, indices, defLevels, maxDef);
-    }
-
-    /// Decodes each value's dictionary entry index into `outDictIndices`, `-1` at null
-    /// positions, for a page that resolves its byte-array values through the dictionary
-    /// rather than holding one reference per value. An index outside
-    /// `[0, dictionarySize)` fails here, at decode, as the lookup into the dictionary
-    /// would.
-    public void readDictionaryIndices(int[] outDictIndices, int dictionarySize, int[] defLevels, int maxDef) {
-        int length = outDictIndices.length;
-        int[] indices = decodeIndices(length, defLevels, maxDef);
-        int min = 0;
-        int max = -1;
-        if (defLevels == null) {
-            for (int i = 0; i < length; i++) {
-                int d = indices[i];
-                outDictIndices[i] = d;
-                min = Math.min(min, d);
-                max = Math.max(max, d);
-            }
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < length; i++) {
-                if (defLevels[i] == maxDef) {
-                    int d = indices[idx++];
-                    outDictIndices[i] = d;
-                    min = Math.min(min, d);
-                    max = Math.max(max, d);
-                }
-                else {
-                    outDictIndices[i] = -1;
-                }
-            }
-        }
-        if (min < 0 || max >= dictionarySize) {
-            throw new ArrayIndexOutOfBoundsException("Dictionary index " + (min < 0 ? min : max)
-                    + " out of bounds for a dictionary of " + dictionarySize + " entries");
-        }
-    }
-
-    public void readBooleans(boolean[] output, int[] defLevels, int maxDef) {
-        int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                output[i] = indices[i] != 0;
-            }
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    output[i] = indices[idx++] != 0;
-                }
-            }
-        }
-    }
-
-    private int[] decodeIndices(int len, int[] defLevels, int maxDef) {
-        int count = defLevels == null ? len : countNonNulls(defLevels, len, maxDef);
-        int[] indices = borrowTemp(count);
-        if (bitWidth == 0) {
-            Arrays.fill(indices, 0, count, 0);
-        }
-        else {
-            readInts(indices, 0, count);
-        }
-        return indices;
-    }
-
-    private static int[] borrowTemp(int minSize) {
-        int[] buf = TEMP_INDICES.get();
-        if (buf == null || buf.length < minSize) {
-            buf = new int[minSize];
-            TEMP_INDICES.set(buf);
-        }
-        return buf;
-    }
-
-    private void applyDictionary(long[] output, long[] dict, int[] indices, int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            SIMD_OPS.applyDictionaryLongs(output, dict, indices, output.length);
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
-                }
-            }
-        }
-    }
-
-    private void applyDictionary(double[] output, double[] dict, int[] indices, int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            SIMD_OPS.applyDictionaryDoubles(output, dict, indices, output.length);
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
-                }
-            }
-        }
-    }
-
-    private void applyDictionary(int[] output, int[] dict, int[] indices, int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            SIMD_OPS.applyDictionaryInts(output, dict, indices, output.length);
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
-                }
-            }
-        }
-    }
-
-    private void applyDictionary(float[] output, float[] dict, int[] indices, int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            SIMD_OPS.applyDictionaryFloats(output, dict, indices, output.length);
-        }
-        else {
-            int idx = 0;
-            for (int i = 0; i < output.length; i++) {
-                if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
-                }
-            }
-        }
-    }
-
-    private static int countNonNulls(int[] defLevels, int length, int maxDef) {
-        return SIMD_OPS.countNonNulls(defLevels, length, maxDef);
     }
 
     /// Extracts up to `groups` groups of eight 9-bit values, starting at byte `pos`, into `out`

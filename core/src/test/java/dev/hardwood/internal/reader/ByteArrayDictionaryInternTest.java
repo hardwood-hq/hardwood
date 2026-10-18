@@ -11,13 +11,17 @@ import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// The per-chunk interned-`String` cache decodes each dictionary entry once and
-/// hands back the same instance on every request.
+/// hands back the same instance on every request; a byte-array page refers to the entries by id,
+/// each checked against the dictionary when the page is read ([BinaryPageValues#ids]).
 class ByteArrayDictionaryInternTest {
 
     @Test
@@ -53,102 +57,82 @@ class ByteArrayDictionaryInternTest {
         assertThat(dict.internedString(1)).isEqualTo("x");
     }
 
-    /// A non-string (`INT96` / `FIXED_LEN_BYTE_ARRAY`) column is still a
-    /// `ByteArrayDictionary`. `decodePage` now builds a per-value `dictIndices`
-    /// array for every such page, even though those columns never intern; it must
-    /// not corrupt the decoded entry bytes.
+    /// A non-string (`INT96` / `FIXED_LEN_BYTE_ARRAY`) column is still a `ByteArrayDictionary`, and
+    /// its page's reader carries one id per value, even though those columns never intern; reading
+    /// them must not corrupt the entry bytes.
     @Test
-    void decodePageDecodesANonStringDictionaryThroughTheWidenedPath() throws Exception {
+    void readsANonStringDictionaryPageThroughItsIds() {
         byte[] entry0 = {1, 2, 3, 4};
         byte[] entry1 = {5, 6, 7, 8};
-        Dictionary.ByteArrayDictionary dict =
-                TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
 
-        // RLE index run: header (4 << 1) | 0 = 8 = "repeat 4 times", value 1 (bit width 1).
-        byte[] indexStream = {8, 0x01};
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indexStream, 1);
-        Page.DictionaryByteArrayPage page = (Page.DictionaryByteArrayPage) dict.decodePage(indexDecoder, 4, null, null, 0);
+        // Bit width 1, then an RLE run: header (4 << 1) | 0 = 8 = "repeat 4 times", value 1.
+        byte[][] values = read(DataPages.required(PhysicalType.FIXED_LEN_BYTE_ARRAY, 4), 4, new byte[]{ 1, 8, 0x01 },
+                dict);
 
-        assertThat(page.dictIndices()).containsExactly(1, 1, 1, 1);
-        assertThat(page.dictionary()).isSameAs(dict);
-        for (int i = 0; i < page.size(); i++) {
-            assertThat(page.get(i)).isEqualTo(entry1);
-        }
+        assertThat(values).isDeepEqualTo(new byte[][]{ entry1, entry1, entry1, entry1 });
     }
 
     @Test
-    void decodePageResolvesNullPositionsToNull() throws Exception {
+    void readsNullPositionsAsNull() {
         byte[] entry0 = {1, 2, 3, 4};
         byte[] entry1 = {5, 6, 7, 8};
-        Dictionary.ByteArrayDictionary dict =
-                TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {entry0, entry1});
 
-        // Two present values, both entry 1: RLE run header (2 << 1) | 0 = 4, value 1.
-        byte[] indexStream = {4, 0x01};
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indexStream, 1);
-        int[] definitionLevels = {1, 0, 1, 0};
-        Page.DictionaryByteArrayPage page = (Page.DictionaryByteArrayPage) dict.decodePage(indexDecoder, 4, definitionLevels, null, 1);
+        // Definition levels 1, 0, 1, 0 as one bit-packed group, then two present values, both
+        // entry 1: bit width 1, RLE run header (2 << 1) | 0 = 4, value 1.
+        byte[][] values = read(DataPages.optional(PhysicalType.FIXED_LEN_BYTE_ARRAY, 4), 4,
+                new byte[]{ 2, 0, 0, 0, 3, 0b0000_0101, 1, 4, 0x01 }, dict);
 
-        assertThat(page.dictIndices()).containsExactly(1, -1, 1, -1);
-        assertThat(page.get(0)).isEqualTo(entry1);
-        assertThat(page.get(1)).isNull();
-        assertThat(page.get(2)).isEqualTo(entry1);
-        assertThat(page.get(3)).isNull();
+        assertThat(values).isDeepEqualTo(new byte[][]{ entry1, null, entry1, null });
     }
 
     @Test
-    void decodePageRejectsAnIndexBeyondTheDictionary() {
-        Dictionary.ByteArrayDictionary dict =
-                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
+    void rejectsAnIdBeyondTheDictionary() {
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
         // RLE run of 4 values with index 3, beyond the 2-entry dictionary (bit width 2).
-        byte[] indexStream = {8, 0x03};
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indexStream, 2);
-
-        assertThatThrownBy(() -> dict.decodePage(indexDecoder, 4, null, null, 0))
+        assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4,
+                new byte[]{ 2, 8, 0x03 }, dict))
                 .isInstanceOf(ArrayIndexOutOfBoundsException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 2 entries");
     }
 
     @Test
-    void decodePageRejectsAnIndexBeyondTheDictionaryOnAPageWithNulls() {
-        Dictionary.ByteArrayDictionary dict =
-                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
+    void rejectsAnIdBeyondTheDictionaryOnAPageWithNulls() {
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
-        // Two present values, both index 3: RLE run header (2 << 1) | 0 = 4, value 3 (bit width 2).
-        byte[] indexStream = {4, 0x03};
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indexStream, 2);
-        int[] definitionLevels = {1, 0, 1, 0};
-
-        assertThatThrownBy(() -> dict.decodePage(indexDecoder, 4, definitionLevels, null, 1))
+        // Definition levels 1, 0, 1, 0, then two present values, both index 3 (bit width 2).
+        assertThatThrownBy(() -> read(DataPages.optional(PhysicalType.BYTE_ARRAY, null), 4,
+                new byte[]{ 2, 0, 0, 0, 3, 0b0000_0101, 2, 4, 0x03 }, dict))
                 .isInstanceOf(ArrayIndexOutOfBoundsException.class)
                 .hasMessage("Dictionary index 3 out of bounds for a dictionary of 2 entries");
     }
 
-    /// At bit width 32 an index can decode negative, which must not pass for the `-1` null marker.
+    /// At bit width 32 an id can decode negative, which must not pass for the `-1` null marker.
     @Test
-    void decodePageRejectsANegativeIndex() {
-        Dictionary.ByteArrayDictionary dict =
-                TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
+    void rejectsANegativeId() {
+        Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[][] {{1}, {2}});
 
         // RLE run of 4 values, value 0x80000000 as 4 little-endian bytes (bit width 32).
-        byte[] indexStream = {8, 0x00, 0x00, 0x00, (byte) 0x80};
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indexStream, 32);
-
-        assertThatThrownBy(() -> dict.decodePage(indexDecoder, 4, null, null, 0))
+        assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4,
+                new byte[]{ 32, 8, 0x00, 0x00, 0x00, (byte) 0x80 }, dict))
                 .isInstanceOf(ArrayIndexOutOfBoundsException.class)
                 .hasMessage("Dictionary index -2147483648 out of bounds for a dictionary of 2 entries");
     }
 
     @Test
-    void decodePageRejectsAnyPresentValueAgainstAnEmptyDictionary() {
+    void rejectsAnyPresentValueAgainstAnEmptyDictionary() {
         Dictionary.ByteArrayDictionary dict = TestDictionaries.byteArrays(new byte[0][]);
 
-        // Bit width 0: every index decodes as 0 without reading the stream.
-        RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(new byte[0], 0);
-
-        assertThatThrownBy(() -> dict.decodePage(indexDecoder, 4, null, null, 0))
+        // Bit width 0: every id decodes as 0 without reading the stream.
+        assertThatThrownBy(() -> read(DataPages.required(PhysicalType.BYTE_ARRAY, null), 4, new byte[]{ 0 }, dict))
                 .isInstanceOf(ArrayIndexOutOfBoundsException.class)
                 .hasMessage("Dictionary index 0 out of bounds for a dictionary of 0 entries");
+    }
+
+    private static byte[][] read(ColumnSchema column, int numValues, byte[] body, Dictionary dictionary) {
+        return (byte[][]) DataPages.read(DataPages.decoder(column, CompressionCodec.UNCOMPRESSED), column,
+                DataPages.page(Encoding.RLE_DICTIONARY, numValues, body), dictionary);
     }
 }

@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
 import com.sun.management.ThreadMXBean;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.InPlacePageReads;
 import dev.hardwood.internal.reader.MappedInputFile;
-import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageIterator;
@@ -35,9 +35,10 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/// Allocation profiling test for the page decode pipeline.
+/// Allocation profiling test for the page read: [PageDecoder]'s in-place entry points and the
+/// values written as a fill writes them, into arrays reused across pages.
 ///
-/// Measures byte allocations per page decode to quantify redundant copies.
+/// Measures byte allocations per page read to quantify redundant copies.
 /// Uses [ThreadMXBean#getThreadAllocatedBytes(long)] for precise per-thread measurement.
 ///
 /// Run this test before and after refactoring to compare allocation rates.
@@ -155,17 +156,18 @@ public class PageDecodeAllocationProfileTest {
                         pages.add(iter.next());
                     }
 
+                    InPlacePageReads reads = new InPlacePageReads();
                     for (PageInfo pageInfo : pages) {
-                        // Warm up: decode once to load classes and JIT
+                        // Warm up: read once to load classes and JIT, and to size the reused arrays
                         PageDecoder warmupReader = new PageDecoder(
                                 pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                 context.decompressorFactory());
-                        warmupReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                        reads.read(warmupReader, columnSchema, pageInfo.pageData(), pageInfo.dictionary());
 
-                        // Measure: decode multiple times and take the minimum
+                        // Measure: read multiple times and take the minimum
                         // to filter out JVM noise (JIT recompilation, TLAB refills, etc.)
                         long minAllocated = Long.MAX_VALUE;
-                        Page page = null;
+                        Object values = null;
 
                         for (int m = 0; m < MEASUREMENT_ITERATIONS; m++) {
                             long beforeBytes = threadMXBean.getThreadAllocatedBytes(threadId);
@@ -173,7 +175,8 @@ public class PageDecodeAllocationProfileTest {
                             PageDecoder pageDecoder = new PageDecoder(
                                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                     context.decompressorFactory());
-                            page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                            values = reads.read(pageDecoder, columnSchema, pageInfo.pageData(),
+                                    pageInfo.dictionary());
 
                             long afterBytes = threadMXBean.getThreadAllocatedBytes(threadId);
                             long allocated = afterBytes - beforeBytes;
@@ -181,15 +184,14 @@ public class PageDecodeAllocationProfileTest {
                         }
 
                         long allocated = minAllocated;
-
-                        // Estimate uncompressed data size from the decoded page
-                        int uncompressedSize = estimatePageDataSize(page);
+                        int numValues = pageInfo.records();
+                        int uncompressedSize = estimatePageDataSize(values, numValues);
 
                         pageProfiles.add(new PageProfile(
                                 columnSchema.name(),
                                 pageInfo.columnMetaData().codec().name(),
-                                page.getClass().getSimpleName(),
-                                page.size(),
+                                values.getClass().getSimpleName(),
+                                numValues,
                                 allocated,
                                 uncompressedSize));
 
@@ -241,23 +243,17 @@ public class PageDecodeAllocationProfileTest {
                 totalUncompressed);
     }
 
-    private int estimatePageDataSize(Page page) {
-        return switch (page) {
-            case Page.LongPage p -> p.size() * 8;
-            case Page.DoublePage p -> p.size() * 8;
-            case Page.IntPage p -> p.size() * 4;
-            case Page.FloatPage p -> p.size() * 4;
-            case Page.BooleanPage p -> p.size(); // 1 byte per boolean in array
-            case Page.BinaryPage p -> {
-                int total = 0;
-                for (int i = 0; i < p.size(); i++) {
-                    byte[] v = p.get(i);
-                    if (v != null) {
-                        total += v.length;
-                    }
-                }
-                yield total;
-            }
+    /// The bytes the page's values take in the array they were written to: `numValues` elements
+    /// of a primitive array, or a plain binary page's value bytes, which the array may exceed.
+    private int estimatePageDataSize(Object values, int numValues) {
+        return switch (values) {
+            case long[] a -> numValues * 8;
+            case double[] a -> numValues * 8;
+            case int[] a -> numValues * 4;
+            case float[] a -> numValues * 4;
+            case boolean[] a -> numValues; // 1 byte per boolean in array
+            case byte[] a -> a.length;
+            default -> throw new IllegalArgumentException("Unexpected values: " + values.getClass());
         };
     }
 

@@ -15,12 +15,12 @@ package dev.hardwood.internal.encoding.simd;
 public final class ScalarOperations implements SimdOperations {
 
     @Override
-    public int countNonNulls(int[] defLevels, int length, int maxDef) {
+    public int countNonNulls(int[] defLevels, int from, int to, int maxDef) {
         int count0 = 0, count1 = 0, count2 = 0, count3 = 0;
-        int i = 0;
+        int i = from;
 
         // Process 8 elements at a time with 4 accumulators to minimize dependencies
-        for (; i + 8 <= length; i += 8) {
+        for (; i + 8 <= to; i += 8) {
             count0 += (defLevels[i] == maxDef ? 1 : 0) + (defLevels[i + 4] == maxDef ? 1 : 0);
             count1 += (defLevels[i + 1] == maxDef ? 1 : 0) + (defLevels[i + 5] == maxDef ? 1 : 0);
             count2 += (defLevels[i + 2] == maxDef ? 1 : 0) + (defLevels[i + 6] == maxDef ? 1 : 0);
@@ -30,69 +30,12 @@ public final class ScalarOperations implements SimdOperations {
         int count = count0 + count1 + count2 + count3;
 
         // Handle remaining elements
-        for (; i < length; i++) {
+        for (; i < to; i++) {
             if (defLevels[i] == maxDef) {
                 count++;
             }
         }
 
         return count;
-    }
-
-    @Override
-    public void applyDictionaryLongs(long[] output, long[] dict, int[] indices, int count) {
-        // Unroll 4x to reduce loop overhead
-        int i = 0;
-        for (; i + 4 <= count; i += 4) {
-            output[i] = dict[indices[i]];
-            output[i + 1] = dict[indices[i + 1]];
-            output[i + 2] = dict[indices[i + 2]];
-            output[i + 3] = dict[indices[i + 3]];
-        }
-        for (; i < count; i++) {
-            output[i] = dict[indices[i]];
-        }
-    }
-
-    @Override
-    public void applyDictionaryDoubles(double[] output, double[] dict, int[] indices, int count) {
-        int i = 0;
-        for (; i + 4 <= count; i += 4) {
-            output[i] = dict[indices[i]];
-            output[i + 1] = dict[indices[i + 1]];
-            output[i + 2] = dict[indices[i + 2]];
-            output[i + 3] = dict[indices[i + 3]];
-        }
-        for (; i < count; i++) {
-            output[i] = dict[indices[i]];
-        }
-    }
-
-    @Override
-    public void applyDictionaryInts(int[] output, int[] dict, int[] indices, int count) {
-        int i = 0;
-        for (; i + 4 <= count; i += 4) {
-            output[i] = dict[indices[i]];
-            output[i + 1] = dict[indices[i + 1]];
-            output[i + 2] = dict[indices[i + 2]];
-            output[i + 3] = dict[indices[i + 3]];
-        }
-        for (; i < count; i++) {
-            output[i] = dict[indices[i]];
-        }
-    }
-
-    @Override
-    public void applyDictionaryFloats(float[] output, float[] dict, int[] indices, int count) {
-        int i = 0;
-        for (; i + 4 <= count; i += 4) {
-            output[i] = dict[indices[i]];
-            output[i + 1] = dict[indices[i + 1]];
-            output[i + 2] = dict[indices[i + 2]];
-            output[i + 3] = dict[indices[i + 3]];
-        }
-        for (; i < count; i++) {
-            output[i] = dict[indices[i]];
-        }
     }
 }

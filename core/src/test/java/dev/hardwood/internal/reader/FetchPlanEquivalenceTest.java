@@ -82,25 +82,27 @@ public class FetchPlanEquivalenceTest {
                     PageInfo idxInfo = indexedPages.get(p);
                     PageInfo seqInfo = sequentialPages.get(p);
 
-                    PageDecoder idxDecoder = new PageDecoder(
-                            idxInfo.columnMetaData(), idxInfo.columnSchema(),
-                            context.decompressorFactory());
-                    PageDecoder seqDecoder = new PageDecoder(
-                            seqInfo.columnMetaData(), seqInfo.columnSchema(),
-                            context.decompressorFactory());
+                    ReferencePageDecoder idxDecoder = new ReferencePageDecoder(idxInfo.columnSchema(),
+                            idxInfo.columnMetaData().codec(), context.decompressorFactory());
+                    ReferencePageDecoder seqDecoder = new ReferencePageDecoder(seqInfo.columnSchema(),
+                            seqInfo.columnMetaData().codec(), context.decompressorFactory());
 
-                    Page idxPage = idxDecoder.decodePage(idxInfo.pageData(), idxInfo.dictionary());
-                    Page seqPage = seqDecoder.decodePage(seqInfo.pageData(), seqInfo.dictionary());
+                    ReferencePageDecoder.DecodedPage idxPage = idxDecoder.decode(idxInfo.pageData(),
+                            idxInfo.dictionary());
+                    ReferencePageDecoder.DecodedPage seqPage = seqDecoder.decode(seqInfo.pageData(),
+                            seqInfo.dictionary());
 
-                    assertThat(idxPage.size())
+                    assertThat(idxPage.numValues())
                             .as("Page %d size for column '%s'", p, columnSchema.name())
-                            .isEqualTo(seqPage.size());
+                            .isEqualTo(seqPage.numValues());
 
                     assertThat(idxPage.definitionLevels())
                             .as("Page %d definition levels for column '%s'", p, columnSchema.name())
                             .isEqualTo(seqPage.definitionLevels());
 
-                    assertPageValuesEqual(seqPage, idxPage, p, columnSchema.name());
+                    assertThat(idxPage.values())
+                            .as("Page %d values for column '%s'", p, columnSchema.name())
+                            .isEqualTo(seqPage.values());
                 }
 
                 indexedIterator.close();
@@ -190,37 +192,5 @@ public class FetchPlanEquivalenceTest {
             pages.add(iter.next());
         }
         return pages;
-    }
-
-    private void assertPageValuesEqual(Page expected, Page actual, int pageIndex, String columnName) {
-        String desc = String.format("Page %d values for column '%s'", pageIndex, columnName);
-
-        if (expected instanceof Page.LongPage seqLong && actual instanceof Page.LongPage idxLong) {
-            assertThat(idxLong.values()).as(desc).isEqualTo(seqLong.values());
-        }
-        else if (expected instanceof Page.IntPage seqInt && actual instanceof Page.IntPage idxInt) {
-            assertThat(idxInt.values()).as(desc).isEqualTo(seqInt.values());
-        }
-        else if (expected instanceof Page.DoublePage seqDouble && actual instanceof Page.DoublePage idxDouble) {
-            assertThat(idxDouble.values()).as(desc).isEqualTo(seqDouble.values());
-        }
-        else if (expected instanceof Page.FloatPage seqFloat && actual instanceof Page.FloatPage idxFloat) {
-            assertThat(idxFloat.values()).as(desc).isEqualTo(seqFloat.values());
-        }
-        else if (expected instanceof Page.BooleanPage seqBool && actual instanceof Page.BooleanPage idxBool) {
-            assertThat(idxBool.values()).as(desc).isEqualTo(seqBool.values());
-        }
-        else if (expected instanceof Page.ByteArrayPage seqBytes && actual instanceof Page.ByteArrayPage idxBytes) {
-            assertThat(idxBytes.values()).as(desc).isEqualTo(seqBytes.values());
-        }
-        else if (expected instanceof Page.DictionaryByteArrayPage seqDict
-                && actual instanceof Page.DictionaryByteArrayPage idxDict) {
-            assertThat(idxDict.dictIndices()).as(desc).isEqualTo(seqDict.dictIndices());
-            assertThat(idxDict.dictionary().entryOffsets()).as(desc).isEqualTo(seqDict.dictionary().entryOffsets());
-            assertThat(idxDict.dictionary().entryBytes()).as(desc).isEqualTo(seqDict.dictionary().entryBytes());
-        }
-        else {
-            assertThat(actual.getClass()).as(desc + " type mismatch").isEqualTo(expected.getClass());
-        }
     }
 }

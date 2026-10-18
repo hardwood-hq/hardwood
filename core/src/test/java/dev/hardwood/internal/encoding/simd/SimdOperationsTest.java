@@ -75,8 +75,8 @@ class SimdOperationsTest {
         int[] defLevels = generateDefLevels(size);
         int maxDef = 3;
 
-        int scalarResult = SCALAR.countNonNulls(defLevels, defLevels.length, maxDef);
-        int simdResult = SIMD.countNonNulls(defLevels, defLevels.length, maxDef);
+        int scalarResult = SCALAR.countNonNulls(defLevels, 0, defLevels.length, maxDef);
+        int simdResult = SIMD.countNonNulls(defLevels, 0, defLevels.length, maxDef);
 
         assertThat(simdResult).isEqualTo(scalarResult);
     }
@@ -85,13 +85,13 @@ class SimdOperationsTest {
     void countNonNullsAllNulls() {
         int[] defLevels = new int[100];
         // All zeros, maxDef = 1 means all are null
-        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 1)).isEqualTo(0);
+        assertThat(SIMD.countNonNulls(defLevels, 0, defLevels.length, 1)).isEqualTo(0);
     }
 
     @Test
     void countNonNullsNoNulls() {
         int[] defLevels = IntStream.range(0, 100).map(i -> 3).toArray();
-        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(100);
+        assertThat(SIMD.countNonNulls(defLevels, 0, defLevels.length, 3)).isEqualTo(100);
     }
 
     @Test
@@ -100,14 +100,14 @@ class SimdOperationsTest {
         for (int i = 0; i < 100; i++) {
             defLevels[i] = i % 2 == 0 ? 3 : 0;
         }
-        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(50);
+        assertThat(SIMD.countNonNulls(defLevels, 0, defLevels.length, 3)).isEqualTo(50);
     }
 
     @Test
     void countNonNullsIgnoresScratchTail() {
         int[] defLevels = {3, 0, 3, 3, 3, 3};
-        assertThat(SCALAR.countNonNulls(defLevels, 3, 3)).isEqualTo(2);
-        assertThat(SIMD.countNonNulls(defLevels, 3, 3)).isEqualTo(2);
+        assertThat(SCALAR.countNonNulls(defLevels, 0, 3, 3)).isEqualTo(2);
+        assertThat(SIMD.countNonNulls(defLevels, 0, 3, 3)).isEqualTo(2);
     }
 
     @ParameterizedTest
@@ -126,97 +126,26 @@ class SimdOperationsTest {
                 expected++;
             }
         }
-        assertThat(SCALAR.countNonNulls(defLevels, len, 3)).isEqualTo(expected);
-        assertThat(SIMD.countNonNulls(defLevels, len, 3)).isEqualTo(expected);
+        assertThat(SCALAR.countNonNulls(defLevels, 0, len, 3)).isEqualTo(expected);
+        assertThat(SIMD.countNonNulls(defLevels, 0, len, 3)).isEqualTo(expected);
     }
 
-    // ==================== Dictionary Application Tests ====================
-
+    /// A cursor counts the values between two rows of a page, so the range starts anywhere: the
+    /// starts straddle the vector width, and entries before `from` are present-looking.
     @ParameterizedTest
-    @ValueSource(ints = {1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1000})
-    void applyDictionaryIntsMatchesScalar(int count) {
-        int[] dict = {100, 200, 300, 400, 500, 600, 700, 800};
-        int[] indices = new int[count];
-        for (int i = 0; i < count; i++) {
-            indices[i] = RANDOM.nextInt(dict.length);
+    @ValueSource(ints = {1, 3, 5, 8, 13, 31, 64, 65})
+    void countNonNullsCountsOnlyFromItsStart(int from) {
+        int[] defLevels = IntStream.range(0, from + 300).map(i -> 3).toArray();
+        int to = from + 257;
+        int expected = 0;
+        for (int i = from; i < to; i++) {
+            defLevels[i] = i % 5 == 0 ? 3 : 1;
+            if (defLevels[i] == 3) {
+                expected++;
+            }
         }
-
-        int[] scalarOutput = new int[count];
-        int[] simdOutput = new int[count];
-
-        SCALAR.applyDictionaryInts(scalarOutput, dict, indices, count);
-        SIMD.applyDictionaryInts(simdOutput, dict, indices, count);
-
-        assertThat(simdOutput).isEqualTo(scalarOutput);
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = {1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1000})
-    void applyDictionaryLongsMatchesScalar(int count) {
-        long[] dict = {100L, 200L, 300L, 400L, 500L};
-        int[] indices = new int[count];
-        for (int i = 0; i < count; i++) {
-            indices[i] = RANDOM.nextInt(dict.length);
-        }
-
-        long[] scalarOutput = new long[count];
-        long[] simdOutput = new long[count];
-
-        SCALAR.applyDictionaryLongs(scalarOutput, dict, indices, count);
-        SIMD.applyDictionaryLongs(simdOutput, dict, indices, count);
-
-        assertThat(simdOutput).isEqualTo(scalarOutput);
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = {1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1000})
-    void applyDictionaryDoublesMatchesScalar(int count) {
-        double[] dict = {1.1, 2.2, 3.3, 4.4, 5.5};
-        int[] indices = new int[count];
-        for (int i = 0; i < count; i++) {
-            indices[i] = RANDOM.nextInt(dict.length);
-        }
-
-        double[] scalarOutput = new double[count];
-        double[] simdOutput = new double[count];
-
-        SCALAR.applyDictionaryDoubles(scalarOutput, dict, indices, count);
-        SIMD.applyDictionaryDoubles(simdOutput, dict, indices, count);
-
-        assertThat(simdOutput).isEqualTo(scalarOutput);
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = {1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1000})
-    void applyDictionaryFloatsMatchesScalar(int count) {
-        float[] dict = {1.1f, 2.2f, 3.3f, 4.4f, 5.5f, 6.6f, 7.7f};
-        int[] indices = new int[count];
-        for (int i = 0; i < count; i++) {
-            indices[i] = RANDOM.nextInt(dict.length);
-        }
-
-        float[] scalarOutput = new float[count];
-        float[] simdOutput = new float[count];
-
-        SCALAR.applyDictionaryFloats(scalarOutput, dict, indices, count);
-        SIMD.applyDictionaryFloats(simdOutput, dict, indices, count);
-
-        assertThat(simdOutput).isEqualTo(scalarOutput);
-    }
-
-    @Test
-    void applyDictionaryCorrectValues() {
-        int[] dict = {100, 200, 300, 400, 500};
-        int[] indices = {0, 2, 4, 1, 3, 0, 2, 4, 1, 3, 0, 2, 4, 1, 3, 0};
-        int[] output = new int[16];
-
-        SIMD.applyDictionaryInts(output, dict, indices, 16);
-
-        assertThat(output[0]).isEqualTo(100);
-        assertThat(output[1]).isEqualTo(300);
-        assertThat(output[2]).isEqualTo(500);
-        assertThat(output[3]).isEqualTo(200);
-        assertThat(output[4]).isEqualTo(400);
+        assertThat(SCALAR.countNonNulls(defLevels, from, to, 3)).isEqualTo(expected);
+        assertThat(SIMD.countNonNulls(defLevels, from, to, 3)).isEqualTo(expected);
     }
 
     // ==================== Helper Methods ====================

@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.encoding;
 
-/// Encoder for DELTA_LENGTH_BYTE_ARRAY, the inverse of [DeltaLengthByteArrayDecoder].
+/// Encoder for DELTA_LENGTH_BYTE_ARRAY, the layout `BinaryPageValues.deltaLength` reads in place.
 ///
 /// The lengths are delta-encoded ahead of the values, then the values follow with nothing
 /// between them:

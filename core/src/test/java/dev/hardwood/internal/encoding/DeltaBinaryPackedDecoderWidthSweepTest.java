@@ -69,7 +69,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
                 .startsWith(w, w);
 
         int[] bulk = new int[VALUE_COUNT];
-        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(bulk, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(bulk, 0, bulk.length);
         assertThat(bulk).as("INT32 width %d, read in bulk", w).containsExactly(values);
 
         DeltaBinaryPackedDecoder oneAtATime = new DeltaBinaryPackedDecoder(encoded, 0, encoded.length);
@@ -126,7 +126,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
                 .startsWith(w, w);
 
         long[] bulk = new long[VALUE_COUNT];
-        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readLongs(bulk, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readLongs(bulk, 0, bulk.length);
         assertThat(bulk).as("INT64 width %d, read in bulk", w).containsExactly(values);
 
         DeltaBinaryPackedDecoder oneAtATime = new DeltaBinaryPackedDecoder(encoded, 0, encoded.length);
@@ -172,12 +172,12 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
         byte[] encoded = encode(values);
 
         long[] decoded = new long[count];
-        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readLongs(decoded, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readLongs(decoded, 0, decoded.length);
         assertThat(decoded).as("%d values at width %d", count, w).containsExactly(values);
 
         long[] padded = new long[count];
         byte[] slack = withTrailingSlack(encoded);
-        new DeltaBinaryPackedDecoder(slack, 0, slack.length).readLongs(padded, null, 0);
+        new DeltaBinaryPackedDecoder(slack, 0, slack.length).readLongs(padded, 0, padded.length);
         assertThat(padded).as("%d values at width %d, with room to read wide", count, w)
                 .containsExactly(values);
     }
@@ -197,7 +197,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
         byte[] encoded = encode(valuesOfWidth(count, w));
 
         DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(encoded, 0, encoded.length);
-        decoder.readLongs(new long[count], null, 0);
+        decoder.readLongs(new long[count], 0, count);
 
         assertThat(decoder.getPos()).as("%d values at width %d", count, w).isEqualTo(encoded.length);
     }
@@ -217,7 +217,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
 
         DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(encoded, 0, encoded.length);
         long[] decoded = new long[count];
-        decoder.readLongs(decoded, null, 0);
+        decoder.readLongs(decoded, 0, decoded.length);
 
         assertThat(decoded).as("%d/%d, %d values at width %d", blockSize, miniblockCount, count, w)
                 .containsExactly(values);
@@ -240,7 +240,7 @@ class DeltaBinaryPackedDecoderWidthSweepTest {
         byte[] encoded = encode(valuesOfWidth(VALUE_COUNT, 11));
 
         assertThatThrownBy(() -> new DeltaBinaryPackedDecoder(encoded, 0, encoded.length)
-                .readLongs(new long[VALUE_COUNT + 1], null, 0))
+                .readLongs(new long[VALUE_COUNT + 1], 0, VALUE_COUNT + 1))
                         .isInstanceOf(ParquetReadException.class)
                         .hasMessage("No more values to read");
     }

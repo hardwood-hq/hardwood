@@ -25,8 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Decode-level engagement checks for the fixed-size-list fast path. The fast
 /// path is transparent at the public API (levels are synthesized on demand), so
-/// engagement is observed here at its source — [Page#fixedListK()] on the page
-/// [PageDecoder] produces — rather than through any user-visible difference.
+/// engagement is observed here at its source — `fixedListK` on the page
+/// [PageDecoder#decodeNestedInPlace] reads — rather than through any user-visible difference.
 class FixedSizeListEngagementTest {
 
     private static final Path FIXED_WIDTH_FLOAT = Paths.get("src/test/resources/fixed_size_list_k4_v2.parquet");
@@ -107,7 +107,8 @@ class FixedSizeListEngagementTest {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), false);
-                    Page page = decoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), scratch);
+                    PageDecoder.InPlaceNestedPage page = decoder.decodeNestedInPlace(pageInfo.pageData(),
+                            pageInfo.dictionary(), scratch);
 
                     assertThat(page.repetitionLevels()).isSameAs(scratch.repetitionLevels(page.size()));
                     if (page.definitionLevels() != null) {
@@ -152,8 +153,8 @@ class FixedSizeListEngagementTest {
             PageDecoder decoder = new PageDecoder(
                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                     context.decompressorFactory(), fastPath);
-            Page page = decoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
-            return page.fixedListK();
+            return decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
+                    new PageDecoder.LevelScratch()).fixedListK();
         }
         finally {
             inputFile.close();
@@ -183,8 +184,8 @@ class FixedSizeListEngagementTest {
                     PageDecoder decoder = new PageDecoder(
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), true);
-                    Page page = decoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
-                    result.add(page.fixedListK());
+                    result.add(decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
+                            new PageDecoder.LevelScratch()).fixedListK());
                 }
             }
         }

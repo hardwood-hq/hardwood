@@ -16,11 +16,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.Page;
-import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageIterator;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.ReferencePageDecoder;
 import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -63,8 +62,9 @@ class NestedV1MidRecordPagesTest {
                         context, 0, file.name(), 0).pages();
                 while (iterator.hasNext()) {
                     PageInfo pageInfo = iterator.next();
-                    Page page = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(),
-                            context.decompressorFactory()).decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                    ReferencePageDecoder.DecodedPage page = new ReferencePageDecoder(pageInfo.columnSchema(),
+                            pageInfo.columnMetaData().codec(), context.decompressorFactory())
+                            .decode(pageInfo.pageData(), pageInfo.dictionary());
                     pages++;
                     if (page.repetitionLevels()[0] != 0) {
                         pagesBeginningInsideRecord++;

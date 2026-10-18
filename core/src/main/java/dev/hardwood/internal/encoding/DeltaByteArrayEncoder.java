@@ -9,7 +9,7 @@ package dev.hardwood.internal.encoding;
 
 import java.util.Arrays;
 
-/// Encoder for DELTA_BYTE_ARRAY, the inverse of [DeltaByteArrayDecoder].
+/// Encoder for DELTA_BYTE_ARRAY, the layout `BinaryPageValues.deltaByteArray` reads.
 ///
 /// Each value states how much of its start it shares with the value before it, and carries only
 /// the rest:

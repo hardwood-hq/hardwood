@@ -67,26 +67,26 @@ class PageBodyBoundTest {
 
     @Test
     void aSnappyPageDeclaringMoreValuesThanItsBodyHoldsFails() {
-        PageDecoder decoder = decoder(CompressionCodec.SNAPPY, Encoding.PLAIN);
-        decoder.decodePage(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
+        Reader decoder = decoder(CompressionCodec.SNAPPY, Encoding.PLAIN);
+        decoder.read(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
 
         ByteBuffer shortPage = snappyPage(100, PlainEncoder.encodeLongs(sequence(2), 0, 2));
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF while reading INT64 values");
     }
 
     @Test
     void anUncompressedPageWhoseBodyIsShorterThanItsDeclaredSizeFails() {
-        PageDecoder decoder = decoder(CompressionCodec.UNCOMPRESSED, Encoding.PLAIN);
+        Reader decoder = decoder(CompressionCodec.UNCOMPRESSED, Encoding.PLAIN);
         byte[] fullBody = PlainEncoder.encodeLongs(sequence(125), 0, 125);
-        decoder.decodePage(page(125, fullBody, fullBody.length, Encoding.PLAIN), null);
+        decoder.read(page(125, fullBody, fullBody.length, Encoding.PLAIN), null);
 
         byte[] shortBody = PlainEncoder.encodeLongs(sequence(2), 0, 2);
         ByteBuffer shortPage = page(100, shortBody, 800, Encoding.PLAIN);
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Uncompressed page size mismatch: expected 800, got 16");
     }
@@ -95,15 +95,15 @@ class PageBodyBoundTest {
     /// one bit each) of which the body holds only the first group's byte.
     @Test
     void aDictionaryIndexStreamRunningPastItsPageFails() {
-        PageDecoder decoder = decoder(CompressionCodec.SNAPPY, Encoding.RLE_DICTIONARY);
-        PageDecoder plainDecoder = decoder(CompressionCodec.SNAPPY, Encoding.PLAIN);
-        plainDecoder.decodePage(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
+        Reader decoder = decoder(CompressionCodec.SNAPPY, Encoding.RLE_DICTIONARY);
+        Reader plainDecoder = decoder(CompressionCodec.SNAPPY, Encoding.PLAIN);
+        plainDecoder.read(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
 
         byte[] indices = { 1, (13 << 1) | 1, 0b0101_0101 };
         ByteBuffer shortPage = snappyPage(100, indices, Encoding.RLE_DICTIONARY);
         Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10, 20 });
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, dictionary))
+        assertThatThrownBy(() -> decoder.read(shortPage, dictionary))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Insufficient RLE/Bit-Packing data: decoded 8 of 100 requested values");
     }
@@ -135,13 +135,13 @@ class PageBodyBoundTest {
     /// level sections, not by the length of the buffer it is decompressed into.
     @Test
     void aV2PageWhoseCompressedValueRegionIsShorterThanItsValuesFails() {
-        PageDecoder decoder = decoder(INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
+        Reader decoder = decoder(INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
         byte[] fullBody = PlainEncoder.encodeLongs(sequence(125), 0, 125);
-        decoder.decodePage(snappyPageV2(125, fullBody), null);
+        decoder.read(snappyPageV2(125, fullBody), null);
 
         ByteBuffer shortPage = snappyPageV2(125, Arrays.copyOf(fullBody, 500));
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF while reading INT64 values");
     }
@@ -149,10 +149,10 @@ class PageBodyBoundTest {
     @Test
     void aRepetitionLevelLengthRunningPastItsPageFails() {
         primeWithALargePage();
-        PageDecoder decoder = decoder(REPEATED_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
+        Reader decoder = decoder(REPEATED_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
         ByteBuffer shortPage = snappyPage(100, concat(lengthPrefix(600), new byte[8]), Encoding.PLAIN);
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Invalid repetition level length 600: 8 bytes remain in the page");
     }
@@ -160,10 +160,10 @@ class PageBodyBoundTest {
     @Test
     void aDefinitionLevelLengthRunningPastItsPageFails() {
         primeWithALargePage();
-        PageDecoder decoder = decoder(OPTIONAL_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
+        Reader decoder = decoder(OPTIONAL_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
         ByteBuffer shortPage = snappyPage(100, concat(lengthPrefix(600), new byte[8]), Encoding.PLAIN);
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Invalid definition level length 600: 8 bytes remain in the page");
     }
@@ -171,10 +171,10 @@ class PageBodyBoundTest {
     @Test
     void aPageEndingInsideALevelLengthPrefixFails() {
         primeWithALargePage();
-        PageDecoder decoder = decoder(OPTIONAL_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
+        Reader decoder = decoder(OPTIONAL_INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN);
         ByteBuffer shortPage = snappyPage(100, new byte[]{ 1, 0 }, Encoding.PLAIN);
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF reading the definition level length");
     }
@@ -182,11 +182,11 @@ class PageBodyBoundTest {
     @Test
     void anRleBooleanLengthRunningPastItsPageFails() {
         primeWithALargePage();
-        PageDecoder decoder = decoder(BOOLEAN_COLUMN, CompressionCodec.SNAPPY, Encoding.RLE);
+        Reader decoder = decoder(BOOLEAN_COLUMN, CompressionCodec.SNAPPY, Encoding.RLE);
         ByteBuffer shortPage = snappyPage(100, concat(lengthPrefix(600), new byte[]{ (byte) (100 << 1), 1 }),
                 Encoding.RLE);
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, null))
+        assertThatThrownBy(() -> decoder.read(shortPage, null))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Invalid RLE boolean values length 600: 2 bytes remain in the page");
     }
@@ -196,12 +196,12 @@ class PageBodyBoundTest {
     @Test
     void anRleRunValueCutShortByItsPageFails() {
         primeWithALargePage();
-        PageDecoder decoder = decoder(INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.RLE_DICTIONARY);
+        Reader decoder = decoder(INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.RLE_DICTIONARY);
         byte[] indices = { 9, (byte) 0xC8, 0x01, 0x05 };
         ByteBuffer shortPage = snappyPage(100, indices, Encoding.RLE_DICTIONARY);
         Dictionary dictionary = new Dictionary.LongDictionary(new long[]{ 10, 20 });
 
-        assertThatThrownBy(() -> decoder.decodePage(shortPage, dictionary))
+        assertThatThrownBy(() -> decoder.read(shortPage, dictionary))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF reading RLE run value: expected 2 bytes, got 1");
     }
@@ -224,7 +224,7 @@ class PageBodyBoundTest {
 
         assertThatThrownBy(() -> decodeFullThenCut(BYTE_ARRAY_COLUMN, Encoding.DELTA_LENGTH_BYTE_ARRAY, fullBody))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Unexpected EOF reading byte array: expected 8, got 0");
+                .hasMessage("DELTA_LENGTH_BYTE_ARRAY value section holds 494 value bytes, not the 1015 its lengths give");
     }
 
     @Test
@@ -243,20 +243,20 @@ class PageBodyBoundTest {
 
         assertThatThrownBy(() -> decodeFullThenCut(INT64_COLUMN, Encoding.BYTE_STREAM_SPLIT, fullBody))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("Insufficient data: expected at least 1000 bytes for 125 values of 8 bytes, got 500");
+                .hasMessage("BYTE_STREAM_SPLIT value section holds 500 bytes, not the 1000 of its 125 INT64 values");
     }
 
     private static void decodeFullThenCut(ColumnSchema column, Encoding encoding, byte[] fullBody) {
-        PageDecoder decoder = decoder(column, CompressionCodec.SNAPPY, encoding);
-        decoder.decodePage(snappyPage(125, fullBody, encoding), null);
-        decoder.decodePage(snappyPage(125, Arrays.copyOf(fullBody, fullBody.length / 2), encoding), null);
+        Reader decoder = decoder(column, CompressionCodec.SNAPPY, encoding);
+        decoder.read(snappyPage(125, fullBody, encoding), null);
+        decoder.read(snappyPage(125, Arrays.copyOf(fullBody, fullBody.length / 2), encoding), null);
     }
 
     /// Leaves a 1,000-byte page body in this thread's decompression buffer, so that a shorter page
     /// decoded next has stale bytes behind its end.
     private static void primeWithALargePage() {
         decoder(INT64_COLUMN, CompressionCodec.SNAPPY, Encoding.PLAIN)
-                .decodePage(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
+                .read(snappyPage(125, PlainEncoder.encodeLongs(sequence(125), 0, 125)), null);
     }
 
     /// Values whose deltas vary, so that a delta block packs them at a non-zero bit width.
@@ -302,12 +302,21 @@ class PageBodyBoundTest {
         return values;
     }
 
-    private static PageDecoder decoder(CompressionCodec codec, Encoding encoding) {
+    private static Reader decoder(CompressionCodec codec, Encoding encoding) {
         return decoder(INT64_COLUMN, codec, encoding);
     }
 
-    private static PageDecoder decoder(ColumnSchema column, CompressionCodec codec, Encoding encoding) {
-        return new PageDecoder(metaData(column.type(), codec, encoding), column, new DecompressorFactory(null));
+    private static Reader decoder(ColumnSchema column, CompressionCodec codec, Encoding encoding) {
+        return new Reader(new PageDecoder(metaData(column.type(), codec, encoding), column,
+                new DecompressorFactory(null)), column);
+    }
+
+    /// A column's page decoder, read through the entry point that serves the column.
+    private record Reader(PageDecoder decoder, ColumnSchema column) {
+
+        Object read(ByteBuffer page, Dictionary dictionary) {
+            return DataPages.read(decoder, column, page, dictionary);
+        }
     }
 
     private static ColumnMetaData metaData(CompressionCodec codec, Encoding encoding) {

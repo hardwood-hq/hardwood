@@ -15,9 +15,13 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.reader.ReferencePageDecoder;
+import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PhysicalType;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// [DeltaLengthByteArrayEncoder] and [DeltaByteArrayEncoder] against the decoders beside them,
+/// [DeltaLengthByteArrayEncoder] and [DeltaByteArrayEncoder] against [ReferencePageDecoder],
 /// over the edges each encoding has: empty values, values sharing everything or nothing, and a
 /// range taken out of the middle of a chunk's stored values.
 class ByteArrayEncodingsTest {
@@ -170,7 +174,7 @@ class ByteArrayEncodingsTest {
 
         assertThat(decodeDeltaByteArray(encoded, values.size())).containsExactlyElementsOf(values);
         int[] prefixLengths = new int[values.size()];
-        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(prefixLengths, null, 0);
+        new DeltaBinaryPackedDecoder(encoded, 0, encoded.length).readInts(prefixLengths, 0, prefixLengths.length);
         assertThat(prefixLengths).containsExactly(0, 3, 31, 32, 132, 102, 0, 0);
     }
 
@@ -208,19 +212,13 @@ class ByteArrayEncodingsTest {
     }
 
     private static List<byte[]> decodeDeltaLength(byte[] encoded, int count) throws IOException {
-        DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(encoded, 0, encoded.length);
-        decoder.initialize(count);
-        byte[][] output = new byte[count][];
-        decoder.readByteArrays(output, null, 0);
-        return List.of(output);
+        return List.of((byte[][]) ReferencePageDecoder.decodeValues(Encoding.DELTA_LENGTH_BYTE_ARRAY,
+                PhysicalType.BYTE_ARRAY, null, encoded, 0, encoded.length, count, null));
     }
 
     private static List<byte[]> decodeDeltaByteArray(byte[] encoded, int count) throws IOException {
-        DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(encoded, 0, encoded.length);
-        decoder.initialize(count);
-        byte[][] output = new byte[count][];
-        decoder.readByteArrays(output, null, 0);
-        return List.of(output);
+        return List.of((byte[][]) ReferencePageDecoder.decodeValues(Encoding.DELTA_BYTE_ARRAY,
+                PhysicalType.BYTE_ARRAY, null, encoded, 0, encoded.length, count, null));
     }
 
     /// Values packed end to end behind cumulative offsets — value `i` occupying

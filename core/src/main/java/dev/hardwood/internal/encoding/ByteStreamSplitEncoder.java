@@ -7,7 +7,8 @@
  */
 package dev.hardwood.internal.encoding;
 
-/// Encoder for BYTE_STREAM_SPLIT, the inverse of [ByteStreamSplitDecoder].
+/// Encoder for BYTE_STREAM_SPLIT, the layout `FlatPageValues.byteStreamSplit` and
+/// `BinaryPageValues.byteStreamSplit` read in place.
 ///
 /// A value's K bytes are scattered across K streams, stream `k` holding byte `k` of every value
 /// in turn, and the streams are written one after another. The encoded length is exactly the
