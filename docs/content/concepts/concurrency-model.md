@@ -37,8 +37,8 @@ cheap and short-lived. This matters most when reading many files, as described b
 ## The assembly pipeline
 
 For a single read, the reader runs an **assembly pipeline** ahead of the consumer. While
-your loop is processing the current batch (or row), pool threads are already decompressing and
-decoding the pages that feed the next batches, queuing the results. The consumer thread
+your loop is processing the current batch (or row), pool threads are already decompressing the
+pages that feed the next batches and decoding their values straight into those batches. The consumer thread
 generally pulls ready-to-use decoded data instead of blocking on decode.
 
 Frequent or long **`BatchWait`** [JFR events](../reference/configuration.md#jfr-java-flight-recorder-events)
@@ -77,9 +77,8 @@ A schema of many columns spreads both the copying and the flush across all the t
 - **Size the pool to the workload.** `HardwoodContext.create(n)` sets the number of
   threads that decompress and decode pages, and that encode and compress column chunks on write, which is the bulk of the CPU, so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
-  Parquet; lower it when Hardwood shares the machine with other heavy work. Two lighter stages,
-  fetching page bytes on demand and assembling decoded values into batches, run on the JVM's
-  virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
+  Parquet; lower it when Hardwood shares the machine with other heavy work. Fetching page bytes on
+  demand, a lighter stage, runs on the JVM's virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
   next row group's fetch plans and first chunk, the chunk after the one being read) run on the
   common `ForkJoinPool`. `n` bounds neither. For strict CPU isolation on a shared machine, also cap
   the carriers with `-Djdk.virtualThreadScheduler.parallelism` and the common pool with

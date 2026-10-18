@@ -118,7 +118,7 @@ Tests: `DrainSideOracleTest`.
 
 `BatchMatchMerger` (`internal.reader`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
 
-- **Aliasing** (`FlatRowReader`): each `ScheduledFlatColumn` ran its fragment into the batch's own `matches` array as the batch's cell completed, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
+- **Aliasing** (`FlatRowReader`): each `ScheduledFlatColumn` runs its fragment into the batch's own `matches` array as the batch's cell completes, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
 - **Owning** (`SelectionEngine`): the column readers' columns carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.
 
 A plan that is a single `MergePlan.Column` yields that column's bitmap directly; any other plan goes through `MergePlanEvaluator` into a combined buffer. The merger dereferences only the columns its plan references (`referencedColumns()`), so a caller that stages the batch array need keep only those entries current.

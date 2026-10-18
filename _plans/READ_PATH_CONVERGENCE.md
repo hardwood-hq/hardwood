@@ -188,7 +188,7 @@ the reader merge is the last thing that should meet two copies of a decode.
 | 3 | Choose the reader from the projection | Finding 1 | #1335 | 2 for numbers |
 | 4 | Non-repeated structs on the flat path | — | #475, #631 | 1, 3 |
 | 5 | One reader, worker chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
-| 6 | Cut the nested worker's per-batch cost (superseded, see below) | Finding 6 | #1024, #750, #1045 | — |
+| 6 | Cut the nested worker's per-batch cost (done in #1287, see below) | Finding 6 | #1024, #750, #1045 | — |
 
 Stages 3 and 5 both decide which worker serves a column, at different granularity:
 stage 3 chooses one reader per read from the projection, stage 5 chooses one worker per
@@ -316,9 +316,10 @@ specialization; #732 requires the same. Judged on both stage 2 workloads plus
 
 ### Stage 6 — cut the nested worker's per-batch cost
 
-Superseded by [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md), whose stage 2 fills nested values,
-levels and bytes into batch arrays allocated at their exact size, so there is no accumulator
-left to swap or copy. Closes finding 6. Issues: #1024, #750, #1045.
+Done in #1287: a nested column's page tasks fill its values, levels and bytes into batch arrays
+allocated once at their final size, so there is no accumulator left to swap or copy
+([NESTED_DECODE.md](../_designs/NESTED_DECODE.md#cells)). Closes finding 6. Issues: #1024,
+#750, #1045.
 
 ## Completion
 
