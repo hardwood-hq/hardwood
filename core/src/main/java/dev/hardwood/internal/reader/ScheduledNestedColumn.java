@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.ArrayBlockingQueue;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.schema.ColumnSchema;
@@ -23,19 +24,26 @@ import dev.hardwood.schema.ColumnSchema;
 ///   at most [#MAX_UNPLACED] pages queued or decoding and not placed. A page whose metadata gives
 ///   no record count is queued at the column's last known row, a lower bound of its first, so it
 ///   is never submitted late.
-/// - A page task decodes its page into arrays of the page's own, trims it to its mask's records,
-///   measures it ([PageMeasure]), and places every measured page at the head of the unplaced pages
-///   into the [NestedCell]s of the read's batch plan ([Placer]), in page order.
+/// - A page task reads its page in two passes where it can: a `V1` `PLAIN` or dictionary page of a
+///   fixed-width or binary leaf, unmasked, is decompressed into its own scratch and only its levels
+///   and ids are decoded, its values left in place for the fill. Any other page is decoded into
+///   arrays of its own and trimmed to its mask's records. The task measures the page
+///   ([PageMeasure]) and places every measured page at the head of the unplaced pages into the
+///   [NestedCell]s of the read's batch plan ([Placer]), in page order. A page borrows its scratch
+///   from the column's pool and returns it once every cell it is placed into is filled.
 /// - A cell placement seals is filled once the placing thread has released the lock, by that
 ///   thread or another that finds it first among the sealed cells: every page placed into a sealed
-///   cell is measured, so the cell's arrays are allocated at their final size
-///   and every segment is copied from its page ([NestedFill]). That thread completes the cell and
-///   publishes what can be published. A page keeps its arrays until every cell it is placed into
-///   is filled.
+///   cell is measured, so the cell's arrays are allocated at their final size and every segment is
+///   written from its page ([NestedFill]). That thread completes the cell and publishes what can
+///   be published. The arrays are new for every batch: values a reader returned refer to them.
 public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     /// Pages the column keeps queued or decoding and not yet placed.
     static final int MAX_UNPLACED = ColumnWorker.MAX_INFLIGHT_PAGES;
+
+    /// Scratch of pages whose cells are all filled, for the column's next pages.
+    private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool =
+            new ArrayBlockingQueue<>(4 * MAX_UNPLACED);
 
     /// The fetcher's failure, behind the pages it queued before it.
     private record FetchFailure(Exception failure, boolean betweenWorkItems) {
@@ -94,8 +102,10 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     @Override
     PageTask newPageTask(PageInfo info, PageDecoder decoder, long firstRow) {
+        PageDecoder.LevelScratch scratch = scratchPool.poll();
         return new NestedPageTask(info, pageSource.getCurrentFileName(), pageSource.getCurrentRowGroupIndex(),
-                pageSource.getCurrentPageIndex(), pageSource.getCurrentBatches(), decoder, firstRow);
+                pageSource.getCurrentPageIndex(), pageSource.getCurrentBatches(), decoder, firstRow,
+                scratch != null ? scratch : new PageDecoder.LevelScratch());
     }
 
     @Override
@@ -228,7 +238,13 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     private void place(NestedPageTask page) {
         try {
-            if (!placer.place(page, page.measure, repeated)) {
+            boolean goesOn = placer.place(page, page.measure, repeated);
+            // Placement of the page has ended: every cell it reaches holds its segment, and none of
+            // them is filled before the lock is released
+            if (page.unfilledSegments.get() == 0) {
+                releaseScratch(page);
+            }
+            if (!goesOn) {
                 placementEnded = true;
             }
             page.endRow[0] = placer.nextRow();
@@ -280,7 +296,9 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         @Override
         public void add(NestedCell cell, PageTask page, int recordStart, int recordEnd, int valueStart,
                         int valueEnd) {
-            cell.add((NestedPageTask) page, recordStart, recordEnd, valueStart, valueEnd);
+            NestedPageTask nestedPage = (NestedPageTask) page;
+            nestedPage.unfilledSegments.incrementAndGet();
+            cell.add(nestedPage, recordStart, recordEnd, valueStart, valueEnd);
         }
 
         @Override
@@ -307,15 +325,24 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
                 return;
             }
             PageInfo info = page.info;
-            Page decoded = info.isNullPlaceholder()
-                    ? page.decoder.nullPage(info.placeholderNumValues())
-                    : page.decoder.decodePage(info.pageData(), info.dictionary(), page.scratch);
             PageRowMask mask = info.mask();
-            if (!mask.isAll()) {
-                decoded = PageTrimmer.trim(decoded, mask);
+            PageDecoder.InPlaceNestedPage inPlace = !info.isNullPlaceholder() && mask.isAll()
+                    ? page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch)
+                    : null;
+            if (inPlace != null) {
+                page.inPlace = inPlace;
+                page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
             }
-            page.page = decoded;
-            page.measure = PageMeasure.of(decoded, info.records(), page.scratch);
+            else {
+                Page decoded = info.isNullPlaceholder()
+                        ? page.decoder.nullPage(info.placeholderNumValues())
+                        : page.decoder.decodePage(info.pageData(), info.dictionary(), page.scratch);
+                if (!mask.isAll()) {
+                    decoded = PageTrimmer.trim(decoded, mask);
+                }
+                page.page = decoded;
+                page.measure = PageMeasure.of(decoded, info.records(), page.scratch);
+            }
             lock.lock();
             try {
                 page.measured = true;
@@ -338,6 +365,14 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
     }
 
+    /// Returns a page's scratch to the column's pool; the page reads it no more.
+    private void releaseScratch(NestedPageTask page) {
+        page.page = null;
+        page.inPlace = null;
+        page.measure = null;
+        scratchPool.offer(page.scratch);
+    }
+
     /// Fills, completes and publishes the cells sealed so far, outside the lock.
     private void fillSealed() {
         while (true) {
@@ -354,6 +389,11 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             }
             try {
                 cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand));
+                for (NestedSegment segment : cell.segments()) {
+                    if (segment.page.unfilledSegments.decrementAndGet() == 0) {
+                        releaseScratch(segment.page);
+                    }
+                }
                 // The cell holds what it was filled from no longer: a cell waiting for room in the
                 // exchange would otherwise keep its pages' arrays alive
                 cell.dropSegments();

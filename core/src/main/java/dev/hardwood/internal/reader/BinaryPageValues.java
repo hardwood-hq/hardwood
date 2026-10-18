@@ -217,6 +217,13 @@ final class BinaryPageValues {
         };
     }
 
+    /// A reader of the same values with a cursor of its own at the page's first row, so that two
+    /// fills can read one page at once.
+    BinaryPageValues view() {
+        return new BinaryPageValues(kind, numValues, definitionLevels, maxDefinitionLevel, allPresent, bytePrefix,
+                data, plainOffset, width, ids, dictionary, arrays);
+    }
+
     /// The page's values, nulls included.
     int size() {
         return numValues;

@@ -83,7 +83,13 @@ final class NestedFill {
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             if (!(out instanceof BinaryBatchValues)) {
-                copyValues(segment.page.page, segment.valueStart, out, segment.cellValueOffset, segment.values());
+                if (segment.page.page != null) {
+                    copyValues(segment.page.page, segment.valueStart, out, segment.cellValueOffset, segment.values());
+                }
+                else {
+                    segment.page.inPlace.flat().view().copy(segment.valueStart, out, segment.cellValueOffset,
+                            segment.values());
+                }
             }
             copyLevels(segment, definitionLevels, repetitionLevels, maxDefinitionLevel);
             PageMeasure measure = segment.page.measure;
@@ -126,9 +132,9 @@ final class NestedFill {
         boolean[] wroteIds = new boolean[segments.size()];
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
-            // A decoded page's values (arrays or row ids) are read by position, with no cursor, so
-            // two cells sharing the page may be filled from it at once
-            BinaryPageValues values = segment.page.measure.binary();
+            // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
+            // sharing the page may be filled from it at once
+            BinaryPageValues values = segment.page.measure.binary().view();
             Dictionary.ByteArrayDictionary dictionary = values.dictionary();
             if (dictionary != null) {
                 int[] ids = out.installDictionary(dictionary);
@@ -174,12 +180,13 @@ final class NestedFill {
     private static void copyLevels(NestedSegment segment, int[] definitionLevels, int[] repetitionLevels,
                                    int maxDefinitionLevel) {
         Page page = segment.page.page;
+        PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
         int from = segment.valueStart;
         int dest = segment.cellValueOffset;
         int length = segment.values();
-        int k = page.fixedListK();
+        int k = page != null ? page.fixedListK() : 0;
         if (definitionLevels != null) {
-            int[] pageDefinitionLevels = page.definitionLevels();
+            int[] pageDefinitionLevels = page != null ? page.definitionLevels() : inPlace.definitionLevels();
             if (k == 0 && pageDefinitionLevels != null) {
                 System.arraycopy(pageDefinitionLevels, from, definitionLevels, dest, length);
             }
@@ -188,7 +195,7 @@ final class NestedFill {
             }
         }
         if (repetitionLevels != null) {
-            int[] pageRepetitionLevels = page.repetitionLevels();
+            int[] pageRepetitionLevels = page != null ? page.repetitionLevels() : inPlace.repetitionLevels();
             if (k > 0) {
                 // A fixed-size-list page's records are k-value runs from its first value
                 Arrays.fill(repetitionLevels, dest, dest + length, 1);

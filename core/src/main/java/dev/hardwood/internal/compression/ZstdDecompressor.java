@@ -20,7 +20,11 @@ public class ZstdDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        byte[] output = borrowOutputBuffer(uncompressedSize);
+        return decompress(compressed, uncompressedSize, borrowOutputBuffer(uncompressedSize));
+    }
+
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] output) {
         int actualSize;
         try {
             actualSize = Zstd.decompress(output, DirectBuffers.ensureDirect(compressed));

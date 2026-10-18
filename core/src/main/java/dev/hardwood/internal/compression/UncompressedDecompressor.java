@@ -28,6 +28,17 @@ public class UncompressedDecompressor implements Decompressor {
         return data;
     }
 
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+        int storedSize = compressed.remaining();
+        if (storedSize != uncompressedSize) {
+            throw new ParquetReadException(
+                    "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
+        }
+        compressed.get(compressed.position(), dest, 0, storedSize);
+        return dest;
+    }
+
     private static byte[] borrowOutputBuffer(int minSize) {
         byte[] buf = OUTPUT_BUFFER.get();
         if (buf == null || buf.length < minSize) {

@@ -7,21 +7,30 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /// A page of a [ScheduledNestedColumn]: its task decodes it into page arrays of its own and
 /// measures it, and the page keeps them until every cell it is placed into is filled.
 final class NestedPageTask extends PageTask {
 
     /// The page's levels, record starts and byte prefix, which outlive its task.
-    final PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
+    final PageDecoder.LevelScratch scratch;
+    /// Segments placed from the page whose cells are not filled yet; the page's scratch goes back
+    /// to its column's pool once its placement has ended and the count is back at zero.
+    final AtomicInteger unfilledSegments = new AtomicInteger();
     /// The decoded page, trimmed to its kept records; written by its task before it is measured.
+    /// `null` for a page read in two passes, whose values [#inPlace] leaves in its bytes.
     Page page;
+    /// A page read in two passes: its levels, and its values in place in its own bytes.
+    PageDecoder.InPlaceNestedPage inPlace;
     /// The page's measure; written by its task before [#measured] is set.
     PageMeasure measure;
     /// Guarded by the column lock: whether the page is measured, so that it can be placed.
     boolean measured;
 
     NestedPageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
-                   PageDecoder decoder, long firstRow) {
+                   PageDecoder decoder, long firstRow, PageDecoder.LevelScratch scratch) {
         super(info, fileName, rowGroup, pageIndex, batches, decoder, firstRow);
+        this.scratch = scratch;
     }
 }

@@ -122,6 +122,13 @@ final class FlatPageValues {
         };
     }
 
+    /// A reader of the same values with a cursor of its own at the page's first row, so that two
+    /// fills can read one page at once.
+    FlatPageValues view() {
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset, ids,
+                dictionaryValues);
+    }
+
     /// The page's values, nulls included.
     int size() {
         return numValues;

@@ -26,6 +26,15 @@ public interface Decompressor {
     /// @throws ParquetReadException if the bytes do not decode
     byte[] decompress(ByteBuffer compressed, int uncompressedSize);
 
+    /// Decompresses into `dest`, which holds at least `uncompressedSize` bytes and belongs to the
+    /// caller, so that the bytes outlive the decompressor's next call (prototype).
+    ///
+    /// @return `dest`
+    default byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+        System.arraycopy(decompress(compressed, uncompressedSize), 0, dest, 0, uncompressedSize);
+        return dest;
+    }
+
     /// Get the name of this decompressor.
     String getName();
 }
