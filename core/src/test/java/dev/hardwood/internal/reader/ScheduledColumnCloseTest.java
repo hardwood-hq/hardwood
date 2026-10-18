@@ -107,6 +107,87 @@ class ScheduledColumnCloseTest {
         }
     }
 
+    /// Closing one column of a read stops the read's other columns before it waits for its own,
+    /// so that a reader closing its columns one after another waits for all of them at once
+    /// rather than for each in turn.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void closingOneColumnStopsEveryColumnOfTheRead() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
+            FileSchema schema = reader.getFileSchema();
+            InputFile inputFile = InputFile.of(FILE);
+            inputFile.open();
+            RowGroupIterator iterator = new RowGroupIterator(List.of(inputFile), context, 0);
+            iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
+            iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
+            int batchCapacity = 64;
+            iterator.planBatches(batchCapacity, 0);
+
+            // Both fetchers are held in their first page read, so neither column ends on its own
+            // and the first close cannot return while its fetcher is held.
+            CountDownLatch readsStalled = new CountDownLatch(2);
+            CountDownLatch release = new CountDownLatch(1);
+            ReadScheduler scheduler = new ReadScheduler(context, batchCapacity, batchCapacity);
+            ScheduledFlatColumn first = stalledColumn(scheduler, iterator, 0, schema.getColumn(0),
+                    BatchExchange.detachingFlat(schema.getColumn(0).name(), batchCapacity), batchCapacity, readsStalled,
+                    release, context);
+            BatchExchange<BatchExchange.Batch> secondExchange = BatchExchange.detachingFlat(
+                    schema.getColumn(1).name(), batchCapacity);
+            ScheduledFlatColumn second = stalledColumn(scheduler, iterator, 1, schema.getColumn(1), secondExchange,
+                    batchCapacity, readsStalled, release, context);
+            scheduler.start();
+            assertThat(readsStalled.await(5, TimeUnit.SECONDS)).as("both fetchers are held inside a page read")
+                    .isTrue();
+
+            Thread closer = Thread.ofVirtual().start(first::close);
+            try {
+                awaitParkedOrExited(closer);
+                assertThat(closer.isAlive()).as("the first close waits for its held fetcher").isTrue();
+                assertThat(second.isDone()).as("the second column is stopped by the first close").isTrue();
+                assertThat(secondExchange.isFinished())
+                        .as("the second column's consumer sees the end while the first close waits")
+                        .isTrue();
+            }
+            finally {
+                release.countDown();
+            }
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat(closer.isAlive()).as("close() returns once the fetcher exits").isFalse();
+            second.close();
+            iterator.close();
+            inputFile.close();
+        }
+    }
+
+    /// A column of `scheduler` whose fetcher's first page read counts `stalled` down and is held
+    /// until `release`.
+    private static ScheduledFlatColumn stalledColumn(ReadScheduler scheduler, RowGroupIterator iterator, int index,
+                                                     ColumnSchema column, BatchExchange<BatchExchange.Batch> exchange,
+                                                     int batchCapacity, CountDownLatch stalled, CountDownLatch release,
+                                                     HardwoodContextImpl context) {
+        PageSource source = new PageSource(iterator, index) {
+            private boolean first = true;
+
+            @Override
+            public PageInfo next() throws IOException {
+                if (first) {
+                    first = false;
+                    stalled.countDown();
+                    try {
+                        release.await();
+                    }
+                    catch (InterruptedException e) {
+                        throw new InterruptedIOException();
+                    }
+                }
+                return super.next();
+            }
+        };
+        return new ScheduledFlatColumn(scheduler, source, exchange, column, batchCapacity,
+                context.decompressorFactory(), null);
+    }
+
     private static void awaitParkedOrExited(Thread thread) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {

@@ -38,11 +38,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// the dominant term.
 ///
 /// The property under test is that a close costs the same whether one column is projected or
-/// sixteen. It fails as soon as a column's stop signal does not reach its fetcher thread
-/// directly, because [dev.hardwood.internal.reader.ScheduledColumn#close()] joins that thread and
-/// then waits for the column's page tasks, and [ColumnReaders#close()] closes the columns one at
-/// a time: a per-column delay of any kind adds up rather than overlapping, and the total goes
-/// linear in the projection width.
+/// sixteen. [dev.hardwood.internal.reader.ScheduledColumn#close()] joins its column's fetcher
+/// thread and then waits for the column's page tasks, and [ColumnReaders#close()] closes the
+/// columns one at a time. The first close stops every column of the read, so the columns' waits
+/// overlap. The test fails as soon as a column's stop signal does not reach its fetcher thread
+/// directly, or a column is stopped only when its own close is reached: a per-column delay of any
+/// kind then adds up rather than overlapping, and the total goes linear in the projection width.
 ///
 /// When close() arrives mid-file, each column's ready queue is at its limit, so its completed
 /// cells wait for the consumer to publish them, the scheduler submits none of its pages past the

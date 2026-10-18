@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /// Submits the pages of a read's [ScheduledColumn]s to the decode pool, in row order across the
@@ -69,6 +70,8 @@ public final class ReadScheduler {
     /// Calls to [#submit()] not yet served; the caller that raises it from zero submits.
     private final AtomicInteger submitting = new AtomicInteger();
     private volatile boolean started;
+    /// Set by the first [#stop()].
+    private final AtomicBoolean stopped = new AtomicBoolean();
 
     /// @param context the context whose decode pool runs the page tasks
     /// @param batchCapacity the read's batch capacity
@@ -106,6 +109,18 @@ public final class ReadScheduler {
         started = true;
         for (ScheduledColumn<?> column : columns) {
             column.start();
+        }
+    }
+
+    /// Stops every column of the read without waiting for any ([ScheduledColumn#signalStop()]).
+    /// Called by each column's close, on the thread closing the read; the first call stops them
+    /// all and later ones do nothing.
+    void stop() {
+        if (!stopped.compareAndSet(false, true)) {
+            return;
+        }
+        for (ScheduledColumn<?> column : columns) {
+            column.signalStop();
         }
     }
 

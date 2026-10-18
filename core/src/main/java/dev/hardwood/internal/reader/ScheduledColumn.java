@@ -122,15 +122,17 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         fetcherThread.start();
     }
 
-    /// Stops the column and waits until it is quiescent: the fetcher has exited and every page
-    /// task submitted for it has finished, so that the caller can release what the `InputFile`
-    /// owns. Nothing is interrupted.
+    /// Stops every column of the read ([ReadScheduler#stop()]) and waits until this one is
+    /// quiescent: its fetcher has exited and every page task submitted for it has finished, so
+    /// that the caller can release what the `InputFile` owns. Nothing is interrupted.
+    ///
+    /// A read's columns are closed together, one after another. Stopping them all on the first
+    /// close lets the waits of every column overlap: a column still running while an earlier one
+    /// is awaited would go on submitting and decoding pages, and its fetcher would only be woken
+    /// once its own close is reached.
     @Override
     public void close() {
-        closingThread = Thread.currentThread();
-        stop();
-        exchange.finish();
-        unparkFetcher();
+        scheduler.stop();
         Thread fetcher = fetcherThread;
         boolean interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
         // Bounded wait, re-checked: the last task to finish unparks this thread.
@@ -140,6 +142,16 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         if (interrupted) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /// Stops the column without waiting for it: no publish runs after it, its consumer sees the
+    /// end of the stream, its fetcher is woken to exit, and the calling thread is the one its last
+    /// page task wakes. Called by [ReadScheduler#stop()], on the thread that closes the read.
+    void signalStop() {
+        closingThread = Thread.currentThread();
+        stop();
+        exchange.finish();
+        unparkFetcher();
     }
 
     /// Sets `done` under the column lock, so that no publish runs after it.

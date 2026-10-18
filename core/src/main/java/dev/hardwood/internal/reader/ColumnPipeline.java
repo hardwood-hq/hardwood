@@ -12,7 +12,8 @@ package dev.hardwood.internal.reader;
 public interface ColumnPipeline extends AutoCloseable {
 
     /// Stops the pipeline and waits until it is quiescent, so that the caller can release what the
-    /// read's `InputFile`s own.
+    /// read's `InputFile`s own. The first close of a read's pipelines stops all of them, so a
+    /// reader closing them one after another waits for them all at once.
     @Override
     void close();
 }
