@@ -83,12 +83,7 @@ final class NestedFill {
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             if (!(out instanceof BinaryBatchValues)) {
-                if (segment.page.page != null) {
-                    copyValues(segment.page.page, segment.valueStart, out, segment.cellValueOffset, segment.values());
-                }
-                else {
-                    copyInPlace(segment, out);
-                }
+                copyInPlace(segment, out);
             }
             copyLevels(segment, definitionLevels, repetitionLevels, maxDefinitionLevel);
             PageMeasure measure = segment.page.measure;
@@ -140,7 +135,7 @@ final class NestedFill {
                 if (!values.allPresent()) {
                     out.installViews();
                 }
-                KeptRuns runs = segment.page.inPlace != null ? segment.page.inPlace.runs() : null;
+                KeptRuns runs = segment.page.inPlace.runs();
                 int kept = segment.valueStart;
                 int end = segment.valueEnd;
                 while (kept < end) {
@@ -155,7 +150,7 @@ final class NestedFill {
             }
             else {
                 out.installViews();
-                KeptRuns runs = segment.page.inPlace != null ? segment.page.inPlace.runs() : null;
+                KeptRuns runs = segment.page.inPlace.runs();
                 int kept = segment.valueStart;
                 int end = segment.valueEnd;
                 while (kept < end) {
@@ -201,28 +196,16 @@ final class NestedFill {
         }
     }
 
-    private static void copyValues(Page page, int srcPos, Object values, int destPos, int length) {
-        switch (page) {
-            case Page.IntPage p -> System.arraycopy(p.values(), srcPos, (int[]) values, destPos, length);
-            case Page.LongPage p -> System.arraycopy(p.values(), srcPos, (long[]) values, destPos, length);
-            case Page.FloatPage p -> System.arraycopy(p.values(), srcPos, (float[]) values, destPos, length);
-            case Page.DoublePage p -> System.arraycopy(p.values(), srcPos, (double[]) values, destPos, length);
-            case Page.BooleanPage p -> System.arraycopy(p.values(), srcPos, (boolean[]) values, destPos, length);
-            case Page.BinaryPage p -> throw new IllegalStateException("Binary values are filled by fillBinary");
-        }
-    }
-
     /// Writes the segment's levels into the arrays given, each `null` when it is not written.
     private static void copyLevels(NestedSegment segment, int[] definitionLevels, int[] repetitionLevels,
                                    int maxDefinitionLevel) {
-        Page page = segment.page.page;
         PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
         int from = segment.valueStart;
         int dest = segment.cellValueOffset;
         int length = segment.values();
-        int k = page != null ? page.fixedListK() : inPlace.fixedListK();
+        int k = inPlace.fixedListK();
         if (definitionLevels != null) {
-            int[] pageDefinitionLevels = page != null ? page.definitionLevels() : inPlace.definitionLevels();
+            int[] pageDefinitionLevels = inPlace.definitionLevels();
             if (k == 0 && pageDefinitionLevels != null) {
                 System.arraycopy(pageDefinitionLevels, from, definitionLevels, dest, length);
             }
@@ -231,7 +214,7 @@ final class NestedFill {
             }
         }
         if (repetitionLevels != null) {
-            int[] pageRepetitionLevels = page != null ? page.repetitionLevels() : inPlace.repetitionLevels();
+            int[] pageRepetitionLevels = inPlace.repetitionLevels();
             if (k > 0) {
                 // A fixed-size-list page's records are k-value runs from its first value
                 Arrays.fill(repetitionLevels, dest, dest + length, 1);

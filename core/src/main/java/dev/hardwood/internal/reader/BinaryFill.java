@@ -22,10 +22,9 @@ import java.util.List;
 ///
 /// A segment of dictionary ids writes its ids, and the empty views of its nulls; its values'
 /// views are built when a reader needs them. A segment of plain values writes its views and its
-/// bytes, at the offset the sizing gave it. One that is filled before its cell is sized writes
-/// its bytes to an array of its own, with views relative to it, and parks ([Cell#park]); the
-/// sizing copies the bytes into place and moves the views by the segment's offset ([#unpark]).
-/// Either way the segment's views, ids and validity are written by its own page's task.
+/// bytes, at the offset the sizing gave it. One whose cell is not sized yet writes nothing and
+/// parks with a view of its page ([Cell#park]), whose bytes the page keeps; the sizing writes its
+/// views, bytes and validity straight from the page ([#unpark]). Every value is written once.
 final class BinaryFill implements FlatFill.Run {
 
     private final BinaryPageValues values;
@@ -70,18 +69,18 @@ final class BinaryFill implements FlatFill.Run {
         }
         out.installViews();
         Cell cell = segment.cell;
-        boolean direct = segment.bytes == 0 || cell.isSized();
-        byte[] dest = direct ? out.fillBytes() : new byte[segment.bytes];
-        int destByte = direct && segment.bytes > 0 ? segment.byteOffset : 0;
-        FlatFill.forEachRun(segment, new BinaryFill(values, validity, out.fillStarts(), out.fillEnds(), null,
-                dest, destByte));
-        if (direct || cell.park(segment, dest)) {
-            return direct;
+        if (segment.bytes > 0 && !cell.isSized() && cell.park(segment, values.view())) {
+            return false;
         }
-        // Sized between the check and the park
-        segment.parkedBytes = dest;
-        unpark(segment, out);
+        writePlain(segment, values, out, validity);
         return true;
+    }
+
+    /// Writes a segment's plain values' views and bytes at its offset in the sized byte buffer.
+    private static void writePlain(Segment segment, BinaryPageValues values, BinaryBatchValues out,
+                                   FlatFill.ValidityWriter validity) {
+        FlatFill.forEachRun(segment, new BinaryFill(values, validity, out.fillStarts(), out.fillEnds(), null,
+                out.fillBytes(), segment.bytes > 0 ? segment.byteOffset : 0));
     }
 
     /// The bytes of the segment's plain values: `0` for ids.
@@ -120,18 +119,13 @@ final class BinaryFill implements FlatFill.Run {
         return cell.markSized();
     }
 
-    /// Writes a parked segment's bytes into place and moves its views by its offset.
-    static void unpark(Segment segment, BinaryBatchValues out) {
-        byte[] parked = segment.parkedBytes;
-        segment.parkedBytes = null;
-        System.arraycopy(parked, 0, out.fillBytes(), segment.byteOffset, parked.length);
-        int[] starts = out.fillStarts();
-        int[] ends = out.fillEnds();
-        int offset = segment.byteOffset;
-        for (int i = segment.cellOffset, end = i + segment.records(); i < end; i++) {
-            starts[i] += offset;
-            ends[i] += offset;
-        }
+    /// Fills a parked segment of a sized cell straight from its page: its views, bytes and validity.
+    ///
+    /// @param maxDefinitionLevel the column's, below which a value is null
+    static void unpark(Segment segment, BinaryBatchValues out, int maxDefinitionLevel) {
+        BinaryPageValues values = segment.parkedValues;
+        segment.parkedValues = null;
+        writePlain(segment, values, out, new FlatFill.ValidityWriter(segment, maxDefinitionLevel));
     }
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments

@@ -52,7 +52,7 @@ class ParallelFillValidityTest {
     private static final BatchExchange<BatchExchange.Batch> EXCHANGE = BatchExchange.detachingFlat("v", 1024);
 
     /// The decoded page of each segment's page task in the current round.
-    private static final AtomicReference<Map<PageTask, Page>> PAGES = new AtomicReference<>();
+    private static final AtomicReference<Map<PageTask, FlatPageValues>> PAGES = new AtomicReference<>();
 
     @Test
     @Timeout(value = 120, unit = TimeUnit.SECONDS)
@@ -108,7 +108,7 @@ class ParallelFillValidityTest {
                 List<Segment> segments = current.get();
                 for (int s = thread; s < segments.size(); s += THREADS) {
                     Segment segment = segments.get(s);
-                    FlatFill.fill(segment, null, PAGES.get().get(segment.page), segment.cell.allocate(EXCHANGE, COLUMN).values, 1);
+                    FlatFill.fill(segment, PAGES.get().get(segment.page), segment.cell.allocate(EXCHANGE, COLUMN).values, 1);
                 }
             }
             catch (Throwable t) {
@@ -128,7 +128,7 @@ class ParallelFillValidityTest {
         BatchPlan.RowGroupBatches rowGroup = new BatchPlan(total, false, false, 0).plan(0, 0, "f.parquet", false, total);
         Cell cell = new Cell("f.parquet", false, total, total, 0, false);
         cell.allocate(EXCHANGE, COLUMN);
-        Map<PageTask, Page> pages = new IdentityHashMap<>();
+        Map<PageTask, FlatPageValues> pages = new IdentityHashMap<>();
 
         long[] expected = new long[(total + 63) >>> 6];
         List<Segment> segments = new ArrayList<>();
@@ -148,7 +148,9 @@ class ParallelFillValidityTest {
             }
             PageTask task = new PageTask(new PageInfo(null, null, null, null, PageRowMask.ALL, length),
                     "f.parquet", 0, s, rowGroup, null, offset);
-            pages.put(task, new Page.IntPage(new int[length], defLevels, null, 1, length));
+            int present = FlatPageValues.countNonNull(defLevels, 1, length);
+            pages.put(task, FlatPageValues.plain(PhysicalType.INT32, defLevels, 1, length, new byte[present * 4], 0,
+                    present * 4));
             segments.add(cell.add(task, 0, length));
             offset += length;
         }

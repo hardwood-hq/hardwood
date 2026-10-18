@@ -28,12 +28,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// The segments of one binary cell filled at the same time, each by its own thread, write their
 /// entry ids, views, bytes and validity at their own positions ([BinaryFill]), while the cell is
-/// sized on another thread: a plain segment filled before the sizing parks its bytes, and the
-/// sizing writes them into place.
+/// sized on another thread: a plain segment filled before the sizing parks with a view of its
+/// page, and the sizing writes it from the page.
 ///
-/// Each segment comes from a page of its own, of one of the four kinds a binary page decodes to:
-/// `PLAIN` and dictionary ids read in place, a decoded page of arrays, and a decoded dictionary
-/// page. Each has nulls at random rows unless it is every fifth.
+/// Each segment comes from a page of its own, of one of the two kinds a binary page is read as:
+/// `PLAIN` values and dictionary ids, both in place. Each has nulls at random rows unless it is
+/// every fifth.
 class ParallelBinaryFillTest {
 
     private static final int[] LENGTHS = { 3, 7, 1, 5, 11, 2, 9, 13, 70, 4, 6, 1, 1, 8, 3, 129, 5, 2, 10, 7, 1, 3 };
@@ -77,7 +77,7 @@ class ParallelBinaryFillTest {
                 List<Segment> parked = BinaryFill.size(prepared.cell, prepared.out);
                 if (parked != null) {
                     for (Segment segment : parked) {
-                        BinaryFill.unpark(segment, prepared.out);
+                        BinaryFill.unpark(segment, prepared.out, 1);
                     }
                 }
                 while (finished.get() < THREADS) {
@@ -98,8 +98,8 @@ class ParallelBinaryFillTest {
         }
     }
 
-    /// A plain segment filled before its cell is sized parks with its bytes; the sizing hands it
-    /// back, and writing it into place moves its views by the offset the sizing gave it.
+    /// A plain segment filled before its cell is sized parks with a view of its page and writes
+    /// nothing; the sizing hands it back, and it is then written at the offset the sizing gave it.
     @Test
     void aParkedSegmentIsWrittenWhenItsCellIsSized() {
         List<String> first = List.of("one", "two");
@@ -111,15 +111,15 @@ class ParallelBinaryFillTest {
         Segment a = place(cell, rowGroup, 0, first.size());
         Segment b = place(cell, rowGroup, 1, second.size());
         BinaryPageValues aValues = plain(first);
-        BinaryPageValues bValues = arrays(second);
+        BinaryPageValues bValues = plain(second);
         a.bytes = BinaryFill.measure(a, aValues);
         b.bytes = BinaryFill.measure(b, bValues);
 
         assertThat(BinaryFill.fill(b, bValues, out, 1)).as("filled before its cell is sized").isFalse();
-        assertThat(b.parkedBytes).hasSize("threefive".length());
+        assertThat(b.parkedValues).as("parked with a view of its page").isNotNull();
         List<Segment> parked = BinaryFill.size(cell, out);
         assertThat(parked).containsExactly(b);
-        BinaryFill.unpark(b, out);
+        BinaryFill.unpark(b, out, 1);
         assertThat(BinaryFill.fill(a, aValues, out, 1)).as("filled once its cell is sized").isTrue();
         FlatFill.backfillValidity(cell);
         BinaryFill.finish(cell, out, new BinaryBatchValues.ViewDemand());
@@ -179,20 +179,14 @@ class ParallelBinaryFillTest {
         List<Boolean> fromDictionary = new ArrayList<>();
         for (int s = 0; s < LENGTHS.length; s++) {
             int length = LENGTHS[s];
-            int kind = random.nextInt(4);
-            boolean ids = kind == 1 || kind == 3;
+            boolean ids = random.nextBoolean();
             List<String> page = new ArrayList<>();
             for (int i = 0; i < length; i++) {
                 boolean isNull = s % 5 != 4 && random.nextInt(3) == 0;
                 page.add(isNull ? null : ids ? ENTRIES[random.nextInt(ENTRIES.length)] : "v" + random.nextInt(100_000));
                 fromDictionary.add(ids && !isNull);
             }
-            BinaryPageValues pageValues = switch (kind) {
-                case 0 -> plain(page);
-                case 1 -> ids(page);
-                case 2 -> arrays(page);
-                default -> rowIds(page);
-            };
+            BinaryPageValues pageValues = ids ? ids(page) : plain(page);
             Segment segment = place(cell, rowGroup, s, length);
             segment.bytes = BinaryFill.measure(segment, pageValues);
             cell.unsized.decrementAndGet();
@@ -270,26 +264,6 @@ class ParallelBinaryFillTest {
             }
         }
         return BinaryPageValues.ids(definitionLevels(page), 1, page.size(), ids, count, DICTIONARY);
-    }
-
-    /// The page as a decoded page of arrays.
-    private static BinaryPageValues arrays(List<String> page) {
-        byte[][] values = new byte[page.size()][];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = page.get(i) == null ? null : page.get(i).getBytes(StandardCharsets.UTF_8);
-        }
-        return BinaryPageValues.of(new Page.ByteArrayPage(values, definitionLevels(page), null, 1, values.length),
-                new PageDecoder.LevelScratch());
-    }
-
-    /// The page as a decoded dictionary page: one id per row, `-1` for a null.
-    private static BinaryPageValues rowIds(List<String> page) {
-        int[] ids = new int[page.size()];
-        for (int i = 0; i < ids.length; i++) {
-            ids[i] = page.get(i) == null ? -1 : List.of(ENTRIES).indexOf(page.get(i));
-        }
-        return BinaryPageValues.of(new Page.DictionaryByteArrayPage(DICTIONARY, ids, definitionLevels(page), null, 1,
-                ids.length), new PageDecoder.LevelScratch());
     }
 
     private static Dictionary.ByteArrayDictionary dictionary() {

@@ -191,14 +191,14 @@ final class Cell implements ScheduledCell<BatchExchange.Batch> {
         return sized;
     }
 
-    /// Parks a segment whose bytes are in `bytes`, unless the cell was sized meanwhile.
+    /// Parks a segment that reads its page through `values`, unless the cell was sized meanwhile.
     ///
-    /// @return whether the segment is parked: the sizing writes its bytes
-    synchronized boolean park(Segment segment, byte[] bytes) {
+    /// @return whether the segment is parked: the sizing fills it from `values`
+    synchronized boolean park(Segment segment, BinaryPageValues values) {
         if (sized) {
             return false;
         }
-        segment.parkedBytes = bytes;
+        segment.parkedValues = values;
         if (parked == null) {
             parked = new ArrayList<>(2);
         }

@@ -329,23 +329,14 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
                     ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch)
                     : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch);
-            if (inPlace != null && !mask.isAll()) {
+            if (inPlace == null) {
+                page.decoder.rejectWithoutReader(info.pageData(), info.dictionary(), page.scratch);
+            }
+            if (!mask.isAll()) {
                 inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
             }
-            if (inPlace != null) {
-                page.inPlace = inPlace;
-                page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
-            }
-            else {
-                Page decoded = info.isNullPlaceholder()
-                        ? page.decoder.nullPage(info.placeholderNumValues())
-                        : page.decoder.decodePage(info.pageData(), info.dictionary(), page.scratch);
-                if (!mask.isAll()) {
-                    decoded = PageTrimmer.trim(decoded, mask);
-                }
-                page.page = decoded;
-                page.measure = PageMeasure.of(decoded, info.records(), page.scratch);
-            }
+            page.inPlace = inPlace;
+            page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
             lock.lock();
             try {
                 page.measured = true;
@@ -370,7 +361,6 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     /// Returns a page's scratch to the column's pool; the page reads it no more.
     private void releaseScratch(NestedPageTask page) {
-        page.page = null;
         page.inPlace = null;
         page.measure = null;
         scratchPool.offer(page.scratch);

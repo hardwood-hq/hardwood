@@ -55,18 +55,6 @@ final class PageMeasure {
         this.binary = binary;
     }
 
-    /// Measures a decoded page, trimmed to its kept records.
-    ///
-    /// @param metadataRecords the records the page's metadata gives after its mask
-    ///        ([PageInfo#records()]), [PageInfo#UNKNOWN_RECORDS] for a column with repetition
-    /// @param scratch the page's own scratch, which holds its levels
-    /// @throws ParquetReadException if the page's records disagree with its metadata
-    static PageMeasure of(Page page, int metadataRecords, PageDecoder.LevelScratch scratch) {
-        BinaryPageValues binary = page instanceof Page.BinaryPage ? BinaryPageValues.of(page, scratch) : null;
-        return of(page.size(), page.fixedListK(), page.repetitionLevels(), page.allPresent(), binary,
-                metadataRecords, scratch);
-    }
-
     /// Measures a page read in two passes from its levels, before its values are decoded.
     ///
     /// @throws ParquetReadException if the page's records disagree with its metadata
