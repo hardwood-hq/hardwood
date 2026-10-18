@@ -47,6 +47,7 @@ two copies around native decompression (#1015; stage 8 below).
 | Stage 5 on Overture with PyArrow's defaults, row scan, N300 pinned: GC | 848–871 ms per read against `main`'s 313–342; every collection promotes at age 1 in both (tenuring threshold 1 in about 90% of collections, nothing past age 2), stage 5 in 148–152 collections against 87–90, promoting 13.3–13.9 GB against 2.6–2.7. Live heap at a full collection 377–436 MB against `main`'s 446–454; pages and dictionaries each decoded once; read-ahead depth 1 still promotes 10 GB; bounding finished batches ahead of the consumer changes nothing |
 | Each nested page allocating its own scratch (levels, record starts, ids), against a pool per column returned once the page's cells are filled; two passes and the pool together, allocation per read (container) | Overture as written: columns 11.5 → 7.9 GB, rows 11.6 → 8.5 GB (`main` 10.6, 11.6); with PyArrow's defaults: columns 12.2 → 7.9 GB, rows 13.4 → 8.6 GB (`main` 11.5, 12.0) |
 | The same, N300 pinned, two rounds, ms | as written: columns 3304/3337 → 3151/3337 (`main` 4429/4127), rows 3051/2911 → 2917/2915 (`main` 3951/3867); with PyArrow's defaults: columns 4290/4022 → 3557/3469 (`main` 4721/4146), rows 4198/4211 → 3409/3328 (`main` 3932/4218), GC 903/853 → 557/555 ms (`main` 366/491), promoted 13.0/11.7 → 7.6/7.5 GB (`main` 3.0/3.8) |
+| Fixed-size lists (`k` 768, `V2` pages, uncompressed) through the fast path, N300 pinned | memory-bound: `main` 25.7–27.4 ms at 1 to 8 decode threads alike; stage 5 decoded into page arrays and copied them into cells on every pool thread, 31.0 ms and 162–165 ms CPU at 8 threads against `main`'s 27.4 and 110 (each copy 50–70% dearer per byte), level with `main` at 2–4 threads. `V2` pages read in place (no page array): 27.4–27.6 ms, 51 MB allocated per read against 63; `run-regression.sh` (fixedlist, flat, narrow, nested, encodings) 12 contenders, 0 slower, fixed-size lists −3.1..−3.9% |
 
 **Other readers, repeated leaves** (source read at the commits given in #1287):
 
@@ -185,7 +186,7 @@ where pass 2 has no reader for its encoding yet:
 | Page | Pass 2 reads its values |
 | --- | --- |
 | `V1` `PLAIN` and dictionary | in place, at any position (`FlatPageValues`, `BinaryPageValues`, shared with flat columns) |
-| `V2` | in place: its levels lie uncompressed before its value region |
+| `V2` | in place: its levels lie uncompressed before its value region (prototype: `PLAIN` and dictionary, flat and nested) |
 | `BYTE_STREAM_SPLIT`, `ALP`, `PLAIN` `BOOLEAN` | in place, at any position |
 | delta encodings, `RLE` `BOOLEAN` | from the page's start only: one fill task per page, once every cell it touches is sealed, writes its segments in page order |
 | masked pages | in place, skipping the rows the mask drops, as flat columns do |

@@ -87,8 +87,7 @@ final class NestedFill {
                     copyValues(segment.page.page, segment.valueStart, out, segment.cellValueOffset, segment.values());
                 }
                 else {
-                    segment.page.inPlace.flat().view().copy(segment.valueStart, out, segment.cellValueOffset,
-                            segment.values());
+                    copyInPlace(segment, out);
                 }
             }
             copyLevels(segment, definitionLevels, repetitionLevels, maxDefinitionLevel);
@@ -141,14 +140,32 @@ final class NestedFill {
                 if (!values.allPresent()) {
                     out.installViews();
                 }
-                values.copyIds(segment.valueStart, segment.values(), ids, out.fillStarts(), out.fillEnds(),
-                        segment.cellValueOffset);
+                KeptRuns runs = segment.page.inPlace != null ? segment.page.inPlace.runs() : null;
+                int kept = segment.valueStart;
+                int end = segment.valueEnd;
+                while (kept < end) {
+                    int run = runs == null ? 0 : runs.runOf(kept);
+                    int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
+                    int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
+                    values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(),
+                            segment.cellValueOffset + kept - segment.valueStart);
+                    kept += n;
+                }
                 wroteIds[i] = true;
             }
             else {
                 out.installViews();
-                destByte = values.copyPlain(segment.valueStart, segment.values(), out.fillStarts(), out.fillEnds(),
-                        segment.cellValueOffset, out.fillBytes(), destByte);
+                KeptRuns runs = segment.page.inPlace != null ? segment.page.inPlace.runs() : null;
+                int kept = segment.valueStart;
+                int end = segment.valueEnd;
+                while (kept < end) {
+                    int run = runs == null ? 0 : runs.runOf(kept);
+                    int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
+                    int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
+                    destByte = values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(),
+                            segment.cellValueOffset + kept - segment.valueStart, out.fillBytes(), destByte);
+                    kept += n;
+                }
             }
         }
         if (out.dictionary != null) {
@@ -162,6 +179,25 @@ final class NestedFill {
         out.finishFill(valueCount, viewDemand);
         if (viewDemand.requested) {
             out.ensureViews();
+        }
+    }
+
+    /// Writes a segment of a page read in place straight from the page's bytes, through the kept
+    /// runs of a masked page.
+    private static void copyInPlace(NestedSegment segment, Object out) {
+        PageDecoder.InPlaceNestedPage inPlace = segment.page.inPlace;
+        FlatPageValues values = inPlace.flat().view();
+        KeptRuns runs = inPlace.runs();
+        if (runs == null) {
+            values.copy(segment.valueStart, out, segment.cellValueOffset, segment.values());
+            return;
+        }
+        int kept = segment.valueStart;
+        while (kept < segment.valueEnd) {
+            int run = runs.runOf(kept);
+            int n = Math.min(segment.valueEnd - kept, runs.remaining(run, kept));
+            values.copy(runs.pagePosition(run, kept), out, segment.cellValueOffset + kept - segment.valueStart, n);
+            kept += n;
         }
     }
 
@@ -184,7 +220,7 @@ final class NestedFill {
         int from = segment.valueStart;
         int dest = segment.cellValueOffset;
         int length = segment.values();
-        int k = page != null ? page.fixedListK() : 0;
+        int k = page != null ? page.fixedListK() : inPlace.fixedListK();
         if (definitionLevels != null) {
             int[] pageDefinitionLevels = page != null ? page.definitionLevels() : inPlace.definitionLevels();
             if (k == 0 && pageDefinitionLevels != null) {

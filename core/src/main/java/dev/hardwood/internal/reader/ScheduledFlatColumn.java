@@ -229,7 +229,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             FlatPageValues values = null;
             Page decoded = null;
             if (info.isNullPlaceholder()) {
-                decoded = page.decoder.nullPage(info.placeholderNumValues());
+                values = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).flat();
             }
             else {
                 values = page.decoder.decodeFlat(info.pageData(), info.dictionary(), scratch);
@@ -265,9 +265,14 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// filled, so that a cell this page's measure sizes is sized before the page fills it.
     private void runBinaryPage(PageTask page, PageDecoder.LevelScratch scratch) {
         PageInfo info = page.info;
-        BinaryPageValues values = info.isNullPlaceholder()
-                ? null
-                : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch);
+        BinaryPageValues values;
+        if (info.isNullPlaceholder()) {
+            PageDecoder.InPlaceNestedPage nulls = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch);
+            values = nulls != null ? nulls.binary() : null;
+        }
+        else {
+            values = page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch);
+        }
         if (values == null) {
             Page decoded = info.isNullPlaceholder()
                     ? page.decoder.nullPage(info.placeholderNumValues())

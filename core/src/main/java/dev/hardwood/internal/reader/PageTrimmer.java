@@ -55,6 +55,98 @@ final class PageTrimmer {
         return Page.withSize(page, kept);
     }
 
+    /// Returns the view of a page read in place that holds only the values of the records `mask`
+    /// keeps: their levels, copied into `scratch`'s kept-level arrays, and where they lie in the
+    /// page ([KeptRuns]). The page's own levels and values stay as they are, for its fill.
+    ///
+    /// @throws IllegalArgumentException if `mask` is [PageRowMask#ALL]
+    /// @throws ParquetReadException as [#trim(Page, PageRowMask)] does
+    static PageDecoder.InPlaceNestedPage trim(PageDecoder.InPlaceNestedPage page, PageRowMask mask,
+                                              PageDecoder.LevelScratch scratch) {
+        if (mask.isAll()) {
+            throw new IllegalArgumentException("PageRowMask.ALL keeps the page as is; nothing to trim");
+        }
+        int[] starts = new int[mask.intervalCount()];
+        int[] lengths = new int[mask.intervalCount()];
+        int count;
+        int k = page.fixedListK() > 0 ? page.fixedListK() : page.repetitionLevels() == null ? 1 : 0;
+        if (k > 0) {
+            checkMaskFits(mask, page.size() / k);
+            for (int i = 0; i < mask.intervalCount(); i++) {
+                starts[i] = mask.start(i) * k;
+                lengths[i] = (mask.end(i) - mask.start(i)) * k;
+            }
+            count = mask.intervalCount();
+        }
+        else {
+            count = regularRuns(page.size(), page.repetitionLevels(), mask, starts, lengths);
+        }
+        KeptRuns runs = KeptRuns.of(starts, lengths, count);
+        int kept = 0;
+        for (int i = 0; i < count; i++) {
+            kept += lengths[i];
+        }
+        int[] definitionLevels = keep(page.definitionLevels(), starts, lengths, count, kept,
+                page.definitionLevels() == null ? null : scratch.keptDefinitionLevels(kept));
+        int[] repetitionLevels = keep(page.repetitionLevels(), starts, lengths, count, kept,
+                page.repetitionLevels() == null ? null : scratch.keptRepetitionLevels(kept));
+        return new PageDecoder.InPlaceNestedPage(kept, definitionLevels, repetitionLevels, page.fixedListK(),
+                page.flat(), page.binary(), runs);
+    }
+
+    /// Copies the levels of the kept runs into `dest`; `null` for a page without such levels.
+    private static int[] keep(int[] levels, int[] starts, int[] lengths, int count, int kept, int[] dest) {
+        if (levels == null) {
+            return null;
+        }
+        int write = 0;
+        for (int i = 0; i < count; i++) {
+            System.arraycopy(levels, starts[i], dest, write, lengths[i]);
+            write += lengths[i];
+        }
+        return dest;
+    }
+
+    /// The runs of the values of the records `mask` keeps of a page whose record boundaries are its
+    /// repetition levels of `0`, into `starts` and `lengths`; returns how many. Adjacent kept
+    /// records make one run, so there are at most as many runs as the mask has intervals.
+    private static int regularRuns(int size, int[] repetitionLevels, PageRowMask mask, int[] starts,
+                                   int[] lengths) {
+        if (size > 0 && repetitionLevels[0] != 0) {
+            throw new ParquetReadException(
+                    "Invalid column chunk: first repetition level must be 0 but was "
+                    + repetitionLevels[0]);
+        }
+        int intervalCount = mask.intervalCount();
+        int intervalCursor = 0;
+        int recordIndex = -1;
+        int count = 0;
+        int runStart = -1;
+        for (int i = 0; i < size; i++) {
+            if (repetitionLevels[i] == 0) {
+                recordIndex++;
+                while (intervalCursor < intervalCount && recordIndex >= mask.end(intervalCursor)) {
+                    intervalCursor++;
+                }
+            }
+            boolean keep = intervalCursor < intervalCount && recordIndex >= mask.start(intervalCursor);
+            if (keep && runStart < 0) {
+                runStart = i;
+            }
+            else if (!keep && runStart >= 0) {
+                starts[count] = runStart;
+                lengths[count++] = i - runStart;
+                runStart = -1;
+            }
+        }
+        checkMaskFits(mask, recordIndex + 1);
+        if (runStart >= 0) {
+            starts[count] = runStart;
+            lengths[count++] = size - runStart;
+        }
+        return count;
+    }
+
     /// Compacts a page whose records are the runs of `k` values starting at multiples
     /// of `k`: a fixed-width fixed-size-list page, or with `k == 1` a page of a column
     /// with no repeated ancestor. Returns the number of values kept.
