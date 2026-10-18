@@ -359,8 +359,18 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// Decodes a page into the column's cells.
     abstract void runPage(PageTask page);
 
-    /// Ends the read with a failure met on `page`'s task, placed with the page.
+    /// Ends the read with a failure met on `page`'s task, placed with the page; a segment's
+    /// failure ([SegmentFillException]) is placed with the segment's own page.
     void pageFailed(Exception e, PageTask page) {
+        if (e instanceof SegmentFillException segment) {
+            failed(segment.failure(), segment.page);
+        }
+        else {
+            failed(e, page);
+        }
+    }
+
+    private void failed(Exception e, PageTask page) {
         signalError(ScheduledColumn.placeFailure(e, column, pageSource.footersSupplied(), page.fileName,
                 page.rowGroup, page.pageIndex));
     }

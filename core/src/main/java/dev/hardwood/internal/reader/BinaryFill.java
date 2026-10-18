@@ -120,12 +120,19 @@ final class BinaryFill implements FlatFill.Run {
     }
 
     /// Fills a parked segment of a sized cell straight from its page: its views, bytes and validity.
+    /// It runs on the task of the page whose measure sized the cell, so a failure is raised as the
+    /// segment's own page's ([SegmentFillException]).
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
     static void unpark(Segment segment, BinaryBatchValues out, int maxDefinitionLevel) {
         BinaryPageValues values = segment.parkedValues;
         segment.parkedValues = null;
-        writePlain(segment, values, out, new FlatFill.ValidityWriter(segment, maxDefinitionLevel));
+        try {
+            writePlain(segment, values, out, new FlatFill.ValidityWriter(segment, maxDefinitionLevel));
+        }
+        catch (RuntimeException e) {
+            throw new SegmentFillException(segment.page, e);
+        }
     }
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments
