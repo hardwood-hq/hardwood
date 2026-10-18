@@ -181,7 +181,7 @@ public class BatchExchange<B> {
     }
 
     /// Creates a detaching exchange for nested batches. A nested batch counts its records, since
-    /// its arrays are trimmed to them when it is published.
+    /// its arrays are allocated at the size its records hold.
     ///
     /// @param columnName column name for error messages
     /// @param batchCapacity the most records a batch holds

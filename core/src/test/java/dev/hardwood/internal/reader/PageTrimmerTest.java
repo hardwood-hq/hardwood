@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
@@ -111,6 +112,87 @@ class PageTrimmerTest {
         assertThat(trimmed.repetitionLevels()).isNull();
     }
 
+    /// The nulls of a dropped record hold no value, so reading the kept values past them counts
+    /// only the dropped records' present values.
+    @Test
+    void testSkipsNullsOfDroppedRecords() {
+        // Records [10, null], [null], [30, 31], [null, 41], [50]
+        PageDecoder.InPlaceNestedPage page = intPage(new int[]{ 10, 0, 0, 30, 31, 0, 41, 50 },
+                new int[]{ 3, 2, 1, 3, 3, 2, 3, 3 }, new int[]{ 0, 1, 0, 0, 1, 0, 1, 0 }, 3, 0);
+
+        PageDecoder.InPlaceNestedPage trimmed = trim(page, 2, 3, 4, 5);
+
+        assertThat(trimmed.size()).isEqualTo(3);
+        assertThat(keptInts(trimmed)).containsExactly(30, 31, 50);
+        assertThat(Arrays.copyOf(trimmed.definitionLevels(), 3)).containsExactly(3, 3, 3);
+        assertThat(Arrays.copyOf(trimmed.repetitionLevels(), 3)).containsExactly(0, 1, 0);
+    }
+
+    /// A column without repetition skips the nulls of its dropped values too.
+    @Test
+    void testSkipsNullsOfDroppedValuesWithoutRepetition() {
+        PageDecoder.InPlaceNestedPage page = intPage(new int[]{ 0, 101, 0, 0, 104, 105 }, new int[]{ 0, 1, 0, 0, 1, 1 },
+                null, 1, 0);
+
+        PageDecoder.InPlaceNestedPage trimmed = trim(page, 1, 2, 3, 6);
+
+        assertThat(trimmed.size()).isEqualTo(4);
+        assertThat(keptInts(trimmed)).containsExactly(101, 0, 104, 105);
+        assertThat(Arrays.copyOf(trimmed.definitionLevels(), 4)).containsExactly(1, 0, 1, 1);
+    }
+
+    /// Plain byte-array values past dropped records with nulls, read through several runs, and
+    /// their bytes summed over the runs.
+    @Test
+    void testKeepsByteArrayValuesOverSeveralRuns() {
+        // Records [a], [null, bb], [ccc], [null], [dddd, e]
+        int[] rep = { 0, 0, 1, 0, 0, 0, 1 };
+        int[] def = { 3, 2, 3, 3, 1, 3, 3 };
+        byte[] plain = plain("a", "bb", "ccc", "dddd", "e");
+        BinaryPageValues values = BinaryPageValues.plain(PhysicalType.BYTE_ARRAY, 0, def, 3, 7, plain, 0,
+                plain.length, new PageDecoder.LevelScratch());
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(7, def, rep, 0, null, values, null);
+
+        PageDecoder.InPlaceNestedPage trimmed = trim(page, 0, 1, 2, 3, 4, 5);
+        KeptRuns runs = trimmed.runs();
+
+        assertThat(trimmed.size()).isEqualTo(4);
+        assertThat(runs.count()).isEqualTo(3);
+        assertThat(keptBytes(trimmed, 3)).isDeepEqualTo(new byte[][]{ { 'a' }, { 'c', 'c', 'c' }, { 'd', 'd', 'd', 'd' },
+                { 'e' } });
+        assertThat(runs.bytes(values, 0, 4)).isEqualTo(9);
+        assertThat(runs.bytes(values, 1, 3)).isEqualTo(7);
+        assertThat(runs.bytes(values, 2, 2)).isZero();
+        assertThat(PageMeasure.of(trimmed, PageInfo.UNKNOWN_RECORDS, new PageDecoder.LevelScratch()).bytes(0, 4))
+                .isEqualTo(9);
+    }
+
+    /// Dictionary ids past dropped records with nulls.
+    @Test
+    void testSkipsNullsOfDroppedRecordsOfDictionaryIds() {
+        Dictionary.ByteArrayDictionary dictionary = TestDictionaries.byteArrays(
+                new byte[][]{ { 'a' }, { 'b' }, { 'c' } });
+        // Records [null], [a, null], [c], [b]
+        int[] rep = { 0, 0, 1, 0, 0 };
+        int[] def = { 1, 3, 2, 3, 3 };
+        BinaryPageValues values = BinaryPageValues.ids(def, 3, 5, new int[]{ 0, 2, 1 }, 3, dictionary);
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(5, def, rep, 0, null, values, null);
+
+        PageDecoder.InPlaceNestedPage trimmed = trim(page, 3, 4);
+
+        assertThat(trimmed.size()).isEqualTo(1);
+        assertThat(keptBytes(trimmed, 3)).isDeepEqualTo(new byte[][]{ { 'b' } });
+    }
+
+    /// Whether the mask keeps the page's last record, which the next page's leading values
+    /// continue.
+    @Test
+    void testReportsWhetherTheLastRecordIsKept() {
+        assertThat(trim(fourRecords(), 0, 1).runs().keepsLastValue()).isFalse();
+        assertThat(trim(fourRecords(), 0, 1, 3, 4).runs().keepsLastValue()).isTrue();
+        assertThat(trim(fourRecords(), 2, 3).runs().keepsLastValue()).isFalse();
+    }
+
     @Test
     void testRejectsMaskPastLastRecordOfRegularPage() {
         assertThatThrownBy(() -> trim(fourRecords(), 3, 5))
@@ -145,6 +227,15 @@ class PageTrimmerTest {
 
     private static PageDecoder.InPlaceNestedPage trim(PageDecoder.InPlaceNestedPage page, int... intervals) {
         return PageTrimmer.trim(page, PageRowMask.of(intervals), new PageDecoder.LevelScratch());
+    }
+
+    /// `PLAIN` byte-array values, each behind its 4-byte length.
+    private static byte[] plain(String... values) {
+        ByteBuffer plain = ByteBuffer.allocate(1024).order(ByteOrder.LITTLE_ENDIAN);
+        for (String value : values) {
+            plain.putInt(value.length()).put(value.getBytes(StandardCharsets.UTF_8));
+        }
+        return Arrays.copyOf(plain.array(), plain.position());
     }
 
     /// A page of `INT32` values in place, the present ones as `PLAIN` bytes.

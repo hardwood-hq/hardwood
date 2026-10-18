@@ -4921,6 +4921,105 @@ print("\nGenerated nested_v1_mid_record_pages.parquet:")
 print(f"  - 1 row group, {MID_RECORD_ROWS} rows, Parquet v1, no page index")
 print("  - tags LIST<STRING> recut into pages of 7 level positions, 43 of 97 beginning inside a record")
 
+# Nested LIST<STRING> column with V1 pages that hold no record start: every 10th
+# record is a list of 20 elements, which the recut into pages of 7 level positions
+# spreads over at least three pages, the middle ones holding only values of that
+# record. Null elements vary the definition levels inside the long records.
+# =====================================================================
+
+LONG_RECORD_ROWS = 120
+
+
+def long_record_tags(i):
+    if i % 17 == 8:
+        return None
+    if i % 10 == 3:
+        return [None if j % 6 == 4 else f"long{i}-e{j}" for j in range(20)]
+    return [f"r{i}-e{j}" for j in range(i % 3)]
+
+
+long_record_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('tags', pa.list_(pa.field('element', pa.string()))),
+])
+long_record_table = pa.table({
+    'id': list(range(LONG_RECORD_ROWS)),
+    'tags': [long_record_tags(i) for i in range(LONG_RECORD_ROWS)],
+}, schema=long_record_schema)
+long_record_path = 'core/src/test/resources/nested_v1_long_record_pages.parquet'
+pq.write_table(
+    long_record_table,
+    long_record_path,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=False,
+    write_page_index=False,
+)
+recut_v1_pages(long_record_path, 'tags.list.element', max_rep=1, max_def=3, levels_per_page=7)
+
+print("\nGenerated nested_v1_long_record_pages.parquet:")
+print(f"  - 1 row group, {LONG_RECORD_ROWS} rows, Parquet v1, no page index")
+print("  - tags LIST<STRING> recut into pages of 7 level positions; lists of 20 span pages without a record start")
+
+# Nested leaves in the encodings the readers read in place: lists of INT32 and
+# INT64 in DELTA_BINARY_PACKED, of FLOAT, DOUBLE, INT32 and FIXED_LEN_BYTE_ARRAY
+# in BYTE_STREAM_SPLIT, of BOOLEAN in RLE, of strings in DELTA_BYTE_ARRAY and
+# DELTA_LENGTH_BYTE_ARRAY, and an optional struct's DOUBLE leaf in
+# BYTE_STREAM_SPLIT. Null and empty lists and null elements throughout; small
+# pages and two row groups, once with V1 and once with V2 data pages.
+# =====================================================================
+
+IN_PLACE_ROWS = 300
+
+
+def _in_place_list(i, value):
+    if i % 13 == 6:
+        return None
+    if i % 11 == 2:
+        return []
+    return [None if (i + j) % 7 == 3 else value(i * 4 + j) for j in range(i % 5 + 1)]
+
+
+in_place_columns = {
+    'delta_i32': (pa.int32(), lambda n: n * 37 - 1000 + (n % 3) * 11, 'DELTA_BINARY_PACKED'),
+    'delta_i64': (pa.int64(), lambda n: n * 1_000_003 - (n % 5) * 7, 'DELTA_BINARY_PACKED'),
+    'bss_f32': (pa.float32(), lambda n: (n % 50) * 0.25, 'BYTE_STREAM_SPLIT'),
+    'bss_f64': (pa.float64(), lambda n: (n % 80) * 0.125 + n, 'BYTE_STREAM_SPLIT'),
+    'bss_i32': (pa.int32(), lambda n: n * 9_973 - 50_000, 'BYTE_STREAM_SPLIT'),
+    'bss_flba': (pa.binary(3), lambda n: bytes([n % 256, (n >> 8) % 256, 7]), 'BYTE_STREAM_SPLIT'),
+    'rle_bool': (pa.bool_(), lambda n: n % 3 == 0, 'RLE'),
+    'dba_str': (pa.string(), lambda n: f"key-{n // 3}-{n % 3}", 'DELTA_BYTE_ARRAY'),
+    'dlba_str': (pa.string(), lambda n: "v" * (n % 9) + str(n), 'DELTA_LENGTH_BYTE_ARRAY'),
+}
+in_place_fields = [('id', pa.int32(), False)]
+in_place_data = {'id': list(range(IN_PLACE_ROWS))}
+in_place_encoding = {}
+for name, (value_type, value, encoding) in in_place_columns.items():
+    in_place_fields.append((name, pa.list_(pa.field('element', value_type))))
+    in_place_data[name] = [_in_place_list(i, value) for i in range(IN_PLACE_ROWS)]
+    in_place_encoding[f'{name}.list.element'] = encoding
+in_place_fields.append(('point', pa.struct([('x', pa.float64())])))
+in_place_data['point'] = [None if i % 9 == 4 else {'x': None if i % 4 == 1 else i * 0.5} for i in range(IN_PLACE_ROWS)]
+in_place_encoding['point.x'] = 'BYTE_STREAM_SPLIT'
+in_place_table = pa.table(in_place_data, schema=pa.schema(in_place_fields))
+for page_version, suffix in (('1.0', 'v1'), ('2.0', 'v2')):
+    pq.write_table(
+        in_place_table,
+        f'core/src/test/resources/nested_in_place_encodings_{suffix}.parquet',
+        use_dictionary=False,
+        compression='NONE',
+        data_page_version=page_version,
+        column_encoding=in_place_encoding,
+        data_page_size=64,
+        write_batch_size=16,
+        row_group_size=IN_PLACE_ROWS // 2,
+    )
+
+print("\nGenerated nested_in_place_encodings_v1.parquet / _v2.parquet:")
+print(f"  - 2 row groups, {IN_PLACE_ROWS} rows, small pages, V1 and V2 data pages")
+print("  - list leaves in DELTA_BINARY_PACKED, BYTE_STREAM_SPLIT, RLE, DELTA_BYTE_ARRAY, DELTA_LENGTH_BYTE_ARRAY")
+
 # ============================================================================
 # PR #471 Review Fixtures (#463 / #470 / #473)
 # ============================================================================
