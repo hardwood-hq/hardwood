@@ -14,7 +14,7 @@ Related documents:
 
 ## Page decode
 
-`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. Every data page is read in place: a page task reads the page's header and levels and locates its values, and the fills write each value once, from the decompressed page straight into the batch arrays, with no page-sized value array between.
+`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. It refuses a `FIXED_LEN_BYTE_ARRAY` column without a positive width (`FixedWidthValidator`, as the read does before it starts), so every page of the column, null placeholders included, is read at the column's width. Every data page is read in place: a page task reads the page's header and levels and locates its values, and the fills write each value once, from the decompressed page straight into the batch arrays, with no page-sized value array between.
 
 The steps, in order (`PageDecoder.readInPlace`):
 
@@ -30,7 +30,7 @@ The steps, in order (`PageDecoder.readInPlace`):
 4. Decode repetition levels when `maxRepetitionLevel > 0` and definition levels when `maxDefinitionLevel > 0`, both with `RleBitPackingHybridDecoder` at the bit width of the maximum level, and the dictionary ids of a dictionary-encoded page, into scratch.
 5. Build the page's value reader for its encoding (next section).
 
-A `PageDecodedEvent` (JFR) is committed per page read with the column and both sizes.
+A `PageDecodedEvent` (JFR) is committed per page read with the column and both sizes; it spans the steps above and the value reader's checks, not the fills that write the values.
 
 The entry points differ in the column they serve and in where the values live:
 
@@ -58,7 +58,7 @@ The fixed-size-list fast path reads a page with `null` level arrays and gives it
 
 A reader failure is a `RuntimeException` on a page task; `ScheduledColumn.placeFailure` classifies it into `ParquetReadException` and names the file, row group, column and page ([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)).
 
-Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`.
+Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`, `DecompressorCallerBufferTest`, `InPlaceReaderOracleTest`.
 
 ## Encodings and readers
 
@@ -69,8 +69,8 @@ Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`.
 | `PLAIN` | all | `FlatPageValues.plain`, `BinaryPageValues.plain`: the values in the decompressed page | bytes left over after the last value |
 | `RLE_DICTIONARY`, `PLAIN_DICTIONARY` | all but `BOOLEAN` (see [Dictionary](#dictionary-and-string-reuse)) | ids decoded into scratch through `RleBitPackingHybridDecoder`; a numeric fill looks each up in the `Dictionary`, a binary fill writes it as the batch's entry id | no dictionary for the chunk; an index bit width above 32; an id outside the dictionary; a `BOOLEAN` dictionary (`UnsupportedOperationException`, raised when the dictionary page is parsed) |
 | `DELTA_BINARY_PACKED` | `INT32`, `INT64` | `FlatPageValues.delta`, driving `DeltaBinaryPackedDecoder` in row order | every other type; a malformed stream header, checked when the page is read; a malformed block, raised by the fill that decodes it |
-| `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` | `BinaryPageValues.deltaLength`: lengths decoded up front, bytes in place | every other type |
-| `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `BinaryPageValues.deltaByteArray`: values reconstructed from prefixes and suffixes into the page's scratch | every other type |
+| `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` | `BinaryPageValues.deltaLength`: lengths decoded up front, bytes in place | every other type; a negative length; value bytes other than the sum of the lengths, checked when the page is read |
+| `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `BinaryPageValues.deltaByteArray`: values reconstructed from prefixes and suffixes into the page's scratch | every other type; a negative length; a prefix longer than the previous value; suffixes that run out, or bytes left over after the last; on `FIXED_LEN_BYTE_ARRAY`, a value of another width than the column's; all checked when the page is read |
 | `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` | `FlatPageValues.byteStreamSplit`, `BinaryPageValues.byteStreamSplit`: each value gathered from its byte streams | `BOOLEAN`, `BYTE_ARRAY`, `INT96`; a value section that does not hold exactly the page's values |
 | `ALP` | `FLOAT`, `DOUBLE` | `FlatPageValues.alp`: every vector header checked when the page is read (`AlpDecoder.validate`), each vector decoded once into the reader's buffer as the fill reaches it | every other type; a header element count other than the page's non-null count; a vector that does not start where the previous one ended, or a page with bytes left over after the last vector; an exponent, factor or bit width outside the format's range; an exception position outside its vector. A compression mode or integer encoding other than 0, which the format reserves for later variants, raises `UnsupportedOperationException` |
 | `RLE` | `BOOLEAN`, behind a 4-byte length | `FlatPageValues.rleBooleans`: decoded into scratch through `RleBitPackingHybridDecoder` at width 1 | every other type |
@@ -87,7 +87,7 @@ ALP decodes a value as `encoded * 10^factor * 10^-exponent`: two multiplications
 
 `ReferencePageDecoder` (core test sources) decodes a page whole into its levels and one value per entry, the reference the readers are checked against; the encoder tests round-trip through it.
 
-Tests: `PageDecoderEncodingTest`, `PageDecoderPlainSizeTest`, `PageBodyBoundTest`, `ByteArrayDictionaryInternTest`, `DeltaBinaryPackedDecoderHeaderTest`, `DeltaBinaryPackedDecoderWidthSweepTest`, `DeltaBinaryPackedTest`, `DeltaByteArrayTest`, `DeltaByteArrayFlbaTest`, `AlpDecoderTest`, `AlpReadTest` (parquet-testing-runner).
+Tests: `PageDecoderEncodingTest`, `PageDecoderPlainSizeTest`, `PageValuesValidationTest`, `PageBodyBoundTest`, `ByteArrayDictionaryInternTest`, `ReadFailurePositionTest`, `InPlaceReaderOracleTest`, `EncodingRoundTripTest`, `DeltaBinaryPackedDecoderHeaderTest`, `DeltaBinaryPackedDecoderWidthSweepTest`, `DeltaBinaryPackedDecoderCursorTest`, `DeltaBinaryPackedTest`, `DeltaByteArrayTest`, `DeltaByteArrayFlbaTest`, `AlpDecoderTest`, `AlpReadTest` (parquet-testing-runner).
 
 ## Dictionary and string reuse
 

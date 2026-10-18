@@ -1076,8 +1076,8 @@ public class RowGroupIterator implements Closeable {
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
                 // Determine needed pages (filter + maxRows). Each entry pairs a
-                // PageLocation with its PageRowMask so the assembler can keep only
-                // the records inside the matching ranges.
+                // PageLocation with its PageRowMask so the column keeps only the
+                // records inside the matching ranges.
                 List<NeededPage> neededPages = computeNeededPages(
                         allPages, matchingRows, rowGroup.numRows());
 
@@ -1309,7 +1309,7 @@ public class RowGroupIterator implements Closeable {
     record PageGroup(long offset, int length, int firstPageIndex, int pageCount) {}
 
     /// A page needed for the current read paired with the [PageRowMask] selecting
-    /// which records within the page the assembler should keep. The mask is
+    /// which records within the page the column keeps. The mask is
     /// [PageRowMask#ALL] when no filter is active or when the page falls
     /// entirely inside the matching ranges.
     ///
@@ -1371,7 +1371,7 @@ public class RowGroupIterator implements Closeable {
 
     /// Determines which pages are needed based on the filter's matching row ranges,
     /// pairing each kept page with the [PageRowMask] that selects which of its
-    /// records the assembler should keep.
+    /// records the column keeps.
     private static List<NeededPage> computeNeededPages(List<PageLocation> allPages,
                                                        RowRanges matchingRows,
                                                        long rowGroupRowCount) {

@@ -9,6 +9,7 @@ package dev.hardwood.internal.compression.libdeflate;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Random;
 import java.util.zip.GZIPOutputStream;
 
@@ -141,6 +142,26 @@ class LibdeflateDecompressorIT {
         byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, expectedOutput.length);
 
         assertThat(result).startsWith(expectedOutput);
+    }
+
+    /// The caller's buffer receives exactly the declared bytes, from a direct and a heap page.
+    @Test
+    void decompressIntoTheCallersBuffer() throws Exception {
+        byte[] original = new byte[10_000];
+        new Random(7).nextBytes(original);
+        byte[] compressed = gzipCompress(original);
+        LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
+
+        for (ByteBuffer buffer : new ByteBuffer[]{ createDirectBuffer(compressed), createHeapBuffer(compressed) }) {
+            byte[] dest = new byte[original.length + 32];
+            Arrays.fill(dest, (byte) 0x55);
+
+            byte[] result = decompressor.decompress(buffer, original.length, dest);
+
+            assertThat(result).isSameAs(dest);
+            assertThat(Arrays.copyOf(dest, original.length)).isEqualTo(original);
+            assertThat(Arrays.copyOfRange(dest, original.length, dest.length)).containsOnly((byte) 0x55);
+        }
     }
 
     @Test

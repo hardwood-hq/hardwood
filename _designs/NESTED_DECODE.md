@@ -85,7 +85,7 @@ Where a record starts depends on the page:
 
 On a regular page, record `0` is the one its first value opens, so a masked page whose first repetition level is not `0` fails the read with a `ParquetReadException`, as does a mask that selects records past the page's last.
 
-Tests: `PageTrimmerTest`, `NestedV2NoIndexMaskingTest`, `MisalignedPageBoundariesTest`.
+Tests: `PageTrimmerTest`, `KeptRunsTest`, `NestedFillMaskedPageTest`, `NestedV2NoIndexMaskingTest`, `MisalignedPageBoundariesTest`.
 
 ## Cells
 
@@ -114,7 +114,7 @@ Invariants:
 
 `NestedBatch.allPresent` records whether every page with a segment in the batch passed the all-present gate.
 
-Tests: `ScheduledNestedColumnTest`, which compares each read with one whose batches end only at row groups, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `FileLogicalTypeTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
+Tests: `ScheduledNestedColumnTest`, which compares each read, at several batch capacities, with the records `ReferencePageDecoder` decodes, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `FileLogicalTypeTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
 
 ## Index modes
 

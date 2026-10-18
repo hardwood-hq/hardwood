@@ -258,6 +258,7 @@
                     <include>**/InlineNullPageDropTest.java</include>
                     <include>**/DictionaryEndToEndTest.java</include>
                     <include>**/DictionaryFallbackNullsTest.java</include>
+                    <include>**/EncodingRoundTripTest.java</include>
                   </includes>
                   <systemPropertyVariables>
                     <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
@@ -282,6 +283,7 @@
                     <include>**/NestedV2NoIndexMaskingTest.java</include>
                     <include>**/NestedDictBatchBoundaryTest.java</include>
                     <include>**/FixedSizeListFastPathReadTest.java</include>
+                    <include>**/EncodingRoundTripTest.java</include>
                   </includes>
                   <systemPropertyVariables>
                     <hardwood.internal.batchSize>1</hardwood.internal.batchSize>

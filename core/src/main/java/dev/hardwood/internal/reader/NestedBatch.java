@@ -69,9 +69,9 @@ public final class NestedBatch {
     /// selection (for which the consumer builds a view lazily from the sliced levels).
     public NestedLevelComputer.RealView realView;
 
-    /// Real-items-only leaf values, gathered by the cell's fill from [#values] when the
-    /// batch has phantom positions, so the compaction runs off the serial consumer.
-    /// `null` when no gather is needed (`realView.realToRawLeaf() == null`: the raw
-    /// [#values] already pass through) or on paths that compact lazily.
+    /// Real-items-only leaf values, set with [#realView]: gathered by the cell's fill from
+    /// [#values] when the batch has phantom positions, so the compaction runs off the serial
+    /// consumer, and [#values] itself when no gather is needed (`realView.realToRawLeaf() ==
+    /// null`). `null` wherever [#realView] is.
     public Object realValues;
 }

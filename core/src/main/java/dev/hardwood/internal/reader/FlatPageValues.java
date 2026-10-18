@@ -18,15 +18,18 @@ import dev.hardwood.internal.encoding.simd.VectorSupport;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The values of a decompressed flat data page, read in place by its fill: `PLAIN` bytes or the
-/// dictionary ids of a fixed-width column, and the page's definition levels.
+/// The values of a decompressed data page of a fixed-width numeric or boolean column, read in place
+/// by its fills, and the page's definition levels. The values are the page's own bytes in any
+/// encoding but the ids ones (`PLAIN`, `BYTE_STREAM_SPLIT`, `ALP`, `DELTA_BINARY_PACKED`), or ids
+/// decoded into scratch (a dictionary's, or `RLE` booleans).
 ///
-/// The fill writes the page's rows into its segments in page order, so the values are read with
-/// one forward cursor: [#copy] moves it to the run's first row, counting the non-null values it
-/// passes, then writes the run. A page whose mask drops rows passes them on the way.
+/// A fill writes its rows in page order, so the values are read with one forward cursor: [#copy]
+/// moves it to the run's first row, counting the non-null values it passes, then writes the run.
+/// A page whose mask drops rows passes them on the way. A fill that starts elsewhere reads through
+/// a [#view()] of its own.
 ///
-/// The ids and the definition levels live in the decode thread's scratch, which the page holds
-/// for the length of its task.
+/// The ids and the definition levels live in the scratch the page is decoded with, for as long
+/// as the page's fills run.
 final class FlatPageValues {
 
     private static final VarHandle INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
@@ -41,7 +44,8 @@ final class FlatPageValues {
     /// The page's definition levels, `null` when every value is present.
     private final int[] definitionLevels;
     private final int maxDefinitionLevel;
-    /// `PLAIN` values: the decompressed page and where its values start; `null` for ids.
+    /// The value section's bytes and where it starts, for every encoding but the ids ones; `null`
+    /// for ids.
     private final byte[] plain;
     private final int plainOffset;
     /// Dictionary ids of the non-null values, and the dictionary's values; `null` for `PLAIN`.

@@ -89,8 +89,8 @@ The suites that compare the values a read returns run a second time with the int
 
 | Module | Capacity | Tests |
 |--------|----------|-------|
-| `core` | 7 | the differential, nested, fixed-size-list, filter, dictionary and multi-file read suites |
-| `core` | 1 | the nested and `V1` subset of them, including `NestedV1MidRecordPagesTest`, whose pages begin inside a record |
+| `core` | 7 | the differential, nested, fixed-size-list, filter, dictionary and multi-file read suites, and `EncodingRoundTripTest`, every in-place encoding over flat, repeated and struct leaves |
+| `core` | 1 | the nested and `V1` subset of them, including `NestedV1MidRecordPagesTest`, whose pages begin inside a record, and `EncodingRoundTripTest` |
 | `parquet-testing-runner` | 7 | `ParquetComparisonTest` |
 
 A test that asserts the shape of a batch, such as its record count or a value at a fixed index of its first batch, stays out of these lists. The profiles are inactive under `-Dtest=...`, which would otherwise run the selection once per execution.
