@@ -262,7 +262,7 @@ class ReadFailurePositionTest {
             offsets[r + 1] = count;
         }
         long[] values = Arrays.copyOf(elements, count);
-        byte[] file = writeDelta(schema, batch -> batch.list("v", offsets).longs("v.list.element", values));
+        byte[] file = write(schema, ColumnEncoding.DELTA_BINARY_PACKED, batch -> batch.list("v", offsets).longs("v.list.element", values));
         String failure = corruptFirstDeltaBlock(file, 1, 1);
 
         assertThatThrownBy(() -> {
@@ -286,7 +286,7 @@ class ReadFailurePositionTest {
         for (int i = 0; i < values.length; i++) {
             values[i] = (i * 7_919L) % 997;
         }
-        byte[] file = writeDelta(schema, batch -> batch.longs("v", values));
+        byte[] file = write(schema, ColumnEncoding.DELTA_BINARY_PACKED, batch -> batch.longs("v", values));
         String failure = corruptFirstDeltaBlock(file, 0, 0);
 
         assertThatThrownBy(() -> {
@@ -300,11 +300,45 @@ class ReadFailurePositionTest {
                                                             + failure);
     }
 
-    /// One row group of uncompressed `DELTA_BINARY_PACKED` pages of 20 records each.
-    private static byte[] writeDelta(FileSchema schema, Consumer<ColumnBatch> batch) throws Exception {
+    /// A page no reader takes, here `RLE` declared over an `INT32` column, is refused on the
+    /// scheduled path with the page's place.
+    @Test
+    void aRefusedPageNamesItsPlace() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        int[] values = new int[60];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        byte[] file = write(schema, ColumnEncoding.PLAIN, batch -> batch.ints("v", values));
+        long pageOffset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)))) {
+            pageOffset = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData().dataPageOffset();
+        }
+        // The data page header's num_values (20) and encoding (PLAIN, 0) fields, the encoding
+        // replaced by RLE (3), both zigzag-encoded: 40 and 6
+        int headerStart = Math.toIntExact(pageOffset);
+        int encodingAt = indexOf(file, headerStart, headerStart + 64, new byte[]{ 0x15, 40, 0x15, 0 }) + 3;
+        file[encodingAt] = 6;
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+                 ColumnReader column = reader.columnReader("v")) {
+                while (column.nextBatch()) {
+                    // read to the refused page
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 0, column 'v', page 0] "
+                                                            + "RLE encodes only boolean values in a data page, not INT32");
+    }
+
+    /// One row group of uncompressed pages of 20 records each in `encoding`.
+    private static byte[] write(FileSchema schema, ColumnEncoding encoding, Consumer<ColumnBatch> batch)
+            throws Exception {
         WriterConfig config = WriterConfig.builder()
                 .codec(CompressionCodec.UNCOMPRESSED)
-                .encoding(ColumnEncoding.DELTA_BINARY_PACKED)
+                .encoding(encoding)
                 .pageTargetRows(20)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();

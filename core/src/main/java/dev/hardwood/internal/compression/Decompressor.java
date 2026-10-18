@@ -27,9 +27,11 @@ public interface Decompressor {
     byte[] decompress(ByteBuffer compressed, int uncompressedSize);
 
     /// Decompresses into `dest`, which holds at least `uncompressedSize` bytes and belongs to the
-    /// caller, so that the bytes outlive the decompressor's next call (prototype).
+    /// caller, so that the bytes outlive the decompressor's next call. A stream that decodes to
+    /// `uncompressedSize` bytes writes nothing past them.
     ///
     /// @return `dest`
+    /// @throws ParquetReadException if the bytes do not decode to exactly `uncompressedSize` bytes
     default byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         System.arraycopy(decompress(compressed, uncompressedSize), 0, dest, 0, uncompressedSize);
         return dest;

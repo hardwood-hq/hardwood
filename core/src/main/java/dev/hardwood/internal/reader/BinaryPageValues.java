@@ -184,6 +184,9 @@ final class BinaryPageValues {
     /// into `scratch`'s value buffer, each prefix copied from the previous value there, and the
     /// fill copies them from it.
     ///
+    /// @param width the width of a `FIXED_LEN_BYTE_ARRAY` column's values, which every value must
+    ///        have; `0` for a `BYTE_ARRAY` column
+    ///
     /// @throws ParquetReadException if the value section is malformed
     static BinaryPageValues deltaByteArray(int width, int[] definitionLevels, int maxDefinitionLevel, int numValues,
                                            byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch) {
@@ -227,6 +230,10 @@ final class BinaryPageValues {
             suffixPos += suffixLength;
             previousStart = pos;
             previousLength = prefixLength + suffixLength;
+            if (width > 0 && previousLength != width) {
+                throw new ParquetReadException("DELTA_BYTE_ARRAY value " + i + " is " + previousLength
+                        + " bytes long, not the " + width + " of its FIXED_LEN_BYTE_ARRAY column");
+            }
             pos += previousLength;
             suffixLengths[i] = previousLength;
         }
