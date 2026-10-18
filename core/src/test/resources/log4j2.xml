@@ -16,7 +16,6 @@
     </Appenders>
     <Loggers>
         <!-- Set DEBUG level for Hardwood reader classes -->
-        <Logger name="dev.hardwood.internal.reader.PageCursor" level="DEBUG"/>
         <Logger name="dev.hardwood.reader.RowReader" level="DEBUG"/>
 
         <Root level="INFO">

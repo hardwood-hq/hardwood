@@ -89,7 +89,7 @@ Tests: `PageTrimmerTest`, `KeptRunsTest`, `NestedFillMaskedPageTest`, `NestedV2N
 
 ## Cells
 
-A nested column's batches are built from cells of the read's batch plan ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). Where a page's records start, and how many values each holds, only its levels say, so a page is placed into cells once its task has decoded and measured it, and a cell is filled only once every page placed into it is measured.
+A nested column's batches are built from cells of the read's batch plan ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). Where a page's records start, and how many values each holds, only its levels say, so a page is placed into cells once its task has decoded and measured it, and a cell is filled only once every page placed into it is measured. The pages of one column are decoded on several threads at once, so no fill can take its write position from the fill before it: the measure and the placement give every segment its offset, and every array of the cell its size, before any value is written, so each value is written once, into an array allocated once.
 
 **Measure** (`PageMeasure`, on the page's task, after a masked page is trimmed). The page's values, its records and where each starts, and the values before its first record start:
 
@@ -187,4 +187,5 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 - **Fixed-size list element types** are limited to fixed-width primitives; byte-array-backed leaves (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) and nullable elements take the regular path.
 - **Legacy `BIT_PACKED` levels (#569).** `DataPageV1` level streams are decoded as the RLE / bit-packing hybrid whatever the header's level encoding says, so a page with `BIT_PACKED` levels is misread.
 - **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group keeps its annotation and is refused when a read projects it, rather than read as a list of variants.
+- **Real view per leaf (#1023).** Each leaf column computes its real-items view from its own levels, so sibling leaves of one repetition domain derive the same ancestor structure once each.
 - **Phantom-bearing batches** on `REAL_VIEW` build the full `computeRealView` and gather the leaf values; only all-present batches get the lean view.

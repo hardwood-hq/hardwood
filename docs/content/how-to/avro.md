@@ -103,7 +103,7 @@ Building an `AvroRowReader` fails with an error when a projected `LIST` group ha
 
 ## Lifecycle
 
-`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps. Closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller.
+`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps. Closing the `AvroRowReader` releases the inner readers, but the underlying `ParquetFileReader` must be closed separately by the caller.
 
 ## Schema overrides
 

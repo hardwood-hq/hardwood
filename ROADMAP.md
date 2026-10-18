@@ -250,6 +250,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Data page reading and decoding
 - [x] Page decompression
 - [x] Parallel column batch fetching
+- [x] Pages decoded straight into batch arrays, each value written once, and submitted to the decode pool in row order across a read's columns by one scheduler per read (#1287; see [`_designs/READ_PIPELINE.md`](_designs/READ_PIPELINE.md#scheduled-columns))
 - [x] Lazy per-file metadata access with a parent-owned footer cache (see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md))
 - [x] Footers supplied across readers through a `MetadataSource` on the context, checked against each file before use (#837; see [`_designs/FILE_METADATA.md`](_designs/FILE_METADATA.md#supplied-footers))
 
@@ -392,7 +393,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 9.5 Fixed-size-list read fast path
 - [x] Detect fixed-width fixed-*k* `LIST` pages from level streams alone (`FixedSizeListDetector`): O(1) definition-level gate + O(rows) repetition verification
 - [x] SWAR word-at-a-time tiled compare for the small-*k* bit-packed regime
-- [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `NestedColumnWorker`, `ColumnReader`)
+- [x] Skip level materialization + record reconstruction on `DataPageV2` and `DataPageV1` (RLE-encoded levels); arithmetic offsets and all-present validity, transparent per-page fallback (`PageDecoder`, `ScheduledNestedColumn`, `ColumnReader`)
 - [x] Decode benchmark vs. naive `LIST` and flat-column floor (`FixedSizeListDecodeBenchmark`); recovers ~85–87% of the reconstruction gap; the fast path is described in `_designs/NESTED_DECODE.md#fixed-size-list-fast-path`
 - [x] `ReaderConfig` — immutable per-read behaviour value (mirrors `WriterConfig`), carrying the fast-path toggle; passed to `ParquetFileReader.open(...)`, keeping `HardwoodContext` resources-only (see `_designs/READ_PIPELINE.md#configuration-readerconfig`)
 - [ ] Nullable-vector (null-row) support — follow-up

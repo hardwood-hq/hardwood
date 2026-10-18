@@ -10,15 +10,15 @@ each one costs, and the order in which they are merged.
 
 | Layer | Flat | Nested | Shared |
 | --- | --- | --- | --- |
-| Fetch, page decode | — | — | `RowGroupIterator`, `SequentialFetchPlan`, `PageDecoder`, `Page` |
-| Worker | `FlatColumnWorker` | `NestedColumnWorker` | `ColumnWorker` (3 abstract methods) |
+| Fetch, scheduling, page read | — | — | `RowGroupIterator`, `PageSource`, `ReadScheduler`, `PageDecoder`, `FlatPageValues`, `BinaryPageValues` |
+| Scheduled column | `ScheduledFlatColumn` (`Cell`, `FlatFill`) | `ScheduledNestedColumn` (`NestedCell`, `PageMeasure`, `NestedFill`) | `ScheduledColumn`, `Placer` |
 | Batch | `BatchExchange.Batch` | `NestedBatch` | `BatchExchange`, `BinaryBatchValues` |
 | Reader | `FlatRowReader` | `NestedRowReader` → `NestedBatchDataView` | `StructAccessor` |
 | Flyweights | — | `PqStructImpl`, `PqListImpl`, `PqMapImpl` | `NestedBatchIndex` |
 | Leaf decode | — | — | `LeafDecoder`, `LogicalTypeConverter`, `LeafKind` |
 
-The IO and decode layers are path-agnostic. The duplication is in the worker, the
-batch and the accessors.
+The IO, scheduling and page-read layers are path-agnostic. The duplication is in the
+scheduled column, the batch and the accessors.
 
 **Flat and repeated, not flat and nested.** The two paths are named for schema shape,
 but the property that decides addressing is repetition. A column with
@@ -35,8 +35,8 @@ asks about the file, so a projection of nothing but top-level primitives lands o
 `NestedRowReader` whenever the file holds one list column anywhere — including a
 column the projection never names.
 
-Measured on a 1M-row uncompressed file holding twenty `int32` columns and one
-`list<string>`, projecting the twenty scalars and reading two or all twenty of them per
+Measured before #1287, on a 1M-row uncompressed file holding twenty `int32` columns
+and one `list<string>`, projecting the twenty scalars and reading two or all twenty of them per
 row. The dispatch predicate below was applied and reverted, so the file, the projection
 and the reads are identical between the two columns and only the reader differs.
 Minimum of 5 runs after 3 warmups, one JVM per figure, taken in the dev container
@@ -55,16 +55,20 @@ recoverable without changing which reader serves the read.
 
 ## Finding 2 — what a non-repeated column pays on the nested path
 
-Per batch, per column, for a column with `maxRepetitionLevel == 0`:
+`NestedRowReader` reads every projected column through `ScheduledNestedColumn`. Per
+batch, per column, for a column with `maxRepetitionLevel == 0`, `NestedFill` and
+`NestedIndex` under `NestedIndexMode.ALL_ITEMS` pay:
 
-- `Arrays.copyOf` of the definition levels (`batchCapacity` ints), all at one value.
-- `Arrays.copyOf` of the repetition levels (`batchCapacity` ints), all zero.
-- `Arrays.copyOf` of `recordOffsets` (`batchCapacity` ints), exactly `[0, 1, 2, …]`.
+- the definition levels, `valueCount` ints allocated per batch, copied from the page or
+  filled at the maximum level.
+- the repetition levels, `valueCount` ints allocated per batch, all zero.
+- `recordOffsets`, `recordCount` ints allocated per batch, exactly `[0, 1, 2, …]`.
 - `computeElementValidity`, an O(valueCount) scan of the definition levels.
-- `trimValues`, a full copy of the value array — finding 6, which every column pays.
+- a value array allocated per batch: a nested batch's arrays are never refilled
+  ([NESTED_DECODE.md](../_designs/NESTED_DECODE.md#cells)).
 
-`FlatColumnWorker` does none of these: it recycles one value array and one validity
-bitmap for the life of the read.
+`ScheduledFlatColumn` does none of these: its cells take the value array of a recycled
+batch holder, and allocate a validity bitmap only for a batch holding a null.
 
 `NestedBatchDataView.setRowIndex` refreshes the cached value index for every projected
 column on every row, whether or not the row reads that column. The flat reader stores
@@ -72,12 +76,12 @@ one `rowIndex`.
 
 ## Finding 3 — the nested layout is already dense
 
-`PageDecoder` allocates value arrays at `numValues` — levels included — and the typed
-decoders scatter present values into the positions the definition levels give them. A
-null occupies a slot on both paths.
+`NestedFill` allocates a cell's value array at its values, levels included, and writes
+each segment's values from the page in place, a null keeping its slot. A null occupies
+a slot on both paths.
 
-So for a non-repeated column the nested worker's `recordOffsets` is the identity,
-`valueCount == recordCount`, and the value layout is the one `FlatColumnWorker`
+So for a non-repeated column the nested column's `recordOffsets` is the identity,
+`valueCount == recordCount`, and the value layout is the one `ScheduledFlatColumn`
 produces. The "layout is coupled to addressing" section of #732 describes a compaction
 the row-reader path does not perform, and the addressing seam it calls for is already
 written and already correct:
@@ -87,12 +91,13 @@ written and already correct:
 
 Nulling the offsets for a non-repeated column is a change to the producer alone.
 
-Per-column worker selection is also not hypothetical: the columnar path already does it.
-`ColumnReader` picks its worker per column on `layers.count() > 0 ||
-maxRepetitionLevel > 0`, taking `FlatColumnWorker` otherwise. #732's model is shipped —
-on the `ColumnReader` API rather than the row reader. It splits on shape rather than
-repetition, sending a non-repeated leaf under a group to the nested worker, so it agrees
-with stage 3's interim predicate and not with the end state's.
+Per-column pipeline selection is also not hypothetical: the columnar path already does
+it. `ColumnCursor.isNested` picks the scheduled column per column on `layers.count() > 0
+|| maxRepetitionLevel > 0`, taking `ScheduledFlatColumn` otherwise. #732's model is
+shipped — on the `ColumnReader` API rather than the row reader. It splits on shape
+rather than repetition, sending a non-repeated leaf under a group to
+`ScheduledNestedColumn`, so it agrees with stage 3's interim predicate and not with the
+end state's.
 
 ## Finding 4 — two copies of the leaf decode
 
@@ -133,25 +138,19 @@ on the flat path. On the nested path every column carries two `int[]`, so a mixe
 file's batches exceed the 6 MB target by `8 × valueCount` bytes per non-repeated column
 — the opposite direction from the cache budget the sizing exists to hold.
 
-## Finding 6 — the trim copy defeats batch recycling
+## Finding 6 — the trim copy defeats batch recycling (closed by #1287)
 
-Unlike finding 2, this is paid by every column, repeated ones included.
-
-`trimValues` copies the value array on every publish and overwrites the recycled batch's
-`values` with the copy, so the array `BatchExchange.recycling`'s factory allocates is
-used for the first batch and discarded from then on. A byte-array leaf also allocates a
-fresh `BinaryBatchValues` and copies the whole byte buffer each time.
-
-The trim is required on the `ColumnReader` paths, where the returned array's length is
-the contract. On `IndexMode.ALL_ITEMS` the consumer reads `NestedBatchIndex.valueCounts`
-and the length carries nothing.
+Every nested column, repeated ones included, copied its value array, and a byte-array
+leaf its whole byte buffer, at every publish to trim it to its length. `NestedFill`
+allocates a cell's arrays once at their final size, so no publish copies.
 
 ## Intended end state
 
-One row reader over a heterogeneous set of columns, each drained by the worker its shape
-calls for — `FlatColumnWorker` where `maxRepetitionLevel == 0`, `NestedColumnWorker`
-otherwise — addressed through one seam, `offsets == null ? rowIndex : offsets[rowIndex]`,
-with one statement of the leaf decode behind the accessors.
+One row reader over a heterogeneous set of columns, each read by the scheduled column its
+shape calls for — `ScheduledFlatColumn` where `maxRepetitionLevel == 0`,
+`ScheduledNestedColumn` otherwise — addressed through one seam,
+`offsets == null ? rowIndex : offsets[rowIndex]`, with one statement of the leaf decode
+behind the accessors.
 
 This is #732's model, and `ColumnReader` already implements it on the columnar path
 (finding 3), splitting on `layers.count() > 0 || maxRepetitionLevel > 0`. The row path
@@ -168,7 +167,7 @@ Two constraints come with it, both named by #732 and neither designed away here:
   accessor indirection, so the flat case survives as a performance specialization of one
   model rather than as a second implementation of the accessor contract.
 
-Today's reader, worker and batch class names still describe what they hold under this
+Today's reader, scheduled-column and batch class names still describe what they hold under this
 model, so none of them is renamed.
 
 ## Delivery plan
@@ -187,17 +186,17 @@ the reader merge is the last thing that should meet two copies of a decode.
 | 2 | Benchmark projected reads | — | none (hardwood-benchmarks) | — |
 | 3 | Choose the reader from the projection | Finding 1 | #1335 | 2 for numbers |
 | 4 | Non-repeated structs on the flat path | — | #475, #631 | 1, 3 |
-| 5 | One reader, worker chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
-| 6 | Cut the nested worker's per-batch cost (superseded, see below) | Finding 6 | #1024, #750, #1045 | — |
+| 5 | One reader, pipeline chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
+| 6 | Cut the nested column's per-batch cost (done in #1287, see below) | Finding 6 | #1024, #750, #1045 | — |
 
-Stages 3 and 5 both decide which worker serves a column, at different granularity:
-stage 3 chooses one reader per read from the projection, stage 5 chooses one worker per
-column and needs no reader dispatch at all. Stage 5 subsumes stage 3, which is why stage
+Stages 3 and 5 both decide which pipeline serves a column, at different granularity:
+stage 3 chooses one reader per read from the projection, stage 5 chooses one scheduled
+column per column and needs no reader dispatch at all. Stage 5 subsumes stage 3, which is why stage
 3 is worth doing anyway — a change at one call site, 3.03× measured, long before the
-reader merge is ready. Stage 6 is on the other axis entirely: it cuts what
-`NestedColumnWorker` spends per batch on every column it drains. The costs finding 2
+reader merge is ready. Stage 6 is on the other axis entirely: it cut what
+`ScheduledNestedColumn` spends per batch on every column it reads. The costs finding 2
 lists for a *non-repeated* column are closed by stage 5 moving those columns off it, not
-by optimising the worker that would no longer see them.
+by optimising the column that would no longer see them.
 
 ### Stage 1 — state the decode once
 
@@ -278,7 +277,7 @@ Issues: #475, #631.
 to "nothing in the projection repeats" — the axis the end state settles on. A group
 name resolves to a `PqStruct` flyweight over row-aligned leaves, and an optional group
 carries a group-present bitset so leaf-null and struct-null stay distinct.
-`FlatColumnWorker` reduces definition levels to a leaf-present bit, so that bitset is
+`ScheduledFlatColumn` reduces definition levels to a leaf-present bit, so that bitset is
 the capability stage 5 needs for every non-repeated struct: nothing here is written to
 be deleted. Stage 1 is what makes this small: without the shared helper it adds a sixth
 copy of the accessors to `FlatRowReader`.
@@ -288,24 +287,24 @@ struct of primitives that must dispatch to `FlatRowReader`, which only happens o
 #475 lands. Its reader-class assertion is the in-repo counterpart of the one stage 3
 adds.
 
-### Stage 5 — one reader, worker chosen per column
+### Stage 5 — one reader, pipeline chosen per column
 
 Reaches the end state. Closes findings 2 and 5, and the remainder of finding 1, on the
 seam finding 3 shows is already in place. Issue: #732.
 
-One reader holding columns from both workers, selecting on `maxRepetitionLevel` and
+One reader holding columns of both scheduled kinds, selecting on `maxRepetitionLevel` and
 addressing each through `offsets == null ? rowIndex : offsets[rowIndex]`. A
-non-repeated column then drains flat wherever it appears, which is what closes finding
-2 — not by making `NestedColumnWorker` cheaper for it, but by no longer sending it
+non-repeated column is then read flat wherever it appears, which is what closes finding
+2 — not by making `ScheduledNestedColumn` cheaper for it, but by no longer sending it
 there. Finding 5 goes with it: `BatchSizing.levelBytesPerValue` returning `0` for a
 non-repeated column becomes true, because such a column no longer carries level arrays.
 The scalar columns of a mixed projection gain drain-side batch filtering, which exists
-only on the flat worker.
+only on the flat column.
 
 The work is the heterogeneous batch set: reconciling addressing and the drain-side
 intersect-matches logic across `BatchExchange.Batch` and `NestedBatch`. #732 prices this
 as one hoistable per-column branch in the accessor. `ColumnReader` is the existence
-proof — it has selected its worker per column since it shipped — though it splits on
+proof — it has selected its pipeline per column since it shipped — though it splits on
 shape rather than repetition; `ColumnCursor.isNested` moves to the repetition predicate
 in this stage.
 
@@ -314,16 +313,17 @@ part of today's gap in accessor indirection, so the all-non-repeated case keeps 
 specialization; #732 requires the same. Judged on both stage 2 workloads plus
 `NestedScanBenchmark`'s full-record workload.
 
-### Stage 6 — cut the nested worker's per-batch cost
+### Stage 6 — cut the nested column's per-batch cost
 
-Superseded by [DECODE_INTO_BATCH.md](DECODE_INTO_BATCH.md), whose stage 2 fills nested values,
-levels and bytes into batch arrays allocated at their exact size, so there is no accumulator
-left to swap or copy. Closes finding 6. Issues: #1024, #750, #1045.
+Done in #1287: a nested column's page tasks fill its values, levels and bytes into batch arrays
+allocated once at their final size, so there is no accumulator left to swap or copy
+([NESTED_DECODE.md](../_designs/NESTED_DECODE.md#cells)). Closes finding 6. Issues: #1024,
+#750, #1045.
 
 ## Completion
 
 When stage 5 lands, the intended end state and the constraints it carries fold into
-`_designs/ROW_READER.md` (and the columnar worker choice into `_designs/COLUMN_READER.md`),
+`_designs/ROW_READER.md` (and the columnar pipeline choice into `_designs/COLUMN_READER.md`),
 and this plan is deleted.
 
 ## Not in scope
@@ -335,12 +335,12 @@ same polarity) costs nothing and is worth doing.
 
 Drain-side batch filtering (`Batch.matches`, `BatchMatchMerger`, `ColumnBatchMatcher`)
 exists only on the flat path, so a mixed schema loses it for its scalar columns as well.
-Stage 5 gives those columns the flat worker and with it the filter; a genuinely repeated
+Stage 5 reads those columns flat and gives them the filter; a genuinely repeated
 column still has none, which is a capability gap in the neighbourhood of #222.
 
-The `ColumnReader` drain has its own costs under `IndexMode.REAL_VIEW`, which no stage
-here touches: #756 (leaf compaction on a batch with no phantom positions) and #1023
-(`NestedLevelComputer.computeRealView` recomputed per leaf, 22.6% to 37.6% of self time
-in nested columnar profiles). #1023 is the largest single item measured anywhere in this
-area and needs coordination across sibling leaves, which a per-column worker cannot do
+The `ColumnReader`'s nested path has its own costs under `NestedIndexMode.REAL_VIEW`,
+which no stage here touches: #756 (leaf compaction on a batch with no phantom positions)
+and #1023 (`NestedLevelComputer.computeRealView` recomputed per leaf, 22.6% to 37.6% of
+self time in nested columnar profiles measured before #1287). #1023 is the largest
+single item measured anywhere in this area and needs coordination across sibling leaves, which a per-column pipeline cannot do
 alone. Both are separate work on a separate surface.

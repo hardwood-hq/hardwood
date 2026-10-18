@@ -98,7 +98,7 @@ A file whose top-level fields are all primitive and whose columns have no repeti
 ### Primitive-First API
 The public API (`PqIntList`, `getLong()`, `ColumnReader`'s typed arrays) avoids boxing wherever possible. Internal code uses primitive arrays (`int[]`, `long[]`) rather than `List<Integer>`.
 
-### Per-Column Pipelines on Virtual Threads
+### Row-Ordered Decode into Batches
 Each decoded column (the projection plus any filter-only predicate columns) has a fetcher virtual thread that fetches its pages. One scheduler per read submits every column's pages, in row order, to a fixed platform-thread pool owned by the `HardwoodContext`, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md)).
 
 ### Minimal Dependencies
