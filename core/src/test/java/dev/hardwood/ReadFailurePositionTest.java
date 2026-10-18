@@ -8,17 +8,26 @@
 package dev.hardwood;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.function.Consumer;
+import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -26,6 +35,11 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ColumnBatch;
+import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -227,5 +241,163 @@ class ReadFailurePositionTest {
         }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 0, column "
                                                             + "'address.city', page 0] PageHeader has "
                                                             + "unknown page type: -1408");
+    }
+
+    /// A `DELTA_BINARY_PACKED` page's blocks are decoded by the fill of the cell the page is placed
+    /// into, which runs once the cell's last page is read. A block running past its page fails
+    /// that fill, and the failure names the page the block is on, not the cell's last page.
+    @Test
+    void aDeltaBlockFailureInANestedCellNamesItsOwnPage() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT64, RepetitionType.REQUIRED))
+                .build();
+        int records = 600;
+        int[] offsets = new int[records + 1];
+        long[] elements = new long[records * 3];
+        int count = 0;
+        for (int r = 0; r < records; r++) {
+            for (int k = 0; k < 1 + r % 3; k++) {
+                elements[count++] = r * 1_000L + (r * 7_919L + k * 31L) % 997;
+            }
+            offsets[r + 1] = count;
+        }
+        long[] values = Arrays.copyOf(elements, count);
+        byte[] file = writeDelta(schema, batch -> batch.list("v", offsets).longs("v.list.element", values));
+        String failure = corruptFirstDeltaBlock(file, 1, 1);
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+                 ColumnReader column = reader.columnReader("v.list.element")) {
+                while (column.nextBatch()) {
+                    // read to the corrupt page
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 0, column "
+                                                            + "'v.list.element', page 0] " + failure);
+    }
+
+    /// The same for a flat column, whose pages fill their segments on their own tasks.
+    @Test
+    void aDeltaBlockFailureInAFlatCellNamesItsOwnPage() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        long[] values = new long[600];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = (i * 7_919L) % 997;
+        }
+        byte[] file = writeDelta(schema, batch -> batch.longs("v", values));
+        String failure = corruptFirstDeltaBlock(file, 0, 0);
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+                 ColumnReader column = reader.columnReader("v")) {
+                while (column.nextBatch()) {
+                    // read to the corrupt page
+                }
+            }
+        }).isInstanceOf(ParquetReadException.class).hasMessage("[<memory>: row group 0, column 'v', page 0] "
+                                                            + failure);
+    }
+
+    /// One row group of uncompressed `DELTA_BINARY_PACKED` pages of 20 records each.
+    private static byte[] writeDelta(FileSchema schema, Consumer<ColumnBatch> batch) throws Exception {
+        WriterConfig config = WriterConfig.builder()
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .encoding(ColumnEncoding.DELTA_BINARY_PACKED)
+                .pageTargetRows(20)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.columnWriter().writeBatch(batch);
+        }
+        return InMemoryFiles.toByteArray(out);
+    }
+
+    /// Widens the first miniblock of the first data page's first delta block of the file's only
+    /// column so that it runs past the page, and patches the page's CRC to match; returns the
+    /// message the decoder raises for it. The width is the widest whose CRC encodes in as many
+    /// bytes as the original, so the header keeps its length.
+    private static String corruptFirstDeltaBlock(byte[] file, int maxRepetitionLevel, int maxDefinitionLevel)
+            throws Exception {
+        long pageOffset;
+        int pageCount;
+        try (InputFile in = InputFile.of(ByteBuffer.wrap(file));
+             ParquetFileReader reader = ParquetFileReader.open(in)) {
+            ColumnChunk chunk = reader.getFileMetaData().rowGroups().get(0).columns().get(0);
+            pageOffset = chunk.metaData().dataPageOffset();
+            pageCount = OffsetIndexReader.read(new ThriftCompactReader(
+                    in.readRange(chunk.offsetIndexOffset(), chunk.offsetIndexLength()))).pageLocations().size();
+        }
+        assertThat(pageCount).as("the corrupt page must not be the chunk's last").isGreaterThan(2);
+
+        int headerStart = Math.toIntExact(pageOffset);
+        ThriftCompactReader headerReader = new ThriftCompactReader(ByteBuffer.wrap(file), headerStart);
+        PageHeader header = PageHeaderReader.read(headerReader);
+        int body = headerStart + headerReader.getBytesRead();
+        int bodyEnd = body + header.compressedPageSize();
+        int[] pos = { body };
+        if (maxRepetitionLevel > 0) {
+            pos[0] += 4 + ByteBuffer.wrap(file, pos[0], 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        }
+        if (maxDefinitionLevel > 0) {
+            pos[0] += 4 + ByteBuffer.wrap(file, pos[0], 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        }
+        long blockSize = uleb(file, pos);
+        long miniblocks = uleb(file, pos);
+        uleb(file, pos); // total value count
+        uleb(file, pos); // first value
+        uleb(file, pos); // the block's minimum delta
+        int widthAt = pos[0];
+        long remaining = bodyEnd - widthAt - miniblocks;
+        byte[] oldCrc = zigzagVarint(header.crc());
+        int crcAt = indexOf(file, headerStart, body, oldCrc);
+        for (int width = 64; width > 0; width--) {
+            long bytes = ((blockSize / miniblocks) * width + 7) / 8;
+            assertThat(bytes).as("a width that runs past the page").isGreaterThan(remaining);
+            file[widthAt] = (byte) width;
+            CRC32 crc = new CRC32();
+            crc.update(file, body, bodyEnd - body);
+            byte[] newCrc = zigzagVarint((int) crc.getValue());
+            if (newCrc.length == oldCrc.length) {
+                System.arraycopy(newCrc, 0, file, crcAt, newCrc.length);
+                return "Unexpected EOF reading miniblock data: expected " + bytes + " bytes, got " + remaining;
+            }
+        }
+        throw new IllegalStateException("No width keeps the CRC's length");
+    }
+
+    private static long uleb(byte[] data, int[] pos) {
+        long result = 0;
+        int shift = 0;
+        int b;
+        do {
+            b = data[pos[0]++] & 0xFF;
+            result |= (long) (b & 0x7F) << shift;
+            shift += 7;
+        } while ((b & 0x80) != 0);
+        return result;
+    }
+
+    /// A Thrift compact `i32`: zigzag, then an unsigned varint.
+    private static byte[] zigzagVarint(int value) {
+        long zigzag = Integer.toUnsignedLong((value << 1) ^ (value >> 31));
+        byte[] bytes = new byte[5];
+        int length = 0;
+        while ((zigzag & ~0x7FL) != 0) {
+            bytes[length++] = (byte) ((zigzag & 0x7F) | 0x80);
+            zigzag >>>= 7;
+        }
+        bytes[length++] = (byte) zigzag;
+        return Arrays.copyOf(bytes, length);
+    }
+
+    private static int indexOf(byte[] data, int from, int to, byte[] pattern) {
+        for (int i = from; i + pattern.length <= to; i++) {
+            if (Arrays.equals(data, i, i + pattern.length, pattern, 0, pattern.length)) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("Pattern not found in the page header");
     }
 }

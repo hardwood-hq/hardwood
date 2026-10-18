@@ -84,7 +84,12 @@ final class NestedFill {
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             if (!(out instanceof BinaryBatchValues)) {
-                copyInPlace(segment, out);
+                try {
+                    copyInPlace(segment, out);
+                }
+                catch (RuntimeException e) {
+                    throw new SegmentFillException(segment.page, e);
+                }
             }
             copyLevels(segment, definitionLevels, repetitionLevels, maxDefinitionLevel);
             PageMeasure measure = segment.page.measure;
@@ -127,41 +132,11 @@ final class NestedFill {
         boolean[] wroteIds = new boolean[segments.size()];
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
-            // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
-            // sharing the page may be filled from it at once
-            BinaryPageValues values = segment.page.measure.binary().view();
-            Dictionary.ByteArrayDictionary dictionary = values.dictionary();
-            if (dictionary != null) {
-                int[] ids = out.installDictionary(dictionary);
-                if (!values.allPresent()) {
-                    out.installViews();
-                }
-                KeptRuns runs = segment.page.inPlace.runs();
-                int kept = segment.valueStart;
-                int end = segment.valueEnd;
-                while (kept < end) {
-                    int run = runs == null ? 0 : runs.runOf(kept);
-                    int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
-                    int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
-                    values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(),
-                            segment.cellValueOffset + kept - segment.valueStart);
-                    kept += n;
-                }
-                wroteIds[i] = true;
+            try {
+                destByte = fillBinary(segment, out, destByte, wroteIds, i);
             }
-            else {
-                out.installViews();
-                KeptRuns runs = segment.page.inPlace.runs();
-                int kept = segment.valueStart;
-                int end = segment.valueEnd;
-                while (kept < end) {
-                    int run = runs == null ? 0 : runs.runOf(kept);
-                    int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
-                    int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
-                    destByte = values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(),
-                            segment.cellValueOffset + kept - segment.valueStart, out.fillBytes(), destByte);
-                    kept += n;
-                }
+            catch (RuntimeException e) {
+                throw new SegmentFillException(segment.page, e);
             }
         }
         if (out.dictionary != null) {
@@ -176,6 +151,47 @@ final class NestedFill {
         if (viewDemand.requested) {
             out.ensureViews();
         }
+    }
+
+    /// Writes one segment's binary values: its plain values' bytes from `destByte` on and their
+    /// views, or its entry ids, recording in `wroteIds[index]` that it wrote ids.
+    ///
+    /// @return the byte after the segment's plain bytes
+    private static int fillBinary(NestedSegment segment, BinaryBatchValues out, int destByte, boolean[] wroteIds,
+                                  int index) {
+        // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
+        // sharing the page may be filled from it at once
+        BinaryPageValues values = segment.page.measure.binary().view();
+        KeptRuns runs = segment.page.inPlace.runs();
+        Dictionary.ByteArrayDictionary dictionary = values.dictionary();
+        int[] ids = null;
+        if (dictionary != null) {
+            ids = out.installDictionary(dictionary);
+            if (!values.allPresent()) {
+                out.installViews();
+            }
+            wroteIds[index] = true;
+        }
+        else {
+            out.installViews();
+        }
+        int kept = segment.valueStart;
+        int end = segment.valueEnd;
+        while (kept < end) {
+            int run = runs == null ? 0 : runs.runOf(kept);
+            int n = runs == null ? end - kept : Math.min(end - kept, runs.remaining(run, kept));
+            int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
+            int destPos = segment.cellValueOffset + kept - segment.valueStart;
+            if (ids != null) {
+                values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), destPos);
+            }
+            else {
+                destByte = values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), destPos, out.fillBytes(),
+                        destByte);
+            }
+            kept += n;
+        }
+        return destByte;
     }
 
     /// Writes a segment of a page read in place straight from the page's bytes, through the kept
