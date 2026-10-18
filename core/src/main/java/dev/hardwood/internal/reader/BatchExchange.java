@@ -333,6 +333,9 @@ public class BatchExchange<B> {
         // is the stall, so it spans every exit from the timed poll loop.
         BatchWaitEvent event = new BatchWaitEvent();
         event.begin();
+        if (DebugTiming.enabled()) {
+            DebugTiming.log("poll-wait-begin col=" + columnName);
+        }
         try {
             while ((batch = taken(readyQueue.poll(10, TimeUnit.MILLISECONDS))) == null) {
                 if (finished) {
@@ -349,6 +352,9 @@ public class BatchExchange<B> {
         finally {
             event.column = columnName;
             event.commit();
+            if (DebugTiming.enabled()) {
+                DebugTiming.log("poll-wait col=" + columnName + " result=" + (batch == END_OF_STREAM ? "END" : batch == null ? "finished" : "batch"));
+            }
         }
     }
 

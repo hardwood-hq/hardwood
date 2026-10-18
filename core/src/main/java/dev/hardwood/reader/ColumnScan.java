@@ -14,6 +14,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.DebugTiming;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
@@ -356,13 +357,24 @@ final class ColumnScan implements Closeable {
             return;
         }
         closed = true;
+        long t0 = System.nanoTime();
         tally.close();
+        long t1 = System.nanoTime();
+        long t2 = t1;
         // Released even when a cursor's teardown fails: this scan will not run its
         // close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime.
         try (rowGroupIterator) {
             for (ColumnCursor cursor : cursors) {
                 cursor.close();
+            }
+            t2 = System.nanoTime();
+        }
+        finally {
+            if (DebugTiming.enabled()) {
+                long t3 = System.nanoTime();
+                DebugTiming.log("ColumnScan.close total=" + DebugTiming.ms(t3 - t0) + " tally=" + DebugTiming.ms(t1 - t0)
+                        + " cursors=" + DebugTiming.ms(t2 - t1) + " iterator=" + DebugTiming.ms(t3 - t2));
             }
         }
     }

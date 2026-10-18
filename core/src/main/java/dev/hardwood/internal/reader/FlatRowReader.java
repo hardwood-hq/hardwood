@@ -1048,21 +1048,36 @@ public final class FlatRowReader implements FileAwareRowReader {
         // reader will not run its close body again, so skipping the release would
         // leave the work list reachable for the parent reader's whole lifetime. A
         // failure to release is suppressed beneath the original.
+        long t0 = System.nanoTime();
+        long t1 = t0;
+        long t2 = t0;
+        long t3 = t0;
         try (rowGroupIterator) {
             if (tally != null) {
                 tally.close();
             }
+            t1 = System.nanoTime();
             if (columnPipelines != null) {
                 for (ColumnPipeline pipeline : columnPipelines) {
                     pipeline.close();
                 }
             }
+            t2 = System.nanoTime();
             for (int i = 0; i < columnCount; i++) {
                 if (previousBatches[i] != null) {
                     exchanges[i].recycle(previousBatches[i]);
                     previousBatches[i] = null;
                 }
                 exchanges[i].drainReady();
+            }
+            t3 = System.nanoTime();
+        }
+        finally {
+            if (DebugTiming.enabled()) {
+                long t4 = System.nanoTime();
+                DebugTiming.log(getClass().getSimpleName() + ".close total=" + DebugTiming.ms(t4 - t0)
+                        + " tally=" + DebugTiming.ms(t1 - t0) + " pipelines=" + DebugTiming.ms(t2 - t1)
+                        + " drain=" + DebugTiming.ms(t3 - t2) + " iterator=" + DebugTiming.ms(t4 - t3));
             }
         }
     }

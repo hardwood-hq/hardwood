@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.internal.reader.DebugTiming;
 import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -91,12 +92,32 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
             // A first pass pays the one-off costs — class loading, the executor's threads, the
             // footer parse. Those can stall a consumer for real, so the pass is excluded rather
             // than merely untimed: the events are filtered by when the measured pass began.
+            System.setProperty(DebugTiming.PROPERTY, "true");
+            DebugTiming.drain();
             readEveryColumnToTheEnd(hardwood, file);
+            StringBuilder warm = new StringBuilder("=== DEBUG-TIMING readingToTheEnd warmup cpus="
+                    + Runtime.getRuntime().availableProcessors() + "\n");
+            for (String line : DebugTiming.drain()) {
+                warm.append("  ").append(line).append('\n');
+            }
+            System.err.print(warm);
 
             Instant measuredFrom = Instant.now();
             readEveryColumnToTheEnd(hardwood, file);
+            System.setProperty(DebugTiming.PROPERTY, "false");
 
             awaitEvents();
+
+
+            StringBuilder out = new StringBuilder("=== DEBUG-TIMING readingToTheEnd measured\n");
+            for (String line : DebugTiming.drain()) {
+                out.append("  ").append(line).append('\n');
+            }
+            eventsSince(BATCH_WAIT_EVENT, measuredFrom).forEach(e -> out.append("  BatchWait ")
+                    .append(e.getString("column")).append(' ').append(e.getDuration().toNanos() / 1e6)
+                    .append(" ms at ").append(e.getStartTime()).append(" thread=")
+                    .append(e.getThread() == null ? "?" : e.getThread().getJavaName()).append('\n'));
+            System.err.print(out);
 
             // Presence, not a count: the scan events are committed on fetcher threads, and one
             // of them can miss this recording's flush (see AbstractJfrRecorderTest).
@@ -129,6 +150,9 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
         try (ParquetFileReader parquet = hardwood.open(InputFile.of(ByteBuffer.wrap(file)))) {
             for (String column : columnNames()) {
                 int batches = 0;
+                if (DebugTiming.enabled()) {
+                    DebugTiming.log("open " + column);
+                }
                 try (ColumnReader reader = parquet.columnReader(column)) {
                     while (reader.nextBatch()) {
                         batches++;

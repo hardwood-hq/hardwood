@@ -118,6 +118,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     /// Starts the fetcher. Called by the scheduler.
     void start() {
+        startedAt = System.nanoTime();
         fetcherThread = Thread.ofVirtual().unstarted(this::runFetcher);
         fetcherThread.start();
     }
@@ -132,12 +133,37 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// once its own close is reached.
     @Override
     public void close() {
+        boolean debug = DebugTiming.enabled();
+        long t0 = System.nanoTime();
+        int tasks0 = tasks.get();
+        Thread fetcher0 = fetcherThread;
+        String fetcherState0 = fetcher0 == null ? "none" : fetcher0.getState().toString();
+        boolean done0 = done;
+        boolean fetchEnded0 = fetchEnded;
         scheduler.stop();
+        long t1 = System.nanoTime();
+        long t2 = closeUnparkedAt == 0 ? t1 : closeUnparkedAt;
         Thread fetcher = fetcherThread;
         boolean interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
+        long t3 = System.nanoTime();
+        int tasks1 = tasks.get();
+        int parks = 0;
         // Bounded wait, re-checked: the last task to finish unparks this thread.
         while (tasks.get() > 0) {
+            parks++;
             LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
+        }
+        long t4 = System.nanoTime();
+        if (debug) {
+            DebugTiming.log("close col=" + column.fieldPath() + " total=" + DebugTiming.ms(t4 - t0)
+                    + " stopAll=" + DebugTiming.ms(t1 - t0) + " ownSignalAt=" + DebugTiming.ms(t2 - t0)
+                    + " join=" + DebugTiming.ms(t3 - t2) + " taskWait=" + DebugTiming.ms(t4 - t3)
+                    + " parks=" + parks + " tasksAtEntry=" + tasks0 + " tasksAfterJoin=" + tasks1
+                    + " fetcherAtEntry=" + fetcherState0 + " doneAtEntry=" + done0
+                    + " fetchEndedAtEntry=" + fetchEnded0
+                    + " fetcherExitLag=" + (fetcherExitAt == 0 ? "n/a" : DebugTiming.ms(fetcherExitAt - t2))
+                    + " fetcherWokeLag=" + (fetcherWokeAt == 0 ? "n/a" : DebugTiming.ms(fetcherWokeAt - t2))
+                    + " lastTaskEndLag=" + (lastTaskEndAt == 0 ? "n/a" : DebugTiming.ms(lastTaskEndAt - t2)));
         }
         if (interrupted) {
             Thread.currentThread().interrupt();
@@ -152,7 +178,16 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         stop();
         exchange.finish();
         unparkFetcher();
+        closeUnparkedAt = System.nanoTime();
     }
+
+    // TEMPORARY debug timestamps
+    volatile long closeUnparkedAt;
+    volatile long fetcherExitAt;
+    volatile long fetcherWokeAt;
+    volatile long lastTaskEndAt;
+    volatile long startedAt;
+    volatile boolean firstPageQueued;
 
     /// Sets `done` under the column lock, so that no publish runs after it.
     private void stop() {
@@ -237,10 +272,16 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     // ==================== Fetcher ====================
 
     private void runFetcher() {
+        if (DebugTiming.enabled()) {
+            DebugTiming.log("fetcher-run col=" + column.fieldPath() + " sinceStart=" + DebugTiming.ms(System.nanoTime() - startedAt));
+        }
         try {
             while (!done && !fetchStopped()) {
                 PageInfo info = pageSource.next();
                 if (info == null) {
+                    if (DebugTiming.enabled()) {
+                        DebugTiming.log("fetcher-eof col=" + column.fieldPath() + " sinceStart=" + DebugTiming.ms(System.nanoTime() - startedAt));
+                    }
                     pagesEnded();
                     break;
                 }
@@ -251,9 +292,16 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                 if (!queue(info, pageDecoder)) {
                     break;
                 }
+                if (!firstPageQueued && DebugTiming.enabled()) {
+                    firstPageQueued = true;
+                    DebugTiming.log("fetcher-queued-first col=" + column.fieldPath() + " sinceStart=" + DebugTiming.ms(System.nanoTime() - startedAt));
+                }
                 scheduler.submit();
                 while (!done && !fetchStopped() && !mayQueue()) {
                     LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
+                    if (done && fetcherWokeAt == 0) {
+                        fetcherWokeAt = System.nanoTime();
+                    }
                 }
             }
         }
@@ -277,6 +325,10 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                 lock.unlock();
             }
             scheduler.submit();
+            fetcherExitAt = System.nanoTime();
+            if (DebugTiming.enabled() && closingThread == null) {
+                DebugTiming.log("fetcher-exit col=" + column.fieldPath() + " sinceStart=" + DebugTiming.ms(fetcherExitAt - startedAt));
+            }
         }
     }
 
@@ -452,6 +504,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     private void finishRead() {
+        if (DebugTiming.enabled()) {
+            DebugTiming.log("finishRead col=" + column.fieldPath() + " sinceStart=" + DebugTiming.ms(System.nanoTime() - startedAt));
+        }
         done = true;
         exchange.finish();
         unparkFetcher();
@@ -476,6 +531,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     private void uncountTask() {
+        if (closingThread != null) {
+            lastTaskEndAt = System.nanoTime();
+        }
         if (tasks.decrementAndGet() == 0) {
             Thread closing = closingThread;
             if (closing != null) {

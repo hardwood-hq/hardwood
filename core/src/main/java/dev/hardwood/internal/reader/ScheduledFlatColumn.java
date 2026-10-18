@@ -228,6 +228,9 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// Decodes a page and fills its segments, completing each cell whose last segment it fills.
     @Override
     void runPage(PageTask page) {
+        if (DebugTiming.enabled()) {
+            DebugTiming.log("task-start col=" + column.fieldPath() + " done=" + done + " sinceStart=" + DebugTiming.ms(System.nanoTime() - startedAt));
+        }
         try {
             if (done) {
                 return;

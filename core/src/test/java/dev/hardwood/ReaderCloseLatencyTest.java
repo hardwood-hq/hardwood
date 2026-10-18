@@ -14,9 +14,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.internal.reader.DebugTiming;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReaders;
@@ -103,6 +106,29 @@ class ReaderCloseLatencyTest {
     /// actual margin and its tail.
     private static final Duration BOUND = Duration.ofMillis(60L);
 
+    @BeforeEach
+    void enableTiming() {
+        System.setProperty(DebugTiming.PROPERTY, "true");
+    }
+
+    @AfterEach
+    void disableTiming() {
+        System.setProperty(DebugTiming.PROPERTY, "false");
+        DebugTiming.drain();
+    }
+
+    // TEMPORARY CI diagnostic
+    private static void report(String test, String phase, Duration elapsed) {
+        StringBuilder out = new StringBuilder();
+        out.append("=== DEBUG-TIMING ").append(test).append(' ').append(phase).append(" elapsed=")
+                .append(elapsed.toNanos() / 1e6).append(" ms cpus=").append(Runtime.getRuntime().availableProcessors())
+                .append('\n');
+        for (String line : DebugTiming.drain()) {
+            out.append("  ").append(line).append('\n');
+        }
+        System.err.print(out);
+    }
+
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void closeDoesNotScaleWithProjectionWidth() throws Exception {
@@ -112,9 +138,14 @@ class ReaderCloseLatencyTest {
         try (Hardwood hardwood = Hardwood.create()) {
             // A first read pays the one-off costs — class loading, the executor's threads, the
             // footer parse — so they are not attributed to the close being measured.
-            timeCloseAfterOneBatch(hardwood, file, columns);
+            DebugTiming.drain();
+            report("closeDoesNotScaleWithProjectionWidth", "warmup", timeCloseAfterOneBatch(hardwood, file, columns));
 
             Duration elapsed = timeCloseAfterOneBatch(hardwood, file, columns);
+            report("closeDoesNotScaleWithProjectionWidth", "measured", elapsed);
+            for (int rep = 1; rep <= 4; rep++) {
+                report("closeDoesNotScaleWithProjectionWidth", "extra-" + rep, timeCloseAfterOneBatch(hardwood, file, columns));
+            }
 
             assertThat(elapsed)
                     .as("close() of a %d-column projection; a %d ms stall per column "
@@ -137,9 +168,14 @@ class ReaderCloseLatencyTest {
         String[] columns = columnNames().toArray(new String[0]);
 
         try (Hardwood hardwood = Hardwood.create()) {
-            timeFilteredCloseAfterOneBatch(hardwood, file, columns);
+            DebugTiming.drain();
+            report("filteredCloseDoesNotScaleWithProjectionWidth", "warmup", timeFilteredCloseAfterOneBatch(hardwood, file, columns));
 
             Duration elapsed = timeFilteredCloseAfterOneBatch(hardwood, file, columns);
+            report("filteredCloseDoesNotScaleWithProjectionWidth", "measured", elapsed);
+            for (int rep = 1; rep <= 4; rep++) {
+                report("filteredCloseDoesNotScaleWithProjectionWidth", "extra-" + rep, timeFilteredCloseAfterOneBatch(hardwood, file, columns));
+            }
 
             assertThat(elapsed)
                     .as("close() of a filtered %d-column projection", COLUMNS)
@@ -160,9 +196,14 @@ class ReaderCloseLatencyTest {
         String[] columns = columnNames().toArray(new String[0]);
 
         try (Hardwood hardwood = Hardwood.create()) {
-            timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+            DebugTiming.drain();
+            report("rowReaderCloseDoesNotScaleWithProjectionWidth", "warmup", timeRowReaderCloseAfterFewRows(hardwood, file, columns));
 
             Duration elapsed = timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+            report("rowReaderCloseDoesNotScaleWithProjectionWidth", "measured", elapsed);
+            for (int rep = 1; rep <= 4; rep++) {
+                report("rowReaderCloseDoesNotScaleWithProjectionWidth", "extra-" + rep, timeRowReaderCloseAfterFewRows(hardwood, file, columns));
+            }
 
             assertThat(elapsed)
                     .as("RowReader.close() over a %d-column projection after reading %d rows; "
@@ -183,9 +224,14 @@ class ReaderCloseLatencyTest {
         String[] columns = { STRUCT };
 
         try (Hardwood hardwood = Hardwood.create()) {
-            timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+            DebugTiming.drain();
+            report("nestedRowReaderCloseDoesNotScaleWithProjectionWidth", "warmup", timeRowReaderCloseAfterFewRows(hardwood, file, columns));
 
             Duration elapsed = timeRowReaderCloseAfterFewRows(hardwood, file, columns);
+            report("nestedRowReaderCloseDoesNotScaleWithProjectionWidth", "measured", elapsed);
+            for (int rep = 1; rep <= 4; rep++) {
+                report("nestedRowReaderCloseDoesNotScaleWithProjectionWidth", "extra-" + rep, timeRowReaderCloseAfterFewRows(hardwood, file, columns));
+            }
 
             assertThat(elapsed)
                     .as("RowReader.close() over a struct of %d fields after reading %d rows; "
@@ -214,6 +260,7 @@ class ReaderCloseLatencyTest {
                 rows.next();
             }
 
+            DebugTiming.drain();
             long start = System.nanoTime();
             rows.close();
             return Duration.ofNanos(System.nanoTime() - start);
@@ -231,6 +278,7 @@ class ReaderCloseLatencyTest {
                     .build();
             assertThat(readers.nextBatch()).as("first filtered batch").isTrue();
 
+            DebugTiming.drain();
             long start = System.nanoTime();
             readers.close();
             return Duration.ofNanos(System.nanoTime() - start);
@@ -250,6 +298,7 @@ class ReaderCloseLatencyTest {
                     .build();
             assertThat(readers.nextBatch()).as("first batch").isTrue();
 
+            DebugTiming.drain();
             long start = System.nanoTime();
             readers.close();
             return Duration.ofNanos(System.nanoTime() - start);
