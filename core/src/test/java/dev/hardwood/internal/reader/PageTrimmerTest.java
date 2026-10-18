@@ -103,7 +103,7 @@ class PageTrimmerTest {
         assertThat(Arrays.copyOf(trimmed.values(), 4)).containsExactly(1, 1.5, 3, 3.5);
     }
 
-    /// A column with no repeated ancestor, read by a nested worker, has one value per record.
+    /// A column with no repeated ancestor, read as a nested column, has one value per record.
     @Test
     void testKeepsValuesOfColumnWithoutRepetition() {
         long[] values = { 100, 101, 102, 103, 104 };

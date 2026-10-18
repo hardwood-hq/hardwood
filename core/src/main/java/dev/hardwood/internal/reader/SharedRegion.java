@@ -66,7 +66,7 @@ public final class SharedRegion {
 
     /// Chains a one-ahead region for asynchronous pre-fetch. The first
     /// [#ensureFetched] of this region kicks off the next region's fetch
-    /// on a worker thread.
+    /// on a speculative task.
     public void setNextRegion(SharedRegion next) {
         this.nextRegion = next;
     }

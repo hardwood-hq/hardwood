@@ -22,10 +22,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 /// Pins the [AutoCloseable] contract that `close()` is idempotent: calling it
 /// repeatedly after a reader is depleted must not redo the pipeline teardown.
 ///
-/// The decode-pipeline rework in v1.0.0.Beta2 turned `close()` from a single
-/// boolean write into a per-column worker quiesce (virtual-thread joins,
-/// in-flight decode draining) plus, on the column path, iterator-local cache
-/// teardown.
+/// `close()` stops every column — it joins the column's fetcher and waits for
+/// its page tasks — plus, on the column path, tears down the iterator-local
+/// caches.
 /// Without an idempotency guard every redundant `close()` re-ran that work
 /// (issue #659).
 class RowReaderCloseIdempotencyTest {
@@ -38,8 +37,8 @@ class RowReaderCloseIdempotencyTest {
         ParquetFileReader fileReader = ParquetFileReader.open(file);
         try {
             ColumnReader columnReader = fileReader.columnReader(0);
-            // Drain first: the teardown #659 is about — quiescing started
-            // per-column workers — only exists once decoding has run.
+            // Drain first: the teardown #659 is about — stopping started
+            // columns — only exists once decoding has run.
             while (columnReader.nextBatch()) {
                 // drain
             }

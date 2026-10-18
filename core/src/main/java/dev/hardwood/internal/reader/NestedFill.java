@@ -13,14 +13,15 @@ import java.util.List;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Fills a sealed [NestedCell]: allocates its batch's arrays at their final size from its
-/// segments' measures, copies each segment from its decoded page, and computes the batch's index
+/// segments' measures, writes each segment from its page, and computes the batch's index
 /// ([NestedIndex]).
 ///
-/// Each segment's values are one contiguous run of its page, which was trimmed to its kept
-/// records. A segment writes:
+/// Each segment's values are one contiguous run of its page's kept values, read in place from the
+/// page's bytes through a view of its own, and through its kept runs for a masked page. A segment
+/// writes:
 ///
-/// - values: one `System.arraycopy` for primitive values; for binary values each value's bytes at
-///   the segment's place in the cell's plain bytes, or its dictionary entry id;
+/// - values: decoded straight into the cell for primitive values; for binary values each value's
+///   bytes at the segment's place in the cell's plain bytes, or its dictionary entry id;
 /// - definition levels: copied, or filled with the column's maximum for an all-present page;
 /// - repetition levels: copied, or filled with `0` for a column without repetition;
 /// - the record offsets of the records it starts.
@@ -47,7 +48,7 @@ final class NestedFill {
     /// @throws IllegalStateException if the cell's values draw on two dictionaries, or its bytes
     ///         would exceed 2 GB
     static NestedBatch fill(NestedCell cell, BatchExchange<NestedBatch> exchange, ColumnSchema column,
-                            NestedLevelComputer.Layers layers, NestedColumnWorker.IndexMode mode,
+                            NestedLevelComputer.Layers layers, NestedIndexMode mode,
                             BinaryBatchValues.ViewDemand viewDemand) {
         List<NestedSegment> segments = cell.segments();
         int values = cell.values();
@@ -61,7 +62,7 @@ final class NestedFill {
             allPresent &= measure.allPresent();
         }
         boolean fixedWidth = k > 0;
-        boolean keepLevels = mode != NestedColumnWorker.IndexMode.REAL_VIEW;
+        boolean keepLevels = mode != NestedIndexMode.REAL_VIEW;
 
         int[] definitionLevels = null;
         int[] repetitionLevels = null;

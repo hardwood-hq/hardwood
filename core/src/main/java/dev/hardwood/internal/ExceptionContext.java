@@ -143,8 +143,8 @@ public final class ExceptionContext {
     ///
     /// This mapping is the judgement the reader's exception model rests on, and
     /// it is asserted directly for every arm of it rather than only through a
-    /// corrupt file. A checked [IOException] never reaches it — the column
-    /// worker routes transport failures around it — and an [Error] propagates
+    /// corrupt file. A checked [IOException] never reaches it — the scheduled
+    /// column routes transport failures around it — and an [Error] propagates
     /// as it was raised.
     ///
     /// @param e the runtime failure raised while reading file content

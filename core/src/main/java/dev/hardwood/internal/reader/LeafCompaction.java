@@ -9,8 +9,8 @@ package dev.hardwood.internal.reader;
 
 /// Gathers a nested batch's real-items-only leaf values from its raw
 /// (phantom-including) value array, using a real-leaf → raw-position map. Shared
-/// by the drain — which pre-compacts on the [dev.hardwood.reader.ColumnReader]
-/// path so the scan lands on an idle thread — and the consumer fallback for
+/// by the cell's fill — which pre-compacts on the [dev.hardwood.reader.ColumnReader]
+/// path so the scan runs on a decode thread — and the consumer fallback for
 /// batches derived by record selection.
 public final class LeafCompaction {
 

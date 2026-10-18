@@ -7,7 +7,7 @@ Related documents:
 - [INPUT_FILES.md](INPUT_FILES.md): the `InputFile` contract and what a `readRange` costs on the mapped and in-memory backends
 - [S3_STORAGE.md](S3_STORAGE.md): the S3 backend and what a `readRange` costs there
 - [FILE_METADATA.md](FILE_METADATA.md): parsing the footer and the page index
-- [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline drains the plans (`PageSource`, `ColumnWorker`, the work list, row-group transitions)
+- [READ_PIPELINE.md](READ_PIPELINE.md): how the pipeline drains the plans (`PageSource`, the scheduled columns, the work list, row-group transitions)
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decisions that choose rows and pages
 
 ## Fetch sequence
@@ -34,7 +34,7 @@ A row group's reads happen when the first decoded column reaches it, or earlier 
 | 3 | Page index | `IndexWindow.buffersFor` | The OffsetIndex of every decoded column the row group reads and, under page filtering, the ColumnIndex and OffsetIndex of every filter column. Fetched for the row group's [index window](#page-index-windows) by the first of its members to ask: at most one request per structure when the window's slices lie within the gap limit of each other, none when an earlier member fetched the window, none for a structure no needed chunk has |
 | 4 | Mask-capability probe | `PageFormatProbe` | At most one page-header probe per decoded nested column without an OffsetIndex (re-read with a larger window while the header is truncated, up to a bound that marks the file corrupt), none after the first column that closes the gate, and only when the row group's ranges are not all rows or a fast `tail` asks ([page masking](#page-masking)) |
 | 5 | Fetch plans | `computeFetchPlans` | None |
-| 6 | Data | the plans' `ChunkHandle`s and `SharedRegion`s | As few as the [gap policy](#gap-policy) and the plan shapes allow, issued as the column's retriever advances |
+| 6 | Data | the plans' `ChunkHandle`s and `SharedRegion`s | As few as the [gap policy](#gap-policy) and the plan shapes allow, issued as the column's fetcher advances |
 
 A row group its bloom filters drop reads no dictionary. A row group its bloom filters or dictionaries drop gets `FetchPlan.EMPTY` for every column, and steps 4 to 6 read nothing for it; step 3 reads nothing for it unless another member of its window asks. The dictionaries read in step 2 stay in the row group's `SharedRowGroupMetadata` until every column has released the row group, and the fetch plans decode with them, so a dictionary page pruning read is not fetched again. How the bloom filters and dictionaries refine the decisions planning recorded is in [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#row-groups).
 
@@ -80,7 +80,7 @@ A `FetchPlan` is one decoded column's view of one row group: `isEmpty()`, a `Pag
 | `FetchPlan.EMPTY` | the filter's row ranges touch no page of an indexed column, the row ranges are empty, or the row group's dictionaries dropped it | None | None |
 | `SkippedColumnFetchPlan` | a filter-only column in a row group statistics proved to match in full ([RECORD_FILTERING.md](RECORD_FILTERING.md#filter-only-column-skip)) | One boundary marker | None |
 
-**A `PageInfo` carries resolved bytes.** The plan's iterator resolves a page's bytes (which fetches its chunk if needed) before it hands out the `PageInfo`, so a decode task does no I/O; every read of page bytes happens on the retriever or on a speculative task. A `PageInfo` holds no chunk handle. Its page slice keeps the fetched buffer alive after the plan is evicted, until the decode task is done with it. Untested.
+**A `PageInfo` carries resolved bytes.** The plan's iterator resolves a page's bytes (which fetches its chunk if needed) before it hands out the `PageInfo`, so a page task does no I/O; every read of page bytes happens on the fetcher or on a speculative task. A `PageInfo` holds no chunk handle. Its page slice keeps the fetched buffer alive after the plan is evicted, until the page task is done with it. Untested.
 
 **Empty row ranges read no page.** When no row of the row group survives page filtering (a leaf's column index rules out every page, or an `AND` intersects disjoint ranges), its `RowRanges` are empty (`RowRanges.isEmpty()`), and every decoded column gets `FetchPlan.EMPTY`: an indexed column through its needed pages, after reporting its skipped pages, and a column without an OffsetIndex directly, without a sequential walk. The mask gate is not probed, because no plan applies a mask.
 
@@ -146,11 +146,11 @@ Tests: `CrossColumnCoalesceTest`.
 
 ## Page masking
 
-A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`, which are the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)) or the range `[residue, numRows)` a fast `tail` sets on the first work item ([ROW_READER.md](ROW_READER.md#tail)). A nested column's decode task trims the decoded page to its kept records, so nested assembly only sees unmasked pages ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)); a flat column's drain copies each kept interval.
+A `PageRowMask` selects the records of one page to keep, as sorted, non-overlapping `[start, end)` intervals relative to the page's first row, counted in values for a flat column and in top-level records (repetition level 0) for a nested one. `PageRowMask.ALL` keeps the page whole; a page with no matching row gets no mask and is not read. Masks come from the row group's `RowRanges`, which are the column-index result under a filter ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md#column-index)) or the range `[residue, numRows)` a fast `tail` sets on the first work item ([ROW_READER.md](ROW_READER.md#tail)). A nested column's page task trims the page to its kept records before measuring it, so nested placement and filling see only kept records ([NESTED_DECODE.md](NESTED_DECODE.md#masked-pages)); a flat column's fill reads each kept interval.
 
 ### The mask-capability gate
 
-**Per-page masks apply to every decoded column of a row group or to none.** Columns have their own page boundaries; a column that ignored the masks its siblings applied would hand the worker rows its siblings dropped, and the batches would misalign. A column is mask-capable when it:
+**Per-page masks apply to every decoded column of a row group or to none.** Columns have their own page boundaries; a column that ignored the masks its siblings applied would place rows its siblings dropped, and the batches would misalign. A column is mask-capable when it:
 
 - has an OffsetIndex (its plan is indexed, and the OffsetIndex gives each page's first row); or
 - is flat, so a sequential plan takes the record count from the page header's `num_values`; or
@@ -173,7 +173,7 @@ Tests: `MisalignedPageBoundariesTest`, `MisalignedPageBoundariesNoIndexTest`, `N
 | Plan | Effect of the row group's share `m` |
 |---|---|
 | `IndexedFetchPlan` | Keeps the needed pages whose first row is below `m`; the page groups cover only those |
-| `SequentialFetchPlan` | Sizes its chunks from `m`. A flat column stops yielding pages once their values cover `m` rows; a nested column, whose record count is inside the compressed page, yields its pages until the worker's drain reaches the cap |
+| `SequentialFetchPlan` | Sizes its chunks from `m`. A flat column stops yielding pages once their values cover `m` rows; a nested column, whose record count is inside the compressed page, yields its pages until the column's placement reaches the cap |
 
 A page is the smallest fetch and decode unit: a page that straddles the limit is fetched and decoded whole.
 

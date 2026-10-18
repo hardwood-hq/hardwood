@@ -73,7 +73,7 @@ class CrossFileColumnOrderTest {
     }
 
     /// Same reordering with differing physical types. Reading by first-file
-    /// ordinal hands the second file's DOUBLE chunk to a worker built for
+    /// ordinal hands the second file's DOUBLE chunk to a column built for
     /// INT64, which surfaces as a `ClassCastException` from a decode thread
     /// after the first file's rows have already been emitted.
     @Test

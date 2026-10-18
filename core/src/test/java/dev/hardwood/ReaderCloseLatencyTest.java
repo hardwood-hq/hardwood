@@ -38,21 +38,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// the dominant term.
 ///
 /// The property under test is that a close costs the same whether one column is projected or
-/// sixteen. It fails as soon as a worker's stop signal does not reach its drain thread
-/// directly, because [dev.hardwood.internal.reader.ColumnWorker#close()] joins that thread and
-/// [ColumnReaders#close()] closes the columns one at a time: a per-column delay of any kind
-/// adds up rather than overlapping, and the total goes linear in the projection width.
-/// A scheduled column's [dev.hardwood.internal.reader.ScheduledColumn#close()] stops every
-/// scheduled column of the read on the first close, so their waits overlap the same way.
+/// sixteen. [dev.hardwood.internal.reader.ScheduledColumn#close()] joins its column's fetcher
+/// thread and then waits for the column's page tasks, and [ColumnReaders#close()] closes the
+/// columns one at a time. The first close stops every column of the read, so the columns' waits
+/// overlap. The test fails as soon as a column's stop signal does not reach its fetcher thread
+/// directly, or a column is stopped only when its own close is reached: a per-column delay of any
+/// kind then adds up rather than overlapping, and the total goes linear in the projection width.
 ///
-/// Both consumer shapes have to be covered, because the two `BatchExchange` modes block their
-/// drain thread at *different* points and so are separately breakable. [ColumnReaders] uses
-/// the detaching mode, whose drain blocks in `publish()` once its ready queue holds two full
-/// batches' worth of rows; [RowReader] uses the recycling mode, whose drain blocks in
-/// `takeBatch()` on an empty free pool. A teardown that releases only one of the two looks fixed
-/// from one shape and is still broken from the other. The read's scheduler decodes every flat
-/// column, with no drain, so the flat cases cover its close in both modes; the nested row-reader
-/// case reads struct fields, whose column workers keep their drains.
+/// When close() arrives mid-file, each column's ready queue is at its limit, so its completed
+/// cells wait for the consumer to publish them, the scheduler submits none of its pages past the
+/// read-ahead depth, and its fetcher is parked on room in the column's page queue. The close has
+/// to unpark that fetcher, and its wait for the page tasks has to end as the last task finishes.
+/// The cases differ in where the pipeline comes to rest: [ColumnReaders] uses the detaching
+/// `BatchExchange` mode, whose ready queue is limited in rows, and [RowReader] the recycling mode,
+/// whose ready queue is limited in batch holders; a flat column places its pages on the fetcher
+/// ([dev.hardwood.internal.reader.ScheduledFlatColumn]), and a struct field's column places them
+/// on its page tasks and also parks its fetcher on its pages not yet placed
+/// ([dev.hardwood.internal.reader.ScheduledNestedColumn]).
 ///
 /// On the bound: sub-millisecond closes are typical, but the distribution has a heavy tail,
 /// and under 8x CPU oversubscription maxima of 27 / 61 / 67 / 101 ms have been observed across
@@ -69,16 +71,15 @@ class ReaderCloseLatencyTest {
     /// Also wide enough for the row-reader case to reproduce at all. Batch size there is
     /// derived from the projection (see [dev.hardwood.internal.reader.BatchSizing]) rather
     /// than set by the caller, so a narrow projection gets batches big enough to swallow the
-    /// whole file, every drain reaches EOF and finishes itself, and nothing is left parked for
+    /// whole file, every column reaches EOF and finishes itself, and nothing is left parked for
     /// close() to release. The effect appears from about 8 columns upward; 16 is comfortably
     /// inside that.
     private static final int COLUMNS = 16;
 
     /// Many more rows than the one batch the test consumes. This is the state the property
-    /// needs: with data still to come, each column's drain thread has filled its ready queue and
-    /// is blocked — trying to publish a third batch on the column path, or waiting
-    /// for a recycled holder on the row path. A file consumed entirely by the first batch does
-    /// not exercise it — the drain reaches EOF and exits on its own before close() is called.
+    /// needs: with data still to come, each column has filled its ready queue and its fetcher is
+    /// parked on room in its page queue. A file consumed entirely by the first batch does
+    /// not exercise it — the fetcher reaches EOF and exits on its own before close() is called.
     private static final int ROWS = 200_000;
 
     /// Forces many batches per column, so one batch is a small fraction of the file.
@@ -92,9 +93,9 @@ class ReaderCloseLatencyTest {
     /// The struct of the nested row-reader case, whose fields are named like the flat columns.
     private static final String STRUCT = "s";
 
-    /// The per-column cost a teardown that fails to signal its drain directly settles at —
-    /// 10 ms was what the timed `BatchExchange` waits this test was written against charged.
-    /// Used only to state the expected magnitude in the assertion messages.
+    /// The per-column cost a teardown that fails to signal its fetcher directly settles at: the
+    /// bound on the fetcher's timed wait for room. Used only to state the expected magnitude in
+    /// the assertion messages.
     private static final Duration PER_COLUMN_STALL_DURATION = Duration.ofMillis(10L);
 
     /// Passes comfortably when no close stalls, and cannot pass when they all do: a stalling
@@ -148,11 +149,10 @@ class ReaderCloseLatencyTest {
 
     /// And of the row-reader path, which is the *other* exchange mode.
     ///
-    /// [RowReader] recycles its batch holders, so its drain blocks in `takeBatch()` waiting for
-    /// the consumer to hand a holder back, not in `publish()` waiting for ready-queue room.
-    /// Releasing only the publish side leaves this path stalling per column, which is exactly
-    /// the regression the two cases above cannot see. Its file's columns are flat `BYTE_ARRAY`,
-    /// which the read's scheduler decodes; the nested case below covers the drains.
+    /// [RowReader] recycles its batch holders, so its ready queue is limited in holders rather
+    /// than rows, and the pipeline comes to rest at another point of the file than on the column
+    /// path. Its file's columns are flat `BYTE_ARRAY`, whose cells are sized once their pages
+    /// are measured.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void rowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {
@@ -174,8 +174,8 @@ class ReaderCloseLatencyTest {
     }
 
     /// And of the nested row reader, which recycles its batch holders too and whose struct fields
-    /// are decoded by column workers, so a drain blocks in `takeBatch()` until the consumer hands
-    /// a holder back.
+    /// are [dev.hardwood.internal.reader.ScheduledNestedColumn]s: they place their pages on their
+    /// page tasks, and their fetchers also park on the pages not yet placed.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void nestedRowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {
@@ -200,8 +200,8 @@ class ReaderCloseLatencyTest {
     /// long the close took.
     ///
     /// The rows matter for the same reason the single batch does on the column path: they are
-    /// what gets the drain threads running and their exchanges occupied. Reading only a
-    /// handful — rather than draining — is what leaves them parked mid-file when close()
+    /// what gets the fetchers running and their exchanges occupied. Reading only a
+    /// handful — rather than the whole file — is what leaves them parked mid-file when close()
     /// arrives.
     private static Duration timeRowReaderCloseAfterFewRows(
             Hardwood hardwood, byte[] file, String[] columns) throws Exception {
@@ -239,7 +239,7 @@ class ReaderCloseLatencyTest {
 
     /// Opens the projection, consumes exactly one batch, and returns how long the close took.
     ///
-    /// The batch matters: it is what gets the drain threads running and the ready queues
+    /// The batch matters: it is what gets the fetchers running and the ready queues
     /// occupied, which is the state a close has to unwind. Closing a reader that never read
     /// does not reach the path this is about.
     private static Duration timeCloseAfterOneBatch(Hardwood hardwood, byte[] file, String[] columns)
@@ -318,8 +318,8 @@ class ReaderCloseLatencyTest {
         return InMemoryFiles.toByteArray(out);
     }
 
-    /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through nested
-    /// column workers.
+    /// A struct of `COLUMNS` required `INT64` fields, which a row read decodes through
+    /// [dev.hardwood.internal.reader.ScheduledNestedColumn]s.
     private static byte[] writeSyntheticStructFile() throws Exception {
         FileSchema schema = FileSchema.builder("close_scaling_struct")
                 .struct(STRUCT, RepetitionType.REQUIRED, struct -> {

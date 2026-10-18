@@ -52,7 +52,7 @@ class AlwaysMatchingRowGroupTest {
     void nonFilterColumnsStayRowAlignedAcrossMixedGroups() throws Exception {
         // gtEq(150) drops RG1, partially matches RG2 (150-200), and fully matches RG3
         // (201-300). Reading all three columns crosses the batch-flush boundary between
-        // the evaluated group and the always-matching group on every worker, so any
+        // the evaluated group and the always-matching group on every column, so any
         // desync between the filter column and the non-filter columns surfaces as a
         // value/label misaligned with its id.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
@@ -97,12 +97,12 @@ class AlwaysMatchingRowGroupTest {
     @Test
     void cappedReadHandsTheCapBackAtTheFirstUndecidedRowGroup() throws Exception {
         // lt(250) fully matches RG1 (1-100) and RG2 (101-200) and splits RG3 (201-300).
-        // While the groups are proven, scanned rows are matching rows and the drain holds
+        // While the groups are proven, scanned rows are matching rows and the batch plan holds
         // the cap itself; at RG3 it can no longer tell them apart and the reader counts
         // matches from there. A cap that spans the boundary is the case where the two have
-        // to agree: 200 rows counted by the drain, the remaining 20 by the reader.
+        // to agree: 200 rows counted by the batch plan, the remaining 20 by the reader.
         assertHeadUnderPartlyProvenFilter(220, 220);
-        // The same cap satisfied before the boundary is reached, so the drain alone
+        // The same cap satisfied before the boundary is reached, so the batch plan alone
         // enforces it and RG3 is never planned.
         assertHeadUnderPartlyProvenFilter(150, 150);
         // Every matching row, so the cap never binds — the handoff still has to yield

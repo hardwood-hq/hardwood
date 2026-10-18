@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// with nulls on page edges and inside pages: every value, null and dictionary id reads as written,
 /// through the column readers at batch sizes that put page edges inside batches and batch edges
 /// inside pages, through the row reader, and through filtered reads whose binary predicates run per
-/// batch on the column's worker.
+/// batch as the column completes its cells.
 ///
 /// The fixture has one row group of 4,000 rows in pages of 300: `label` repeats three values over
 /// the first 2,000 rows (dictionary pages) and is distinct after (`PLAIN` pages, once the

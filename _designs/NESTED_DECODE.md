@@ -1,6 +1,6 @@
 # Nested decode
 
-Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding, how a scheduled column's cells are measured, placed and filled, what each `IndexMode` derives, the real-items view, and the fixed-size-list fast path.
+Describes how the reader turns a nested column's repetition and definition levels into nested batches: the mapping from schema to layers, level decoding, how a scheduled column's cells are measured, placed and filled, what each `NestedIndexMode` derives, the real-items view, and the fixed-size-list fast path.
 
 Related documents:
 
@@ -65,15 +65,15 @@ Tests: `ColumnReaderLayerModelTest`, `UnannotatedRepeatedListTest`, `LegacyTwoLe
 `PageDecoder` decodes a page's level streams (RLE / bit-packing hybrid) before its values.
 
 - **Repetition levels** are always materialised for a column with `maxRepetitionLevel > 0`, except on a page the [fixed-size-list fast path](#fixed-size-list-fast-path) takes.
-- **Definition levels** go through the all-present gate: `RleBitPackingHybridDecoder.isSingleRleRunOf(maxDef, numValues)` inspects one run header and value. When the stream is a single RLE run of `maxDef` covering every value, no array is produced and the page's definition levels are `null`. A `null` array is the reader-wide all-present convention, shared with required columns (`Page.allPresent()`); value decoders read densely from it.
+- **Definition levels** go through the all-present gate: `RleBitPackingHybridDecoder.isSingleRleRunOf(maxDef, numValues)` inspects one run header and value. When the stream is a single RLE run of `maxDef` covering every value, no array is produced and the page's definition levels are `null`. A `null` array is the reader-wide all-present convention, shared with required columns; value readers read densely from it.
 
-**Page-owned levels.** A nested page's task decodes its levels into a `PageDecoder.LevelScratch` the page owns (`NestedPageTask.scratch`), which also holds its record starts and the byte prefix of its plain binary values. The page keeps them past its task, until every cell it is placed into is filled ([Cells](#cells)), so they cannot be the pool thread's scratch. A level array can be longer than its page, and so can every position-indexed array of a trimmed page ([Masked pages](#masked-pages)): no consumer reads `array.length`; every consumer scans `page.size()` or an explicit count, and `SimdOperations.countNonNulls` takes an explicit length.
+**Page-owned scratch.** A nested page is read in two passes (`PageDecoder.decodeNestedInPlace`): its task decompresses the page into a `PageDecoder.LevelScratch` the page owns (`NestedPageTask.scratch`) and decodes its levels and dictionary ids there, leaving the values in the decompressed bytes; the scratch also holds the page's record starts, the byte prefix of its plain binary values and, for a masked page, its kept levels. The page borrows the scratch from its column's pool and keeps it past its task, until every cell it is placed into is filled ([Cells](#cells)), so it cannot be the pool thread's scratch. A scratch array can be longer than its page: no consumer reads `array.length`; every consumer scans the page's size or an explicit count, and `SimdOperations.countNonNulls` takes an explicit length.
 
 Tests: `SimdOperationsTest` (stale tail ignored).
 
 ## Masked pages
 
-A page row mask ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking)) on a nested column is applied on the page's task, before the page is measured; a flat column's fill copies each kept interval instead. `PageTrimmer` moves the positions of the kept records to the front of the page's value, dictionary-index and level arrays, in place, and shortens `page.size()`. Measuring, placing and filling therefore only ever see unmasked pages, and have one shape whatever masks the read carries.
+A page row mask ([FETCH_PLANNING.md](FETCH_PLANNING.md#page-masking)) on a nested column is applied on the page's task, before the page is measured; a flat column's fill reads each kept interval instead. `PageTrimmer.trim(InPlaceNestedPage, ...)` copies the levels of the kept records into the page's scratch and records where their values lie in the page (`KeptRuns`): runs of consecutive page positions, with adjacent kept records in one run. The trimmed page's size is its kept values, and its kept position `i` is the `i`-th position over the runs. Its values stay in the decompressed bytes, and a fill reads each kept position from there through its run. Measuring, placing and filling therefore see only the kept records, and have one shape whatever masks the read carries.
 
 Where a record starts depends on the page:
 
@@ -83,9 +83,7 @@ Where a record starts depends on the page:
 | no repetition levels (no repeated ancestor) | value `r` |
 | anything else | the positions from the `r`-th repetition level `0` up to the next |
 
-On a regular page, record `0` is the one its first value opens, so a masked page whose first repetition level is not `0` fails the read with a `ParquetReadException`.
-
-Trimming in place relies on the page owning its arrays. Value and dictionary-index arrays are allocated per decoded page, and level arrays are the page's own ([page-owned levels](#level-decode-and-scratch)). A value array pooled across pages would let one page's trim corrupt another. Untested.
+On a regular page, record `0` is the one its first value opens, so a masked page whose first repetition level is not `0` fails the read with a `ParquetReadException`, as does a mask that selects records past the page's last.
 
 Tests: `PageTrimmerTest`, `NestedV2NoIndexMaskingTest`, `MisalignedPageBoundariesTest`.
 
@@ -105,24 +103,22 @@ and, for a binary leaf, the bytes of any range of its plain values. A page whose
 
 **Placement** (`Placer`, under the column lock, in page order). The placer splits a page's records into one `NestedSegment` per batch they fall into, each a record range and the value range those records hold; a page's leading values go, as a segment of no records, into the cell holding the previous page's last record. A cell of a column without repetition is sealed as soon as its last planned record is placed; a cell of a column with repetition is sealed at the next record start, at the end of its row group where the plan closes its batch there, or at the end of the read, since its last record's values can follow on later pages.
 
-**Fill** (`NestedFill`, outside the lock, on the thread whose placement sealed the cell or another that takes it first off the column's sealed cells). The cell's arrays are allocated once at their final size: values and levels at the sum of its segments' values, record offsets at its records, a binary leaf's byte buffer at the sum of its segments' plain bytes. Each segment's values are one contiguous run of its page, so a segment copies its values, levels and record offsets by `System.arraycopy`, a level fill where its page has none (definition levels of an all-present page, repetition levels of a column without repetition), and per value only for binary values: each plain value's bytes and view, or each dictionary value's entry id, whose view is built when a reader first needs it ([COLUMN_READER.md](COLUMN_READER.md#variable-length)). The thread then computes the batch's index ([Index modes](#index-modes)) and completes the cell. A page keeps its arrays until every cell it is placed into is filled; a filled cell drops its segments, so a cell waiting for room in the exchange holds only its own arrays.
+**Fill** (`NestedFill`, outside the lock, on the thread whose placement sealed the cell or another that takes it first off the column's sealed cells). The cell's arrays are allocated once at their final size: values and levels at the sum of its segments' values, record offsets at its records, a binary leaf's byte buffer at the sum of its segments' plain bytes. Each segment's values are one contiguous range of its page's kept values. A segment writes its values straight from the page's decompressed bytes through the page's value reader ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), through a view of its own, since two cells sharing a page can be filled at once, and run by run where the page is masked. It copies its levels by `System.arraycopy`, fills the levels its page has none of (definition levels of an all-present page, repetition levels of a column without repetition), and writes the offsets of the records it starts. A binary segment writes each plain value's bytes and view, or each dictionary value's entry id, whose view is built when a reader first needs it ([COLUMN_READER.md](COLUMN_READER.md#variable-length)). The thread then computes the batch's index ([Index modes](#index-modes)) and completes the cell. A page keeps its scratch until every cell it is placed into is filled, and then returns it to the column's pool; a filled cell drops its segments, so a cell waiting for room in the exchange holds only its own arrays.
 
 Invariants:
 
 - **Records are never split across batches.** Batch boundaries are the plan's, which every column shares and which keeps sibling columns aligned (see [READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)).
 - **Masks are applied before measuring.** A masked page is trimmed to its kept records ([Masked pages](#masked-pages)), so every segment keeps every value it is given.
-- **A batch's arrays are its own, at the size it holds.** The cell allocates them for its batch alone, so a published batch shares no array with another, and no array is grown or copied out at publish.
+- **A batch's arrays are its own, at the size it holds.** The cell allocates them for its batch alone, on the row reader's recycling exchange too, so a published batch shares no array with another, and no array is grown or copied out at publish. Values the row reader returns refer to their batch's arrays and stay correct after the reader moves on ([LOGICAL_TYPES.md](LOGICAL_TYPES.md)), so a nested batch's arrays are never refilled.
 - **Every column chunk begins with a record.** A chunk's first page with values whose first repetition level is not `0` fails the read with a `ParquetReadException`, placed at that page: a record never spans two row groups. Later pages may begin inside a record, unless masked, since trimming needs each masked page to open a record ([Masked pages](#masked-pages)).
 
 `NestedBatch.allPresent` records whether every page with a segment in the batch passed the all-present gate.
 
-**Column worker.** With the scheduler switched off (the internal property `hardwood.internal.scheduled`, for tests that compare the two), a `NestedColumnWorker` assembles the same batches on a drain thread through reusable accumulators, which it grows as they fill and copies out at publish. It copies an all-present page in bulk, any other page per element, and counts towards a batch's `allPresent` the page whose first record start closes it.
-
-Tests: `ScheduledNestedColumnTest`, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
+Tests: `ScheduledNestedColumnTest`, which compares each read with one whose batches end only at row groups, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `FileLogicalTypeTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
 
 ## Index modes
 
-Before a cell's batch is published, `NestedIndex.compute` derives per-batch structures on the thread that filled it, off the serial consumer. What it derives is fixed per column by an `IndexMode` the constructing reader chooses:
+Before a cell's batch is published, `NestedIndex.compute` derives per-batch structures on the thread that filled it, off the serial consumer. What it derives is fixed per column by a `NestedIndexMode` the constructing reader chooses:
 
 | Mode | Reader | Batch carries | Derived before publish |
 |---|---|---|---|
@@ -153,15 +149,15 @@ Tests: `ColumnReaderLayerModelTest`, `ColumnReaderExactFilterTest`, `FixedSizeLi
 
 ## Fixed-size-list fast path
 
-A `LIST` column in which every row is a present list of exactly `k` present elements (embedding vectors, Arrow `FixedSizeList` / `FixedShapeTensor` written as 3-level `LIST`) carries a repetition stream of `0` followed by `k − 1` ones per row and a constant definition stream. The fast path recognises that shape from the level bytes, decodes only the values, and builds the batch with arithmetic offsets `[0, k, 2k, …]`, producing the same public output as the regular path.
+A `LIST` column in which every row is a present list of exactly `k` present elements (embedding vectors, Arrow `FixedSizeList` / `FixedShapeTensor` written as 3-level `LIST`) carries a repetition stream of `0` followed by `k − 1` ones per row and a constant definition stream. The fast path recognises that shape from the level bytes, decodes no levels, and builds the batch with arithmetic offsets `[0, k, 2k, …]`, producing the same public output as the regular path.
 
 ### Gate
 
-`PageDecoder` stamps a page with `fixedListK = k` (`Page.withFixedListK`) only when every condition holds:
+`PageDecoder` gives a page `fixedListK = k` when it reads the page's levels, only when every condition holds:
 
 | Condition | Rule |
 |---|---|
-| Enabled | The reader option `hardwood.fixed-list-fast-path` is `"true"` (case-insensitive). The option is off by default; see [docs/content/reference/reader.md](../docs/content/reference/reader.md). `ParquetFileReader` resolves it and threads it to every worker and `PageDecoder`. |
+| Enabled | The reader option `hardwood.fixed-list-fast-path` is `"true"` (case-insensitive). The option is off by default; see [docs/content/reference/reader.md](../docs/content/reference/reader.md). `ParquetFileReader` resolves it and threads it to every nested column and its `PageDecoder`s. |
 | Element type | Physical type `BOOLEAN`, `INT32`, `INT64`, `FLOAT` or `DOUBLE`. |
 | Level geometry | `maxRepetitionLevel == 1`, and `maxDefinitionLevel == 2`, or `maxDefinitionLevel == 1` with a leaf whose own repetition is not `REPEATED`. |
 | Page format | `DataPageV2`: both level regions non-empty. `DataPageV1`: both level encodings `RLE` and both level regions non-empty. Legacy `BIT_PACKED` levels do not qualify; the regular path misreads them (#569). |
@@ -184,7 +180,7 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 
 ## Boundaries
 
-- **Page arrays.** A nested page is decoded into arrays of its own, which its cells copy from: a page's values outlive its task until every cell it is placed into is filled, and its decompressed bytes are the decompressor's for the length of the task only.
+- **Page scratch.** A nested page's decompressed bytes, levels and ids are held in its scratch from its task until every cell it is placed into is filled, so a page spanning several batches holds its scratch until its last cell fills.
 - **Non-repeated columns** in a nested row read are decoded through levels and pay the levels machinery; direct addressing for them is #732.
 - **Fixed-size list, 2-level required lists and bare repeated primitives** (`maxDefinitionLevel == 1` with a `REPEATED` leaf) take the regular path; #808.
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.

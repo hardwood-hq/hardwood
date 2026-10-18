@@ -9,9 +9,8 @@ package dev.hardwood.internal.predicate;
 
 import dev.hardwood.internal.reader.BatchExchange;
 
-/// Per-column predicate fragment evaluated against a just-filled [BatchExchange.Batch], by a
-/// [dev.hardwood.internal.reader.FlatColumnWorker]'s drain or by the decode task that completes a
-/// [dev.hardwood.internal.reader.ScheduledColumn]'s batch.
+/// Per-column predicate fragment evaluated against a just-filled [BatchExchange.Batch], by the
+/// decode task that completes a [dev.hardwood.internal.reader.ScheduledColumn]'s batch.
 ///
 /// Implementations write a per-batch matches mask into the caller-provided
 /// `outWords` `long[]`. A bit at index `i` is set iff row `i` definitely matches.
@@ -28,7 +27,7 @@ public sealed interface ColumnBatchMatcher
     void test(BatchExchange.Batch batch, long[] outWords);
 
     /// Whether [#test] reads the byte view of every value of a binary batch. A matcher that
-    /// returns `false` lets the column worker leave dictionary values' views to be built when a
+    /// returns `false` lets the column leave dictionary values' views to be built when a
     /// reader first needs them.
     default boolean readsEveryValueView() {
         return true;

@@ -146,7 +146,7 @@ class BadDataHandlingTest {
     void rejectCorruptChecksum() throws IOException {
         // Intentionally corrupted CRC checksums in data pages.
         // The CRC IOException is wrapped in UncheckedIOException with file context
-        // by ColumnWorker before BatchExchange forwards it.
+        // by the column's page task before BatchExchange forwards it.
         assertCorruptChecksumRejected("data/datapage_v1-corrupt-checksum.parquet",
                 "[datapage_v1-corrupt-checksum.parquet: row group 0, column 'a', page 0] CRC"
                         + " mismatch: expected bbce3b9d but computed f4f6d0a");

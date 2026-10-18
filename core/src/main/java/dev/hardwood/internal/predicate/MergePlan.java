@@ -13,7 +13,7 @@ package dev.hardwood.internal.predicate;
 ///
 /// Produced by [BatchFilterCompiler] alongside the per-column
 /// [ColumnBatchMatcher] array. A [Column] node references the projected index
-/// of a column whose worker emitted a `matches` array; [And] and [Or] combine
+/// of a column whose batches carry a `matches` array; [And] and [Or] combine
 /// children word-wise.
 ///
 /// Each leaf column appears in at most one [Column] node — same-column leaves

@@ -65,7 +65,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
-    private final ColumnPipeline[] columnWorkers;
+    private final ColumnPipeline[] columnPipelines;
     private final int columnCount;
 
     /// The caller's projection (see [ReadProjection#payload()]). Its columns lead the decoded
@@ -139,8 +139,8 @@ public final class FlatRowReader implements FileAwareRowReader {
     private long[] combinedWords;
     private int pendingRowIndex = -1;
     /// Cap on the number of *matching* rows yielded (SQL LIMIT over the filtered
-    /// relation). [ColumnWorker#UNLIMITED] means no cap. Enforced on both filtering
-    /// paths; without a filter the worker already capped scanned == matched rows.
+    /// relation). [ScheduledColumn#UNLIMITED] means no cap. Enforced on both filtering
+    /// paths; without a filter the batch plan already capped scanned == matched rows.
     private final long maxMatchedRows;
     /// Count of matching rows yielded so far.
     private long matchedRowsYielded;
@@ -164,7 +164,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// what stops the owning [dev.hardwood.reader.ParquetFileReader] tracking it.
     private final RowGroupIterator rowGroupIterator;
 
-    private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, ColumnPipeline[] columnWorkers,
+    private FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, ColumnPipeline[] columnPipelines,
                          FileSchema fileSchema, ProjectedSchema payload,
                          BatchMatchMerger matchMerger, long maxMatchedRows,
                          RowMatcher recordMatcher, PredicateView predicateView, RecordFilterTally tally,
@@ -175,7 +175,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         this.predicateView = predicateView;
         this.tally = tally;
         this.exchanges = exchanges;
-        this.columnWorkers = columnWorkers;
+        this.columnPipelines = columnPipelines;
         this.columnCount = exchanges.length;
         this.payload = payload;
         int payloadColumnCount = payload.getProjectedColumnCount();
@@ -210,13 +210,12 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     // ==================== Factory ====================
 
-    /// Creates a flat v3 pipeline and returns a [RowReader].
+    /// Creates a flat pipeline and returns a [RowReader].
     ///
     /// Wires up `RowGroupIterator → PageSource → ScheduledColumn → BatchExchange → FlatRowReader`,
-    /// a [ScheduledColumn] for each column, or a [ColumnWorker] for each when the scheduler is
-    /// switched off ([ReadScheduler#ENABLED]), starts them and initializes the reader. A read with no row group left once
+    /// a [ScheduledFlatColumn] for each column, starts them and initializes the reader. A read with no row group left once
     /// its leading row groups' bloom filters and dictionaries are probed
-    /// ([RowGroupIterator#hasLiveWorkItem]) starts no worker and is exhausted from the start. A filter is installed on
+    /// ([RowGroupIterator#hasLiveWorkItem]) starts no column and is exhausted from the start. A filter is installed on
     /// whichever path can carry it — per batch on the drain side, per record otherwise —
     /// which is decided by the predicate's shape alone, never by what a file holds.
     ///
@@ -246,9 +245,9 @@ public final class FlatRowReader implements FileAwareRowReader {
         int projectedColumnCount = decoded.getProjectedColumnCount();
 
         // A row-level filter changes what `maxRows` counts: under SQL LIMIT semantics
-        // the cap is on *matching* rows, not scanned rows. The workers still take it —
-        // they hold it only while statistics prove every row they assemble matches, and
-        // drop it at the first row group that is not proven, from where the drain-side
+        // the cap is on *matching* rows, not scanned rows. The batch plan still takes it —
+        // it holds it only while statistics prove every row it reaches matches, and
+        // drops it at the first row group that is not proven, from where the drain-side
         // reader counts matches instead.
         //
         // Nothing here asks a question about the read as a whole, so nothing here plans
@@ -275,8 +274,8 @@ public final class FlatRowReader implements FileAwareRowReader {
                 ? RecordFilterCompiler.compile(filter, schema, predicateView::indexOf)
                 : null;
         // Filtering happens in the reader on both paths, so the reader caps matched
-        // rows. Without a filter the worker already capped scanned == matched rows.
-        long readerMatchLimit = filter != null ? maxRows : ColumnWorker.UNLIMITED;
+        // rows. Without a filter the batch plan already capped scanned == matched rows.
+        long readerMatchLimit = filter != null ? maxRows : ScheduledColumn.UNLIMITED;
         // The tally spans both filtered paths: the drain side feeds it whole batches,
         // the record matcher single records, and either way the reader marks the file
         // boundaries as it loads batches.
@@ -291,14 +290,12 @@ public final class FlatRowReader implements FileAwareRowReader {
             return reader;
         }
 
-        // Every worker closes its batches where the read's batch plan does, so the columns
+        // Every column closes its batches where the read's batch plan does, so the columns
         // stay row-aligned. Under a filter the cap counts matching rows: the plan holds it
         // only while statistics prove every row of the row groups it reaches matches.
         rowGroupIterator.planBatches(batchSize, maxRows);
-        ColumnPipeline[] workers = new ColumnPipeline[projectedColumnCount];
-        ReadScheduler scheduler = ReadScheduler.ENABLED
-                ? new ReadScheduler(context, batchSize, budgetRows)
-                : null;
+        ColumnPipeline[] pipelines = new ColumnPipeline[projectedColumnCount];
+        ReadScheduler scheduler = new ReadScheduler(context, batchSize, budgetRows);
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
 
@@ -324,19 +321,10 @@ public final class FlatRowReader implements FileAwareRowReader {
                     });
             ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             buffers[i] = buffer;
-            if (scheduler != null) {
-                workers[i] = new ScheduledFlatColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
-                        context.decompressorFactory(), columnFilter);
-                continue;
-            }
-            FlatColumnWorker worker = new FlatColumnWorker(
-                    pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(),
-                    columnFilter);
-            workers[i] = worker;
-            worker.start();
+            pipelines[i] = new ScheduledFlatColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
+                    context.decompressorFactory(), columnFilter);
         }
-        if (scheduler != null && scheduler.hasColumns()) {
+        if (scheduler.hasColumns()) {
             scheduler.start();
         }
 
@@ -346,7 +334,7 @@ public final class FlatRowReader implements FileAwareRowReader {
                 ? BatchMatchMerger.aliasing(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
                 : null;
 
-        FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projection.payload(),
+        FlatRowReader reader = new FlatRowReader(buffers, pipelines, schema, projection.payload(),
                 matchMerger, readerMatchLimit, recordMatcher, predicateView, tally, rowGroupIterator);
         reader.initialize();
         return reader;
@@ -369,7 +357,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             return false;
         }
         if (activeMerger != null) {
-            if (maxMatchedRows != ColumnWorker.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
+            if (maxMatchedRows != ScheduledColumn.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
                 exhausted = true;
                 return false;
             }
@@ -423,7 +411,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// Returns to [#hasNext]'s plain cursor as soon as a batch loads that statistics
     /// decided, so a proven batch never pays for the per-row protocol.
     private boolean hasNextMatching() throws IOException {
-        if (maxMatchedRows != ColumnWorker.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
+        if (maxMatchedRows != ScheduledColumn.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
             exhausted = true;
             return false;
         }
@@ -918,13 +906,13 @@ public final class FlatRowReader implements FileAwareRowReader {
             return false;
         }
         currentFileName = previousBatches[0].fileName;
-        // Uniform across columns: the flag comes from the work item, and the workers
-        // flush on its transitions, so no batch mixes the two.
+        // Uniform across columns: the flag comes from the work item, and the batch plan
+        // closes a batch on its transitions, so no batch mixes the two.
         currentRowsAlwaysMatch = previousBatches[0].filterAlwaysMatches;
         // A batch statistics decided, with no cap to count matches against, needs
         // nothing evaluated and nothing counted per row: hand it to the plain cursor
         // and tally it whole.
-        boolean proven = currentRowsAlwaysMatch && maxMatchedRows == ColumnWorker.UNLIMITED;
+        boolean proven = currentRowsAlwaysMatch && maxMatchedRows == ScheduledColumn.UNLIMITED;
         activeMatcher = proven ? null : recordMatcher;
         activeMerger = proven ? null : matchMerger;
         // A filter-only column is not read in a row group statistics proved, so its
@@ -953,7 +941,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             // on the file the batch came from. Batches never straddle files.
             tally.switchFile(currentFileName);
             if (activeMerger != null) {
-                // The whole batch was decided on the drain thread — count it here
+                // The whole batch was decided as its cells completed — count it here
                 // rather than as rows are yielded, so an early exit does not leave
                 // the batch reported as all-skipped.
                 tally.recordBatch(batchSize, countMatches(combinedWords, batchSize));
@@ -1064,12 +1052,9 @@ public final class FlatRowReader implements FileAwareRowReader {
             if (tally != null) {
                 tally.close();
             }
-            if (columnWorkers != null) {
-                for (ColumnPipeline worker : columnWorkers) {
-                    worker.requestStop();
-                }
-                for (ColumnPipeline worker : columnWorkers) {
-                    worker.close();
+            if (columnPipelines != null) {
+                for (ColumnPipeline pipeline : columnPipelines) {
+                    pipeline.close();
                 }
             }
             for (int i = 0; i < columnCount; i++) {

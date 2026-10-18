@@ -383,10 +383,10 @@ class PredicatePushDownTest {
             // Uncapped: the proven batch clears the active matcher and runs on the plain
             // cursor, then the undecided batch installs it again.
             assertNestedIdsUnderFilter(reader, filter, 0, List.of(1, 2, 3, 4));
-            // Capped across the boundary: the drain holds the cap over RG1's three proven
+            // Capped across the boundary: the batch plan holds the cap over RG1's three proven
             // rows and hands it back at RG2, where the reader counts the fourth match.
             assertNestedIdsUnderFilter(reader, filter, 4, List.of(1, 2, 3, 4));
-            // Capped inside the proven group: the drain alone enforces it, and the rows it
+            // Capped inside the proven group: the batch plan alone enforces it, and the rows it
             // yields are matches because statistics already proved them.
             assertNestedIdsUnderFilter(reader, filter, 2, List.of(1, 2));
         }

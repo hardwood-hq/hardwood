@@ -17,7 +17,7 @@ import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
-import dev.hardwood.internal.reader.NestedColumnWorker;
+import dev.hardwood.internal.reader.NestedIndexMode;
 import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RecordFilterTally;
 import dev.hardwood.internal.reader.RowGroupIterator;
@@ -70,22 +70,20 @@ final class ColumnScan implements Closeable {
                            ResolvedPredicate filter,
                            int batchSize,
                            long budgetRows) {
-        NestedColumnWorker.IndexMode indexMode = filter == null
-                ? NestedColumnWorker.IndexMode.REAL_VIEW
-                : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
+        NestedIndexMode indexMode = filter == null
+                ? NestedIndexMode.REAL_VIEW
+                : NestedIndexMode.REAL_VIEW_KEEP_LEVELS;
         ProjectedSchema decoded = projection.decoded();
         int columnCount = decoded.getProjectedColumnCount();
-        // Every cursor's worker closes its batches where the read's batch plan does.
+        // Every cursor's column closes its batches where the read's batch plan does.
         rowGroupIterator.planBatches(batchSize, 0);
-        ReadScheduler scheduler = ReadScheduler.ENABLED
-                ? new ReadScheduler(context, batchSize, budgetRows)
-                : null;
+        ReadScheduler scheduler = new ReadScheduler(context, batchSize, budgetRows);
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
                     rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode, scheduler);
         }
-        if (scheduler != null && scheduler.hasColumns()) {
+        if (scheduler.hasColumns()) {
             scheduler.start();
         }
         SelectionEngine engine = filter == null
@@ -96,7 +94,7 @@ final class ColumnScan implements Closeable {
 
     /// The engine's predicate view rejects what the reader cannot assemble (a shredded
     /// Variant `typed_value` of a type the shredding spec does not allow). The cursors'
-    /// workers have started by then and no scan will own them, so a failure closes them
+    /// columns have started by then and no scan will own them, so a failure closes them
     /// before it propagates, naming the file whose schema it was found in.
     private static SelectionEngine createSelectionEngine(FileSchema schema, ProjectedSchema decoded,
                                                          ResolvedPredicate filter, ColumnCursor[] cursors,
@@ -113,7 +111,7 @@ final class ColumnScan implements Closeable {
     }
 
     /// A scan for a read in which pruning dropped every row group: it has no
-    /// cursors, starts no worker, and its first [#advance()] returns `false`.
+    /// cursors, starts no column, and its first [#advance()] returns `false`.
     static ColumnScan empty(RowGroupIterator rowGroupIterator) {
         return new ColumnScan(new ColumnCursor[0], 0, null, rowGroupIterator);
     }
@@ -350,7 +348,7 @@ final class ColumnScan implements Closeable {
         return out;
     }
 
-    /// Stops every cursor's worker, then releases the iterator, even when a
+    /// Stops every cursor's column, then releases the iterator, even when a
     /// cursor's teardown fails. Idempotent.
     @Override
     public void close() throws IOException {
@@ -363,9 +361,6 @@ final class ColumnScan implements Closeable {
         // close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime.
         try (rowGroupIterator) {
-            for (ColumnCursor cursor : cursors) {
-                cursor.requestStop();
-            }
             for (ColumnCursor cursor : cursors) {
                 cursor.close();
             }

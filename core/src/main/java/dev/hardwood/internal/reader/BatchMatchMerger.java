@@ -23,10 +23,10 @@ import dev.hardwood.internal.predicate.MergePlanEvaluator;
 /// Two axes, both decided once at construction:
 ///
 /// - **Where the per-column bitmaps come from.** [#aliasing] serves a consumer
-///   whose column workers already ran the matchers into each batch's own
-///   `matches` array: the merge reseats pointers and copies nothing.
-///   [#owning] serves a consumer with no workers — it runs the matchers itself,
-///   into buffers allocated here.
+///   whose columns already ran the matchers into each batch's own
+///   `matches` array as its cells completed: the merge reseats pointers and copies
+///   nothing. [#owning] serves a consumer whose columns run no matchers — it runs
+///   them itself, into buffers allocated here.
 /// - **Plan shape.** A single-column plan has nothing to combine, so the merge
 ///   yields that one column's bitmap: no combined buffer, no evaluator, no
 ///   scratch pool. Any other plan goes to the evaluator, which populates the
@@ -41,7 +41,7 @@ public final class BatchMatchMerger {
     private final int aliasedColumn;
 
     /// Per-column matchers to run over each batch, indexed by projected column
-    /// index, or `null` when the consumer's workers already ran them.
+    /// index, or `null` when the consumer's columns already ran them.
     private final ColumnBatchMatcher[] matchers;
     /// Projected indices the plan reads. The only entries of [#merge]'s
     /// `batches` argument it dereferences, so a caller staging that array need
@@ -65,8 +65,8 @@ public final class BatchMatchMerger {
     /// Destination for the combined bitmap, owned and reused across batches.
     private final long[] combined;
 
-    /// A merger for a consumer whose column workers already wrote every batch's
-    /// `matches` array, as [FlatColumnWorker] does on the drain-side read path.
+    /// A merger for a consumer whose columns already wrote every batch's `matches` array, as
+    /// [ScheduledFlatColumn] does as each cell completes on the drain-side read path.
     ///
     /// @param plan how to combine the per-column bitmaps
     /// @param columnCount number of projected columns
@@ -75,7 +75,7 @@ public final class BatchMatchMerger {
         return new BatchMatchMerger(plan, null, columnCount, wordsLen);
     }
 
-    /// A merger for a consumer with no column workers: [#merge] runs `filter`'s
+    /// A merger for a consumer whose columns run no matchers: [#merge] runs `filter`'s
     /// per-column matchers over the batches itself, into buffers allocated here.
     ///
     /// @param filter the compiled filter, supplying both the matchers and the plan
@@ -124,7 +124,7 @@ public final class BatchMatchMerger {
     /// `[0, recordCount)` — bits past `recordCount` are never read by the
     /// consumer, so leaving them stale from an earlier, longer batch is safe
     /// and saves a trailing zero-fill per batch. The same holds of the
-    /// per-column bitmaps, whether a worker or [#bitmap] filled them.
+    /// per-column bitmaps, whether a column or [#bitmap] filled them.
     ///
     /// @param batches the batches being served, indexed by projected column
     ///         index; only [#referencedColumns] are dereferenced
@@ -146,7 +146,7 @@ public final class BatchMatchMerger {
     }
 
     /// The bitmap for projected column `c`: the batch's own array when the
-    /// consumer's workers filled it, otherwise this merger's buffer, filled here.
+    /// consumer's columns filled it, otherwise this merger's buffer, filled here.
     private long[] bitmap(BatchExchange.Batch[] batches, int c) {
         if (matchers == null) {
             return batches[c].matches;

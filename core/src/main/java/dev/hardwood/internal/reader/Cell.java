@@ -43,8 +43,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// a segment's bits are merged atomically ([FlatFill]).
 ///
 /// A segment of plain bytes that its page fills before its cell is sized cannot write them yet:
-/// it writes them to an array of its own and parks there ([#park]), and the sizing copies them
-/// into place. Every other array of a measured cell is plan-sized, so no other fill waits.
+/// it writes nothing and parks with a view of its page ([#park]), whose bytes the page keeps, and
+/// the sizing writes it from the page. Every other array of a measured cell is plan-sized, so no
+/// other fill waits.
 final class Cell implements ScheduledCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.

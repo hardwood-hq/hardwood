@@ -115,7 +115,7 @@ passed to `computeIfAbsent`. Those are the only places an I/O failure is wrapped
 caller sees one. **A boundary counts when the language forbids the declaration, not when an
 interface we chose happens to.**
 
-The read pipeline's threads (retriever, decode tasks, drain) meet at boundaries that catch
+The read pipeline's threads (fetchers, page tasks) meet at boundaries that catch
 `Exception`, record where they were, and hand it to the consumer
 ([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)). Whatever the decoders raise there,
 other than an `UnsupportedOperationException`, becomes a `ParquetReadException` keeping the

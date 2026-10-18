@@ -99,7 +99,7 @@ A file whose top-level fields are all primitive and whose columns have no repeti
 The public API (`PqIntList`, `getLong()`, `ColumnReader`'s typed arrays) avoids boxing wherever possible. Internal code uses primitive arrays (`int[]`, `long[]`) rather than `List<Integer>`.
 
 ### Per-Column Pipelines on Virtual Threads
-Each decoded column (the projection plus any filter-only predicate columns) has two virtual threads of its own: a retriever that fetches its pages and a drain that assembles and publishes its batches, with back-pressure towards the consumer. Pages are decompressed and decoded in parallel on a fixed platform-thread pool owned by the `HardwoodContext` ([READ_PIPELINE.md](_designs/READ_PIPELINE.md)).
+Each decoded column (the projection plus any filter-only predicate columns) has a fetcher virtual thread that fetches its pages. One scheduler per read submits every column's pages, in row order, to a fixed platform-thread pool owned by the `HardwoodContext`, where they are decoded straight into batches, with back-pressure towards the consumer ([READ_PIPELINE.md](_designs/READ_PIPELINE.md)).
 
 ### Minimal Dependencies
 `hardwood-core` has no required runtime dependency. GZIP goes through the JDK; the other codecs use compression libraries that are optional, needed only for the codecs a file uses. LZO is not supported. `hardwood-s3` implements its S3 client and SigV4 signing without the AWS SDK.

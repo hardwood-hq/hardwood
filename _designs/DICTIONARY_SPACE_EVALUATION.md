@@ -42,6 +42,6 @@ The state belongs to one dictionary object, which is one column chunk's dictiona
 
 A batch records an entry id per value ([VALUE_DECODE.md](VALUE_DECODE.md)) and draws on at most one dictionary, since a read with a binary column ends its batches at row-group boundaries ([READ_PIPELINE.md](READ_PIPELINE.md)). An id of `-1` therefore marks a null or a value written `PLAIN` after the chunk's dictionary filled up. The wrapper decides such a non-null row through the delegate's `testValue` over the row's byte view.
 
-The wrapper reads no other view. `ColumnBatchMatcher.readsEveryValueView()` returns `false` for it, and for a same-column `AND` or `OR` whose sides both do, so the column worker leaves the batch's dictionary values with their views deferred ([COLUMN_READER.md](COLUMN_READER.md)). A filtered read that consumes the column through its dictionary ids or its strings then never builds the views. The first `-1` row of a batch with deferred views builds them, as any reader's first view access does.
+The wrapper reads no other view. `ColumnBatchMatcher.readsEveryValueView()` returns `false` for it, and for a same-column `AND` or `OR` whose sides both do, so the column leaves the batch's dictionary values with their views deferred ([COLUMN_READER.md](COLUMN_READER.md)). A filtered read that consumes the column through its dictionary ids or its strings then never builds the views. The first `-1` row of a batch with deferred views builds them, as any reader's first view access does.
 
-Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `ColumnWorkerTest`.
+Tests: `DictionaryBinaryBatchMatcherTest`, `DictionarySpaceEvaluationTest`, `ShortValueEqualityTest`, `ScheduledBinaryViewsTest`.

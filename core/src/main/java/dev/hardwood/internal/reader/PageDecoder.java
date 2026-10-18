@@ -287,10 +287,10 @@ public class PageDecoder {
         return result;
     }
 
-    /// Decodes a page of a column without repetition whose values a fill reads in place: a data
-    /// page (`V1` or `V2`) of a fixed-width numeric column, `PLAIN` or dictionary-encoded. Any
-    /// other page returns `null` before anything is decompressed, and is decoded by [#decodePage]
-    /// instead.
+    /// Decodes a data page (`V1` or `V2`) of a fixed-width numeric or boolean column without
+    /// repetition whose values a fill reads in place, in any encoding the format defines for its
+    /// type. Returns `null` before anything is decompressed for a page no in-place reader takes,
+    /// which [#rejectWithoutReader] refuses.
     ///
     /// The returned values hold `scratch`'s definition levels and ids until the fill is done.
     FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
@@ -306,9 +306,10 @@ public class PageDecoder {
         return values;
     }
 
-    /// Decodes a page of a binary column without repetition whose values a fill reads in place:
-    /// a data page (`V1` or `V2`), `PLAIN` or dictionary-encoded. Any other page returns `null`
-    /// before anything is decompressed, and is decoded by [#decodePage] instead.
+    /// Decodes a data page (`V1` or `V2`) of a binary column without repetition whose values a
+    /// fill reads in place, in any encoding the format defines for its type. Returns `null` before
+    /// anything is decompressed for a page no in-place reader takes, which [#rejectWithoutReader]
+    /// refuses.
     ///
     /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and the
     /// decompressor's buffer, until the fill is done.
@@ -332,12 +333,11 @@ public class PageDecoder {
         return values;
     }
 
-    /// Decodes the levels of a data page (`V1` or `V2`) of a column decoded through levels,
-    /// `PLAIN` or dictionary-encoded, of a fixed-width numeric or binary type, and leaves its
-    /// values in place in `scratch`'s own byte buffer for a fill to read later
-    /// ([InPlaceNestedPage]). A page the fixed-size-list fast path takes keeps no levels and
-    /// carries its `k`. Any other page returns `null` before anything is decompressed, and is
-    /// decoded by [#decodePage] instead.
+    /// Decodes the levels of a data page (`V1` or `V2`) of a column decoded through levels, in any
+    /// encoding the format defines for its type, and leaves its values in place in `scratch`'s own
+    /// byte buffer for a fill to read later ([InPlaceNestedPage]). A page the fixed-size-list fast
+    /// path takes keeps no levels and carries its `k`. Returns `null` before anything is
+    /// decompressed for a page no in-place reader takes, which [#rejectWithoutReader] refuses.
     InPlaceNestedPage decodeNestedInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
         boolean numeric = isNumeric(column.type());
         if (!numeric && binaryWidth() < 0) {
@@ -354,8 +354,6 @@ public class PageDecoder {
                 page.fixedListK, flat, binary, null);
     }
 
-    /// Whether the column's values are read in place through [FlatPageValues]: fixed-width
-    /// numbers, and booleans.
     /// Raises the error a page no in-place reader takes is refused with: an encoding not defined over
     /// the column's type, or one the format does not allow for a data page's values. Every page the
     /// format defines for a column has an in-place reader, so a page this decodes is a reader gap.
@@ -401,6 +399,8 @@ public class PageDecoder {
 
     private static final byte[] NO_BYTES = new byte[0];
 
+    /// Whether the column's values are read in place through [FlatPageValues]: fixed-width
+    /// numbers, and booleans.
     private static boolean isNumeric(PhysicalType type) {
         return type == PhysicalType.INT32 || type == PhysicalType.INT64
                 || type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE || type == PhysicalType.BOOLEAN;
@@ -495,8 +495,8 @@ public class PageDecoder {
     }
 
     /// Reads the header of a page a fill may read in place, and decodes its levels when it is one:
-    /// a `V1` or `V2` data page, `PLAIN` or dictionary-encoded, with `RLE` levels. Returns `null`
-    /// for any other page before decompressing it.
+    /// a `V1` or `V2` data page in an encoding [#readsInPlace] takes. Returns `null` for any other
+    /// page before decompressing it.
     ///
     /// @param ownBytes whether the values must outlive the task: they are then decompressed or
     ///        copied into `scratch`'s own buffer rather than the decompressor's

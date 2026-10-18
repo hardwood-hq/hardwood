@@ -33,9 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// columns are read.
 ///
 /// This is the read-path counterpart of [ReaderCloseLatencyTest], and the same defect one step
-/// earlier. That one covers teardown: a drain blocked inside its exchange could not see the
-/// `finished` flag until its own timed queue operation expired, so `close()` inherited the wait
-/// once per column. This covers the read itself — the *consumer* waiting inside
+/// earlier. That one covers teardown: a fetcher parked on room in its column's queue does not see
+/// the stop until its own timed wait expires unless the close unparks it, so `close()` would
+/// inherit the wait once per column. This covers the read itself — the *consumer* waiting inside
 /// [dev.hardwood.internal.reader.BatchExchange#poll()] could not see the flag either, so the last
 /// `nextBatch()`, the one that reports the end, waited out the same window. Teardown strands a
 /// producer whose consumer has stopped consuming; this strands a consumer whose producer has
@@ -66,8 +66,8 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
     private static final int COLUMNS = 16;
 
     /// Few enough rows that a column is one batch, which is the state this is about: the consumer
-    /// takes that batch, asks again, and reaches the exchange before the drain has finished
-    /// itself. A file large enough to need many batches gives the drain time to end the stream
+    /// takes that batch, asks again, and reaches the exchange before the column has ended its
+    /// stream. A file large enough to need many batches gives the column time to end the stream
     /// while the consumer is still working through them, and the last ask finds the flag already
     /// set — the same read, none of the wait.
     private static final int ROWS = 1_000;
@@ -103,7 +103,7 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
 
             awaitEvents();
 
-            // Presence, not a count: the scan events are committed on worker threads, and one
+            // Presence, not a count: the scan events are committed on fetcher threads, and one
             // of them can miss this recording's flush (see AbstractJfrRecorderTest).
             assertThat(eventsSince(ROW_GROUP_SCANNED_EVENT, measuredFrom).count())
                     .as("the recording saw the measured pass, so an empty stall total means "

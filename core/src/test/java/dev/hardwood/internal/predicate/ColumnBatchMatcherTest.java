@@ -380,8 +380,8 @@ class ColumnBatchMatcherTest {
         assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
     }
 
-    /// Packs `values` back to back into a [BinaryBatchValues], the layout `FlatColumnWorker`
-    /// assembles. A `null` entry occupies an empty slice; nullness itself comes from `nulls`, so a
+    /// Packs `values` back to back into a [BinaryBatchValues], the layout a flat binary cell
+    /// holds. A `null` entry occupies an empty slice; nullness itself comes from `nulls`, so a
     /// row can be marked null while still holding bytes — the scratch a null fixed-length slot
     /// keeps.
     private static BatchExchange.Batch binaryBatch(BitSet nulls, byte[]... values) {

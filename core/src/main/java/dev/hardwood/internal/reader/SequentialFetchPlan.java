@@ -44,7 +44,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// Each time a new chunk is entered, the next chunk's `ChunkHandle` is
 /// created and chained for one-ahead pre-fetch. When `ensureFetched()`
 /// completes on chunk N, it triggers an async fetch of chunk N+1. When
-/// the retriever later advances to N+1 (already fetched), a new handle
+/// the fetcher later advances to N+1 (already fetched), a new handle
 /// for N+2 is created and chained.
 ///
 /// Chunk size controls the `readRange()` granularity:
@@ -215,7 +215,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     }
 
     /// Returns the handle of the first chunk, creating a standalone one if none is attached.
-    /// Synchronized because [#prefetch] runs on a speculative task while a column's retriever
+    /// Synchronized because [#prefetch] runs on a speculative task while a column's fetcher
     /// may already be walking the plan.
     private synchronized ChunkHandle firstChunk() {
         if (firstChunkHandle == null) {
@@ -803,8 +803,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// plan decides for a flat column only, whose values are its records. A
         /// nested column has more values than records, and counting them needs the
         /// repetition levels, which a v1 page holds inside the compressed body; its
-        /// pages are yielded until the column worker has placed
-        /// `maxRows` records and stops the worker.
+        /// pages are yielded until the column's placement has placed
+        /// `maxRows` records and ends the read.
         private boolean reachedMaxRows() {
             return maxRows > 0 && columnSchema.maxRepetitionLevel() == 0 && valuesRead >= maxRows;
         }

@@ -177,7 +177,7 @@ class FixedSizeListFastPathReadTest {
     /// aliased into the reused accumulator: each batch's array is retained alongside a
     /// snapshot and, after the whole file is drained (the producer assembles later
     /// batches ahead of the consumer), must be unchanged. Aliasing would make the
-    /// drain overwrite an earlier batch's values while it is still live.
+    /// producer overwrite an earlier batch's values while it is still live.
     @Test
     void fixedWidthValueHandoffAcrossFullBatches() throws Exception {
         int k = 8;

@@ -212,9 +212,9 @@ public final class BatchSizing {
     }
 
     /// Bytes of repetition/definition level storage a repeated column's nested
-    /// worker holds per leaf value — one `int` definition level plus one `int`
-    /// repetition level. A repeated column drains through [NestedColumnWorker],
-    /// which accumulates both `int[]` level arrays alongside the value array, so
+    /// batch holds per leaf value — one `int` definition level plus one `int`
+    /// repetition level. A repeated column's batch ([NestedBatch]) holds both `int[]` level
+    /// arrays alongside the value array, so
     /// they count toward the batch's byte budget. Non-repeated columns carry no
     /// per-value level arrays (nullability rides a packed validity bitmap), so they
     /// contribute `0`.

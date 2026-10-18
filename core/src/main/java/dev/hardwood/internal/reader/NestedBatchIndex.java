@@ -27,7 +27,7 @@ final class NestedBatchIndex {
     final int[][] offsets;         // [projectedCol] -> record-level offsets
     /// `[projectedCol] -> int[repCount][]`, **rep-level-indexed** offsets
     /// compacted from the layer-indexed [NestedBatch#multiLevelOffsets]
-    /// produced by the worker. `STRUCT`-layer slots (`null`) are dropped so
+    /// produced by the cell's fill. `STRUCT`-layer slots (`null`) are dropped so
     /// the remaining `REPEATED`-layer offsets are addressable by the
     /// 0-indexed rep level used by internal consumers
     /// ([PqListImpl] / [PqMapImpl] / [PqStructImpl]). Each per-rep-level
@@ -58,7 +58,7 @@ final class NestedBatchIndex {
     }
 
     /// Build the batch index from [NestedBatch] objects whose index fields
-    /// have been pre-computed by the drain thread.
+    /// have been pre-computed by the cell's fill before publish.
     static NestedBatchIndex buildFromBatches(NestedBatch[] batches, ColumnSchema[] columnSchemas,
                                               FileSchema schema, ProjectedSchema projectedSchema,
                                               TopLevelFieldMap fieldMap) {
