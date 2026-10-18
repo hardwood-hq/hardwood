@@ -25,6 +25,9 @@ class PlacerTest {
     private static final String FILE_A = "a.parquet";
     private static final String FILE_B = "b.parquet";
 
+    /// The ordinal [#nestedPage(BatchPlan.RowGroupBatches)] gives its next page.
+    private int nextPageIndex;
+
     @Test
     void aFlatPageSplitsIntoOneSegmentPerBatch() {
         BatchPlan plan = new BatchPlan(4, false, false, 0);
@@ -148,6 +151,55 @@ class PlacerTest {
         assertThatThrownBy(() -> placer.place(nestedPage(second), measure(2, 0), true))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Invalid column chunk: first repetition level must be 0 but was 2");
+    }
+
+    /// A page beginning inside a record continues the last record of the page before it, which
+    /// that page's row mask dropped: its leading values belong to no kept record.
+    @Test
+    void leadingValuesAfterAMaskedPageDroppingItsLastRecordFail() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
+        Placer<TestCell> placer = new Placer<>(new RecordingSink(), 4);
+        placer.place(nestedPage(rowGroup), maskedMeasure(PageRowMask.of(new int[]{ 0, 2 }), 0, 1, 0, 0, 1, 0, 0, 1), true);
+
+        assertThatThrownBy(() -> placer.place(nestedPage(rowGroup), measure(1, 0), true))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid column chunk: first repetition level must be 0 after a page whose row mask "
+                        + "drops its last record, but was 1");
+    }
+
+    /// A masked page that keeps its last record is continued by the next page's leading values.
+    @Test
+    void leadingValuesContinueTheKeptLastRecordOfAMaskedPage() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
+        RecordingSink sink = new RecordingSink();
+        Placer<TestCell> placer = new Placer<>(sink, 4);
+
+        placer.place(nestedPage(rowGroup), maskedMeasure(PageRowMask.of(new int[]{ 3, 5 }), 0, 1, 0, 0, 1, 0, 0, 1), true);
+        placer.place(nestedPage(rowGroup), measure(1, 0), true);
+        placer.end();
+
+        assertThat(sink.segments).containsExactly(
+                "cell 0: records [0, 2) values [0, 3)",
+                "cell 0: records [0, 0) values [0, 1)",
+                "cell 0: records [0, 1) values [1, 2)");
+        assertThat(sink.sealed).containsExactly("cell 0: 3 records, 5 values");
+    }
+
+    /// A page beginning inside a record continues the last record of a page the read skips: its
+    /// leading values belong to no record placed.
+    @Test
+    void leadingValuesAfterASkippedPageFail() {
+        BatchPlan plan = new BatchPlan(4, false, false, 0);
+        BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
+        Placer<TestCell> placer = new Placer<>(new RecordingSink(), 4);
+        placer.place(nestedPage(rowGroup, 0), measure(0, 1, 0), true);
+
+        assertThatThrownBy(() -> placer.place(nestedPage(rowGroup, 2), measure(1, 0), true))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Invalid column chunk: first repetition level of page 2 must be 0 after page 0, "
+                        + "the last page read before it, but was 1");
     }
 
     /// The batch the row cap ends waits for its last record, which continues on the next page.
@@ -331,9 +383,16 @@ class PlacerTest {
         return task(batches, records);
     }
 
-    /// A page of a column with repetition, placed through its measure.
-    private static PageTask nestedPage(BatchPlan.RowGroupBatches batches) {
-        return task(batches, PageInfo.UNKNOWN_RECORDS);
+    /// A page of a column with repetition, placed through its measure, its ordinal one past the
+    /// page before it.
+    private PageTask nestedPage(BatchPlan.RowGroupBatches batches) {
+        return nestedPage(batches, nextPageIndex++);
+    }
+
+    /// A page of a column with repetition, placed through its measure, at `pageIndex` of its chunk.
+    private PageTask nestedPage(BatchPlan.RowGroupBatches batches, int pageIndex) {
+        PageInfo info = new PageInfo(null, null, null, null, PageRowMask.ALL, PageInfo.UNKNOWN_RECORDS);
+        return new PageTask(info, batches.fileName(), batches.workItemIndex(), pageIndex, batches, null, 0);
     }
 
     /// The measure of a page of a column with repetition whose levels are `repetitionLevels`.
@@ -341,6 +400,15 @@ class PlacerTest {
         PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(repetitionLevels.length, null,
                 repetitionLevels, 0, null, null, null);
         return PageMeasure.of(page, PageInfo.UNKNOWN_RECORDS, new PageDecoder.LevelScratch());
+    }
+
+    /// The measure of a page of a column with repetition whose levels are `repetitionLevels`,
+    /// trimmed to the records `mask` keeps.
+    private static PageMeasure maskedMeasure(PageRowMask mask, int... repetitionLevels) {
+        PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(repetitionLevels.length, null,
+                repetitionLevels, 0, null, null, null);
+        return PageMeasure.of(PageTrimmer.trim(page, mask, scratch), PageInfo.UNKNOWN_RECORDS, scratch);
     }
 
     private static PageTask task(BatchPlan.RowGroupBatches batches, int records) {

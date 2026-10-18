@@ -52,7 +52,7 @@ final class PageTrimmer {
         else {
             count = regularRuns(page.size(), page.repetitionLevels(), mask, starts, lengths);
         }
-        KeptRuns runs = KeptRuns.of(starts, lengths, count);
+        KeptRuns runs = KeptRuns.of(starts, lengths, count, page.size());
         int kept = 0;
         for (int i = 0; i < count; i++) {
             kept += lengths[i];
