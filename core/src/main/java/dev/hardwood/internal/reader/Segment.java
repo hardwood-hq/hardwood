@@ -36,7 +36,7 @@ final class Segment {
     /// segment's values as having none.
     boolean wroteIds;
     /// The segment's bytes while it waits for its cell to be sized ([Cell#park]).
-    byte[] parkedBytes;
+    BinaryPageValues parkedValues;
 
     Segment(Cell cell, PageTask page, int recordStart, int recordEnd, int cellOffset) {
         this.cell = cell;

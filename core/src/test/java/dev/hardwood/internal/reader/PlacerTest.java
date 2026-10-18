@@ -173,7 +173,7 @@ class PlacerTest {
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
         Placer<TestCell> placer = new Placer<>(sink, 2);
-        Page page = Page.withFixedListK(new Page.IntPage(new int[9], null, null, 1, 9), 3);
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(9, null, null, 3, null, null, null);
 
         placer.place(task(rowGroup, PageInfo.UNKNOWN_RECORDS),
                 PageMeasure.of(page, PageInfo.UNKNOWN_RECORDS, new PageDecoder.LevelScratch()), true);
@@ -192,7 +192,7 @@ class PlacerTest {
         BatchPlan.RowGroupBatches rowGroup = plan.plan(0, 0, FILE_A, false, 3);
         RecordingSink sink = new RecordingSink();
         Placer<TestCell> placer = new Placer<>(sink, 2);
-        Page page = new Page.IntPage(new int[3], null, null, 1, 3);
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(3, null, null, 0, null, null, null);
 
         placer.place(task(rowGroup, 3), PageMeasure.of(page, 3, new PageDecoder.LevelScratch()), false);
 
@@ -338,8 +338,8 @@ class PlacerTest {
 
     /// The measure of a page of a column with repetition whose levels are `repetitionLevels`.
     private static PageMeasure measure(int... repetitionLevels) {
-        Page page = new Page.IntPage(new int[repetitionLevels.length], null, repetitionLevels, 1,
-                repetitionLevels.length);
+        PageDecoder.InPlaceNestedPage page = new PageDecoder.InPlaceNestedPage(repetitionLevels.length, null,
+                repetitionLevels, 0, null, null, null);
         return PageMeasure.of(page, PageInfo.UNKNOWN_RECORDS, new PageDecoder.LevelScratch());
     }
 

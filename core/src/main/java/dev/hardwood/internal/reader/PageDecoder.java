@@ -313,10 +313,17 @@ public class PageDecoder {
     /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and the
     /// decompressor's buffer, until the fill is done.
     BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
+        return decodeFlatBinary(pageBuffer, dictionary, scratch, false);
+    }
+
+    /// As [#decodeFlatBinary(ByteBuffer, Dictionary, LevelScratch)], with the values in
+    /// `scratch`'s own byte buffer when `ownBytes`, so that they outlive the decode task.
+    BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                                      boolean ownBytes) {
         if (binaryWidth() < 0 || column.maxRepetitionLevel() > 0) {
             return null;
         }
-        InPlacePage page = readInPlace(pageBuffer, scratch, false);
+        InPlacePage page = readInPlace(pageBuffer, scratch, ownBytes);
         if (page == null) {
             return null;
         }
@@ -349,6 +356,17 @@ public class PageDecoder {
 
     /// Whether the column's values are read in place through [FlatPageValues]: fixed-width
     /// numbers, and booleans.
+    /// Raises the error a page no in-place reader takes is refused with: an encoding not defined over
+    /// the column's type, or one the format does not allow for a data page's values. Every page the
+    /// format defines for a column has an in-place reader, so a page this decodes is a reader gap.
+    ///
+    /// @throws ParquetReadException for the page's malformation
+    /// @throws IllegalStateException if the page decodes, which no in-place reader took
+    void rejectWithoutReader(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
+        decodePage(pageBuffer, dictionary, scratch);
+        throw new IllegalStateException("No in-place reader for a decodable page of column '" + column.name() + "'");
+    }
+
     /// The values of a null placeholder page, every one null, for a fill that reads them in place:
     /// all-zero definition (and repetition) levels in `scratch` and no value bytes. `null` for a
     /// binary column whose width is left to the decoder to refuse.

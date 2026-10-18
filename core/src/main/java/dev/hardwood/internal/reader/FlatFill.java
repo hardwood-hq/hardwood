@@ -37,13 +37,15 @@ final class FlatFill {
     private FlatFill() {
     }
 
-    /// Fills `segment` from `values` (in place) or `page` (copied), exactly one of which is
-    /// non-null, into the cell's array `out`.
+    /// Fills `segment` from its page's `values`, read in place, into the cell's array `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    static void fill(Segment segment, FlatPageValues values, Page page, Object out, int maxDefinitionLevel) {
+    static void fill(Segment segment, FlatPageValues values, Object out, int maxDefinitionLevel) {
         ValidityWriter validity = new ValidityWriter(segment, maxDefinitionLevel);
-        forEachRun(segment, (pageRow, destPos, length) -> run(values, page, out, pageRow, destPos, length, validity));
+        forEachRun(segment, (pageRow, destPos, length) -> {
+            values.copy(pageRow, out, destPos, length);
+            validity.mark(values.definitionLevels(), pageRow, destPos, length);
+        });
     }
 
     /// Writes a run of a segment's values: page rows `[pageRow, pageRow + length)` to the cell's
@@ -75,26 +77,6 @@ final class FlatFill {
             }
             kept += length;
         }
-    }
-
-    /// Writes page rows `[pageRow, pageRow + length)` to `out` from `destPos`.
-    private static void run(FlatPageValues values, Page page, Object out, int pageRow, int destPos, int length,
-                            ValidityWriter validity) {
-        if (values != null) {
-            values.copy(pageRow, out, destPos, length);
-            validity.mark(values.definitionLevels(), pageRow, destPos, length);
-            return;
-        }
-        switch (page) {
-            case Page.IntPage p -> System.arraycopy(p.values(), pageRow, (int[]) out, destPos, length);
-            case Page.LongPage p -> System.arraycopy(p.values(), pageRow, (long[]) out, destPos, length);
-            case Page.FloatPage p -> System.arraycopy(p.values(), pageRow, (float[]) out, destPos, length);
-            case Page.DoublePage p -> System.arraycopy(p.values(), pageRow, (double[]) out, destPos, length);
-            case Page.BooleanPage p -> System.arraycopy(p.values(), pageRow, (boolean[]) out, destPos, length);
-            case Page.ByteArrayPage p -> throw new IllegalStateException("A fixed-width column decoded a binary page");
-            case Page.DictionaryByteArrayPage p -> throw new IllegalStateException("A fixed-width column decoded a binary page");
-        }
-        validity.mark(page.definitionLevels(), pageRow, destPos, length);
     }
 
     /// Sets the validity bits of every segment of `cell` that wrote none, as it held no null, once

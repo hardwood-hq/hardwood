@@ -70,10 +70,11 @@ class ScheduledBinaryViewsTest {
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aReaderOfViewsSwitchesTheColumnToBuildingThem() throws Exception {
-        List<BinaryBatchValues> batches = read(true, null);
+        BinaryBatchValues.ViewDemand demand = new BinaryBatchValues.ViewDemand();
+        List<BinaryBatchValues> batches = read(true, null, false, demand);
 
         assertThat(batches).hasSize(20);
-        assertThat(batches.getLast().hasPendingViews()).as("views built as the cell completed").isFalse();
+        assertThat(demand.requested).as("the reader's views raised the column's demand").isTrue();
         // Deferred, built and eager batches alike carry each value's bytes.
         for (BinaryBatchValues values : batches) {
             byte[] bytes = values.bytes();
@@ -86,9 +87,27 @@ class ScheduledBinaryViewsTest {
         }
     }
 
-    /// Reads the fixture's column through a [ScheduledColumn] in batches of 10, building the views
-    /// of the first batch if `readViews`.
+    /// A column whose views a reader asked for builds them as each cell completes. The demand is
+    /// raised before the read starts: which cells complete before a reader's first demand mid-read
+    /// is up to the decode threads.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aColumnAskedForViewsBuildsThemAsItsCellsComplete() throws Exception {
+        List<BinaryBatchValues> batches = read(false, null, true, new BinaryBatchValues.ViewDemand());
+
+        assertThat(batches).hasSize(20);
+        assertThat(batches).allSatisfy(values -> assertThat(values.hasPendingViews()).isFalse());
+    }
+
     private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter) throws Exception {
+        return read(readViews, filter, false, new BinaryBatchValues.ViewDemand());
+    }
+
+    /// Reads the fixture's column through a [ScheduledColumn] in batches of 10, building the views
+    /// of the first batch if `readViews`, with the column's view demand raised before the read
+    /// if `requestViews`. `demand` receives the column's demand as the read ends.
+    private static List<BinaryBatchValues> read(boolean readViews, ColumnBatchMatcher filter, boolean requestViews,
+                                                BinaryBatchValues.ViewDemand demand) throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE))) {
             FileSchema schema = reader.getFileSchema();
@@ -109,6 +128,9 @@ class ScheduledBinaryViewsTest {
             ReadScheduler scheduler = new ReadScheduler(context, 10, 10);
             ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, new PageSource(iterator, 0), exchange, column,
                     10, context.decompressorFactory(), filter);
+            if (requestViews) {
+                scheduled.viewDemand().requested = true;
+            }
             scheduler.start();
 
             List<BinaryBatchValues> batches = new ArrayList<>();
@@ -121,6 +143,7 @@ class ScheduledBinaryViewsTest {
                 batches.add(values);
             }
             exchange.checkError();
+            demand.requested = scheduled.viewDemand().requested;
             scheduled.close();
             iterator.close();
             inputFile.close();

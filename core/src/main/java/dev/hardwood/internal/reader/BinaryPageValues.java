@@ -20,28 +20,24 @@ import dev.hardwood.reader.ParquetReadException;
 ///
 /// A page holds either plain values, whose bytes a fill copies into its cell's byte buffer, or
 /// dictionary ids, which a fill writes as the batch's entry ids and which have no bytes of their
-/// own. Each comes in place or from a decoded [Page]:
+/// own, both read in place:
 ///
 /// | Kind | From | Values |
 /// |---|---|---|
-/// | plain | a `V1` `PLAIN` page | length-prefixed or fixed-width bytes in the decompressed page |
-/// | ids | a `V1` dictionary-encoded page | one id per non-null value |
-/// | arrays | any other page ([Page.ByteArrayPage]) | one array per value, `null` for a null |
-/// | row ids | any other dictionary page ([Page.DictionaryByteArrayPage]) | one id per value, `-1` for a null |
+/// | plain | a `PLAIN`, `BYTE_STREAM_SPLIT` or delta-encoded page | the value bytes in the decompressed page, or for `DELTA_BYTE_ARRAY` reconstructed into the page's scratch |
+/// | ids | a dictionary-encoded page | one id per non-null value |
 ///
-/// The fill writes the page's rows in page order, so the in-place kinds are read with one forward
-/// cursor, as [FlatPageValues] is. The definition levels, ids and byte prefix of an in-place page
-/// live in the decode thread's scratch, and its bytes in the decompressor's buffer, for the length
-/// of its task.
+/// The fill writes the page's rows in page order, so the values are read with one forward cursor,
+/// as [FlatPageValues] is; a fill that starts elsewhere reads through a [#view()] of its own. The
+/// definition levels, ids and byte prefix live in the scratch the page is decoded with, and the
+/// bytes in that scratch or the decompressor's buffer, for as long as the page's fills run.
 final class BinaryPageValues {
 
     private static final VarHandle INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
 
     private enum Kind {
         PLAIN,
-        IDS,
-        ARRAYS,
-        ROW_IDS
+        IDS
     }
 
     private final Kind kind;
@@ -65,11 +61,9 @@ final class BinaryPageValues {
     /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
     /// value's bytes; `0` for any other encoding.
     private final int stride;
-    /// Ids: one per non-null value ([Kind#IDS]) or one per value ([Kind#ROW_IDS]).
+    /// Ids: one per non-null value.
     private final int[] ids;
     private final Dictionary.ByteArrayDictionary dictionary;
-    /// A decoded page's values ([Kind#ARRAYS]).
-    private final byte[][] arrays;
 
     /// The page row the cursor is at, the non-null values before it, and where the value of the
     /// next non-null row starts in [#data].
@@ -79,8 +73,7 @@ final class BinaryPageValues {
 
     private BinaryPageValues(Kind kind, int numValues, int[] definitionLevels, int maxDefinitionLevel,
                              boolean allPresent, int[] bytePrefix, byte[] data, int plainOffset, int width,
-                             boolean prefixed, int stride, int[] ids, Dictionary.ByteArrayDictionary dictionary,
-                             byte[][] arrays) {
+                             boolean prefixed, int stride, int[] ids, Dictionary.ByteArrayDictionary dictionary) {
         this.kind = kind;
         this.numValues = numValues;
         this.definitionLevels = definitionLevels;
@@ -94,7 +87,6 @@ final class BinaryPageValues {
         this.stride = stride;
         this.ids = ids;
         this.dictionary = dictionary;
-        this.arrays = arrays;
         this.dataPos = plainOffset;
     }
 
@@ -135,7 +127,7 @@ final class BinaryPageValues {
                     + " values; leftover bytes: " + (limit - end));
         }
         return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, allPresent, prefix,
-                data, offset, width, true, 0, null, null, null);
+                data, offset, width, true, 0, null, null);
     }
 
     /// `BYTE_STREAM_SPLIT` values `width` bytes wide from `offset` in `data`: byte `b` of the `i`th
@@ -160,7 +152,7 @@ final class BinaryPageValues {
             }
         }
         return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, allPresent, prefix,
-                data, offset, width, false, Math.max(1, nonNull), null, null, null);
+                data, offset, width, false, Math.max(1, nonNull), null, null);
     }
 
     /// `DELTA_LENGTH_BYTE_ARRAY` values from `offset` in `data`: their lengths, delta-encoded, then
@@ -183,7 +175,7 @@ final class BinaryPageValues {
                     + " value bytes, not the " + expected + " its lengths give");
         }
         return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
-                prefix, data, bytesStart, 0, false, 0, null, null, null);
+                prefix, data, bytesStart, 0, false, 0, null, null);
     }
 
     /// `DELTA_BYTE_ARRAY` values from `offset` in `data`: prefix lengths, then suffixes encoded as
@@ -244,7 +236,7 @@ final class BinaryPageValues {
         }
         int[] prefix = prefixOf(definitionLevels, maxDefinitionLevel, numValues, suffixLengths, scratch);
         return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
-                prefix, values, 0, 0, false, 0, null, null, null);
+                prefix, values, 0, 0, false, 0, null, null);
     }
 
     /// The byte prefix of a page's rows from the lengths of its non-null values, into `scratch`.
@@ -310,57 +302,14 @@ final class BinaryPageValues {
             }
         }
         return new BinaryPageValues(Kind.IDS, numValues, definitionLevels, maxDefinitionLevel, idCount == numValues,
-                null, null, 0, 0, false, 0, ids, dictionary, null);
-    }
-
-    /// The values of a page decoded by [PageDecoder#decodePage], measured into `scratch`'s byte
-    /// prefix when they are plain.
-    ///
-    /// @throws IllegalStateException if the page is not binary, or its values exceed 2 GB
-    static BinaryPageValues of(Page page, PageDecoder.LevelScratch scratch) {
-        return switch (page) {
-            case Page.ByteArrayPage p -> {
-                int size = p.size();
-                byte[][] values = p.values();
-                int[] prefix = scratch.bytePrefix(size + 1);
-                long sum = 0;
-                boolean allPresent = true;
-                prefix[0] = 0;
-                for (int r = 0; r < size; r++) {
-                    byte[] value = values[r];
-                    if (value != null) {
-                        sum += value.length;
-                    }
-                    else {
-                        allPresent = false;
-                    }
-                    if (sum > Integer.MAX_VALUE) {
-                        throw BinaryBatchValues.bufferOverflow(r);
-                    }
-                    prefix[r + 1] = (int) sum;
-                }
-                yield new BinaryPageValues(Kind.ARRAYS, size, p.definitionLevels(), p.maxDefinitionLevel(),
-                        allPresent, prefix, null, 0, 0, false, 0, null, null, values);
-            }
-            case Page.DictionaryByteArrayPage p -> {
-                int size = p.size();
-                int[] rowIds = p.dictIndices();
-                boolean allPresent = true;
-                for (int r = 0; r < size && allPresent; r++) {
-                    allPresent = rowIds[r] >= 0;
-                }
-                yield new BinaryPageValues(Kind.ROW_IDS, size, p.definitionLevels(), p.maxDefinitionLevel(),
-                        allPresent, null, null, 0, 0, false, 0, rowIds, p.dictionary(), null);
-            }
-            default -> throw new IllegalStateException("A binary column decoded a " + page.getClass().getSimpleName());
-        };
+                null, null, 0, 0, false, 0, ids, dictionary);
     }
 
     /// A reader of the same values with a cursor of its own at the page's first row, so that two
     /// fills can read one page at once.
     BinaryPageValues view() {
         return new BinaryPageValues(kind, numValues, definitionLevels, maxDefinitionLevel, allPresent, bytePrefix,
-                data, plainOffset, width, prefixed, stride, ids, dictionary, arrays);
+                data, plainOffset, width, prefixed, stride, ids, dictionary);
     }
 
     /// The page's values, nulls included.
@@ -401,18 +350,6 @@ final class BinaryPageValues {
     /// @return the byte of `dest` after the last value written
     int copyPlain(int pageRow, int length, int[] starts, int[] ends, int destPos, byte[] dest, int destByte) {
         int pos = destByte;
-        if (kind == Kind.ARRAYS) {
-            for (int i = 0; i < length; i++) {
-                byte[] value = arrays[pageRow + i];
-                starts[destPos + i] = pos;
-                if (value != null) {
-                    System.arraycopy(value, 0, dest, pos, value.length);
-                    pos += value.length;
-                }
-                ends[destPos + i] = pos;
-            }
-            return pos;
-        }
         skipTo(pageRow);
         if (stride > 0) {
             for (int i = 0; i < length; i++) {
@@ -464,18 +401,6 @@ final class BinaryPageValues {
     /// + length)` of `dictIndices`; a null gets `-1` and an empty view in `starts` and `ends`,
     /// which are `null` only for a page with no null. Rows must be asked for in increasing order.
     void copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int destPos) {
-        if (kind == Kind.ROW_IDS) {
-            System.arraycopy(ids, pageRow, dictIndices, destPos, length);
-            if (!allPresent) {
-                for (int i = 0; i < length; i++) {
-                    if (ids[pageRow + i] < 0) {
-                        starts[destPos + i] = 0;
-                        ends[destPos + i] = 0;
-                    }
-                }
-            }
-            return;
-        }
         skipTo(pageRow);
         if (definitionLevels == null) {
             System.arraycopy(ids, nonNull, dictIndices, destPos, length);

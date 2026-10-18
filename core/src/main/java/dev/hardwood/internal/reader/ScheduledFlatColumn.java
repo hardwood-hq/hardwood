@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
@@ -37,8 +38,17 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// them as its cells complete from then on.
     private final BinaryBatchValues.ViewDemand viewDemand = new BinaryBatchValues.ViewDemand();
 
+    /// The column's view demand, for tests: whether a reader asked for its views, and raising it
+    /// before the read starts.
+    BinaryBatchValues.ViewDemand viewDemand() {
+        return viewDemand;
+    }
+
     // === Guarded by `lock` ===
     private final Placer<Cell> placer;
+    /// Scratch of binary pages whose segments are all filled, for the column's next binary pages.
+    private final ArrayBlockingQueue<PageDecoder.LevelScratch> binaryScratch =
+            new ArrayBlockingQueue<>(4 * ColumnWorker.MAX_INFLIGHT_PAGES);
     /// Cells whose seal came after their last fill, which the fetcher completes once it has
     /// released the lock.
     private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
@@ -222,29 +232,24 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             }
             PageDecoder.LevelScratch scratch = SCRATCH.get();
             if (binary) {
-                runBinaryPage(page, scratch);
+                runBinaryPage(page);
                 return;
             }
             PageInfo info = page.info;
-            FlatPageValues values = null;
-            Page decoded = null;
-            if (info.isNullPlaceholder()) {
-                values = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).flat();
+            FlatPageValues values = info.isNullPlaceholder()
+                    ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).flat()
+                    : page.decoder.decodeFlat(info.pageData(), info.dictionary(), scratch);
+            if (values == null) {
+                page.decoder.rejectWithoutReader(info.pageData(), info.dictionary(), scratch);
             }
-            else {
-                values = page.decoder.decodeFlat(info.pageData(), info.dictionary(), scratch);
-                if (values == null) {
-                    decoded = page.decoder.decodePage(info.pageData(), info.dictionary(), scratch);
-                }
-            }
-            checkRows(info, values != null ? values.size() : decoded.size());
+            checkRows(info, values.size());
             for (int i = 0; i < page.segments.size(); i++) {
                 if (done) {
                     return;
                 }
                 Segment segment = page.segments.get(i);
                 Cell cell = segment.cell;
-                FlatFill.fill(segment, values, decoded, cell.allocate(exchange, column).values, maxDefinitionLevel);
+                FlatFill.fill(segment, values, cell.allocate(exchange, column).values, maxDefinitionLevel);
                 filled(cell);
             }
         }
@@ -263,21 +268,38 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// Decodes a page of a binary column, measures the bytes of its segments, sizes the cells whose
     /// last measure that is, and fills its segments. Every segment is measured before any is
     /// filled, so that a cell this page's measure sizes is sized before the page fills it.
-    private void runBinaryPage(PageTask page, PageDecoder.LevelScratch scratch) {
+    private void runBinaryPage(PageTask page) {
+        // The page's own scratch: a segment that parks reads the page's bytes after this task
+        PageDecoder.LevelScratch scratch = binaryScratch.poll();
+        page.ownScratch = scratch != null ? scratch : new PageDecoder.LevelScratch();
+        try {
+            fillBinaryPage(page, page.ownScratch);
+        }
+        finally {
+            release(page);
+        }
+    }
+
+    /// Gives up a hold on a flat binary page's scratch, returning it to the column's pool at the last.
+    private void release(PageTask page) {
+        if (page.holds.decrementAndGet() == 0) {
+            PageDecoder.LevelScratch scratch = page.ownScratch;
+            page.ownScratch = null;
+            binaryScratch.offer(scratch);
+        }
+    }
+
+    private void fillBinaryPage(PageTask page, PageDecoder.LevelScratch scratch) {
         PageInfo info = page.info;
         BinaryPageValues values;
         if (info.isNullPlaceholder()) {
-            PageDecoder.InPlaceNestedPage nulls = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch);
-            values = nulls != null ? nulls.binary() : null;
+            values = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary();
         }
         else {
-            values = page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch);
-        }
-        if (values == null) {
-            Page decoded = info.isNullPlaceholder()
-                    ? page.decoder.nullPage(info.placeholderNumValues())
-                    : page.decoder.decodePage(info.pageData(), info.dictionary(), scratch);
-            values = BinaryPageValues.of(decoded, scratch);
+            values = page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch, true);
+            if (values == null) {
+                page.decoder.rejectWithoutReader(info.pageData(), info.dictionary(), scratch);
+            }
         }
         checkRows(info, values.size());
         List<Segment> segments = page.segments;
@@ -295,7 +317,10 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             Segment segment = segments.get(i);
             Cell cell = segment.cell;
             BinaryBatchValues out = (BinaryBatchValues) cell.allocate(exchange, column).values;
+            // A segment that parks holds the page's bytes until the sizing fills it
+            page.holds.incrementAndGet();
             if (BinaryFill.fill(segment, values, out, maxDefinitionLevel)) {
+                page.holds.decrementAndGet();
                 filled(cell);
             }
         }
@@ -308,7 +333,9 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         List<Segment> parked = BinaryFill.size(cell, out);
         if (parked != null) {
             for (int i = 0; i < parked.size(); i++) {
-                BinaryFill.unpark(parked.get(i), out);
+                Segment segment = parked.get(i);
+                BinaryFill.unpark(segment, out, maxDefinitionLevel);
+                release(segment.page);
                 filled(cell);
             }
         }

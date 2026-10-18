@@ -18,10 +18,8 @@ final class NestedPageTask extends PageTask {
     /// Segments placed from the page whose cells are not filled yet; the page's scratch goes back
     /// to its column's pool once its placement has ended and the count is back at zero.
     final AtomicInteger unfilledSegments = new AtomicInteger();
-    /// The decoded page, trimmed to its kept records; written by its task before it is measured.
-    /// `null` for a page read in two passes, whose values [#inPlace] leaves in its bytes.
-    Page page;
-    /// A page read in two passes: its levels, and its values in place in its own bytes.
+    /// The page read in two passes: its levels, kept to its mask's records, and its values in
+    /// place in its own bytes; written by its task before it is measured.
     PageDecoder.InPlaceNestedPage inPlace;
     /// The page's measure; written by its task before [#measured] is set.
     PageMeasure measure;
