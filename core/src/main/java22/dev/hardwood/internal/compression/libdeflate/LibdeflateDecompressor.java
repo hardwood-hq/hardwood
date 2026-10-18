@@ -37,6 +37,11 @@ public final class LibdeflateDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
+        return decompress(compressed, uncompressedSize, null);
+    }
+
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();
@@ -96,7 +101,7 @@ public final class LibdeflateDecompressor implements Decompressor {
                         uncompressedSize, outputOffset));
             }
 
-            byte[] result = borrowOutputBuffer(uncompressedSize);
+            byte[] result = dest != null ? dest : borrowOutputBuffer(uncompressedSize);
             MemorySegment.copy(output, ValueLayout.JAVA_BYTE, 0, result, 0, uncompressedSize);
             return result;
         }

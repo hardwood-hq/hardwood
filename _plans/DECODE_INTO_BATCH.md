@@ -41,6 +41,29 @@ two copies around native decompression (#1015; stage 8 below).
 | Cells against pages, stage 5 | Overture: 57,330 cells, one spanning two pages, 3,931 records per cell. Fixed-size lists (`k` 768, 8M values): 16 cells, every one spanning pages, 2.75 pages per cell |
 | Stage 5 profile, fixed-size lists (`k` 768) through the fast path, container | 12.50 ms (`main`) against 12.55 ms; decode of `PLAIN` floats 38%, the copy of uncompressed pages into the decompressor's buffer 29%, the copy into cells about 2% (`main`'s worker copies into its batch at the same cost) |
 
+| `run-nested.sh` (whole Overture file through `RowReader`) on 1.1.0.Beta2, JFR, container | the consumer thread 71% of the CPU samples (record assembly, `NestedBatchIndex.decodeLeaf`; `String` creation 18.5%), the drain 15.6%, page decode 8.1%; the consumer parked for 23 ms of 20 s in parks of 20 ms or more. The read is bound by its consumer, which the pipeline does not touch |
+| Overture places file layout | 55 columns × 256 row groups of about 18K rows, 14,081 data pages: one page per column chunk but one. Batches end at row groups, so no cell crosses a page there by the file's layout |
+| Two passes (prototype, `V1` `PLAIN` and dictionary pages of leaves with repetition read in place at the seal) against stage 5, N300 pinned at 1.50 GHz, two rounds, median ms | Overture as written: columns 3223/3331 against 3254/3325, rows 3205/2803 against 2961/3295 (bimodal on both). Overture with PyArrow's defaults (23 row groups, about 10 pages per chunk): columns 3960/4195 against 4189/4295, rows 3753/4039 against 4051/4156, CPU 2–7% lower, 0.8–1.3 GB less allocated per read. `main` on that file: columns 4201/4237, rows 3865/3918, GC 303–353 ms against stage 5's 570–919 and the two passes' 492–786 |
+| Stage 5 on Overture with PyArrow's defaults, row scan, N300 pinned: GC | 848–871 ms per read against `main`'s 313–342; every collection promotes at age 1 in both (tenuring threshold 1 in about 90% of collections, nothing past age 2), stage 5 in 148–152 collections against 87–90, promoting 13.3–13.9 GB against 2.6–2.7. Live heap at a full collection 377–436 MB against `main`'s 446–454; pages and dictionaries each decoded once; read-ahead depth 1 still promotes 10 GB; bounding finished batches ahead of the consumer changes nothing |
+| Each nested page allocating its own scratch (levels, record starts, ids), against a pool per column returned once the page's cells are filled; two passes and the pool together, allocation per read (container) | Overture as written: columns 11.5 → 7.9 GB, rows 11.6 → 8.5 GB (`main` 10.6, 11.6); with PyArrow's defaults: columns 12.2 → 7.9 GB, rows 13.4 → 8.6 GB (`main` 11.5, 12.0) |
+| The same, N300 pinned, two rounds, ms | as written: columns 3304/3337 → 3151/3337 (`main` 4429/4127), rows 3051/2911 → 2917/2915 (`main` 3951/3867); with PyArrow's defaults: columns 4290/4022 → 3557/3469 (`main` 4721/4146), rows 4198/4211 → 3409/3328 (`main` 3932/4218), GC 903/853 → 557/555 ms (`main` 366/491), promoted 13.0/11.7 → 7.6/7.5 GB (`main` 3.0/3.8) |
+
+**Other readers, repeated leaves** (source read at the commits given in #1287):
+
+| Reader | Copies per value | Output size from | A column's pages in parallel |
+| --- | --- | --- | --- |
+| arrow-rs | 1, plus regrowth across page chunks, and an in-place move for nulls | levels, per page chunk, as decoded | no |
+| Arrow C++ | 1, plus power-of-2 regrowth | growth | no |
+| Polars | 1 for `PLAIN` fixed-width, 2 for delta and cast types | the chunk's level count, an upper bound | no |
+| DuckDB | 2 (a read vector, then `ListVector::Append`) | power-of-2 growth | no |
+| Velox | 1 | a pre-pass over the chunk's levels, then exact per batch | no |
+| cuDF | 1 | a pre-pass over the levels of a bounded set of pages; an exclusive scan gives each page its output offset per nesting depth | yes, each page at its scanned offset |
+
+Every reader that writes a repeated leaf's values once without a size protocol decodes the column
+in order on one thread, so the next write position is always known. A read of one column on
+every core rules that out here. cuDF is the reader with the same constraint, and it writes once
+by measuring levels first and decoding values second, at offsets the measure gives.
+
 The first two rows are where the flat gains come from: no page arrays and no copy. For leaves
 with repetition the gain comes from removing the per-value assembly and its accumulators; the
 copy from page arrays is a few percent of the read, and what remains is dominated by
@@ -128,38 +151,67 @@ zero every column's arrays on one thread.
 A plan-sized cell is never waited for: whichever task reaches it first allocates it. Only a
 measured cell can be reached by a page task before it is allocated.
 
-### Fill rule
+### Two passes
 
-Every segment's values are decoded straight from its page into its cell, once the cell's array
-it writes is allocated. No column copies values from a page array into a cell; levels and
-record starts, which measure decodes, are copied as the batch's index mode keeps them.
+A page whose sizes metadata does not give is read in two passes, and its values are written once,
+from its decompressed bytes into its cells.
 
-- A segment whose cell is allocated when its page task places it is filled by that task, from
-  the page's decompressed bytes. Every segment of a flat fixed-width leaf is filled this way,
-  and so is every segment of a leaf with repetition whose cell the same page seals.
-- Any other segment **waits**: its page counts it, keeps its decompressed bytes, its decoder
-  and its measured levels, and registers with the cell. The thread that seals and allocates the
-  cell submits a **fill task** for every page waiting on it. A fill task writes the page's
-  segments in that cell in page order, so that encodings decoded from the start of the page
-  (run-length ids, delta) keep their decoder state from one segment to the next, and releases
-  the page's bytes once the page has no segment left waiting.
-- A segment of a flat variable-length leaf writes its ids, views and validity at once, since
-  those are plan-sized, and waits only for its bytes: the cell's byte buffer is sized by its
-  segments' measures.
+1. **Measure** (the page's task): decompress the page into a buffer the page owns, decode its
+   levels and, for a dictionary-encoded page, its ids, and measure it: record starts, value
+   counts and, for `PLAIN` binary, byte lengths. Nothing is written into a cell.
+2. **Place** (in page order, under the column lock): split each measured page into segments of
+   the batch plan's cells. A cell is sealed once its last record's end is known, and its
+   segments then give every array's size and every segment's offset: a running sum in page
+   order, the scan cuDF computes per window.
+3. **Fill:** the sealed cell's arrays are allocated at their final size, and each of its segments
+   decodes its values from its page's kept bytes straight to its offset, with its levels and record
+   offsets. A page releases its bytes once every cell it is placed into is filled.
 
-No pool thread waits for a cell: a waiting page holds bytes, not a thread. A fill task goes to
-the pool directly, past the scheduler; it queues behind at most the read's pages in flight,
-which the read-ahead bound keeps short, so the pool still needs no priorities.
-A page holds its decompressed bytes from its decode until its last waiting segment is filled,
-which is bounded by the pages of the column's cells not yet sealed; for leaves with repetition
-the scheduler holds at most a small fixed number of pages unplaced.
+**Every column kind is this model:**
+
+- **Flat fixed-width:** metadata gives the placement and every size, so pass 1 is empty and the
+  page's one task fills its segments.
+- **Flat variable-length:** pass 1 measures the byte lengths; ids, views and validity are
+  plan-sized and written at once.
+- **Leaves with repetition:** pass 1 measures the levels.
+
+The memory a page holds between its passes is its decompressed bytes, its levels and its ids,
+bounded by the pages the scheduler holds unplaced and the pages of cells not yet sealed. No pool
+thread waits for a cell.
+
+**Every encoding can be read this way.** A page falls back to decoding into page arrays only
+where pass 2 has no reader for its encoding yet:
+
+| Page | Pass 2 reads its values |
+| --- | --- |
+| `V1` `PLAIN` and dictionary | in place, at any position (`FlatPageValues`, `BinaryPageValues`, shared with flat columns) |
+| `V2` | in place: its levels lie uncompressed before its value region |
+| `BYTE_STREAM_SPLIT`, `ALP`, `PLAIN` `BOOLEAN` | in place, at any position |
+| delta encodings, `RLE` `BOOLEAN` | from the page's start only: one fill task per page, once every cell it touches is sealed, writes its segments in page order |
+| masked pages | in place, skipping the rows the mask drops, as flat columns do |
+| null placeholders, fixed-size lists | no levels to keep: placeholders write nulls, a fixed-size list's values are contiguous |
+
+Once every row has its reader, the decode into page arrays and the copy at the seal leave the
+scheduled pipeline, for flat and nested columns alike (stage 6).
+
+**Prototype** (branch `1287-window-pass`, behind `hardwood.internal.twoPass`): leaves with
+repetition, `V1` `PLAIN` and dictionary pages, values read in place at the seal through the flat
+readers; every other page through page arrays. Measured against stage 5 on the Overture file as
+written and rewritten with PyArrow's defaults (23 row groups of 200K rows, about 10 pages per
+column chunk), container and N300, with allocation per read. Flat variable-length `PLAIN` against
+stage 4's parked bytes on `run-binary.sh` and the plain 1BRC file follows if leaves with
+repetition take the two passes.
+
+The two passes are adopted if they are no slower than stage 5 on those reads. They reuse the flat
+readers, so the code they add is the readers each encoding needs once, for flat and nested
+columns together.
 
 ### Measure and fill
 
 | Page | Task |
 | --- | --- |
 | fixed-width, without repetition | one step: decompress and decode straight into the segments |
-| with repetition, or variable-length | **measure** (decompress, decode levels and value lengths, report each segment's counts and whether it is all-present), place, then **fill** the segments whose cells are allocated, in order, keeping the decoder state from one segment to the next; the others are filled by the page's fill task once their cells are allocated ([Fill rule](#fill-rule)) |
+| with repetition, or variable-length | **measure** (decompress into the page's own buffer, decode levels, ids and value lengths, report each segment's counts and whether it is all-present), place, then **fill** each sealed cell from its pages' kept bytes ([Two passes](#two-passes)) |
 
 The fill writes values (typed kernels per encoding: dictionary lookup, `PLAIN`,
 `BYTE_STREAM_SPLIT`, delta), dictionary ids, bytes with each value's start and end, levels and
@@ -197,6 +249,7 @@ by the read-ahead window, not by the exchange's holders.
 - A segment's values and bytes are written once, from its page into its cell; no page array of
   values is copied into a cell.
 - No pool thread waits for a cell to be allocated.
+- A page's decompressed bytes outlive its task only until every cell it is placed into is filled.
 - A column publishes a batch only after every segment of its cell is filled, and in plan order.
 - No pool thread blocks on the exchange.
 
@@ -205,7 +258,7 @@ by the read-ahead window, not by the exchange's holders.
 The coordination the pipeline adds costs more than its decoding does in the cases measured so
 far: every regression against `main` found while landing stages 2 to 4 came from threads waiting
 on each other, waking each other or writing each other's cache lines. Before stage 5 adds
-waiting segments and fill tasks, each mechanism is checked against a simpler one. A mechanism
+more, each mechanism is checked against a simpler one. A mechanism
 stays only with a measurement that needs it.
 
 | Mechanism | Needed for | Measured | Decision |
@@ -214,13 +267,19 @@ stays only with a measurement that needs it.
 | A plan-sized cell allocated by the first task that reaches it, under the cell's monitor | allocation off the scheduler and the fetcher | a page spans about two cells, so the second task waits while the first zeroes the array: `ObjectMonitor::try_spin` 9.7% of the instructions of `flatFloor` on the N300; a parking lock −0.5 ms wall; allocating on the fetcher +2.5 ms, one thread zeroing every cell | no task waits for an allocation: allocate outside the lock and install with a compare-and-set, the loser dropping its array (to measure) |
 | Read-ahead window: batches, or budget rows while the slowest column's next batch waits for decoding and a decode thread of the context is idle | a narrow read keeping the pool busy (budget rows); eight concurrent reads (idle gate: an unconditional budget window made 1BRC's splits 7% slower); a consumer-bound row reader (wait gate: dropping it made the flat row reader 7% slower) | the wait gate starves a single column whose pages span about two batches while its consumer is momentarily ahead: `flatFloor` in the container 12.1 (`main`) against 13.5–14.4 ms, 12.5–13.2 ms without the gate | candidate: one bound in bytes past the consumer, and the pool ordering every read's tasks by how near their batch is to that read's consumer, in place of the idle and wait gates; it must pass the three measurements that made the gates and `flatFloor` (to measure) |
 | One fetcher per column, a virtual thread keeping `FETCH_AHEAD` pages queued | header, dictionary and `InputFile` access off the decode pool | — | keep |
-| Three treatments of a size known only once measured: parked bytes (flat variable-length), page arrays copied at the seal (leaves with repetition), and the waiting segments and fill tasks of the [fill rule](#fill-rule) | cells allocated once at their final size | parked bytes: 68% of a plain 1BRC file's bytes, none of a dictionary-encoded one; the copy at the seal: 2–3% of the CPU of the Overture and fixed-size-list reads | decided after the rows above, on the simplified core |
+| Three treatments of a size known only once measured: parked bytes (flat variable-length), page arrays copied at the seal (leaves with repetition), and the waiting segments and fill tasks the plan had for stage 5 | cells allocated once at their final size | parked bytes: 68% of a plain 1BRC file's bytes, none of a dictionary-encoded one; the copy at the seal: 2–3% of the CPU of the Overture and fixed-size-list reads | the [two passes](#two-passes), to be measured against the other two |
 | Cells written by every decode thread and read by the consumer | page-level parallelism within a column | `flatFloor` on the N300: the consumer's loop 0.8–0.9 ms slower than over `main`'s batches, which one drain thread writes; level with `main` when the read runs on one four-core L2 cluster | accepted as the cost of filling on the pool, unless the rows above leave a regression that it explains |
 
 ## Stages
 
 Each stage lands as its own PR, keeps every read correct, and is gated against `main` on the
-N300: the benchmarks named, plus no benchmark of `run-regression.sh` slower. Every gate includes
+N300: the benchmarks named, plus no benchmark of `run-regression.sh` slower. Every stage's reads
+also allocate less per read than `main`'s: the pipeline writes each value into an array allocated
+once, so it never allocates more than the per-column pipeline it replaces. Scratch that outlives a
+page's task (levels, record starts, ids, decompressed bytes) is borrowed from a pool on its
+column and returned once the page's cells are filled. A batch's own arrays are not recycled on the nested
+row reader: values it returns refer to their batch, so no later batch refills its arrays
+(`FileLogicalTypeTest.valuesHeldAcrossBatchesKeepTheirInlineBytes`). Every gate includes
 a narrow read: three columns of the 2016-01 taxi file (one row group of 10.9M rows, pages of
 about 0.7M rows, so about 15 pages per column), the shape `FlatPerformanceTest` reads and the
 regression preset does not. Stage 2 adds it to hardwood-benchmarks.
@@ -234,7 +293,7 @@ batches cut by the one batch plan.
 | 2 | Scheduler, fetchers and cells for flat fixed-width leaves on `ColumnReader`; `V1` dictionary and `PLAIN` pages read in place, every other page through a page array on its task | the drain of those columns, and their page arrays and copy for the common encodings | `run-flat.sh` columnar faster, narrow read not slower |
 | 3 | The same columns on the flat row reader (recycling exchange) | the drain of those columns | `run-flat.sh` row readers faster, narrow read not slower |
 | 4 | Measure and fill for flat variable-length leaves (`PLAIN` and delta bytes), dictionary ids of flat binary leaves, including chunks with a `PLAIN` fallback; `V1` `PLAIN` and dictionary pages read in place, every other page through a page array on its task | the `byte[]` per value, the per-page id array | `run-1brc.sh`, `run-dictfilter.sh` and `run-binary.sh` (a plain `BYTE_ARRAY` scan) faster |
-| 5 | Leaves with repetition: measure, placement after measure, the fill rule with waiting segments and fill tasks, for `V1` `PLAIN` and dictionary pages; flat variable-length bytes move onto waiting segments, replacing their parked bytes; fixed-size lists; every column of `NestedRowReader`, its non-repeated fixed-width leaves included | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE), the parked bytes of stage 4 | `run-nested.sh` faster; `run-fixedlist.sh` (`V2` pages, filled from page arrays until stage 6), `run-1brc.sh` and `run-binary.sh` not slower |
+| 5 | Leaves with repetition: measure, placement after measure, and the [two passes](#two-passes) for `V1` `PLAIN` and dictionary pages, if the prototype carries them (the copy at the seal otherwise); flat variable-length bytes move onto the two passes with them, replacing their parked bytes; fixed-size lists; every column of `NestedRowReader`, its non-repeated fixed-width leaves included | the nested accumulators, their doubling and the publish copies (#1024, #750, finding 6 of READ_PATH_CONVERGENCE), the parked bytes of stage 4 | `run-nested.sh` faster; `run-fixedlist.sh` (`V2` pages, filled from page arrays until stage 6), `run-1brc.sh` and `run-binary.sh` not slower |
 | 6 | Fill straight from the page for `V2` pages, `BYTE_STREAM_SPLIT`, delta `INT32`/`INT64`, `ALP` and `BOOLEAN`, flat and nested | the remaining page arrays and copies | `run-encodings.sh` faster |
 | 7 | Remove the per-column pipeline (the differential tests' oracle: their expected batches are recorded from it first), fold the end state into `READ_PIPELINE.md`, `VALUE_DECODE.md` and `NESTED_DECODE.md`, delete this plan | the drain | — |
 | 8 | Snappy decompresses heap to heap (#1015) | steps 1–2 of #1287 | `run-filter.sh` (SNAPPY) faster |
@@ -243,8 +302,8 @@ Stage 2 carries the gain the spike and the prototype measured, on the read they 
 every later stage moves more columns onto a pipeline already shown faster. Binary leaves come
 before leaves with repetition: they bring the first measured cells while placement still comes
 from metadata, and with them every flat column of both readers, 1BRC's `station` included, is
-on the new pipeline; leaves with repetition add placement after measure and waiting segments on
-top, and stage 4's parked bytes become waiting segments with them. The encodings of
+on the new pipeline; leaves with repetition add placement after measure on top, and the two passes
+would replace stage 4's parked bytes with them. The encodings of
 stage 6 wait for a measurement, since Hardwood's writer and the default
 PyArrow and parquet-java settings write `V1` pages without those encodings. Stage 8 is
 independent of the others and can land at any point.
@@ -264,9 +323,9 @@ independent of the others and can land at any point.
   and both exchange modes. The result-comparing suites also run at small batch capacities.
 - **Parallel fills.** Pages filled concurrently into one cell, with nulls at the page edges, for
   the atomic validity merge; two tasks reaching an unallocated plan-sized cell at once.
-- **Waiting segments.** A page whose segments wait on two cells sealed in either order; a page
-  measured before the page ahead of it; a cell whose every page waits; a failure, `close()` and
-  the row cap while pages wait, each page releasing its bytes once.
+- **Two passes.** A page placed into two cells sealed in either order, filled from its kept bytes
+  by two threads at once; a page measured before the page ahead of it; a failure, `close()` and
+  the row cap between a page's passes, each page releasing its bytes once.
 - **Lifecycle.** `close()` during fills, a page task failure, a pool rejecting tasks (a closed
   context), a recycling exchange with one free holder.
 - The existing suites (`DifferentialReadTest`, the parquet-testing runner, `MisalignedPageBoundariesTest`,

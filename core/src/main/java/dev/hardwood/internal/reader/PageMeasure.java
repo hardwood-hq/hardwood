@@ -60,14 +60,25 @@ final class PageMeasure {
     /// @param scratch the page's own scratch, which holds its levels
     /// @throws ParquetReadException if the page's records disagree with its metadata
     static PageMeasure of(Page page, int metadataRecords, PageDecoder.LevelScratch scratch) {
-        int size = page.size();
-        int k = page.fixedListK();
-        int[] repetitionLevels = page.repetitionLevels();
         BinaryPageValues binary = page instanceof Page.BinaryPage ? BinaryPageValues.of(page, scratch) : null;
+        return of(page.size(), page.fixedListK(), page.repetitionLevels(), page.allPresent(), binary,
+                metadataRecords, scratch);
+    }
+
+    /// Measures a page read in two passes from its levels, before its values are decoded.
+    ///
+    /// @throws ParquetReadException if the page's records disagree with its metadata
+    static PageMeasure of(PageDecoder.InPlaceNestedPage page, int metadataRecords, PageDecoder.LevelScratch scratch) {
+        return of(page.size(), 0, page.repetitionLevels(), page.definitionLevels() == null, page.binary(),
+                metadataRecords, scratch);
+    }
+
+    private static PageMeasure of(int size, int k, int[] repetitionLevels, boolean allPresent,
+                                  BinaryPageValues binary, int metadataRecords, PageDecoder.LevelScratch scratch) {
         if (k > 0 || repetitionLevels == null) {
             int records = k > 0 ? size / k : size;
             checkMetadataRecords(records, metadataRecords);
-            return new PageMeasure(size, records, 0, 0, null, k, page.allPresent(), binary);
+            return new PageMeasure(size, records, 0, 0, null, k, allPresent, binary);
         }
         int[] starts = scratch.recordStarts(size);
         int records = 0;
@@ -79,7 +90,7 @@ final class PageMeasure {
         int leading = records > 0 ? starts[0] : size;
         checkMetadataRecords(records, metadataRecords);
         return new PageMeasure(size, records, leading, size > 0 ? repetitionLevels[0] : 0, starts, 0,
-                page.allPresent(), binary);
+                allPresent, binary);
     }
 
     /// Fails unless the records a page decodes to are the records its metadata gives, where the
