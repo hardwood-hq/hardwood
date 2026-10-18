@@ -13,16 +13,11 @@ import java.util.Arrays;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
-import dev.hardwood.internal.encoding.AlpDecoder;
-import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
-import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
-import dev.hardwood.internal.encoding.DeltaByteArrayDecoder;
-import dev.hardwood.internal.encoding.DeltaLengthByteArrayDecoder;
-import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageDecodedEvent;
@@ -34,11 +29,13 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Decoder for individual Parquet data pages.
+/// Reads the data pages of one column chunk in place: a page's header and levels, and the value
+/// reader its fill writes the values with ([FlatPageValues], [BinaryPageValues]), through
+/// [#decodeFlat], [#decodeFlatBinary] and [#decodeNestedInPlace]. A page no reader takes is
+/// refused before it is decompressed.
 ///
-/// This class provides page decoding via [#decodePage].
-/// Page location is handled by the [FetchPlan] implementations, dictionary
-/// parsing by [DictionaryParser].
+/// Page location is handled by the [FetchPlan] implementations, dictionary parsing by
+/// [DictionaryParser].
 public class PageDecoder {
 
     /// Reusable level-decoding buffers owned by one in-flight page slot.
@@ -166,6 +163,10 @@ public class PageDecoder {
     /// (default disabled).
     private final boolean fixedListFastPathEnabled;
 
+    /// The width of the column's plain binary values: `0` for length-prefixed values, `-1` for a
+    /// column that is not binary.
+    private final int binaryWidth;
+
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this(columnMetaData, column, decompressorFactory, true);
@@ -177,12 +178,20 @@ public class PageDecoder {
     /// @param column column schema
     /// @param decompressorFactory factory for creating decompressors
     /// @param fixedListFastPathEnabled whether the fixed-size-list fast path may engage
+    /// @throws dev.hardwood.reader.SchemaIncompatibleException if the column is a
+    ///         `FIXED_LEN_BYTE_ARRAY` whose width is absent or not positive
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
                        boolean fixedListFastPathEnabled) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
+        this.binaryWidth = switch (column.type()) {
+            case BYTE_ARRAY -> 0;
+            case INT96 -> 12;
+            case FIXED_LEN_BYTE_ARRAY -> FixedWidthValidator.requireWidth(null, column);
+            default -> -1;
+        };
     }
 
     /// Checks if this PageDecoder is compatible with the given column metadata.
@@ -201,173 +210,55 @@ public class PageDecoder {
         return decompressorFactory;
     }
 
-    /// Produces an all-null typed [Page] of the given size, without reading or
-    /// decompressing any data. Used when inline page statistics have proven that
-    /// no row in the page can match the active filter predicate — row alignment
-    /// with sibling columns is preserved while decompression and value decoding
-    /// are skipped entirely. The row-level filter drops the synthetic nulls via
-    /// SQL three-valued logic (`null <op> x → unknown → non-match`).
-    ///
-    /// Only valid for columns where `maxDefinitionLevel > 0`; for required
-    /// columns the caller must not skip the page.
-    public Page nullPage(int numValues) {
-        int maxDefLevel = column.maxDefinitionLevel();
-        if (maxDefLevel == 0) {
-            throw new IllegalStateException("Cannot create null placeholder page for required column '"
-                    + column.name() + "' — maxDefinitionLevel is 0");
-        }
-        int[] definitionLevels = new int[numValues]; // zero-initialised → all null
-        int[] repetitionLevels = column.maxRepetitionLevel() > 0 ? new int[numValues] : null;
-        PhysicalType type = column.type();
-        return switch (type) {
-            case INT64 -> new Page.LongPage(new long[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            case DOUBLE -> new Page.DoublePage(new double[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            case INT32 -> new Page.IntPage(new int[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            case FLOAT -> new Page.FloatPage(new float[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            case BOOLEAN -> new Page.BooleanPage(new boolean[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    new Page.ByteArrayPage(new byte[numValues][], definitionLevels, repetitionLevels, maxDefLevel, numValues);
-        };
-    }
-
-    /// Decode a single data page from a buffer.
-    ///
-    /// The buffer should contain the complete page including header.
-    ///
-    /// @param pageBuffer buffer containing just this page (header + data)
-    /// @param dictionary dictionary for this page, or null if not dictionary-encoded
-    /// @return decoded page
-    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) {
-        // Standalone callers have no reorder slot to reuse across, so a throwaway
-        // scratch (allocated fresh here, buffers grown lazily) matches the old
-        // per-call allocation while keeping the decode path free of null handling.
-        return decodePage(pageBuffer, dictionary, new LevelScratch());
-    }
-
-    /// Decode a single data page, reusing the supplied slot-owned level scratch.
-    /// `scratch` must not be null; standalone callers pass a throwaway instance via
-    /// the two-argument overload.
-    Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        PageDecodedEvent event = new PageDecodedEvent();
-        event.begin();
-
-        // Parse page header directly from buffer
-        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
-        PageHeader pageHeader = PageHeaderReader.read(headerReader);
-        int headerSize = headerReader.getBytesRead();
-
-        // Slice the page data (avoids copying)
-        int compressedSize = pageHeader.compressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
-
-        if (pageHeader.crc() != null) {
-            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
-        }
-
-        Page result = switch (pageHeader.type()) {
-            case DATA_PAGE -> {
-                Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-                int uncompressedSize = pageHeader.uncompressedPageSize();
-                byte[] uncompressedData = decompressor.decompress(pageData, uncompressedSize);
-                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, uncompressedSize, dictionary,
-                        scratch);
-            }
-            case DATA_PAGE_V2 -> {
-                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData,
-                        pageHeader.uncompressedPageSize(), dictionary, scratch);
-            }
-            default -> throw new ParquetReadException("Unexpected page type for single-page decode: " + pageHeader.type());
-        };
-
-        event.column = column.name();
-        event.compressedSize = compressedSize;
-        event.uncompressedSize = pageHeader.uncompressedPageSize();
-        event.commit();
-
-        return result;
-    }
-
-    /// Decodes a data page (`V1` or `V2`) of a fixed-width numeric or boolean column without
+    /// Reads a data page (`V1` or `V2`) of a fixed-width numeric or boolean column without
     /// repetition whose values a fill reads in place, in any encoding the format defines for its
-    /// type. Returns `null` before anything is decompressed for a page no in-place reader takes,
-    /// which [#rejectWithoutReader] refuses.
+    /// type.
     ///
-    /// The returned values hold `scratch`'s definition levels and ids until the fill is done.
+    /// The returned values hold `scratch`'s definition levels and ids, and the decompressor's
+    /// buffer or the fetched page, until the fill is done.
+    ///
+    /// @throws ParquetReadException if the page is malformed, or its encoding is not defined over
+    ///         the column's type
     FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        if (!isNumeric(column.type()) || column.maxRepetitionLevel() > 0) {
-            return null;
-        }
-        InPlacePage page = readInPlace(pageBuffer, scratch, false);
-        if (page == null) {
-            return null;
-        }
+        requireColumn(binaryWidth < 0 && column.maxRepetitionLevel() == 0, "decodeFlat");
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false);
         FlatPageValues values = numericValues(page, dictionary, scratch);
         page.commit(column);
         return values;
     }
 
-    /// Decodes a data page (`V1` or `V2`) of a binary column without repetition whose values a
-    /// fill reads in place, in any encoding the format defines for its type. Returns `null` before
-    /// anything is decompressed for a page no in-place reader takes, which [#rejectWithoutReader]
-    /// refuses.
+    /// Reads a data page (`V1` or `V2`) of a binary column without repetition whose values a fill
+    /// reads in place, in any encoding the format defines for its type.
     ///
-    /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and the
-    /// decompressor's buffer, until the fill is done.
+    /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and their bytes
+    /// in `scratch`'s own buffer, so that a segment parked on its cell reads them after the task.
+    ///
+    /// @throws ParquetReadException as [#decodeFlat] does
     BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        return decodeFlatBinary(pageBuffer, dictionary, scratch, false);
-    }
-
-    /// As [#decodeFlatBinary(ByteBuffer, Dictionary, LevelScratch)], with the values in
-    /// `scratch`'s own byte buffer when `ownBytes`, so that they outlive the decode task.
-    BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
-                                      boolean ownBytes) {
-        if (binaryWidth() < 0 || column.maxRepetitionLevel() > 0) {
-            return null;
-        }
-        InPlacePage page = readInPlace(pageBuffer, scratch, ownBytes);
-        if (page == null) {
-            return null;
-        }
+        requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true);
         BinaryPageValues values = binaryValues(page, dictionary, scratch);
         page.commit(column);
         return values;
     }
 
-    /// Decodes the levels of a data page (`V1` or `V2`) of a column decoded through levels, in any
+    /// Reads the levels of a data page (`V1` or `V2`) of a column decoded through levels, in any
     /// encoding the format defines for its type, and leaves its values in place in `scratch`'s own
     /// byte buffer for a fill to read later ([InPlaceNestedPage]). A page the fixed-size-list fast
-    /// path takes keeps no levels and carries its `k`. Returns `null` before anything is
-    /// decompressed for a page no in-place reader takes, which [#rejectWithoutReader] refuses.
+    /// path takes keeps no levels and carries its `k`.
+    ///
+    /// @throws ParquetReadException as [#decodeFlat] does
     InPlaceNestedPage decodeNestedInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        boolean numeric = isNumeric(column.type());
-        if (!numeric && binaryWidth() < 0) {
-            return null;
-        }
-        InPlacePage page = readInPlace(pageBuffer, scratch, true);
-        if (page == null) {
-            return null;
-        }
-        FlatPageValues flat = numeric ? numericValues(page, dictionary, scratch) : null;
-        BinaryPageValues binary = numeric ? null : binaryValues(page, dictionary, scratch);
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true);
+        FlatPageValues flat = binaryWidth < 0 ? numericValues(page, dictionary, scratch) : null;
+        BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch);
         page.commit(column);
         return new InPlaceNestedPage(page.numValues, page.definitionLevels, page.repetitionLevels,
                 page.fixedListK, flat, binary, null);
     }
 
-    /// Raises the error a page no in-place reader takes is refused with: an encoding not defined over
-    /// the column's type, or one the format does not allow for a data page's values. Every page the
-    /// format defines for a column has an in-place reader, so a page this decodes is a reader gap.
-    ///
-    /// @throws ParquetReadException for the page's malformation
-    /// @throws IllegalStateException if the page decodes, which no in-place reader took
-    void rejectWithoutReader(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        decodePage(pageBuffer, dictionary, scratch);
-        throw new IllegalStateException("No in-place reader for a decodable page of column '" + column.name() + "'");
-    }
-
     /// The values of a null placeholder page, every one null, for a fill that reads them in place:
-    /// all-zero definition (and repetition) levels in `scratch` and no value bytes. `null` for a
-    /// binary column whose width is left to the decoder to refuse.
+    /// all-zero definition (and repetition) levels in `scratch` and no value bytes.
     ///
     /// @throws IllegalStateException for a required column, which a placeholder cannot stand in for
     InPlaceNestedPage nullsInPlace(int numValues, LevelScratch scratch) {
@@ -376,10 +267,6 @@ public class PageDecoder {
             throw new IllegalStateException("Cannot create null placeholder page for required column '"
                     + column.name() + "' — maxDefinitionLevel is 0");
         }
-        boolean numeric = isNumeric(column.type());
-        if (!numeric && binaryWidth() < 0) {
-            return null;
-        }
         int[] definitionLevels = scratch.definitionLevels(numValues);
         Arrays.fill(definitionLevels, 0, numValues, 0);
         int[] repetitionLevels = null;
@@ -387,93 +274,75 @@ public class PageDecoder {
             repetitionLevels = scratch.repetitionLevels(numValues);
             Arrays.fill(repetitionLevels, 0, numValues, 0);
         }
-        FlatPageValues flat = numeric
+        FlatPageValues flat = binaryWidth < 0
                 ? FlatPageValues.plain(column.type(), definitionLevels, maxDefLevel, numValues, NO_BYTES, 0, 0)
                 : null;
-        BinaryPageValues binary = numeric
+        BinaryPageValues binary = binaryWidth < 0
                 ? null
-                : BinaryPageValues.plain(column.type(), binaryWidth(), definitionLevels, maxDefLevel, numValues,
+                : BinaryPageValues.plain(column.type(), binaryWidth, definitionLevels, maxDefLevel, numValues,
                         NO_BYTES, 0, 0, scratch);
         return new InPlaceNestedPage(numValues, definitionLevels, repetitionLevels, 0, flat, binary, null);
     }
 
     private static final byte[] NO_BYTES = new byte[0];
 
-    /// Whether the column's values are read in place through [FlatPageValues]: fixed-width
-    /// numbers, and booleans.
-    private static boolean isNumeric(PhysicalType type) {
-        return type == PhysicalType.INT32 || type == PhysicalType.INT64
-                || type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE || type == PhysicalType.BOOLEAN;
-    }
-
-    /// The width of the column's plain binary values: `0` for length-prefixed values, `-1` for a
-    /// column that is not binary or whose width is left to the decoder to refuse.
-    private int binaryWidth() {
-        Integer typeLength = column.typeLength();
-        return switch (column.type()) {
-            case BYTE_ARRAY -> 0;
-            case INT96 -> 12;
-            case FIXED_LEN_BYTE_ARRAY -> typeLength != null && typeLength > 0 ? typeLength : -1;
-            default -> -1;
-        };
+    /// Fails an entry point called for a column it does not read, which is the caller's error.
+    private void requireColumn(boolean served, String entryPoint) {
+        if (!served) {
+            throw new IllegalStateException(entryPoint + " does not read column '" + column.name() + "' of type "
+                    + column.type() + " with maximum repetition level " + column.maxRepetitionLevel());
+        }
     }
 
     private FlatPageValues numericValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch) {
         int maxDefLevel = column.maxDefinitionLevel();
-        if (page.encoding == Encoding.RLE) {
-            int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
-            int rleLength = readSectionLength(page.data, page.valuesOffset, page.limit, "RLE boolean values");
-            int[] ids = scratch.ids(idCount);
-            new RleBitPackingHybridDecoder(page.data, page.valuesOffset + 4, rleLength, 1).readInts(ids, 0, idCount);
-            return FlatPageValues.rleBooleans(page.numValues, page.definitionLevels, maxDefLevel, ids, idCount);
-        }
-        if (page.encoding == Encoding.DELTA_BINARY_PACKED) {
-            return FlatPageValues.delta(column.type(), page.definitionLevels, maxDefLevel, page.numValues, page.data,
-                    page.valuesOffset, page.limit);
-        }
-        if (page.encoding == Encoding.ALP) {
-            return FlatPageValues.alp(column.type(), page.definitionLevels, maxDefLevel, page.numValues, page.data,
-                    page.valuesOffset, page.limit);
-        }
-        if (page.encoding == Encoding.BYTE_STREAM_SPLIT) {
-            return FlatPageValues.byteStreamSplit(column.type(), page.definitionLevels, maxDefLevel, page.numValues,
+        return switch (page.encoding) {
+            case PLAIN -> FlatPageValues.plain(column.type(), page.definitionLevels, maxDefLevel, page.numValues,
                     page.data, page.valuesOffset, page.limit);
-        }
-        if (page.encoding == Encoding.PLAIN) {
-            return FlatPageValues.plain(column.type(), page.definitionLevels, maxDefLevel, page.numValues, page.data,
-                    page.valuesOffset, page.limit);
-        }
-        int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
-        int[] ids = decodeIds(page.encoding, page.data, page.valuesOffset, page.limit, dictionary, idCount, scratch);
-        return FlatPageValues.dictionary(column.type(), page.numValues, page.definitionLevels, maxDefLevel, ids,
-                idCount, dictionary);
+            case RLE -> {
+                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
+                int rleLength = readSectionLength(page.data, page.valuesOffset, page.limit, "RLE boolean values");
+                int[] ids = scratch.ids(idCount);
+                new RleBitPackingHybridDecoder(page.data, page.valuesOffset + 4, rleLength, 1)
+                        .readInts(ids, 0, idCount);
+                yield FlatPageValues.rleBooleans(page.numValues, page.definitionLevels, maxDefLevel, ids, idCount);
+            }
+            case DELTA_BINARY_PACKED -> FlatPageValues.delta(column.type(), page.definitionLevels, maxDefLevel,
+                    page.numValues, page.data, page.valuesOffset, page.limit);
+            case ALP -> FlatPageValues.alp(column.type(), page.definitionLevels, maxDefLevel, page.numValues,
+                    page.data, page.valuesOffset, page.limit);
+            case BYTE_STREAM_SPLIT -> FlatPageValues.byteStreamSplit(column.type(), page.definitionLevels,
+                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit);
+            default -> {
+                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
+                int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
+                yield FlatPageValues.dictionary(column.type(), page.numValues, page.definitionLevels, maxDefLevel,
+                        ids, idCount, dictionary);
+            }
+        };
     }
 
     private BinaryPageValues binaryValues(InPlacePage page, Dictionary dictionary, LevelScratch scratch) {
         int maxDefLevel = column.maxDefinitionLevel();
-        if (page.encoding == Encoding.BYTE_STREAM_SPLIT) {
-            return BinaryPageValues.byteStreamSplit(binaryWidth(), page.definitionLevels, maxDefLevel,
+        return switch (page.encoding) {
+            case PLAIN -> BinaryPageValues.plain(column.type(), binaryWidth, page.definitionLevels, maxDefLevel,
                     page.numValues, page.data, page.valuesOffset, page.limit, scratch);
-        }
-        if (page.encoding == Encoding.DELTA_LENGTH_BYTE_ARRAY) {
-            return BinaryPageValues.deltaLength(page.definitionLevels, maxDefLevel, page.numValues, page.data,
-                    page.valuesOffset, page.limit, scratch);
-        }
-        if (page.encoding == Encoding.DELTA_BYTE_ARRAY) {
-            return BinaryPageValues.deltaByteArray(page.definitionLevels, maxDefLevel, page.numValues, page.data,
-                    page.valuesOffset, page.limit, scratch);
-        }
-        if (page.encoding == Encoding.PLAIN) {
-            return BinaryPageValues.plain(column.type(), binaryWidth(), page.definitionLevels, maxDefLevel,
+            case BYTE_STREAM_SPLIT -> BinaryPageValues.byteStreamSplit(binaryWidth, page.definitionLevels,
+                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch);
+            case DELTA_LENGTH_BYTE_ARRAY -> BinaryPageValues.deltaLength(page.definitionLevels, maxDefLevel,
                     page.numValues, page.data, page.valuesOffset, page.limit, scratch);
-        }
-        int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
-        int[] ids = decodeIds(page.encoding, page.data, page.valuesOffset, page.limit, dictionary, idCount, scratch);
-        if (!(dictionary instanceof Dictionary.ByteArrayDictionary binaryDictionary)) {
-            throw new ParquetReadException("A " + column.type() + " page refers to a dictionary of another type");
-        }
-        return BinaryPageValues.ids(page.definitionLevels, maxDefLevel, page.numValues, ids, idCount,
-                binaryDictionary);
+            case DELTA_BYTE_ARRAY -> BinaryPageValues.deltaByteArray(binaryWidth, page.definitionLevels,
+                    maxDefLevel, page.numValues, page.data, page.valuesOffset, page.limit, scratch);
+            default -> {
+                int idCount = FlatPageValues.countNonNull(page.definitionLevels, maxDefLevel, page.numValues);
+                int[] ids = decodeIds(page.data, page.valuesOffset, page.limit, idCount, scratch);
+                if (!(dictionary instanceof Dictionary.ByteArrayDictionary binaryDictionary)) {
+                    throw new ParquetReadException("A " + column.type() + " page refers to a dictionary of another type");
+                }
+                yield BinaryPageValues.ids(page.definitionLevels, maxDefLevel, page.numValues, ids, idCount,
+                        binaryDictionary);
+            }
+        };
     }
 
     /// A data page read for a fill that reads its values in place: its values `[valuesOffset,
@@ -494,27 +363,25 @@ public class PageDecoder {
         }
     }
 
-    /// Reads the header of a page a fill may read in place, and decodes its levels when it is one:
-    /// a `V1` or `V2` data page in an encoding [#readsInPlace] takes. Returns `null` for any other
-    /// page before decompressing it.
+    /// Reads the header of a data page, refuses it before decompressing it if its encoding is not
+    /// defined over the column's type ([#requireReader]), and decodes its levels.
     ///
     /// @param ownBytes whether the values must outlive the task: they are then decompressed or
     ///        copied into `scratch`'s own buffer rather than the decompressor's
-    private InPlacePage readInPlace(ByteBuffer pageBuffer, LevelScratch scratch, boolean ownBytes) {
+    private InPlacePage readInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                                    boolean ownBytes) {
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
-        Encoding encoding;
         if (pageHeader.type() == PageType.DATA_PAGE) {
-            encoding = pageHeader.dataPageHeader().encoding();
+            DataPageHeader header = pageHeader.dataPageHeader();
+            requireReader(header.encoding(), header.encodingValue(), dictionary);
         }
         else if (pageHeader.type() == PageType.DATA_PAGE_V2) {
-            encoding = pageHeader.dataPageHeaderV2().encoding();
+            DataPageHeaderV2 header = pageHeader.dataPageHeaderV2();
+            requireReader(header.encoding(), header.encodingValue(), dictionary);
         }
         else {
-            return null;
-        }
-        if (!readsInPlace(encoding)) {
-            return null;
+            throw new ParquetReadException("Unexpected page type for a data page: " + pageHeader.type());
         }
 
         PageDecodedEvent event = new PageDecodedEvent();
@@ -606,25 +473,66 @@ public class PageDecoder {
                 repLength, defLength, k, compressedSize, uncompressedPageSize, event, scratch);
     }
 
-    /// Whether a page of `encoding` of this column has an in-place reader: `PLAIN` for every type,
-    /// dictionary ids for every type but booleans, `BYTE_STREAM_SPLIT` for fixed-width numbers,
-    /// `ALP` for floating-point numbers, `DELTA_BINARY_PACKED` for integers, the binary deltas for
-    /// byte arrays, `RLE` for booleans.
-    private boolean readsInPlace(Encoding encoding) {
+    /// Refuses a page whose encoding has no reader for the column's type. The format defines each
+    /// encoding over a fixed set of physical types, and every pair it defines has a reader, so a
+    /// refusal here is the format's: a malformed file, except for an encoding this release does not
+    /// know.
+    ///
+    /// @throws ParquetReadException if the encoding is not defined over the column's type, or is
+    ///         dictionary-encoded in a chunk without a dictionary
+    /// @throws UnsupportedOperationException for an encoding this release does not know
+    private void requireReader(Encoding encoding, int encodingValue, Dictionary dictionary) {
         PhysicalType type = column.type();
-        return switch (encoding) {
-            case PLAIN -> true;
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> type != PhysicalType.BOOLEAN;
-            case BYTE_STREAM_SPLIT -> type == PhysicalType.INT32 || type == PhysicalType.INT64
-                    || type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE
-                    || (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && binaryWidth() > 0);
-            case ALP -> type == PhysicalType.FLOAT || type == PhysicalType.DOUBLE;
-            case DELTA_BINARY_PACKED -> type == PhysicalType.INT32 || type == PhysicalType.INT64;
-            case DELTA_LENGTH_BYTE_ARRAY -> type == PhysicalType.BYTE_ARRAY;
-            case DELTA_BYTE_ARRAY -> type == PhysicalType.BYTE_ARRAY || type == PhysicalType.FIXED_LEN_BYTE_ARRAY;
-            case RLE -> type == PhysicalType.BOOLEAN;
-            default -> false;
-        };
+        switch (encoding) {
+            case PLAIN -> {
+            }
+            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
+                if (dictionary == null) {
+                    throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
+                }
+            }
+            case BYTE_STREAM_SPLIT -> {
+                if (type == PhysicalType.BOOLEAN || type == PhysicalType.BYTE_ARRAY || type == PhysicalType.INT96) {
+                    throw undefinedOverType(Encoding.BYTE_STREAM_SPLIT, type, PhysicalType.INT32, PhysicalType.INT64,
+                            PhysicalType.FLOAT, PhysicalType.DOUBLE, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+                }
+            }
+            case ALP -> {
+                if (type != PhysicalType.FLOAT && type != PhysicalType.DOUBLE) {
+                    throw undefinedOverType(Encoding.ALP, type, PhysicalType.FLOAT, PhysicalType.DOUBLE);
+                }
+            }
+            case DELTA_BINARY_PACKED -> {
+                if (type != PhysicalType.INT32 && type != PhysicalType.INT64) {
+                    throw undefinedOverType(Encoding.DELTA_BINARY_PACKED, type, PhysicalType.INT32, PhysicalType.INT64);
+                }
+            }
+            case DELTA_LENGTH_BYTE_ARRAY -> {
+                if (type != PhysicalType.BYTE_ARRAY) {
+                    throw undefinedOverType(Encoding.DELTA_LENGTH_BYTE_ARRAY, type, PhysicalType.BYTE_ARRAY);
+                }
+            }
+            case DELTA_BYTE_ARRAY -> {
+                if (type != PhysicalType.BYTE_ARRAY && type != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+                    throw undefinedOverType(Encoding.DELTA_BYTE_ARRAY, type, PhysicalType.BYTE_ARRAY,
+                            PhysicalType.FIXED_LEN_BYTE_ARRAY);
+                }
+            }
+            // In the value position RLE carries booleans and nothing else; the format also gives it
+            // the level streams and dictionary indices, which do not come through here
+            case RLE -> {
+                if (type != PhysicalType.BOOLEAN) {
+                    throw new ParquetReadException("RLE encodes only boolean values in a data page, not " + type);
+                }
+            }
+            case BIT_PACKED -> throw new ParquetReadException(
+                    "BIT_PACKED encodes levels and is not valid for a data page's values");
+            // UNKNOWN stands for every Thrift value this release cannot name, so the raw value says
+            // which encoding was met. Like an ALP variant AlpDecoder does not know, it is a gap in
+            // this release rather than a malformed file.
+            case UNKNOWN -> throw new UnsupportedOperationException(
+                    "Encoding not yet supported: UNKNOWN (Thrift encoding value " + encodingValue + ")");
+        }
     }
 
     /// The `k` of a page the fixed-size-list fast path takes, `0` for any other page.
@@ -659,13 +567,9 @@ public class PageDecoder {
                 k, compressedSize, uncompressedSize, event);
     }
 
-    /// Decodes the `idCount` dictionary ids of a dictionary-encoded `V1` page's value section
+    /// Decodes the `idCount` dictionary ids of a dictionary-encoded page's value section
     /// `[offset, limit)` of `data` into `scratch`.
-    private static int[] decodeIds(Encoding encoding, byte[] data, int offset, int limit, Dictionary dictionary,
-                                   int idCount, LevelScratch scratch) {
-        if (dictionary == null) {
-            throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
-        }
+    private static int[] decodeIds(byte[] data, int offset, int limit, int idCount, LevelScratch scratch) {
         if (offset >= limit) {
             throw new ParquetReadException("Unexpected EOF reading the dictionary index bit width");
         }
@@ -718,21 +622,6 @@ public class PageDecoder {
         return levels;
     }
 
-    /// Count non-null values based on definition levels.
-    private int countNonNullValues(int numValues, int[] definitionLevels) {
-        if (definitionLevels == null) {
-            return numValues;
-        }
-        int maxDefLevel = column.maxDefinitionLevel();
-        int count = 0;
-        for (int i = 0; i < numValues; i++) {
-            if (definitionLevels[i] == maxDefLevel) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     private int getBitWidth(int maxValue) {
         if (maxValue == 0) {
             return 0;
@@ -771,68 +660,6 @@ public class PageDecoder {
         };
     }
 
-    /// @param data the decompressed page body, valid up to `limit`; the buffer may run on past it
-    ///        with bytes of an earlier page
-    /// @param limit the length of the page body
-    private Page parseDataPage(DataPageHeader header, byte[] data, int limit, Dictionary dictionary,
-            LevelScratch scratch) {
-        int numValues = header.numValues();
-        int offset = 0;
-
-        int repLevelLength = 0;
-        int repLevelOffset = 0;
-        if (column.maxRepetitionLevel() > 0) {
-            repLevelLength = readSectionLength(data, offset, limit, "repetition level");
-            offset += 4;
-            repLevelOffset = offset;
-            offset += repLevelLength;
-        }
-
-        int defLevelLength = 0;
-        int defLevelOffset = 0;
-        if (column.maxDefinitionLevel() > 0) {
-            defLevelLength = readSectionLength(data, offset, limit, "definition level");
-            offset += 4;
-            defLevelOffset = offset;
-            offset += defLevelLength;
-        }
-        int valuesOffset = offset;
-
-        // Fixed-size-list fast path: the V1 header carries no num_rows, so the
-        // detector derives it. The levels are inline and (unlike V2) always
-        // present here in decompressed form; the detector only understands the
-        // RLE hybrid, so legacy BIT_PACKED levels are left to the regular path.
-        if (fixedListFastPathEnabled && isFixedListElementSupported()
-                && hasFixedListLevelShape()
-                && header.repetitionLevelEncoding() == Encoding.RLE
-                && header.definitionLevelEncoding() == Encoding.RLE
-                && repLevelLength > 0 && defLevelLength > 0) {
-            FixedSizeListShape shape = FixedSizeListDetector.detect(
-                    data, repLevelOffset, repLevelLength,
-                    data, defLevelOffset, defLevelLength,
-                    numValues, FixedSizeListDetector.ROWS_UNKNOWN,
-                    column.maxRepetitionLevel(), column.maxDefinitionLevel());
-            if (shape instanceof FixedSizeListShape.FixedWidth(int k)) {
-                Page page = decodeTypedValues(
-                        header.encoding(), header.encodingValue(),
-                        data, valuesOffset, limit, numValues, null, null, dictionary);
-                return Page.withFixedListK(page, k);
-            }
-        }
-
-        int[] repetitionLevels = column.maxRepetitionLevel() > 0
-                ? decodeRepetitionLevels(data, repLevelOffset, repLevelLength, numValues,
-                        column.maxRepetitionLevel(), scratch)
-                : null;
-        int[] definitionLevels = column.maxDefinitionLevel() > 0
-                ? decodeDefinitionLevels(data, defLevelOffset, defLevelLength, numValues, scratch)
-                : null;
-
-        return decodeTypedValues(
-                header.encoding(), header.encodingValue(), data, valuesOffset, limit, numValues,
-                definitionLevels, repetitionLevels, dictionary);
-    }
-
     /// Reads the 4-byte little-endian length prefix of a section of `data` at `offset`, and checks
     /// that the section it announces ends within the page.
     private static int readSectionLength(byte[] data, int offset, int limit, String section) {
@@ -848,302 +675,18 @@ public class PageDecoder {
         return length;
     }
 
-    private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
-            Dictionary dictionary, LevelScratch scratch) {
-        int repLevelLen = header.repetitionLevelsByteLength();
-        int defLevelLen = header.definitionLevelsByteLength();
-        int valuesOffset = repLevelLen + defLevelLen;
-        int compressedValuesLen = pageData.remaining() - valuesOffset;
-        int numValues = header.numValues();
-        int valuesLimit = isValueRegionCompressed(header, compressedValuesLen)
-                ? uncompressedPageSize - repLevelLen - defLevelLen
-                : compressedValuesLen;
-
-        byte[] repLevelData = null;
-        if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
-            repLevelData = new byte[repLevelLen];
-            pageData.slice(0, repLevelLen).get(repLevelData);
-        }
-
-        byte[] defLevelData = null;
-        if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
-            defLevelData = new byte[defLevelLen];
-            pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
-        }
-
-        // Fixed-size-list fast path: when the level streams prove every row is a
-        // present list of exactly k elements, skip level materialization and
-        // decode only the values, stamping the shape onto the page. The regular
-        // value decoders already read densely from a null definition-level array
-        // (the all-present convention), so no value-decode change is needed.
-        if (fixedListFastPathEnabled && isFixedListElementSupported()
-                && repLevelData != null && defLevelData != null
-                && hasFixedListLevelShape()) {
-            FixedSizeListShape shape = FixedSizeListDetector.detect(
-                    repLevelData, 0, repLevelLen, defLevelData, 0, defLevelLen,
-                    numValues, header.numRows(),
-                    column.maxRepetitionLevel(), column.maxDefinitionLevel());
-            if (shape instanceof FixedSizeListShape.FixedWidth(int k)) {
-                byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
-                        repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
-                Page page = decodeTypedValues(
-                        header.encoding(), header.encodingValue(),
-                        valuesData, 0, valuesLimit, numValues, null, null, dictionary);
-                return Page.withFixedListK(page, k);
-            }
-        }
-
-        int[] repetitionLevels = repLevelData != null
-                ? decodeRepetitionLevels(repLevelData, 0, repLevelLen, numValues,
-                        column.maxRepetitionLevel(), scratch)
-                : null;
-        int[] definitionLevels = defLevelData != null
-                ? decodeDefinitionLevels(defLevelData, 0, defLevelLen, numValues, scratch)
-                : null;
-
-        byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
-                repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
-        return decodeTypedValues(
-                header.encoding(), header.encodingValue(), valuesData, 0, valuesLimit, numValues,
-                definitionLevels, repetitionLevels, dictionary);
-    }
-
     /// Whether the value region of a `DataPageV2` body is stored compressed.
     private static boolean isValueRegionCompressed(DataPageHeaderV2 header, int compressedValuesLen) {
         return header.isCompressed() && compressedValuesLen > 0;
-    }
-
-    /// Extracts the value region of a `DataPageV2` body, decompressing it when
-    /// the page marks its values compressed. The level regions precede the
-    /// values and are never compressed.
-    ///
-    /// A decompressed region is valid up to `uncompressedPageSize - repLevelLen - defLevelLen`
-    /// only, the buffer it comes in running on past that with bytes of an earlier page; a stored
-    /// one is exactly as long as the region.
-    private byte[] readValueRegion(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
-            int repLevelLen, int defLevelLen, int valuesOffset, int compressedValuesLen) {
-        if (isValueRegionCompressed(header, compressedValuesLen)) {
-            ByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
-            Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-            int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
-            return decompressor.decompress(compressedValues, uncompressedValuesSize);
-        }
-        byte[] valuesData = new byte[compressedValuesLen];
-        pageData.slice(valuesOffset, compressedValuesLen).get(valuesData);
-        return valuesData;
-    }
-
-    /// Decode values into Page using primitive arrays where possible.
-    ///
-    /// @param data the bytes holding the values, which may run on past `limit` with bytes of an
-    ///        earlier page
-    /// @param offset the position in `data` the values start at
-    /// @param limit the position in `data` the values end at, exclusive
-    private Page decodeTypedValues(Encoding encoding, int encodingValue, byte[] data, int offset, int limit,
-                                   int numValues,
-                                   int[] definitionLevels, int[] repetitionLevels,
-                                   Dictionary dictionary) {
-        int maxDefLevel = column.maxDefinitionLevel();
-        PhysicalType type = column.type();
-
-        // Try to decode into primitive arrays for supported type/encoding combinations
-        return switch (encoding) {
-            case PLAIN -> {
-                PlainDecoder decoder = new PlainDecoder(data, offset, limit, type, column.typeLength());
-                Page page = switch (type) {
-                    case INT64 -> {
-                        long[] values = new long[numValues];
-                        decoder.readLongs(values, definitionLevels, maxDefLevel);
-                        yield new Page.LongPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case DOUBLE -> {
-                        double[] values = new double[numValues];
-                        decoder.readDoubles(values, definitionLevels, maxDefLevel);
-                        yield new Page.DoublePage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case INT32 -> {
-                        int[] values = new int[numValues];
-                        decoder.readInts(values, definitionLevels, maxDefLevel);
-                        yield new Page.IntPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case FLOAT -> {
-                        float[] values = new float[numValues];
-                        decoder.readFloats(values, definitionLevels, maxDefLevel);
-                        yield new Page.FloatPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case BOOLEAN -> {
-                        boolean[] values = new boolean[numValues];
-                        decoder.readBooleans(values, definitionLevels, maxDefLevel);
-                        yield new Page.BooleanPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
-                        byte[][] values = new byte[numValues][];
-                        decoder.readByteArrays(values, definitionLevels, maxDefLevel);
-                        yield new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                };
-                // Values read at the wrong boundaries would decode into wrong values, not an EOF
-                if (decoder.remaining() != 0) {
-                    throw new ParquetReadException("PLAIN value section does not end with its "
-                            + countNonNullValues(numValues, definitionLevels) + " " + type
-                            + " values; leftover bytes: " + decoder.remaining());
-                }
-                yield page;
-            }
-            case DELTA_BINARY_PACKED -> {
-                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(data, offset, limit);
-                yield switch (type) {
-                    case INT64 -> {
-                        long[] values = new long[numValues];
-                        decoder.readLongs(values, definitionLevels, maxDefLevel);
-                        yield new Page.LongPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case INT32 -> {
-                        int[] values = new int[numValues];
-                        decoder.readInts(values, definitionLevels, maxDefLevel);
-                        yield new Page.IntPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    default -> throw undefinedOverType(Encoding.DELTA_BINARY_PACKED, type,
-                            PhysicalType.INT32, PhysicalType.INT64);
-                };
-            }
-            case BYTE_STREAM_SPLIT -> {
-                // The decoder derives its byte width from the physical type, so an undefined pair
-                // has to be refused before it is constructed — otherwise the width lookup, and not
-                // the format check, is what the file fails on.
-                if (type == PhysicalType.BOOLEAN || type == PhysicalType.BYTE_ARRAY
-                        || type == PhysicalType.INT96) {
-                    throw byteStreamSplitUndefinedOverType(type);
-                }
-                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                ByteStreamSplitDecoder decoder = new ByteStreamSplitDecoder(
-                        data, offset, limit, numNonNullValues, type, column.typeLength());
-                yield switch (type) {
-                    case INT64 -> {
-                        long[] values = new long[numValues];
-                        decoder.readLongs(values, definitionLevels, maxDefLevel);
-                        yield new Page.LongPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case DOUBLE -> {
-                        double[] values = new double[numValues];
-                        decoder.readDoubles(values, definitionLevels, maxDefLevel);
-                        yield new Page.DoublePage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case INT32 -> {
-                        int[] values = new int[numValues];
-                        decoder.readInts(values, definitionLevels, maxDefLevel);
-                        yield new Page.IntPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case FLOAT -> {
-                        float[] values = new float[numValues];
-                        decoder.readFloats(values, definitionLevels, maxDefLevel);
-                        yield new Page.FloatPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    case FIXED_LEN_BYTE_ARRAY -> {
-                        byte[][] values = new byte[numValues][];
-                        decoder.readByteArrays(values, definitionLevels, maxDefLevel);
-                        yield new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                    }
-                    default -> throw byteStreamSplitUndefinedOverType(type);
-                };
-            }
-            case ALP -> {
-                if (type != PhysicalType.FLOAT && type != PhysicalType.DOUBLE) {
-                    throw undefinedOverType(Encoding.ALP, type, PhysicalType.FLOAT, PhysicalType.DOUBLE);
-                }
-                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                AlpDecoder decoder = new AlpDecoder(data, offset, limit, numNonNullValues, type);
-                if (type == PhysicalType.DOUBLE) {
-                    double[] values = new double[numValues];
-                    decoder.readDoubles(values, definitionLevels, maxDefLevel);
-                    yield new Page.DoublePage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-                }
-                float[] values = new float[numValues];
-                decoder.readFloats(values, definitionLevels, maxDefLevel);
-                yield new Page.FloatPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            }
-            case RLE_DICTIONARY, PLAIN_DICTIONARY -> {
-                if (dictionary == null) {
-                    throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
-                }
-                if (offset >= limit) {
-                    throw new ParquetReadException("Unexpected EOF reading the dictionary index bit width");
-                }
-                int bitWidth = data[offset++] & 0xFF;
-                if (bitWidth > 32) {
-                    throw new ParquetReadException("Invalid dictionary index bit width: " + bitWidth
-                            + ". Must be between 0 and 32");
-                }
-                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, limit - offset, bitWidth);
-
-                yield dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
-            }
-            case RLE -> {
-                // In the value position RLE carries booleans and nothing else; the format also
-                // gives it the level streams and dictionary indices, which do not come through
-                // here. Refusing another type is the format's position, not a decoder this
-                // release has yet to write.
-                if (type != PhysicalType.BOOLEAN) {
-                    throw new ParquetReadException(
-                            "RLE encodes only boolean values in a data page, not " + type);
-                }
-
-                // Read 4-byte length prefix (little-endian)
-                int rleLength = readSectionLength(data, offset, limit, "RLE boolean values");
-                offset += 4;
-
-                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(data, offset, rleLength, 1);
-                boolean[] values = new boolean[numValues];
-                decoder.readBooleans(values, definitionLevels, maxDefLevel);
-                yield new Page.BooleanPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            }
-            case DELTA_LENGTH_BYTE_ARRAY -> {
-                // The lengths are delta-encoded ahead of the bytes, so the values are byte arrays
-                // whatever the column claims; decoding an integer column's page this way would
-                // build a page of the wrong shape rather than fail.
-                if (type != PhysicalType.BYTE_ARRAY) {
-                    throw undefinedOverType(Encoding.DELTA_LENGTH_BYTE_ARRAY, type,
-                            PhysicalType.BYTE_ARRAY);
-                }
-                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(data, offset, limit);
-                decoder.initialize(numNonNullValues);
-                byte[][] values = new byte[numValues][];
-                decoder.readByteArrays(values, definitionLevels, maxDefLevel);
-                yield new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            }
-            case DELTA_BYTE_ARRAY -> {
-                if (type != PhysicalType.BYTE_ARRAY && type != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-                    throw undefinedOverType(Encoding.DELTA_BYTE_ARRAY, type,
-                            PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
-                }
-                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(data, offset, limit);
-                decoder.initialize(numNonNullValues);
-                byte[][] values = new byte[numValues][];
-                decoder.readByteArrays(values, definitionLevels, maxDefLevel);
-                yield new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
-            }
-            // BIT_PACKED encodes levels, never a page's values, so refusing it is the format's
-            // position rather than a decoder this release has yet to write.
-            case BIT_PACKED -> throw new ParquetReadException(
-                    "BIT_PACKED encodes levels and is not valid for a data page's values");
-            // UNKNOWN stands for every Thrift value this release cannot name, so on its own it
-            // does not say which encoding was met; the raw value does. Like an ALP variant
-            // AlpDecoder does not know, it is a gap in this release rather than a malformed file,
-            // so it keeps UnsupportedOperationException.
-            case UNKNOWN -> throw new UnsupportedOperationException(
-                    "Encoding not yet supported: UNKNOWN (Thrift encoding value " + encodingValue + ")");
-        };
     }
 
     /// Refusal for a page whose declared encoding is not defined over its column's physical type.
     ///
     /// The format names the physical types each encoding may carry, so such a page is a malformed
     /// file rather than a gap in this release — which is why this is a [ParquetReadException] and
-    /// not the [UnsupportedOperationException] an unrecognized encoding raises. Decoding it anyway would
-    /// build a page of the wrong shape rather than fail: wrong in the values, and wrong in the
-    /// [Page] variant handed to the column reader.
+    /// not the [UnsupportedOperationException] an unrecognized encoding raises. Reading it anyway
+    /// would take values of the wrong shape: wrong in the values, and wrong in the type the
+    /// consumer casts to.
     ///
     /// @param encoding the encoding the page declares
     /// @param type the column's physical type
@@ -1160,13 +703,5 @@ public class PageDecoder {
         }
         return new ParquetReadException(encoding + " is not defined over " + type
                 + "; the format defines it over " + legalTypes + " only");
-    }
-
-    /// [#undefinedOverType] for `BYTE_STREAM_SPLIT`, whose legal types are named both before the
-    /// decoder is constructed and by the value switch that follows it.
-    private static ParquetReadException byteStreamSplitUndefinedOverType(PhysicalType type) {
-        return undefinedOverType(Encoding.BYTE_STREAM_SPLIT, type, PhysicalType.INT32,
-                PhysicalType.INT64, PhysicalType.FLOAT, PhysicalType.DOUBLE,
-                PhysicalType.FIXED_LEN_BYTE_ARRAY);
     }
 }

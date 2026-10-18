@@ -185,7 +185,7 @@ final class BinaryPageValues {
     /// fill copies them from it.
     ///
     /// @throws ParquetReadException if the value section is malformed
-    static BinaryPageValues deltaByteArray(int[] definitionLevels, int maxDefinitionLevel, int numValues,
+    static BinaryPageValues deltaByteArray(int width, int[] definitionLevels, int maxDefinitionLevel, int numValues,
                                            byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch) {
         int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
         int[] prefixLengths = scratch.ids(nonNull);
@@ -427,7 +427,7 @@ final class BinaryPageValues {
         if (pageRow < row) {
             throw new IllegalStateException("Page rows read out of order: row " + pageRow + " after " + row);
         }
-        int skipped = definitionLevels == null ? pageRow - row : countNonNullBetween(row, pageRow);
+        int skipped = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, row, pageRow);
         if (kind == Kind.PLAIN) {
             dataPos += width == 0
                     ? (prefixed ? 4 * skipped : 0) + bytePrefix[pageRow] - bytePrefix[row]
@@ -435,15 +435,5 @@ final class BinaryPageValues {
         }
         nonNull += skipped;
         row = pageRow;
-    }
-
-    private int countNonNullBetween(int from, int to) {
-        int count = 0;
-        for (int i = from; i < to; i++) {
-            if (definitionLevels[i] == maxDefinitionLevel) {
-                count++;
-            }
-        }
-        return count;
     }
 }

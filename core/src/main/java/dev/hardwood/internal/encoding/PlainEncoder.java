@@ -11,14 +11,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-/// Encoder for the PLAIN encoding, the inverse of [PlainDecoder].
+/// Encoder for the PLAIN encoding, the layout the reader's `PLAIN` value readers
+/// (`FlatPageValues.plain`, `BinaryPageValues.plain`) read in place.
 public final class PlainEncoder {
 
     private PlainEncoder() {
     }
 
-    /// Encode INT32 values as little-endian 4-byte words, matching
-    /// [PlainDecoder#readInts].
+    /// Encode INT32 values as little-endian 4-byte words.
     ///
     /// @param values the values to encode
     /// @return the PLAIN-encoded bytes
@@ -29,7 +29,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` INT32 values starting at `offset` as little-endian 4-byte words,
-    /// matching [PlainDecoder#readInts]. Encoding a sub-range avoids copying a page's
+    /// Encoding a sub-range avoids copying a page's
     /// values out of a larger backing array before encoding.
     ///
     /// @param values the backing array
@@ -58,8 +58,7 @@ public final class PlainEncoder {
                 .asIntBuffer().put(values, offset, length);
     }
 
-    /// Encode `length` INT64 values starting at `offset` as little-endian 8-byte words,
-    /// matching [PlainDecoder#readLongs].
+    /// Encode `length` INT64 values starting at `offset` as little-endian 8-byte words.
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode
@@ -86,7 +85,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` FLOAT values starting at `offset` as little-endian IEEE-754 single
-    /// words, matching [PlainDecoder#readFloats].
+    /// words.
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode
@@ -113,7 +112,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` DOUBLE values starting at `offset` as little-endian IEEE-754 double
-    /// words, matching [PlainDecoder#readDoubles].
+    /// words.
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode
@@ -140,7 +139,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` BOOLEAN values starting at `offset` bit-packed, 8 values per byte,
-    /// least-significant bit first, matching [PlainDecoder#readBooleans].
+    /// least-significant bit first.
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode
@@ -209,7 +208,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` `BYTE_ARRAY` values starting at `offset`, each as a 4-byte little-endian
-    /// length prefix followed by its bytes, matching [PlainDecoder#readByteArrays].
+    /// length prefix followed by its bytes.
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode
@@ -333,8 +332,7 @@ public final class PlainEncoder {
     }
 
     /// Encode `length` `FIXED_LEN_BYTE_ARRAY` values starting at `offset` as raw concatenated
-    /// bytes (no length prefix — the width is fixed by the schema), matching
-    /// [PlainDecoder#readFixedLenByteArray].
+    /// bytes (no length prefix — the width is fixed by the schema).
     ///
     /// @param values the backing array
     /// @param offset the index of the first value to encode

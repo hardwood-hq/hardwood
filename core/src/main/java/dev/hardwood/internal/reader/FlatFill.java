@@ -10,9 +10,8 @@ package dev.hardwood.internal.reader;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 
-/// Fills a [Segment] of a flat fixed-width column's cell from its page: from the page's values in
-/// place ([FlatPageValues]), or by copying from its decoded [Page] where the page's encoding has
-/// no in-place reader.
+/// Fills a [Segment] of a flat fixed-width column's cell from its page's values in place
+/// ([FlatPageValues]).
 ///
 /// A flat page keeps its mask: the segment's kept records `[recordStart, recordEnd)` are walked
 /// through the mask's intervals to the page rows they sit at, in runs, in page order. Each run's

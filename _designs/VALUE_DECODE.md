@@ -1,6 +1,6 @@
 # Value decode
 
-Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the in-place value readers and the decoder each encoding drives, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernels with their scalar fallback.
+Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the in-place value readers and the decoder each encoding drives, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernel with its scalar fallback.
 
 Related documents:
 
@@ -62,7 +62,7 @@ Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`.
 
 ## Encodings and readers
 
-`PageDecoder.readsInPlace` decides, from the page's encoding and the column's physical type, whether the page has an in-place reader. The format defines each encoding over a fixed set of physical types, and every pair it defines has one. A page declaring an encoding its column cannot carry is a malformed file and raises `ParquetReadException` naming the legal types: reading it would take values of the wrong shape, wrong in its values and in the type the consumer casts to.
+`PageDecoder.requireReader` decides, from the page's encoding and the column's physical type, whether the page has an in-place reader, before the page is decompressed. The format defines each encoding over a fixed set of physical types, and every pair it defines has one. A page declaring an encoding its column cannot carry is a malformed file and raises `ParquetReadException` naming the legal types: reading it would take values of the wrong shape, wrong in its values and in the type the consumer casts to.
 
 | Encoding | Physical types read | Reader | Refused |
 |---|---|---|---|
@@ -77,13 +77,15 @@ Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`.
 | `BIT_PACKED` | none | | always: it encodes levels, never values |
 | `UNKNOWN` | none | | `UnsupportedOperationException` carrying the raw Thrift value. It, the `BOOLEAN` dictionary and an unknown ALP variant are the refusals that mark a gap in this release; every other refusal marks a malformed file |
 
-**Refusal.** A page no in-place reader takes is refused by `PageDecoder.rejectWithoutReader`, which runs the page through the full decode (`decodePage`, `decodeTypedValues`) only to raise that decode's error. Every page the format defines for a column has an in-place reader, so a page the full decode accepts there raises `IllegalStateException`, which marks a reader gap.
+**Refusal.** `requireReader` is one switch over the encoding, each case naming the types it is refused over, so the refusals are stated once and need no decode: an encoding over a type the format does not define it for, `RLE` over anything but `BOOLEAN`, `BIT_PACKED` always, a dictionary encoding in a chunk without a dictionary, and `UNKNOWN`. A page whose type is not a data page is refused the same way. A dictionary of the wrong kind for the column fails in the page's reader (`FlatPageValues.dictionary`, `PageDecoder.binaryValues`).
 
 **Cursor.** A value reader is read with one forward cursor over the page's rows: a fill writes its rows in page order, and moving to a run's first row counts the non-null values the cursor passes. A fill that starts elsewhere, such as a nested cell's segment or a second cell sharing the page, reads through a `view()` with a cursor of its own, so several fills can read one page at once. An encoding decoded in order (`DELTA_BINARY_PACKED`, `ALP`) gives each view a decoder of its own; a view that starts past the page's first value decodes the values before it and passes over them.
 
 ALP decodes a value as `encoded * 10^factor * 10^-exponent`: two multiplications, in binary32 for `FLOAT` and binary64 for `DOUBLE`, with power-of-ten constants written as literals. The format makes that arithmetic normative so that every reader reproduces the writer's bits; a single multiplication by `10^(factor - exponent)`, a division, or computed constants decode some values one ulp off. Exception values are restored from their stored bits, NaN payloads included. A decoder that runs out of bytes raises, and the page task classifies the failure as a read failure (see [Page decode](#page-decode)).
 
-Tests: `PageDecoderEncodingTest`, `PageDecoderPlainSizeTest`, `ByteArrayEncodingsTest`, `DeltaBinaryPackedDecoderHeaderTest`, `DeltaBinaryPackedDecoderWidthSweepTest`, `DeltaBinaryPackedTest`, `DeltaByteArrayTest`, `DeltaByteArrayFlbaTest`, `AlpDecoderTest`, `AlpReadTest` (parquet-testing-runner).
+`ReferencePageDecoder` (core test sources) decodes a page whole into its levels and one value per entry, the reference the readers are checked against; the encoder tests round-trip through it.
+
+Tests: `PageDecoderEncodingTest`, `PageDecoderPlainSizeTest`, `PageBodyBoundTest`, `ByteArrayDictionaryInternTest`, `DeltaBinaryPackedDecoderHeaderTest`, `DeltaBinaryPackedDecoderWidthSweepTest`, `DeltaBinaryPackedTest`, `DeltaByteArrayTest`, `DeltaByteArrayFlbaTest`, `AlpDecoderTest`, `AlpReadTest` (parquet-testing-runner).
 
 ## Dictionary and string reuse
 
@@ -152,7 +154,7 @@ Tests: `LeafKindTest`, `LeafDecoderTest`, `DictionaryStringReuseTest`.
 
 ## SIMD and scalar fallback
 
-`SimdOperations` (`internal.encoding.simd`) is the interface for the vectorisable kernels; `ScalarOperations` implements it with plain loops and `VectorOperations` in the `java22` overlay, which depends on the incubating Vector API (`jdk.incubator.vector`). Of its kernels only `countNonNulls` uses vector instructions; its dictionary kernels are scalar loops, since the Vector API offers no simple gather for an index lookup.
+`SimdOperations` (`internal.encoding.simd`) is the interface for the vectorisable kernels; `ScalarOperations` implements it with plain loops and `VectorOperations` in the `java22` overlay, which depends on the incubating Vector API (`jdk.incubator.vector`). Its one kernel, `countNonNulls`, counts the entries of a definition-level range at the maximum level.
 
 **Selection.** `VectorSupport.operations()` returns the implementation, decided once per JVM when `VectorSupport` initialises. `core` is a multi-release JAR:
 
@@ -165,12 +167,12 @@ Tests: `LeafKindTest`, `LeafDecoderTest`, `DictionaryStringReuseTest`.
 
 There is no system property or reader option; omitting the module flag is the way to run scalar. The user-facing statement is in [docs/content/reference/configuration.md](../docs/content/reference/configuration.md).
 
-**Where it is used.** Only `RleBitPackingHybridDecoder` calls it, from the full page decode that refuses a page without an in-place reader ([Refusal](#encodings-and-readers)):
+**Where it is used.** `FlatPageValues.countNonNull` calls it for every non-null count of the read path, and `BinaryPageValues` counts through the same method:
 
-- `countNonNulls` sizes the index stream of a page with definition levels.
-- `applyDictionaryInts` / `Longs` / `Floats` / `Doubles` perform the lookup for an all-present page of a numeric dictionary, scalar in both implementations.
+- the non-null values of a page with definition levels, which size its dictionary ids, its `BYTE_STREAM_SPLIT` stride, its `ALP` and `PLAIN` value sections and its delta length streams;
+- the non-null values a reader's cursor passes on the way to a run's first row, in both readers.
 
-The in-place readers, the level decode and the non-null counts of the read path are scalar.
+The level decode and the readers' per-value loops are scalar.
 
 **Contract.** Both implementations return identical results for every input, and the scalar path is always complete, so correctness never depends on which one is selected.
 
@@ -179,6 +181,6 @@ Tests: `SimdOperationsTest`, which loads `VectorOperations` from the multi-relea
 ## Boundaries
 
 - **Pages without CRCs (#1095).** A corrupt page body in a file written without page CRCs decodes to wrong values without error.
-- **Untrusted page headers (#201).** `uncompressed_page_size` sizes the decompression buffer unchecked, and dictionary indices are not validated ahead of the lookup.
+- **Untrusted page headers (#201).** `uncompressed_page_size` sizes the decompression buffer unchecked.
 - **Materialised levels and indices (#726).** Definition levels and dictionary indices are expanded to one `int` per entry; only the single-RLE-run all-present page is recognised without expansion.
 - **Vector API bit unpacking (#680).** The bit-packed index and level decode is scalar.

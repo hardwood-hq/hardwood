@@ -21,7 +21,6 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
-import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.internal.encoding.simd.ScalarOperations;
 import dev.hardwood.internal.encoding.simd.SimdOperations;
@@ -48,9 +47,6 @@ public class SimdBenchmark {
     private String implementation;
 
     private int[] defLevels;
-    private int[] indices;
-    private int[] dictInt;
-    private long[] dictLong;
     private SimdOperations ops;
 
     @Setup
@@ -70,32 +66,10 @@ public class SimdBenchmark {
         for (int i = 0; i < size; i++) {
             defLevels[i] = random.nextInt(4);
         }
-
-        // Dictionary indices (small dictionary)
-        dictInt = new int[] { 100, 200, 300, 400, 500, 600, 700, 800 };
-        dictLong = new long[] { 100L, 200L, 300L, 400L, 500L, 600L, 700L, 800L };
-        indices = new int[size];
-        for (int i = 0; i < size; i++) {
-            indices[i] = random.nextInt(dictInt.length);
-        }
     }
 
     @Benchmark
     public int countNonNulls() {
-        return ops.countNonNulls(defLevels, defLevels.length, 3);
-    }
-
-    @Benchmark
-    public void applyDictionaryInts(Blackhole bh) {
-        int[] output = new int[size];
-        ops.applyDictionaryInts(output, dictInt, indices, size);
-        bh.consume(output);
-    }
-
-    @Benchmark
-    public void applyDictionaryLongs(Blackhole bh) {
-        long[] output = new long[size];
-        ops.applyDictionaryLongs(output, dictLong, indices, size);
-        bh.consume(output);
+        return ops.countNonNulls(defLevels, 0, defLevels.length, 3);
     }
 }

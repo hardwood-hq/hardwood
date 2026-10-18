@@ -129,7 +129,7 @@ class DeltaBinaryPackedDecoderHeaderTest {
 
     private static int[] decode(byte[] page, int count) throws IOException {
         int[] output = new int[count];
-        new DeltaBinaryPackedDecoder(page, 0, page.length).readInts(output, null, 0);
+        new DeltaBinaryPackedDecoder(page, 0, page.length).readInts(output, 0, output.length);
         return output;
     }
 

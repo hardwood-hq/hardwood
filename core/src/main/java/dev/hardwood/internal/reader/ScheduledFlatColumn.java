@@ -241,9 +241,6 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             FlatPageValues values = info.isNullPlaceholder()
                     ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).flat()
                     : page.decoder.decodeFlat(info.pageData(), info.dictionary(), scratch);
-            if (values == null) {
-                page.decoder.rejectWithoutReader(info.pageData(), info.dictionary(), scratch);
-            }
             checkRows(info, values.size());
             for (int i = 0; i < page.segments.size(); i++) {
                 if (done) {
@@ -293,16 +290,9 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
 
     private void fillBinaryPage(PageTask page, PageDecoder.LevelScratch scratch) {
         PageInfo info = page.info;
-        BinaryPageValues values;
-        if (info.isNullPlaceholder()) {
-            values = page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary();
-        }
-        else {
-            values = page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch, true);
-            if (values == null) {
-                page.decoder.rejectWithoutReader(info.pageData(), info.dictionary(), scratch);
-            }
-        }
+        BinaryPageValues values = info.isNullPlaceholder()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary()
+                : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch);
         checkRows(info, values.size());
         List<Segment> segments = page.segments;
         for (int i = 0; i < segments.size(); i++) {

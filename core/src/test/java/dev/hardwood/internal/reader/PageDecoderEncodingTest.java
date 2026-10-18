@@ -14,9 +14,11 @@ import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.encoding.DeltaByteArrayEncoder;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
+import dev.hardwood.schema.ColumnSchema;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,8 +28,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 ///
 /// A file may say anything. An encoding is defined over some physical types and not others, so a
 /// page declaring one its column has no business carrying is a malformed file, and the decoder has
-/// to say so rather than decode the bytes into a page of the wrong shape — which is silently wrong
-/// twice over, once in the values and once in the [Page] variant handed to the column reader.
+/// to say so rather than read the bytes as values of the wrong shape — which is silently wrong
+/// twice over, once in the values and once in the type the consumer casts to.
 /// Being a malformed file rather than a gap in this release, each of these is a
 /// [ParquetReadException]; [java.lang.UnsupportedOperationException] is left to mean an encoding
 /// no decoder has been written for.
@@ -37,9 +39,8 @@ class PageDecoderEncodingTest {
     private static final int FIXED_LENGTH = 4;
 
     /// The byte-array delta encodings carry a length stream and then bytes, so their values are
-    /// byte arrays whatever the column's physical type is. Declared over an integer column they
-    /// used to decode into a `ByteArrayPage`, which is not the page an `INT32` column's reader
-    /// expects.
+    /// byte arrays whatever the column's physical type is, which is not what an `INT32` column's
+    /// reader expects.
     @Test
     void rejectsDeltaLengthByteArrayOnAnIntegerColumn() {
         assertThatThrownBy(() -> decode(Encoding.DELTA_LENGTH_BYTE_ARRAY, PhysicalType.INT32))
@@ -73,12 +74,11 @@ class PageDecoderEncodingTest {
     /// length by schema. Decoding a real page of them proves the guard lets the pair through,
     /// which asserting that some exception was not raised would not.
     @Test
-    void decodesDeltaByteArrayOnAFixedLengthColumn() throws Exception {
-        Page page = decode(Encoding.DELTA_BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY,
+    void decodesDeltaByteArrayOnAFixedLengthColumn() {
+        Object values = decode(Encoding.DELTA_BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY,
                 deltaByteArrayBody("aaaa", "aaab", "abcd", "abce"));
 
-        assertThat(page).isInstanceOf(Page.ByteArrayPage.class);
-        assertThat(Arrays.stream(((Page.ByteArrayPage) page).values())
+        assertThat(Arrays.stream((byte[][]) values)
                 .map(value -> new String(value, UTF_8))
                 .toList())
                 .containsExactly("aaaa", "aaab", "abcd", "abce");
@@ -128,17 +128,16 @@ class PageDecoderEncodingTest {
     /// An ALP page of one vector holding 1.5, 2.25, 3.0 and 0.75 at (exponent 2, factor 0): the
     /// integers 150, 225, 300 and 75, a frame of reference of 75 and 8-bit deltas.
     @Test
-    void decodesAlpOnADoubleColumn() throws Exception {
+    void decodesAlpOnADoubleColumn() {
         ByteBuffer body = ByteBuffer.allocate(7 + 4 + 13 + 4).order(ByteOrder.LITTLE_ENDIAN);
         body.put((byte) 0).put((byte) 0).put((byte) 10).putInt(NUM_VALUES);
         body.putInt(4);
         body.put((byte) 2).put((byte) 0).putShort((short) 0).putLong(75).put((byte) 8);
         body.put((byte) 75).put((byte) 150).put((byte) 225).put((byte) 0);
 
-        Page page = decode(Encoding.ALP, PhysicalType.DOUBLE, body.array());
+        Object values = decode(Encoding.ALP, PhysicalType.DOUBLE, body.array());
 
-        assertThat(page).isInstanceOf(Page.DoublePage.class);
-        assertThat(((Page.DoublePage) page).values()).containsExactly(1.5, 2.25, 3.0, 0.75);
+        assertThat((double[]) values).containsExactly(1.5, 2.25, 3.0, 0.75);
     }
 
     /// A Thrift value no member of [Encoding] names reads as [Encoding#UNKNOWN], and the refusal
@@ -146,9 +145,95 @@ class PageDecoderEncodingTest {
     /// This is a gap in this release rather than a malformed file.
     @Test
     void rejectsAnUnrecognizedEncodingByItsThriftValue() {
-        assertThatThrownBy(() -> DataPages.decodeRequired(42, PhysicalType.INT32, NUM_VALUES, new byte[16]))
+        ColumnSchema column = DataPages.required(PhysicalType.INT32, null);
+        PageDecoder decoder = DataPages.decoder(column, CompressionCodec.UNCOMPRESSED);
+
+        assertThatThrownBy(() -> DataPages.read(decoder, column, DataPages.page(42, NUM_VALUES, new byte[16]), null))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("Encoding not yet supported: UNKNOWN (Thrift encoding value 42)");
+    }
+
+    @Test
+    void rejectsByteStreamSplitOnABooleanColumn() {
+        assertThatThrownBy(() -> decode(Encoding.BYTE_STREAM_SPLIT, PhysicalType.BOOLEAN))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("BYTE_STREAM_SPLIT is not defined over BOOLEAN; the format defines it over "
+                         + "INT32, INT64, FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY only");
+    }
+
+    @Test
+    void rejectsByteStreamSplitOnAnInt96Column() {
+        assertThatThrownBy(() -> decode(Encoding.BYTE_STREAM_SPLIT, PhysicalType.INT96))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("BYTE_STREAM_SPLIT is not defined over INT96; the format defines it over "
+                         + "INT32, INT64, FLOAT, DOUBLE, FIXED_LEN_BYTE_ARRAY only");
+    }
+
+    @Test
+    void rejectsDeltaBinaryPackedOnADoubleColumn() {
+        assertThatThrownBy(() -> decode(Encoding.DELTA_BINARY_PACKED, PhysicalType.DOUBLE))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("DELTA_BINARY_PACKED is not defined over DOUBLE; the format defines it over "
+                         + "INT32, INT64 only");
+    }
+
+    @Test
+    void rejectsDeltaBinaryPackedOnAByteArrayColumn() {
+        assertThatThrownBy(() -> decode(Encoding.DELTA_BINARY_PACKED, PhysicalType.BYTE_ARRAY))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("DELTA_BINARY_PACKED is not defined over BYTE_ARRAY; the format defines it over "
+                         + "INT32, INT64 only");
+    }
+
+    @Test
+    void rejectsAlpOnAFixedLengthColumn() {
+        assertThatThrownBy(() -> decode(Encoding.ALP, PhysicalType.FIXED_LEN_BYTE_ARRAY))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ALP is not defined over FIXED_LEN_BYTE_ARRAY; the format defines it over "
+                        + "FLOAT, DOUBLE only");
+    }
+
+    @Test
+    void rejectsRleOnAByteArrayColumn() {
+        assertThatThrownBy(() -> decode(Encoding.RLE, PhysicalType.BYTE_ARRAY))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("RLE encodes only boolean values in a data page, not BYTE_ARRAY");
+    }
+
+    @Test
+    void rejectsADictionaryEncodedPageOfAChunkWithoutADictionary() {
+        assertThatThrownBy(() -> decode(Encoding.RLE_DICTIONARY, PhysicalType.INT64))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Dictionary page not found for RLE_DICTIONARY encoding");
+    }
+
+    /// A chunk of booleans has no dictionary to parse, so a page claiming one is refused like any
+    /// other page of a chunk without one.
+    @Test
+    void rejectsADictionaryEncodedBooleanPage() {
+        assertThatThrownBy(() -> decode(Encoding.PLAIN_DICTIONARY, PhysicalType.BOOLEAN))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("Dictionary page not found for PLAIN_DICTIONARY encoding");
+    }
+
+    @Test
+    void rejectsAPageReferringToADictionaryOfAnotherType() {
+        Dictionary dictionary = new Dictionary.IntDictionary(new int[]{ 1 });
+
+        assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.INT64, null, 1,
+                new byte[]{ 0 }, dictionary))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("A INT64 page refers to a dictionary of another type");
+    }
+
+    @Test
+    void rejectsABinaryPageReferringToADictionaryOfAnotherType() {
+        Dictionary dictionary = new Dictionary.IntDictionary(new int[]{ 1 });
+
+        assertThatThrownBy(() -> DataPages.readRequired(Encoding.RLE_DICTIONARY, PhysicalType.BYTE_ARRAY, null, 1,
+                new byte[]{ 0 }, dictionary))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("A BYTE_ARRAY page refers to a dictionary of another type");
     }
 
     /// `DELTA_BYTE_ARRAY` for `values`, each of [#FIXED_LENGTH] bytes, in the layout the encoder
@@ -164,14 +249,14 @@ class PageDecoderEncodingTest {
         return DeltaByteArrayEncoder.encode(data, offsets, 0, values.length);
     }
 
-    /// Decodes a minimal `DATA_PAGE` declaring `encoding` over a required column of `type`, its
-    /// body arbitrary: the refusals are all made before a value is read.
-    private static Page decode(Encoding encoding, PhysicalType type) throws Exception {
+    /// Reads a minimal `DATA_PAGE` declaring `encoding` over a required column of `type`, its
+    /// body arbitrary: the refusals are all made before the page is decompressed.
+    private static Object decode(Encoding encoding, PhysicalType type) {
         return decode(encoding, type, new byte[16]);
     }
 
-    private static Page decode(Encoding encoding, PhysicalType type, byte[] body) throws Exception {
-        return DataPages.decodeRequired(encoding, type,
+    private static Object decode(Encoding encoding, PhysicalType type, byte[] body) {
+        return DataPages.readRequired(encoding, type,
                 type == PhysicalType.FIXED_LEN_BYTE_ARRAY ? FIXED_LENGTH : null, NUM_VALUES, body);
     }
 }

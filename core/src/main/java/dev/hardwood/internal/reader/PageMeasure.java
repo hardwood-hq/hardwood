@@ -135,7 +135,7 @@ final class PageMeasure {
         return fixedListK;
     }
 
-    /// Whether every leaf of the page is present ([Page#allPresent()]).
+    /// Whether every leaf of the page is present: it has no definition levels.
     boolean allPresent() {
         return allPresent;
     }

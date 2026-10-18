@@ -13,11 +13,13 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.reader.ReferencePageDecoder;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// [ByteStreamSplitEncoder] against [ByteStreamSplitDecoder], at every byte width the encoding
+/// [ByteStreamSplitEncoder] against [ReferencePageDecoder], at every byte width the encoding
 /// applies to, and over the floating-point values whose bit patterns are special: `NaN`, the
 /// infinities, and both signed zeros.
 ///
@@ -76,17 +78,13 @@ class ByteStreamSplitEncoderTest {
         int[] ints = { 0, 1, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, 123_456 };
         byte[] intPlain = PlainEncoder.encodeInts(ints, 0, ints.length);
         byte[] intSplit = ByteStreamSplitEncoder.encode(intPlain, 0, ints.length, Integer.BYTES);
-        int[] readInts = new int[ints.length];
-        new ByteStreamSplitDecoder(intSplit, 0, intSplit.length, ints.length, PhysicalType.INT32, null)
-                .readInts(readInts, null, 0);
+        int[] readInts = (int[]) split(intSplit, ints.length, PhysicalType.INT32, null);
         assertThat(readInts).containsExactly(ints);
 
         long[] longs = { 0L, 1L, -1L, Long.MAX_VALUE, Long.MIN_VALUE, 987_654_321L };
         byte[] longPlain = PlainEncoder.encodeLongs(longs, 0, longs.length);
         byte[] longSplit = ByteStreamSplitEncoder.encode(longPlain, 0, longs.length, Long.BYTES);
-        long[] readLongs = new long[longs.length];
-        new ByteStreamSplitDecoder(longSplit, 0, longSplit.length, longs.length, PhysicalType.INT64, null)
-                .readLongs(readLongs, null, 0);
+        long[] readLongs = (long[]) split(longSplit, longs.length, PhysicalType.INT64, null);
         assertThat(readLongs).containsExactly(longs);
     }
 
@@ -103,9 +101,7 @@ class ByteStreamSplitEncoderTest {
 
         byte[] split = ByteStreamSplitEncoder.encode(packed, 0, values.length, width);
 
-        byte[][] read = new byte[values.length][];
-        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.FIXED_LEN_BYTE_ARRAY, width)
-                .readByteArrays(read, null, 0);
+        byte[][] read = (byte[][]) split(split, values.length, PhysicalType.FIXED_LEN_BYTE_ARRAY, width);
         assertThat(read).isEqualTo(values);
     }
 
@@ -118,8 +114,7 @@ class ByteStreamSplitEncoderTest {
 
         byte[] split = ByteStreamSplitEncoder.encode(plain, 2 * Double.BYTES, 3, Double.BYTES);
 
-        double[] read = new double[3];
-        new ByteStreamSplitDecoder(split, 0, split.length, 3, PhysicalType.DOUBLE, null).readDoubles(read, null, 0);
+        double[] read = (double[]) split(split, 3, PhysicalType.DOUBLE, null);
         assertThat(read).containsExactly(10.0, 20.0, 30.0);
     }
 
@@ -156,19 +151,19 @@ class ByteStreamSplitEncoderTest {
     private static float[] roundTripFloats(float[] values) throws IOException {
         byte[] plain = PlainEncoder.encodeFloats(values, 0, values.length);
         byte[] split = ByteStreamSplitEncoder.encode(plain, 0, values.length, Float.BYTES);
-        float[] read = new float[values.length];
-        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.FLOAT, null)
-                .readFloats(read, null, 0);
-        return read;
+        return (float[]) split(split, values.length, PhysicalType.FLOAT, null);
     }
 
     private static double[] roundTripDoubles(double[] values) throws IOException {
         byte[] plain = PlainEncoder.encodeDoubles(values, 0, values.length);
         byte[] split = ByteStreamSplitEncoder.encode(plain, 0, values.length, Double.BYTES);
-        double[] read = new double[values.length];
-        new ByteStreamSplitDecoder(split, 0, split.length, values.length, PhysicalType.DOUBLE, null)
-                .readDoubles(read, null, 0);
-        return read;
+        return (double[]) split(split, values.length, PhysicalType.DOUBLE, null);
+    }
+
+    /// Decodes `count` values of a `BYTE_STREAM_SPLIT` section through [ReferencePageDecoder].
+    private static Object split(byte[] split, int count, PhysicalType type, Integer typeLength) {
+        return ReferencePageDecoder.decodeValues(Encoding.BYTE_STREAM_SPLIT, type, typeLength, split, 0,
+                split.length, count, null);
     }
 
     // ==================== Splitting straight from a typed store ====================

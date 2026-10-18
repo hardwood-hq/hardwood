@@ -25,15 +25,15 @@ import dev.hardwood.row.PqInterval;
 /// Value `i` is the view `[starts[i], ends[i])` into `bytes`. Views need not be
 /// contiguous or in value order, and several may cover the same bytes: a value from a
 /// dictionary page points at its entry in a copy of the dictionary's bytes that the
-/// batch holds once ([#viewDictionaryRange]), while a plain value is appended
-/// ([#appendAt], [#appendRange]). A null value's view is empty. Bytes outside every view, and bytes
-/// at or beyond [#byteCount], are unspecified.
+/// batch holds once, or at a copy of the entry appended to `bytes` ([#ensureViews]), while a
+/// plain value's bytes are written by its segment. A null value's view is empty. Bytes outside
+/// every view, and bytes at or beyond [#byteCount], are unspecified.
 ///
 /// `bytes` starts empty and grows on demand: a batch whose values all come from one
 /// small dictionary holds little more than that dictionary's bytes.
 ///
-/// A batch is either assembled in value order, by appending, or filled positionally by the
-/// segments of a scheduled column's cell ([#prepareForFill], [BinaryFill]): each segment writes
+/// A batch is filled positionally by the segments of a scheduled column's cell
+/// ([#prepareForFill], [BinaryFill], [NestedFill]): each segment writes
 /// its own values' entry ids, views and bytes at its own positions, so the segments are
 /// independent of each other and of the order they are written in. The view arrays and the
 /// entry ids are installed by the first segment that writes them, under the batch's monitor; the
@@ -76,8 +76,8 @@ public final class BinaryBatchValues {
 
     /// Per-value dictionary entry index, meaningful only when [#dictionary] is
     /// non-null. `-1` marks a value that must materialise from [#bytes]: a
-    /// plain-encoded value or a null position. Allocated lazily
-    /// by [#ensureDictionary] when the first dictionary page lands.
+    /// plain-encoded value or a null position. Allocated by the first segment of entry ids
+    /// ([#installDictionary]).
     public int[] dictIndices;
 
     /// An empty batch slot for `capacity` values.
@@ -111,7 +111,7 @@ public final class BinaryBatchValues {
     private boolean viewsPending;
 
     /// End of the range whose dictionary values were recorded without views
-    /// ([#deferDictionaryRange]), `0` when there are none.
+    /// ([#finishFill]), `0` when there are none.
     private int deferredEnd;
 
     /// The column's [ViewDemand], set while dictionary values may be deferred, so that building
@@ -171,15 +171,6 @@ public final class BinaryBatchValues {
             ends = new int[capacity];
             viewsPending = deferredEnd > 0;
         }
-    }
-
-    /// Readies a reused slot for the next batch: its buffer is kept, its contents are not.
-    public void reset() {
-        byteCount = 0;
-        dictionary = null;
-        viewedDictionary = null;
-        deferredEnd = 0;
-        viewsPending = starts == null;
     }
 
     /// Readies a slot for a positional fill: its arrays are kept, its contents are not. Runs
@@ -252,22 +243,6 @@ public final class BinaryBatchValues {
         viewsPending = starts == null || deferredEnd > 0;
     }
 
-    /// Records `[destPos, destPos + length)` as dictionary values whose views are built when a
-    /// reader first needs them ([#ensureViews]); a null gets its empty view now. A reader that
-    /// takes only the entry ids then never pays for the views, nor, if the batch holds no plain
-    /// value or null, for their arrays. The ids come from [#recordDictIndices], which the
-    /// caller runs for the same range.
-    public void deferDictionaryRange(Page.DictionaryByteArrayPage page, int srcPos, int destPos, int length) {
-        int[] indices = page.dictIndices();
-        for (int i = 0; i < length; i++) {
-            if (indices[srcPos + i] < 0) {
-                appendEmpty(destPos + i);
-            }
-        }
-        deferredEnd = Math.max(deferredEnd, destPos + length);
-        viewsPending = true;
-    }
-
     /// Readies [#starts] and [#ends] for reading: allocates them, and builds the views of the
     /// dictionary values recorded without them. Every reader of the views calls this first.
     public void ensureViews() {
@@ -276,9 +251,9 @@ public final class BinaryBatchValues {
         }
     }
 
-    /// Builds the deferred views by the rule [#viewDictionaryRange] applies as it assembles:
-    /// while the deferred values' bytes stay below the dictionary's size they are appended,
-    /// otherwise the dictionary is copied in once and the values point into it.
+    /// Builds the deferred views: while the deferred values' bytes stay below the dictionary's size
+    /// they are appended, otherwise the dictionary is copied in once and the values point into it,
+    /// so a batch holds at most twice the bytes that appending every value would take.
     private void buildViews() {
         viewArrays();
         viewsPending = false;
@@ -365,21 +340,6 @@ public final class BinaryBatchValues {
         dictIndices = ids;
     }
 
-    /// Grows the view arrays (and [#dictIndices], once allocated) to `capacity` values.
-    public void growCapacity(int capacity) {
-        if (capacity <= this.capacity) {
-            return;
-        }
-        this.capacity = capacity;
-        if (starts != null) {
-            starts = Arrays.copyOf(starts, capacity);
-            ends = Arrays.copyOf(ends, capacity);
-        }
-        if (dictIndices != null) {
-            dictIndices = Arrays.copyOf(dictIndices, capacity);
-        }
-    }
-
     /// Materialise value `idx` as a fresh `byte[]` copy. Allocates one array
     /// per call — used by convenience accessors and per-row materialisation
     /// paths; hot loops should read [#bytes()] / [#starts()] / [#ends()] directly.
@@ -456,7 +416,7 @@ public final class BinaryBatchValues {
                 return dict.internedString(dictIndex);
             }
         }
-        // A value without an entry id, plain or null, had its view written when it was appended,
+        // A value without an entry id, plain or null, had its view written by its segment,
         // so this reads it without building the deferred views of the batch's dictionary values.
         int start = starts[idx];
         int len = ends[idx] - start;
@@ -472,7 +432,7 @@ public final class BinaryBatchValues {
     /// Appends `len` bytes from `src[srcOffset..)` as value `valueIdx`, growing
     /// [#bytes] if it would otherwise overflow. Throws if the batch's bytes would
     /// overflow `Integer.MAX_VALUE`.
-    public void appendAt(int valueIdx, byte[] src, int srcOffset, int len) {
+    private void appendAt(int valueIdx, byte[] src, int srcOffset, int len) {
         int start = byteCount;
         ensureBytes((long) start + len, valueIdx, true);
         if (len > 0) {
@@ -485,104 +445,10 @@ public final class BinaryBatchValues {
     }
 
     /// Records an empty view as value `valueIdx`, as a null value has.
-    public void appendEmpty(int valueIdx) {
+    private void appendEmpty(int valueIdx) {
         viewArrays();
         starts[valueIdx] = byteCount;
         ends[valueIdx] = byteCount;
-    }
-
-    /// Appends `values[srcPos, srcPos + length)` as values `[destPos, destPos + length)`,
-    /// a `null` giving an empty view. The range form of [#appendAt], keeping the write
-    /// position in a local across the range.
-    public void appendRange(byte[][] values, int srcPos, int destPos, int length) {
-        viewArrays();
-        int cursor = byteCount;
-        byte[] buffer = bytes;
-        for (int i = 0; i < length; i++) {
-            byte[] value = values[srcPos + i];
-            int dest = destPos + i;
-            starts[dest] = cursor;
-            if (value != null) {
-                int len = value.length;
-                if (len > buffer.length - cursor) {
-                    ensureBytes((long) cursor + len, dest, true);
-                    buffer = bytes;
-                }
-                System.arraycopy(value, 0, buffer, cursor, len);
-                cursor += len;
-            }
-            ends[dest] = cursor;
-        }
-        byteCount = cursor;
-    }
-
-    /// Sets the views of `[destPos, destPos + length)` to the entries the page's indices
-    /// `[srcPos, srcPos + length)` name, `-1` (a null) giving an empty view.
-    ///
-    /// The values point into one copy of the dictionary's bytes held by this batch. Until
-    /// the bytes of the batch's values from a dictionary reach the dictionary's size, those
-    /// values are appended instead and the dictionary is not copied in, so a batch holds
-    /// at most twice the bytes that appending every value would take.
-    public void viewDictionaryRange(Page.DictionaryByteArrayPage page, int srcPos, int destPos, int length) {
-        viewArrays();
-        Dictionary.ByteArrayDictionary dict = page.dictionary();
-        int[] indices = page.dictIndices();
-        int[] entryOffsets = dict.entryOffsets();
-        int base = viewBase(dict);
-        if (base < 0) {
-            long rangeBytes = 0;
-            for (int i = 0; i < length; i++) {
-                int entry = indices[srcPos + i];
-                if (entry >= 0) {
-                    rangeBytes += entryOffsets[entry + 1] - entryOffsets[entry];
-                }
-            }
-            if (appendedDictionaryBytes + rangeBytes < dict.entryBytes().length) {
-                appendedDictionaryBytes += rangeBytes;
-                for (int i = 0; i < length; i++) {
-                    appendEntry(dict, indices[srcPos + i], destPos + i);
-                }
-                return;
-            }
-            base = copyIn(destPos);
-        }
-        for (int i = 0; i < length; i++) {
-            int entry = indices[srcPos + i];
-            int dest = destPos + i;
-            if (entry < 0) {
-                starts[dest] = 0;
-                ends[dest] = 0;
-            }
-            else {
-                starts[dest] = base + entryOffsets[entry];
-                ends[dest] = base + entryOffsets[entry + 1];
-            }
-        }
-    }
-
-    /// Sets the view of value `destIdx` to the entry the page's index at `srcIdx`
-    /// names. The single-value form of [#viewDictionaryRange], for nested assembly.
-    public void viewDictionaryValue(Page.DictionaryByteArrayPage page, int srcIdx, int destIdx) {
-        viewArrays();
-        Dictionary.ByteArrayDictionary dict = page.dictionary();
-        int entry = page.dictIndices()[srcIdx];
-        if (entry < 0) {
-            appendEmpty(destIdx);
-            return;
-        }
-        int[] entryOffsets = dict.entryOffsets();
-        int base = viewBase(dict);
-        if (base < 0) {
-            int len = entryOffsets[entry + 1] - entryOffsets[entry];
-            if (appendedDictionaryBytes + len < dict.entryBytes().length) {
-                appendedDictionaryBytes += len;
-                appendEntry(dict, entry, destIdx);
-                return;
-            }
-            base = copyIn(destIdx);
-        }
-        starts[destIdx] = base + entryOffsets[entry];
-        ends[destIdx] = base + entryOffsets[entry + 1];
     }
 
     private void appendEntry(Dictionary.ByteArrayDictionary dict, int entry, int destIdx) {
@@ -644,67 +510,6 @@ public final class BinaryBatchValues {
             long hint = valueAppend ? (long) bytesPerValueHint * capacity : 0L;
             long newSize = Math.min(Integer.MAX_VALUE, Math.max(Math.max((long) bytes.length * 2L, needed), hint));
             bytes = Arrays.copyOf(bytes, (int) newSize);
-        }
-    }
-
-    /// Records dictionary entry indices for a contiguous page range
-    /// `[srcPos, srcPos + length)` landing at `[destPos, destPos + length)`, so
-    /// [#stringAt] can reuse one materialised `String` per entry and
-    /// `ColumnReader.getDictionaryIds()` can expose them.
-    ///
-    /// `pageDictIndices` is `null` for a plain (non-dictionary) page; such
-    /// values are recorded as `-1` only once the batch is already on the
-    /// dictionary path, since otherwise [#stringAt] reads [#bytes] regardless.
-    /// The first dictionary page switches the batch on (see [#ensureDictionary]).
-    public void recordDictIndices(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
-                                  int srcPos, int destPos, int length) {
-        if (pageDictIndices == null) {
-            if (dictionary != null) {
-                Arrays.fill(dictIndices, destPos, destPos + length, -1);
-            }
-            return;
-        }
-        ensureDictionary(pageDict, destPos);
-        System.arraycopy(pageDictIndices, srcPos, dictIndices, destPos, length);
-    }
-
-    /// Records the dictionary entry index for a single gathered value at
-    /// `destPos`. Used by nested assembly, where kept values are scattered by
-    /// the rep/def-level walk rather than copied as a contiguous range. See
-    /// [#recordDictIndices] for the range form; the dictionary-switch rules are
-    /// identical.
-    public void recordDictIndex(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
-                                int srcPos, int destPos) {
-        if (pageDictIndices == null) {
-            if (dictionary != null) {
-                dictIndices[destPos] = -1;
-            }
-            return;
-        }
-        // ensureDictionary lazily allocates dictIndices, so it must run before
-        // the `dictIndices[destPos]` store target is evaluated — otherwise the
-        // store binds the pre-allocation (null) array reference.
-        ensureDictionary(pageDict, destPos);
-        dictIndices[destPos] = pageDictIndices[srcPos];
-    }
-
-    /// Switches the batch onto the dictionary representation on the first
-    /// dictionary page that contributes: adopts `pageDict`, allocates
-    /// [#dictIndices] (sized to the value capacity), and backfills the plain
-    /// prefix `[0, destPos)` with `-1`. A batch of binary values ends at its row
-    /// group's end, so every dictionary page of a batch carries the same dictionary.
-    ///
-    /// @throws IllegalStateException if `pageDict` is not the batch's dictionary
-    private void ensureDictionary(Dictionary.ByteArrayDictionary pageDict, int destPos) {
-        if (dictionary == null) {
-            dictionary = pageDict;
-            if (dictIndices == null || dictIndices.length < capacity) {
-                dictIndices = new int[capacity];
-            }
-            Arrays.fill(dictIndices, 0, destPos, -1);
-        }
-        else if (dictionary != pageDict) {
-            throw twoDictionaries();
         }
     }
 }

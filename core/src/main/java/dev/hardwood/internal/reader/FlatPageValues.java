@@ -13,6 +13,8 @@ import java.nio.ByteOrder;
 
 import dev.hardwood.internal.encoding.AlpDecoder;
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
+import dev.hardwood.internal.encoding.simd.SimdOperations;
+import dev.hardwood.internal.encoding.simd.VectorSupport;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -31,6 +33,7 @@ final class FlatPageValues {
     private static final VarHandle LONG = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
     private static final VarHandle FLOAT = MethodHandles.byteArrayViewVarHandle(float[].class, ByteOrder.LITTLE_ENDIAN);
     private static final VarHandle DOUBLE = MethodHandles.byteArrayViewVarHandle(double[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final SimdOperations SIMD = VectorSupport.operations();
 
     private final PhysicalType type;
     /// The page's values, nulls included.
@@ -179,16 +182,12 @@ final class FlatPageValues {
 
     /// The non-null values among a page's first `numValues`.
     static int countNonNull(int[] definitionLevels, int maxDefinitionLevel, int numValues) {
-        if (definitionLevels == null) {
-            return numValues;
-        }
-        int count = 0;
-        for (int i = 0; i < numValues; i++) {
-            if (definitionLevels[i] == maxDefinitionLevel) {
-                count++;
-            }
-        }
-        return count;
+        return countNonNull(definitionLevels, maxDefinitionLevel, 0, numValues);
+    }
+
+    /// The non-null values among a page's rows `[from, to)`, counted by the [SimdOperations] kernel.
+    static int countNonNull(int[] definitionLevels, int maxDefinitionLevel, int from, int to) {
+        return definitionLevels == null ? to - from : SIMD.countNonNulls(definitionLevels, from, to, maxDefinitionLevel);
     }
 
     private static int width(PhysicalType type) {
@@ -237,20 +236,8 @@ final class FlatPageValues {
         if (pageRow < row) {
             throw new IllegalStateException("Page rows read out of order: row " + pageRow + " after " + row);
         }
-        nonNull += definitionLevels == null
-                ? pageRow - row
-                : countNonNullBetween(row, pageRow);
+        nonNull += countNonNull(definitionLevels, maxDefinitionLevel, row, pageRow);
         row = pageRow;
-    }
-
-    private int countNonNullBetween(int from, int to) {
-        int count = 0;
-        for (int i = from; i < to; i++) {
-            if (definitionLevels[i] == maxDefinitionLevel) {
-                count++;
-            }
-        }
-        return count;
     }
 
     /// Writes the `length` values from the cursor's non-null position, every one present.
