@@ -762,11 +762,13 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     else {
                         placeholderRecords = mask.totalRecords();
                     }
-                    pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData);
+                    pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData,
+                            columnSchema.maxRepetitionLevel() == 0 ? placeholderRecords : PageInfo.UNKNOWN_RECORDS);
                 }
                 else {
                     ByteBuffer pageData = readPageBytes(position, totalPageSize);
-                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
+                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask,
+                            keptRecords(mask, numValues));
                 }
                 valuesRead += numValues;
                 recordsRead += recordsInPage;
@@ -787,11 +789,21 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             return null;
         }
 
+        /// The records a data page of `numValues` values contributes after `mask`, for
+        /// [PageInfo#records()]: a column without repetition has one record per value, a column
+        /// with repetition counts its records from its repetition levels once decoded.
+        private int keptRecords(PageRowMask mask, int numValues) {
+            if (columnSchema.maxRepetitionLevel() > 0) {
+                return PageInfo.UNKNOWN_RECORDS;
+            }
+            return mask.isAll() ? numValues : mask.totalRecords();
+        }
+
         /// Whether the pages yielded so far cover `maxRows` records, which this
         /// plan decides for a flat column only, whose values are its records. A
         /// nested column has more values than records, and counting them needs the
         /// repetition levels, which a v1 page holds inside the compressed body; its
-        /// pages are yielded until the column worker's drain has assembled
+        /// pages are yielded until the column worker has placed
         /// `maxRows` records and stops the worker.
         private boolean reachedMaxRows() {
             return maxRows > 0 && columnSchema.maxRepetitionLevel() == 0 && valuesRead >= maxRows;

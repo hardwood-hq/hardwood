@@ -18,6 +18,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedColumnWorker;
+import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RecordFilterTally;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -36,6 +37,11 @@ import dev.hardwood.schema.FileSchema;
 /// One party advances a scan: its [ColumnReaders] group, or the single
 /// [ColumnReader] that is its only view. The views take up each step after it.
 final class ColumnScan implements Closeable {
+
+    /// Whether flat fixed-width columns are read by [ReadScheduler]; `false` reads every column
+    /// through a [dev.hardwood.internal.reader.ColumnWorker], for tests comparing the two.
+    private static final boolean SCHEDULED =
+            !"false".equalsIgnoreCase(System.getProperty("hardwood.internal.scheduled"));
 
     private final ColumnCursor[] cursors;
     private final int payloadCount;
@@ -67,7 +73,8 @@ final class ColumnScan implements Closeable {
                            FileSchema schema,
                            ReadProjection projection,
                            ResolvedPredicate filter,
-                           int batchSize) {
+                           int batchSize,
+                           long budgetRows) {
         NestedColumnWorker.IndexMode indexMode = filter == null
                 ? NestedColumnWorker.IndexMode.REAL_VIEW
                 : NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS;
@@ -75,10 +82,16 @@ final class ColumnScan implements Closeable {
         int columnCount = decoded.getProjectedColumnCount();
         // Every cursor's worker closes its batches where the read's batch plan does.
         rowGroupIterator.planBatches(batchSize, 0);
+        ReadScheduler scheduler = SCHEDULED
+                ? new ReadScheduler(context, batchSize, budgetRows)
+                : null;
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
             cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode);
+                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode, scheduler);
+        }
+        if (scheduler != null && scheduler.hasColumns()) {
+            scheduler.start();
         }
         SelectionEngine engine = filter == null
                 ? null
@@ -355,6 +368,9 @@ final class ColumnScan implements Closeable {
         // close body again, so skipping the release would leave the work list
         // reachable for the parent reader's whole lifetime.
         try (rowGroupIterator) {
+            for (ColumnCursor cursor : cursors) {
+                cursor.requestStop();
+            }
             for (ColumnCursor cursor : cursors) {
                 cursor.close();
             }

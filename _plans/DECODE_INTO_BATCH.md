@@ -30,10 +30,16 @@ two copies around native decompression (#1015; stage 7 below).
 | Prototype `1287-proto-deferred-dict`: dictionary numeric pages gathered into the batch on the drain, 20 columns, 8 threads | wall 306 → 209 ms, CPU 2100 → 1460 ms |
 | Spike `scatter-decode-spike`: one scheduler, decode into batches, 20 columns | CPU −40% on 8 threads, wall −28% on 1 thread; behind the prototype on 8 threads (262 ms), its scheduler thread doing every column's I/O, header and dictionary parsing |
 | Spike, in-flight bound counted in batches past the consumer | a 4-batch window starved pages of ~870K rows; 16 did not |
+| Window of 8 batches counted in batch capacity (#1516), 3 columns of the 2016-01 file, pages of ~0.7M rows | clamped at `MAX_BATCH`, the window held about 1.5 pages per column: 46 ms against `main`'s 33 ms in a container with fast cores, while on the N300 it was 23% faster than `main`; with the window in byte-budget rows while the read waits for decoding and a decode thread idles, 31 ms in the container, and the 20-column read and 1BRC's eight concurrent readers unchanged on the N300 |
+| Read-ahead depth: each column's next pages up to the pool's thread count, or its next batches up to that count, within 8 batch byte budgets, in place of the window and its idle and wait gates | one flat column of pages spanning about two batches (`flatFloor`): N300 15.6–16.1 → 14.9–15.2 ms (`main` 14.0–14.6), container 14.6–15.2 → 12.3–13.6 ms (`main` 12.1–12.7); 3-column read unchanged (N300 110–115 ms, `main` 158–172; container 30–33 ms, `main` 32–36); 20-column read and 1BRC's eight readers within noise. 8 batch budgets as the only bound decoded the whole one-column file ahead and cost 25% on the N300; batches of the clamped capacity as the only bound starved the 3-column read by 50% in the container; pages alone as the depth starved a column of 53 small pages, about 7 to a batch, by 37% (ZSTD `BYTE_STREAM_SPLIT`, container 36 → 50 ms), its threads idling on each batch's last page; with batches counted too, 34–36 ms (`main` 40–42) |
+| Submission on the thread that changes the state, in place of a scheduler thread | one-column read on the N300: 73–78 → 68–70 ms CPU per read (`main` 65–70), wall unchanged |
+| Cell allocation under a parking lock, in place of a monitor | the second task reaching a cell spun while the first zeroed its array: `ObjectMonitor::try_spin` 9.7% of the instructions of the one-column read on the N300; with the lock −0.5 ms wall, −5 ms CPU per read. Allocating on the fetcher instead: +2.5 ms, one thread zeroing every cell; installing with a compare-and-set: twice the read's time, both tasks zeroing an array |
+| One task per column batch, prototype for flat fixed-width columns: a page spanning batches decoded by a page task into pooled buffers, each batch filled by one batch task | N300 against page tasks with the depth rule: one-column read level (14.9–15.1 ms, CPU 60–63 against 70–71 ms), 3-column read 114–130 against 110–114 ms, 20-column read 297–303 against 292–296 ms, 1BRC 674–682 against 645–658 ms; the remaining gap is dictionary ids read on another core than the one that decoded them. Its batch tasks size a batch before writing, but a page's decoded state then outlives its task (pooled scratch, owned bytes, a reader count, a cursor per reader), which costs about what the cross-task sizing it removes does |
 | Per-column pipeline without a drain, cells filled by copy (#1516) | per-column throttles cannot serve both shapes: with a window of 3 batches per column, the 20-column flat read was 10% and the nested read 18–27% faster than `main`, and a 3-column read of the 2016 and 2019 files 30–50% slower; with cells allocated before decode and no window, the 3-column read was close to `main` and the 20-column read 26–32% slower |
 
-The first two rows are where the gains come from: no page arrays and no copy. The last two are
-why the scheduling changes with them. With one retriever per column on a first-in-first-out
+The first two rows are where the gains come from: no page arrays and no copy. The rows on the
+read-ahead window, the depth and the per-column pipeline are why the scheduling
+changes with them. With one retriever per column on a first-in-first-out
 pool, decodes reach the pool in whatever order the retrievers race ahead, and the batch the
 consumer waits for queues behind other columns' read-ahead. A narrow read needs deep
 read-ahead per column to keep the pool busy; a wide read must not have it.
@@ -68,12 +74,13 @@ start go into the previous record's batch.
 ### Scheduler
 
 One scheduler per read decides the order in which pages reach the decode pool. It does no I/O
-and no decoding.
+and no decoding, and has no thread of its own: it runs on whichever thread changes what may be
+submitted, one thread at a time.
 
 | Role | Thread | Does |
 | --- | --- | --- |
 | **Fetcher** | one virtual thread per column (today's retriever) | Pulls `PageInfo`s from the column's `PageSource`: fetches, parses page headers and dictionaries, computes record ranges where metadata gives them. Keeps a short queue of fetched pages. |
-| **Scheduler** | one virtual thread per read | Repeatedly takes the head page with the lowest first row across the columns' queues, places it (computes its segments), and submits its task. |
+| **Scheduler** | the thread that queued a page, ended a task or published a batch | Takes the head page with the lowest first row across the columns' queues and submits its task, while the bounds allow. |
 | **Page task** | the decode pool | Decodes the page into its segments, completes the cells whose last segment it fills, publishes. |
 
 A page whose first row is not known yet (a `V1` page with repetition and no offset index) is
@@ -81,15 +88,15 @@ ordered by its column's last known row, a lower bound, so it is never submitted 
 column's pages are placed once measured, as in [Measure and fill](#measure-and-fill), and the
 scheduler holds at most a small fixed number of them unplaced.
 
-**Read-ahead** is bounded per read, never per column:
+**Read-ahead** has two bounds:
 
-- pages submitted and not finished, across all columns;
-- the first batch a page touches, at most a fixed number of batches past the next batch the
-  consumer takes. A page may extend past that window, so a page spanning many batches is
-  never held back by its own span.
+- pages submitted and not finished, across all columns, a few per decode thread;
+- per column, its pages submitted and not published fewer than the pool's thread count, or the
+  page starting fewer batches past the batch it publishes next than the pool has threads, within
+  a few batch byte budgets of that batch; a page holding rows of that batch is always within it.
 
-Both bounds are fixed by measurement on the shapes in [Stages](#stages): a 20-column flat read,
-a 3-column read of a long single-row-group file, a nested read, and 1BRC.
+The depth gives every thread work on a column alone, counted in whichever unit runs out first:
+pages, where a page spans batches, or batches, where many small pages make up one.
 
 The pool needs no priorities: tasks arrive in row order, so the tasks of the batch the consumer
 waits for are ahead of every read-ahead task in the queue.
@@ -141,9 +148,10 @@ holder's arrays go to the column's free arrays, which the next allocation of a c
 
 ### Threads and lifecycle
 
-- Per read: one scheduler. Per column: one fetcher. The drain threads are removed.
+- Per column: one fetcher. Submission runs on the threads that make pages ready; the drain
+  threads are removed.
 - Every `InputFile` access stays on the fetchers and the speculative tasks, as today.
-- Page tasks are tracked: `close()` stops the scheduler and the fetchers, then waits for every
+- Page tasks are tracked: `close()` stops the fetchers, then waits for every
   task submitted; a failure is placed with its page's file, row group and page ordinal.
 
 ### Invariants for READ_PIPELINE.md

@@ -41,6 +41,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// directly, because [dev.hardwood.internal.reader.ColumnWorker#close()] joins that thread and
 /// [ColumnReaders#close()] closes the columns one at a time: a per-column delay of any kind
 /// adds up rather than overlapping, and the total goes linear in the projection width.
+/// A scheduled column's [dev.hardwood.internal.reader.ScheduledColumn#close()] stops every
+/// scheduled column of the read on the first close, so their waits overlap the same way.
 ///
 /// Both consumer shapes have to be covered, because the two `BatchExchange` modes block their
 /// drain thread at *different* points and so are separately breakable. [ColumnReaders] uses

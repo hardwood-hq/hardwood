@@ -52,6 +52,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// before the next is opened, which is what makes the stalls add rather than overlap: a
 /// projection read through one [dev.hardwood.reader.ColumnReaders] runs its columns concurrently,
 /// so all but the first find their streams already ended and pay nothing.
+///
+/// Only the waits after a column's first batch count. The wait for the first batch is the
+/// pipeline starting up, which the end of the stream has no part in, and on a loaded machine it
+/// alone can reach the threshold.
 class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
 
     private static final String BATCH_WAIT_EVENT = "dev.hardwood.BatchWait";
@@ -91,10 +95,11 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
             // A first pass pays the one-off costs — class loading, the executor's threads, the
             // footer parse. Those can stall a consumer for real, so the pass is excluded rather
             // than merely untimed: the events are filtered by when the measured pass began.
-            readEveryColumnToTheEnd(hardwood, file);
+            readEveryColumnToTheEnd(hardwood, file, new ArrayList<>());
 
             Instant measuredFrom = Instant.now();
-            readEveryColumnToTheEnd(hardwood, file);
+            List<Instant[]> pastFirstBatch = new ArrayList<>();
+            readEveryColumnToTheEnd(hardwood, file, pastFirstBatch);
 
             awaitEvents();
 
@@ -106,6 +111,7 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
                     .isPositive();
 
             long stalledColumns = eventsSince(BATCH_WAIT_EVENT, measuredFrom)
+                    .filter(event -> startsWithin(event, pastFirstBatch))
                     .map(RecordedEvent::getDuration)
                     .filter(waited -> waited.compareTo(WAITED_OUT_THE_WINDOW) >= 0)
                     .count();
@@ -119,22 +125,40 @@ class ReaderEofLatencyTest extends AbstractJfrRecorderTest {
         }
     }
 
+    /// Whether `event` starts within one of `windows`, each the time from a column's first batch
+    /// to its close.
+    private static boolean startsWithin(RecordedEvent event, List<Instant[]> windows) {
+        Instant start = event.getStartTime();
+        for (Instant[] window : windows) {
+            if (!start.isBefore(window[0]) && !start.isAfter(window[1])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Stream<RecordedEvent> eventsSince(String eventName, Instant from) {
         return events(eventName).filter(event -> !event.getStartTime().isBefore(from));
     }
 
     /// Opens each column in turn and drains it past its last batch, because the `nextBatch()`
-    /// that returns `false` is the one this is about.
-    private static void readEveryColumnToTheEnd(Hardwood hardwood, byte[] file) throws Exception {
+    /// that returns `false` is the one this is about. Adds to `pastFirstBatch`, per column, the
+    /// time from its first batch's arrival to its close.
+    private static void readEveryColumnToTheEnd(Hardwood hardwood, byte[] file, List<Instant[]> pastFirstBatch)
+            throws Exception {
         try (ParquetFileReader parquet = hardwood.open(InputFile.of(ByteBuffer.wrap(file)))) {
             for (String column : columnNames()) {
                 int batches = 0;
+                Instant firstBatch = null;
                 try (ColumnReader reader = parquet.columnReader(column)) {
                     while (reader.nextBatch()) {
-                        batches++;
+                        if (batches++ == 0) {
+                            firstBatch = Instant.now();
+                        }
                     }
                 }
                 assertThat(batches).as("batches read from %s", column).isPositive();
+                pastFirstBatch.add(new Instant[]{ firstBatch, Instant.now() });
             }
         }
     }

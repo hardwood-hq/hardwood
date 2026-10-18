@@ -111,9 +111,12 @@ public class HardwoodContextImpl implements HardwoodContext {
         return decompressorFactory;
     }
 
+    /// Shuts the pool down, letting the tasks already queued run: a reader still reading counts
+    /// each task it submitted and waits for it when it closes, and its tasks return at once once
+    /// the rejection of its next submission has ended its read.
     @Override
     public void close() {
-        executor.shutdownNow();
+        executor.shutdown();
         try {
             executor.awaitTermination(5, TimeUnit.SECONDS);
         }

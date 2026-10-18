@@ -1316,7 +1316,9 @@ public class RowGroupIterator implements Closeable {
     /// `pageIndex` is the page's ordinal in the whole column chunk, not its position in
     /// this list: a filter drops pages, and a failure that named the position would send
     /// a reader to a page the offset index numbers differently.
-    record NeededPage(PageLocation location, PageRowMask mask, int pageIndex) {}
+    ///
+    /// `rows` is the page's row span in the offset index, before the mask.
+    record NeededPage(PageLocation location, PageRowMask mask, int pageIndex, int rows) {}
 
     /// Whether the dictionary page, `[dictStart, firstDataPageOffset)`, is fetched with the first
     /// needed page rather than on its own.
@@ -1376,22 +1378,30 @@ public class RowGroupIterator implements Closeable {
         if (matchingRows.isAll()) {
             List<NeededPage> needed = new ArrayList<>(allPages.size());
             for (int i = 0; i < allPages.size(); i++) {
-                needed.add(new NeededPage(allPages.get(i), PageRowMask.ALL, i));
+                needed.add(new NeededPage(allPages.get(i), PageRowMask.ALL, i,
+                        pageRows(allPages, i, rowGroupRowCount)));
             }
             return needed;
         }
         List<NeededPage> needed = new ArrayList<>();
         for (int i = 0; i < allPages.size(); i++) {
             long pageFirstRow = allPages.get(i).firstRowIndex();
-            long pageLastRow = (i + 1 < allPages.size())
-                    ? allPages.get(i + 1).firstRowIndex()
-                    : rowGroupRowCount;
+            long pageLastRow = pageFirstRow + pageRows(allPages, i, rowGroupRowCount);
             PageRowMask mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
             if (mask != null) {
-                needed.add(new NeededPage(allPages.get(i), mask, i));
+                needed.add(new NeededPage(allPages.get(i), mask, i, Math.toIntExact(pageLastRow - pageFirstRow)));
             }
         }
         return needed;
+    }
+
+    /// The rows of page `i` by the offset index: up to the next page's first row, or to the end
+    /// of the row group for the last page.
+    private static int pageRows(List<PageLocation> allPages, int i, long rowGroupRowCount) {
+        long pageLastRow = (i + 1 < allPages.size())
+                ? allPages.get(i + 1).firstRowIndex()
+                : rowGroupRowCount;
+        return Math.toIntExact(pageLastRow - allPages.get(i).firstRowIndex());
     }
 
     /// Emits a [PageFilterEvent] for one column chunk whose pages were narrowed by

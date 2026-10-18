@@ -503,6 +503,9 @@ public final class NestedRowReader implements FileAwareRowReader {
             }
             if (columnWorkers != null) {
                 for (NestedColumnWorker worker : columnWorkers) {
+                    worker.requestStop();
+                }
+                for (NestedColumnWorker worker : columnWorkers) {
                     worker.close();
                 }
             }

@@ -64,9 +64,20 @@ public final class BatchSizing {
     /// vectors (`768 * 4 = 3072` bytes/row) yields `6 MB / 3072 = 2048` rows. A projection
     /// narrower than 48 bytes/row budgets above [#MAX_BATCH] and is clamped to it.
     private static int budgetedBatchSize(ProjectedSchema projectedSchema, double[] valuesPerRow) {
+        return (int) Math.min(MAX_BATCH, budgetRows(projectedSchema, valuesPerRow));
+    }
+
+    /// The rows whose value arrays fill one batch's byte budget (6 MB), before the batch size is
+    /// bounded by [#MAX_BATCH] and by the rows a read can produce: what a batch of the read holds
+    /// in bytes, counted in rows. The read's scheduler bounds its read-ahead in these rows, so
+    /// that a read whose batches the bound cuts short reads ahead as many bytes as any other.
+    ///
+    /// @param projectedSchema the columns the read decodes
+    /// @param valuesPerRow each projected column's list fan-out, or `null` for one value per row
+    /// @return the rows, at least 1
+    public static long budgetRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
         // Target 6 MB of value memory per batch, enough rows to amortise the per-batch overhead.
         long targetBytes = 6L * 1024 * 1024;
-        int maxBatch = MAX_BATCH;
 
         double bytesPerRow = 0;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
@@ -78,7 +89,7 @@ public final class BatchSizing {
             bytesPerRow = 8;
         }
 
-        return (int) Math.min(maxBatch, Math.max(1, (long) (targetBytes / bytesPerRow)));
+        return Math.max(1, (long) (targetBytes / bytesPerRow));
     }
 
     /// Returns the most rows whose values fit in [#MAX_BATCH] for every projected binary column,
@@ -170,19 +181,34 @@ public final class BatchSizing {
         int columnCount = projectedSchema.getProjectedColumnCount();
         double[] valuesPerRow = new double[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            FieldPath path = projectedSchema.getProjectedColumn(i).fieldPath();
+            ColumnSchema column = projectedSchema.getProjectedColumn(i);
             long values = 0;
             for (RowGroup rowGroup : rowGroups) {
-                for (ColumnChunk chunk : rowGroup.columns()) {
-                    if (chunk.metaData().pathInSchema().equals(path)) {
-                        values += chunk.metaData().numValues();
-                        break;
-                    }
+                ColumnChunk chunk = chunkOf(rowGroup, column.columnIndex(), column.fieldPath());
+                if (chunk != null) {
+                    values += chunk.metaData().numValues();
                 }
             }
             valuesPerRow[i] = (double) values / totalRows;
         }
         return valuesPerRow;
+    }
+
+    /// The chunk of the column at `path` in `rowGroup`, `null` if it has none. A row group's
+    /// chunks follow its file's leaf order, so the chunk at the column's index is the one wherever
+    /// the file's schema is the projected one; a file of a multi-file read may order its leaves
+    /// differently, and is searched.
+    private static ColumnChunk chunkOf(RowGroup rowGroup, int columnIndex, FieldPath path) {
+        List<ColumnChunk> chunks = rowGroup.columns();
+        if (columnIndex < chunks.size() && chunks.get(columnIndex).metaData().pathInSchema().equals(path)) {
+            return chunks.get(columnIndex);
+        }
+        for (ColumnChunk chunk : chunks) {
+            if (chunk.metaData().pathInSchema().equals(path)) {
+                return chunk;
+            }
+        }
+        return null;
     }
 
     /// Bytes of repetition/definition level storage a repeated column's nested

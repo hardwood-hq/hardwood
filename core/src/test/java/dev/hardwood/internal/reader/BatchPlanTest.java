@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,15 +16,23 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.reader.BatchPlan.RowGroupBatches;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -339,6 +348,98 @@ class BatchPlanTest {
                 assertThat(worker.isFinished()).isTrue();
             }
         }
+    }
+
+    /// The same of a scheduled column: its fetcher's placement fails part way through the page,
+    /// and the read fails rather than waiting on the cells the page was placed into.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aScheduledColumnHoldingMoreRowsThanPlannedFails(@TempDir Path dir) throws Exception {
+        Path file = longsFile(dir);
+        assertThatThrownBy(() -> scheduleAgainst(file, new BatchPlan(64, true, false, 0)
+                .plan(0, 0, file.getFileName().toString(), false, 90), 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[longs.parquet: row group 0, column 'v', page 0] "
+                        + "Batch plan mismatch: the column holds more than the 90 rows the plan takes from the row group");
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aScheduledColumnHoldingFewerRowsThanPlannedFails(@TempDir Path dir) throws Exception {
+        Path file = longsFile(dir);
+        assertThatThrownBy(() -> scheduleAgainst(file, new BatchPlan(64, true, false, 0)
+                .plan(0, 0, file.getFileName().toString(), false, 120), 0))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[longs.parquet: row group 1, column 'v', page 0] "
+                        + "Batch plan mismatch: the column holds 100 of the 120 rows the plan takes from the row group");
+    }
+
+    /// A page whose metadata gives it more rows than it holds fails when it is decoded, instead
+    /// of filling its batches from values it does not have.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aScheduledPageHoldingFewerValuesThanItsMetadataGivesFails(@TempDir Path dir) throws Exception {
+        Path file = longsFile(dir);
+        assertThatThrownBy(() -> scheduleAgainst(file, new BatchPlan(64, true, false, 0)
+                .plan(0, 0, file.getFileName().toString(), false, 105), 5))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("[longs.parquet: row group 0, column 'v', page 0] "
+                        + "Page holds 100 values, but its metadata gives it 105 rows");
+    }
+
+    /// Reads `file`'s column through a [ScheduledColumn] with the first row group's batches
+    /// replaced by `firstRowGroup`, and the first row group's page claiming `extraRows` more
+    /// rows than it holds.
+    private static void scheduleAgainst(Path file, RowGroupBatches firstRowGroup, int extraRows) throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             RowGroupIterator iterator = iterator(context, file)) {
+            iterator.planBatches(64, 0);
+            ColumnSchema column = iterator.referenceSchema().getColumn(0);
+            PageSource source = new PageSource(iterator, 0) {
+                @Override
+                public PageInfo next() throws IOException {
+                    PageInfo page = super.next();
+                    if (page == null || extraRows == 0 || getCurrentRowGroupIndex() != 0) {
+                        return page;
+                    }
+                    return new PageInfo(page.pageData(), page.columnSchema(), page.columnMetaData(),
+                            page.dictionary(), page.mask(), page.records() + extraRows);
+                }
+
+                @Override
+                RowGroupBatches getCurrentBatches() {
+                    RowGroupBatches planned = super.getCurrentBatches();
+                    return planned != null && planned.workItemIndex() == 0 ? firstRowGroup : planned;
+                }
+            };
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
+            ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
+            try (ScheduledColumn scheduled = new ScheduledColumn(scheduler, source, exchange, column, 64,
+                    context.decompressorFactory())) {
+                scheduler.start();
+                while (exchange.poll() != null) {
+                    // drained
+                }
+                exchange.checkError();
+            }
+        }
+    }
+
+    /// One required `INT64` column `v`, two row groups of 100 rows.
+    private static Path longsFile(Path dir) throws Exception {
+        long[] values = new long[200];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out,
+                FileSchema.builder("longs").addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED).build(),
+                WriterConfig.builder().rowGroupTargetRows(100).build())) {
+            writer.columnWriter().writeBatch(batch -> batch.longs("v", values));
+        }
+        Path file = dir.resolve("longs.parquet");
+        Files.write(file, InMemoryFiles.toByteArray(out));
+        return file;
     }
 
     private static final Path DICT_CROSS_CHUNK = Path.of("src/test/resources/dict_cross_chunk.parquet");

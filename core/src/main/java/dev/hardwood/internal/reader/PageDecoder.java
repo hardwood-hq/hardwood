@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -27,6 +28,7 @@ import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.PageDecodedEvent;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.PageType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetReadException;
@@ -56,6 +58,15 @@ public class PageDecoder {
                 definitionLevels = new int[size];
             }
             return definitionLevels;
+        }
+
+        private int[] ids;
+
+        int[] ids(int size) {
+            if (ids == null || ids.length < size) {
+                ids = new int[size];
+            }
+            return ids;
         }
     }
 
@@ -187,6 +198,87 @@ public class PageDecoder {
         event.commit();
 
         return result;
+    }
+
+    /// Decodes a page of a column without repetition whose values a fill reads in place: a `V1`
+    /// data page of a fixed-width numeric column, `PLAIN` or dictionary-encoded. Any other page
+    /// returns `null` before anything is decompressed, and is decoded by [#decodePage] instead.
+    ///
+    /// The returned values hold `scratch`'s definition levels and ids until the fill is done.
+    FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
+        PhysicalType type = column.type();
+        if (column.maxRepetitionLevel() > 0
+                || (type != PhysicalType.INT32 && type != PhysicalType.INT64
+                        && type != PhysicalType.FLOAT && type != PhysicalType.DOUBLE)) {
+            return null;
+        }
+        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
+        PageHeader pageHeader = PageHeaderReader.read(headerReader);
+        if (pageHeader.type() != PageType.DATA_PAGE) {
+            return null;
+        }
+        DataPageHeader header = pageHeader.dataPageHeader();
+        Encoding encoding = header.encoding();
+        if (encoding != Encoding.PLAIN && encoding != Encoding.RLE_DICTIONARY
+                && encoding != Encoding.PLAIN_DICTIONARY) {
+            return null;
+        }
+
+        PageDecodedEvent event = new PageDecodedEvent();
+        event.begin();
+        int headerSize = headerReader.getBytesRead();
+        int compressedSize = pageHeader.compressedPageSize();
+        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
+        if (pageHeader.crc() != null) {
+            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
+        }
+        int limit = pageHeader.uncompressedPageSize();
+        byte[] data = decompressorFactory.getDecompressor(columnMetaData.codec()).decompress(pageData, limit);
+
+        int numValues = header.numValues();
+        int maxDefLevel = column.maxDefinitionLevel();
+        int offset = 0;
+        int[] definitionLevels = null;
+        if (maxDefLevel > 0) {
+            int defLevelLength = readSectionLength(data, offset, limit, "definition level");
+            offset += 4;
+            definitionLevels = decodeDefinitionLevels(data, offset, defLevelLength, numValues, scratch);
+            offset += defLevelLength;
+        }
+
+        FlatPageValues values;
+        if (encoding == Encoding.PLAIN) {
+            values = FlatPageValues.plain(type, definitionLevels, maxDefLevel, numValues, data, offset, limit);
+        }
+        else {
+            if (dictionary == null) {
+                throw new ParquetReadException("Dictionary page not found for " + encoding + " encoding");
+            }
+            if (offset >= limit) {
+                throw new ParquetReadException("Unexpected EOF reading the dictionary index bit width");
+            }
+            int bitWidth = data[offset++] & 0xFF;
+            if (bitWidth > 32) {
+                throw new ParquetReadException("Invalid dictionary index bit width: " + bitWidth
+                        + ". Must be between 0 and 32");
+            }
+            int idCount = FlatPageValues.countNonNull(definitionLevels, maxDefLevel, numValues);
+            int[] ids = scratch.ids(idCount);
+            if (bitWidth == 0) {
+                Arrays.fill(ids, 0, idCount, 0);
+            }
+            else {
+                new RleBitPackingHybridDecoder(data, offset, limit - offset, bitWidth).readInts(ids, 0, idCount);
+            }
+            values = FlatPageValues.dictionary(type, numValues, definitionLevels, maxDefLevel, ids, idCount,
+                    dictionary);
+        }
+
+        event.column = column.name();
+        event.compressedSize = compressedSize;
+        event.uncompressedSize = limit;
+        event.commit();
+        return values;
     }
 
     /// Decode levels using RLE/Bit-Packing Hybrid encoding.

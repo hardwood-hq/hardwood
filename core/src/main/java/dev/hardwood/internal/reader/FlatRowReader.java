@@ -1051,6 +1051,9 @@ public final class FlatRowReader implements FileAwareRowReader {
             }
             if (columnWorkers != null) {
                 for (FlatColumnWorker worker : columnWorkers) {
+                    worker.requestStop();
+                }
+                for (FlatColumnWorker worker : columnWorkers) {
                     worker.close();
                 }
             }
