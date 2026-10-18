@@ -255,13 +255,23 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
             ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());
             PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
-                    dictionary, needed.mask());
+                    dictionary, needed.mask(), keptRecords(needed));
 
             if (!eventEmitted && !hasNext()) {
                 emitEvent();
             }
 
             return page;
+        }
+
+        /// The records `needed` contributes after its mask, for [PageInfo#records()]: its row span
+        /// in the offset index for a column without repetition, whose records are its values; a
+        /// column with repetition counts its records from its repetition levels once decoded.
+        private int keptRecords(RowGroupIterator.NeededPage needed) {
+            if (columnSchema.maxRepetitionLevel() > 0) {
+                return PageInfo.UNKNOWN_RECORDS;
+            }
+            return needed.mask().isAll() ? needed.rows() : needed.mask().totalRecords();
         }
 
         private Dictionary parseDictionary() throws IOException {

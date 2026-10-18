@@ -699,7 +699,8 @@ public class ParquetFileReader implements Closeable {
                 return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected);
             }
             ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups)));
+                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups),
+                    budgetRows(projected, rowGroups)));
             return new ColumnRead(scan, projected);
         }
 
@@ -727,7 +728,8 @@ public class ParquetFileReader implements Closeable {
         // Size against the decoded columns — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups)));
+                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
+                budgetRows(decoded, rowGroups)));
         return new ColumnRead(scan, readProjection.payload());
     }
 
@@ -816,6 +818,12 @@ public class ParquetFileReader implements Closeable {
         }
         return BatchSizing.computeOptimalBatchSize(projected,
                 BatchSizing.valuesPerRow(projected, rowGroups), availableRows(rowGroups));
+    }
+
+    /// The rows of the read's batch byte budget, which bound its scheduler's read-ahead
+    /// ([BatchSizing#budgetRows]), from the same metadata [#resolveBatchSize] sizes batches by.
+    private static long budgetRows(ProjectedSchema projected, List<RowGroup> rowGroups) {
+        return BatchSizing.budgetRows(projected, BatchSizing.valuesPerRow(projected, rowGroups));
     }
 
     /// Parses the value of [#BATCH_SIZE_OVERRIDE_PROPERTY], rejecting one that is not a

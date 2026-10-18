@@ -43,6 +43,23 @@ class BatchSizingTest {
         }
     }
 
+    /// The rows of the byte budget are not cut by the clamp: the read's scheduler bounds its
+    /// read-ahead in them, so that a narrow read reads ahead as many bytes as a wide one.
+    @Test
+    void budgetRowsAreTheByteBudgetBeforeTheClamp() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
+            ProjectedSchema narrow = ProjectedSchema.create(reader.getFileSchema(),
+                    ColumnProjection.columns("long_col"));
+            ProjectedSchema wide = ProjectedSchema.create(reader.getFileSchema(),
+                    ColumnProjection.columns("int_col", "long_col", "float_col", "double_col"));
+
+            assertThat(BatchSizing.budgetRows(narrow, null)).isEqualTo(TARGET_BYTES / 8);
+            assertThat(BatchSizing.computeOptimalBatchSize(narrow, null, BatchSizing.ROWS_UNKNOWN))
+                    .isEqualTo(BatchSizing.MAX_BATCH);
+            assertThat(BatchSizing.budgetRows(wide, new double[] { 4.0, 4.0, 4.0, 4.0 })).isEqualTo(TARGET_BYTES / 96);
+        }
+    }
+
     @Test
     void batchSizeShrinksAsProjectionWidens() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {

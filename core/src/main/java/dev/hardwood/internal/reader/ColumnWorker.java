@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
@@ -39,7 +40,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// Decode tasks store their result via `set()` and unpark the drain thread.
 ///
 /// @param <B> the batch type (e.g. [BatchExchange.Batch] for flat, [NestedBatch] for nested)
-public abstract class ColumnWorker<B> implements AutoCloseable {
+public abstract class ColumnWorker<B> implements ColumnPipeline {
 
     private static final System.Logger LOG = System.getLogger(ColumnWorker.class.getName());
 
@@ -296,7 +297,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Waits for `thread` to exit, carrying on through interrupts.
     ///
     /// @return whether the calling thread was interrupted while waiting
-    private static boolean joinUninterruptibly(Thread thread) {
+    static boolean joinUninterruptibly(Thread thread) {
         boolean interrupted = false;
         while (true) {
             try {
@@ -392,8 +393,18 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 }
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
-                CompletableFuture<Void> f = CompletableFuture.runAsync(
-                        () -> decode(slot, pi, rdr), decodeExecutor);
+                CompletableFuture<Void> f;
+                try {
+                    f = CompletableFuture.runAsync(() -> decode(slot, pi, rdr), decodeExecutor);
+                }
+                catch (RejectedExecutionException e) {
+                    // The page's slot stays empty, so the failure takes it: the drain reaches it
+                    // behind every page submitted before.
+                    nextSeq = seq;
+                    retrieverFailure = contextClosed(e);
+                    handOverBehindSubmittedPages(FAILURE_SENTINEL);
+                    return;
+                }
                 inFlightDecodes.add(f);
                 f.whenComplete((v, t) -> inFlightDecodes.remove(f));
             }
@@ -721,6 +732,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// ([ExceptionContext#addSuppliedFooterHint]): the checks a supplied footer passes on open do
     /// not catch every file rewritten since the footer was read.
     private Exception enrichWithPlace(Exception e, String fileName, int rowGroup, int page) {
+        return placeFailure(e, column, pageSource.footersSupplied(), fileName, rowGroup, page);
+    }
+
+    /// [#enrichWithPlace] for a failure met on `column`, whose footers a
+    /// [dev.hardwood.MetadataSource] supplied when `footersSupplied`.
+    static Exception placeFailure(Exception e, ColumnSchema column, boolean footersSupplied,
+                                  String fileName, int rowGroup, int page) {
         Exception typed = asReadFailure(e);
         if (fileName == null || fileName.isEmpty()) {
             return typed;
@@ -728,7 +746,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         String columnPath = column.fieldPath().toString();
         if (typed instanceof RuntimeException re) {
             RuntimeException placed = ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
-            return pageSource.footersSupplied() ? ExceptionContext.addSuppliedFooterHint(placed) : placed;
+            return footersSupplied ? ExceptionContext.addSuppliedFooterHint(placed) : placed;
         }
         if (typed instanceof IOException ioe) {
             // Stays checked. The pipeline carries a failure across its thread
@@ -737,6 +755,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, ioe);
         }
         return typed;
+    }
+
+    /// The failure of a read whose decode pool refused a task: its context was closed while it
+    /// was reading. It is not the file's, so it is not placed.
+    static IllegalStateException contextClosed(RejectedExecutionException e) {
+        return new IllegalStateException("The HardwoodContext was closed while a reader using it was reading", e);
     }
 
     /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
@@ -802,5 +826,5 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// This is a workaround, not a fix. The fix is a runtime of 25.0.3+ or 26.0.1+, and the exposure is
     /// wider than these two waits - any untimed park after a timed park is affected, including
     /// [#close()]'s joins when the closing thread is itself a VThread.
-    private static final long WAKE_CHECK_NANOS = 10L * 1_000_000L;
+    static final long WAKE_CHECK_NANOS = 10L * 1_000_000L;
 }
