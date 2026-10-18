@@ -134,6 +134,52 @@ public class AlpDecoder implements ValueDecoder {
         }
     }
 
+    /// The values of each vector but the last.
+    public int vectorSize() {
+        return vectorSize;
+    }
+
+    /// Checks every vector's header and that the vectors end the page, without decoding a value,
+    /// so that a page read later vector by vector ([#decodeVector]) fails where a full decode would.
+    ///
+    /// @throws ParquetReadException if a vector is malformed or the vectors do not end the page
+    public void validate() {
+        long expectedOffset = (long) numVectors * AlpFormat.OFFSET_SIZE;
+        for (int vector = 0; vector < numVectors; vector++) {
+            int count = Math.min(vectorSize, numElements - vector * vectorSize);
+            expectedOffset = readVectorHeader(vector, expectedOffset, count);
+            for (int j = 0; j < numExceptions; j++) {
+                exceptionPosition(j, count, vector);
+            }
+        }
+        long leftover = limit - (offsetsStart + expectedOffset);
+        if (leftover != 0) {
+            throw new ParquetReadException("ALP value section does not end with its " + numVectors
+                    + " vectors; leftover bytes: " + leftover);
+        }
+    }
+
+    /// Decodes vector `vector` of a [#validate]d page onto the front of whichever of the two arrays
+    /// is non-null, which holds at least [#vectorSize()] values.
+    ///
+    /// @return the values the vector holds
+    public int decodeVector(int vector, float[] floats, double[] doubles) {
+        int first = vector * vectorSize;
+        int count = Math.min(vectorSize, numElements - first);
+        long storedOffset = Integer.toUnsignedLong(
+                (int) INT_LE.get(data, offsetsStart + vector * AlpFormat.OFFSET_SIZE));
+        readVectorHeader(vector, storedOffset, count);
+        if (doubles != null) {
+            decodeDoubles(doubles, 0, count);
+            patchDoubleExceptions(doubles, 0, count, vector);
+        }
+        else {
+            decodeFloats(floats, 0, count);
+            patchFloatExceptions(floats, 0, count, vector);
+        }
+        return count;
+    }
+
     private void requireType(PhysicalType requested) {
         if (type != requested) {
             throw new IllegalStateException("ALP decoder for " + type + " cannot read " + requested + " values");

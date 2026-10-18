@@ -22,12 +22,36 @@ public class SnappyDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        ByteBuffer directInput = DirectBuffers.ensureDirect(compressed);
-        ByteBuffer directOutput = borrowDirectBuffer(uncompressedSize);
+        return decompress(compressed, uncompressedSize, borrowOutputBuffer(uncompressedSize));
+    }
+
+    /// Decompresses into `dest`: heap to heap where the compressed page is on the heap, otherwise
+    /// through direct buffers for the native codec and copied into `dest` once.
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         int actualSize;
         try {
             // Declared by the codec, which uncompresses a buffer and reaches nothing.
-            actualSize = Snappy.uncompress(directInput, directOutput);
+            if (compressed.hasArray()) {
+                byte[] input = compressed.array();
+                int offset = compressed.arrayOffset() + compressed.position();
+                int length = compressed.remaining();
+                // The stream's own length, checked before the native call writes into `dest`
+                int declared = Snappy.uncompressedLength(input, offset, length);
+                if (declared != uncompressedSize) {
+                    throw new ParquetReadException("Snappy decompression size mismatch: expected "
+                            + uncompressedSize + ", got " + declared);
+                }
+                actualSize = Snappy.uncompress(input, offset, length, dest, 0);
+            }
+            else {
+                ByteBuffer directOutput = borrowDirectBuffer(uncompressedSize);
+                actualSize = Snappy.uncompress(DirectBuffers.ensureDirect(compressed), directOutput);
+                if (actualSize == uncompressedSize) {
+                    directOutput.rewind();
+                    directOutput.get(dest, 0, uncompressedSize);
+                }
+            }
         }
         catch (IOException e) {
             throw new ParquetReadException("Snappy decompression failed", e);
@@ -37,11 +61,7 @@ public class SnappyDecompressor implements Decompressor {
             throw new ParquetReadException(
                     "Snappy decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
-
-        byte[] output = borrowOutputBuffer(uncompressedSize);
-        directOutput.rewind();
-        directOutput.get(output, 0, uncompressedSize);
-        return output;
+        return dest;
     }
 
     private static ByteBuffer borrowDirectBuffer(int minSize) {

@@ -326,9 +326,12 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             }
             PageInfo info = page.info;
             PageRowMask mask = info.mask();
-            PageDecoder.InPlaceNestedPage inPlace = !info.isNullPlaceholder() && mask.isAll()
-                    ? page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch)
-                    : null;
+            PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
+                    ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch)
+                    : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch);
+            if (inPlace != null && !mask.isAll()) {
+                inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
+            }
             if (inPlace != null) {
                 page.inPlace = inPlace;
                 page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);

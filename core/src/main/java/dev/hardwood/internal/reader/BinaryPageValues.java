@@ -11,6 +11,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
 
+import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -58,6 +59,12 @@ final class BinaryPageValues {
     private final byte[] data;
     private final int plainOffset;
     private final int width;
+    /// Whether each length-prefixed plain value carries its 4-byte length before its bytes;
+    /// `false` for the delta encodings, whose lengths are decoded up front.
+    private final boolean prefixed;
+    /// `BYTE_STREAM_SPLIT` values: the non-null values, which is the distance between two of a
+    /// value's bytes; `0` for any other encoding.
+    private final int stride;
     /// Ids: one per non-null value ([Kind#IDS]) or one per value ([Kind#ROW_IDS]).
     private final int[] ids;
     private final Dictionary.ByteArrayDictionary dictionary;
@@ -72,7 +79,8 @@ final class BinaryPageValues {
 
     private BinaryPageValues(Kind kind, int numValues, int[] definitionLevels, int maxDefinitionLevel,
                              boolean allPresent, int[] bytePrefix, byte[] data, int plainOffset, int width,
-                             int[] ids, Dictionary.ByteArrayDictionary dictionary, byte[][] arrays) {
+                             boolean prefixed, int stride, int[] ids, Dictionary.ByteArrayDictionary dictionary,
+                             byte[][] arrays) {
         this.kind = kind;
         this.numValues = numValues;
         this.definitionLevels = definitionLevels;
@@ -82,6 +90,8 @@ final class BinaryPageValues {
         this.data = data;
         this.plainOffset = plainOffset;
         this.width = width;
+        this.prefixed = prefixed;
+        this.stride = stride;
         this.ids = ids;
         this.dictionary = dictionary;
         this.arrays = arrays;
@@ -125,7 +135,136 @@ final class BinaryPageValues {
                     + " values; leftover bytes: " + (limit - end));
         }
         return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, allPresent, prefix,
-                data, offset, width, null, null, null);
+                data, offset, width, true, 0, null, null, null);
+    }
+
+    /// `BYTE_STREAM_SPLIT` values `width` bytes wide from `offset` in `data`: byte `b` of the `i`th
+    /// non-null value at `offset + b * nonNull + i`.
+    ///
+    /// @throws ParquetReadException if the value section does not hold exactly the page's values
+    static BinaryPageValues byteStreamSplit(int width, int[] definitionLevels, int maxDefinitionLevel, int numValues,
+                                            byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch) {
+        int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
+        long bytes = (long) nonNull * width;
+        if (bytes != limit - offset) {
+            throw new ParquetReadException("BYTE_STREAM_SPLIT value section holds " + (limit - offset)
+                    + " bytes, not the " + bytes + " of its " + nonNull + " FIXED_LEN_BYTE_ARRAY values");
+        }
+        boolean allPresent = nonNull == numValues;
+        int[] prefix = null;
+        if (!allPresent) {
+            prefix = scratch.bytePrefix(numValues + 1);
+            prefix[0] = 0;
+            for (int r = 0; r < numValues; r++) {
+                prefix[r + 1] = prefix[r] + (definitionLevels[r] == maxDefinitionLevel ? width : 0);
+            }
+        }
+        return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, allPresent, prefix,
+                data, offset, width, false, Math.max(1, nonNull), null, null, null);
+    }
+
+    /// `DELTA_LENGTH_BYTE_ARRAY` values from `offset` in `data`: their lengths, delta-encoded, then
+    /// their bytes one after another. Decodes the lengths into `scratch`'s byte prefix; the fill
+    /// copies the bytes from where they lie.
+    ///
+    /// @throws ParquetReadException if the value section does not hold exactly the page's values
+    static BinaryPageValues deltaLength(int[] definitionLevels, int maxDefinitionLevel, int numValues, byte[] data,
+                                        int offset, int limit, PageDecoder.LevelScratch scratch) {
+        int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
+        int[] lengths = scratch.lengths(nonNull);
+        // The lengths' header is there even when no value is
+        DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(data, offset, limit);
+        lengthDecoder.readInts(lengths, 0, nonNull);
+        int bytesStart = lengthDecoder.getPos();
+        int[] prefix = prefixOf(definitionLevels, maxDefinitionLevel, numValues, lengths, scratch);
+        long expected = prefix[numValues];
+        if (expected != limit - bytesStart) {
+            throw new ParquetReadException("DELTA_LENGTH_BYTE_ARRAY value section holds " + (limit - bytesStart)
+                    + " value bytes, not the " + expected + " its lengths give");
+        }
+        return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
+                prefix, data, bytesStart, 0, false, 0, null, null, null);
+    }
+
+    /// `DELTA_BYTE_ARRAY` values from `offset` in `data`: prefix lengths, then suffixes encoded as
+    /// `DELTA_LENGTH_BYTE_ARRAY`. A value is the first prefix-length bytes of the value before it
+    /// and its suffix, so the values exist nowhere whole: they are reconstructed one after another
+    /// into `scratch`'s value buffer, each prefix copied from the previous value there, and the
+    /// fill copies them from it.
+    ///
+    /// @throws ParquetReadException if the value section is malformed
+    static BinaryPageValues deltaByteArray(int[] definitionLevels, int maxDefinitionLevel, int numValues,
+                                           byte[] data, int offset, int limit, PageDecoder.LevelScratch scratch) {
+        int nonNull = FlatPageValues.countNonNull(definitionLevels, maxDefinitionLevel, numValues);
+        int[] prefixLengths = scratch.ids(nonNull);
+        int[] suffixLengths = scratch.lengths(nonNull);
+        // Both lengths' headers are there even when no value is
+        DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset, limit);
+        prefixDecoder.readInts(prefixLengths, 0, nonNull);
+        DeltaBinaryPackedDecoder suffixDecoder = new DeltaBinaryPackedDecoder(data, prefixDecoder.getPos(), limit);
+        suffixDecoder.readInts(suffixLengths, 0, nonNull);
+        int suffixPos = suffixDecoder.getPos();
+        long total = 0;
+        for (int i = 0; i < nonNull; i++) {
+            if (prefixLengths[i] < 0 || suffixLengths[i] < 0) {
+                throw new ParquetReadException("Invalid DELTA_BYTE_ARRAY length: prefix " + prefixLengths[i]
+                        + ", suffix " + suffixLengths[i]);
+            }
+            total += (long) prefixLengths[i] + suffixLengths[i];
+        }
+        if (total > Integer.MAX_VALUE) {
+            throw BinaryBatchValues.bufferOverflow(nonNull);
+        }
+        byte[] values = scratch.valueBytes((int) total);
+        int pos = 0;
+        int previousStart = 0;
+        int previousLength = 0;
+        for (int i = 0; i < nonNull; i++) {
+            int prefixLength = prefixLengths[i];
+            int suffixLength = suffixLengths[i];
+            if (prefixLength > previousLength) {
+                throw new ParquetReadException("DELTA_BYTE_ARRAY value " + i + " takes a prefix of " + prefixLength
+                        + " bytes from a previous value of " + previousLength);
+            }
+            if (suffixLength > limit - suffixPos) {
+                throw new ParquetReadException("Unexpected EOF reading byte array: expected " + suffixLength
+                        + ", got " + (limit - suffixPos));
+            }
+            System.arraycopy(values, previousStart, values, pos, prefixLength);
+            System.arraycopy(data, suffixPos, values, pos + prefixLength, suffixLength);
+            suffixPos += suffixLength;
+            previousStart = pos;
+            previousLength = prefixLength + suffixLength;
+            pos += previousLength;
+            suffixLengths[i] = previousLength;
+        }
+        if (suffixPos != limit) {
+            throw new ParquetReadException("DELTA_BYTE_ARRAY value section does not end with its " + nonNull
+                    + " values; leftover bytes: " + (limit - suffixPos));
+        }
+        int[] prefix = prefixOf(definitionLevels, maxDefinitionLevel, numValues, suffixLengths, scratch);
+        return new BinaryPageValues(Kind.PLAIN, numValues, definitionLevels, maxDefinitionLevel, nonNull == numValues,
+                prefix, values, 0, 0, false, 0, null, null, null);
+    }
+
+    /// The byte prefix of a page's rows from the lengths of its non-null values, into `scratch`.
+    private static int[] prefixOf(int[] definitionLevels, int maxDefinitionLevel, int numValues, int[] lengths,
+                                  PageDecoder.LevelScratch scratch) {
+        int[] prefix = scratch.bytePrefix(numValues + 1);
+        long sum = 0;
+        int value = 0;
+        prefix[0] = 0;
+        for (int r = 0; r < numValues; r++) {
+            if (definitionLevels == null || definitionLevels[r] == maxDefinitionLevel) {
+                int length = lengths[value++];
+                if (length < 0) {
+                    throw new ParquetReadException("Invalid BYTE_ARRAY length: " + length);
+                }
+                sum += length;
+            }
+            prefix[r + 1] = Math.toIntExact(sum);
+        }
+        return prefix;
     }
 
     /// Walks the length prefixes of the page's non-null values into `prefix`.
@@ -171,7 +310,7 @@ final class BinaryPageValues {
             }
         }
         return new BinaryPageValues(Kind.IDS, numValues, definitionLevels, maxDefinitionLevel, idCount == numValues,
-                null, null, 0, 0, ids, dictionary, null);
+                null, null, 0, 0, false, 0, ids, dictionary, null);
     }
 
     /// The values of a page decoded by [PageDecoder#decodePage], measured into `scratch`'s byte
@@ -201,7 +340,7 @@ final class BinaryPageValues {
                     prefix[r + 1] = (int) sum;
                 }
                 yield new BinaryPageValues(Kind.ARRAYS, size, p.definitionLevels(), p.maxDefinitionLevel(),
-                        allPresent, prefix, null, 0, 0, null, null, values);
+                        allPresent, prefix, null, 0, 0, false, 0, null, null, values);
             }
             case Page.DictionaryByteArrayPage p -> {
                 int size = p.size();
@@ -211,7 +350,7 @@ final class BinaryPageValues {
                     allPresent = rowIds[r] >= 0;
                 }
                 yield new BinaryPageValues(Kind.ROW_IDS, size, p.definitionLevels(), p.maxDefinitionLevel(),
-                        allPresent, null, null, 0, 0, rowIds, p.dictionary(), null);
+                        allPresent, null, null, 0, 0, false, 0, rowIds, p.dictionary(), null);
             }
             default -> throw new IllegalStateException("A binary column decoded a " + page.getClass().getSimpleName());
         };
@@ -221,7 +360,7 @@ final class BinaryPageValues {
     /// fills can read one page at once.
     BinaryPageValues view() {
         return new BinaryPageValues(kind, numValues, definitionLevels, maxDefinitionLevel, allPresent, bytePrefix,
-                data, plainOffset, width, ids, dictionary, arrays);
+                data, plainOffset, width, prefixed, stride, ids, dictionary, arrays);
     }
 
     /// The page's values, nulls included.
@@ -275,6 +414,22 @@ final class BinaryPageValues {
             return pos;
         }
         skipTo(pageRow);
+        if (stride > 0) {
+            for (int i = 0; i < length; i++) {
+                int r = pageRow + i;
+                starts[destPos + i] = pos;
+                if (definitionLevels == null || definitionLevels[r] == maxDefinitionLevel) {
+                    int at = plainOffset + nonNull++;
+                    for (int b = 0; b < width; b++) {
+                        dest[pos + b] = data[at + b * stride];
+                    }
+                    pos += width;
+                }
+                ends[destPos + i] = pos;
+            }
+            row = pageRow + length;
+            return pos;
+        }
         if (width > 0 && definitionLevels == null) {
             int bytes = length * width;
             System.arraycopy(data, dataPos, dest, pos, bytes);
@@ -287,7 +442,7 @@ final class BinaryPageValues {
             nonNull += length;
         }
         else {
-            int prefixLength = width == 0 ? 4 : 0;
+            int prefixLength = width == 0 && prefixed ? 4 : 0;
             for (int i = 0; i < length; i++) {
                 int r = pageRow + i;
                 starts[destPos + i] = pos;
@@ -350,7 +505,7 @@ final class BinaryPageValues {
         int skipped = definitionLevels == null ? pageRow - row : countNonNullBetween(row, pageRow);
         if (kind == Kind.PLAIN) {
             dataPos += width == 0
-                    ? 4 * skipped + bytePrefix[pageRow] - bytePrefix[row]
+                    ? (prefixed ? 4 * skipped : 0) + bytePrefix[pageRow] - bytePrefix[row]
                     : width * skipped;
         }
         nonNull += skipped;

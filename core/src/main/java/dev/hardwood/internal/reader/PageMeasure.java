@@ -40,6 +40,8 @@ final class PageMeasure {
     private final boolean allPresent;
     /// The page's binary values, `null` for a column of another type.
     private final BinaryPageValues binary;
+    /// Where a masked page read in place keeps its values, `null` for any other page.
+    private KeptRuns runs;
 
     private PageMeasure(int values, int records, int leadingValues, int firstRepetitionLevel, int[] recordStarts,
                         int fixedListK, boolean allPresent, BinaryPageValues binary) {
@@ -69,8 +71,10 @@ final class PageMeasure {
     ///
     /// @throws ParquetReadException if the page's records disagree with its metadata
     static PageMeasure of(PageDecoder.InPlaceNestedPage page, int metadataRecords, PageDecoder.LevelScratch scratch) {
-        return of(page.size(), 0, page.repetitionLevels(), page.definitionLevels() == null, page.binary(),
-                metadataRecords, scratch);
+        PageMeasure measure = of(page.size(), page.fixedListK(), page.repetitionLevels(),
+                page.definitionLevels() == null, page.binary(), metadataRecords, scratch);
+        measure.runs = page.runs();
+        return measure;
     }
 
     private static PageMeasure of(int size, int k, int[] repetitionLevels, boolean allPresent,
@@ -132,7 +136,10 @@ final class PageMeasure {
 
     /// The bytes of the plain binary values `[from, to)`; `0` for a page of any other values.
     int bytes(int from, int to) {
-        return binary == null ? 0 : binary.bytes(from, to);
+        if (binary == null) {
+            return 0;
+        }
+        return runs == null ? binary.bytes(from, to) : runs.bytes(binary, from, to);
     }
 
     /// Elements per record of a fixed-size-list page, `0` for any other page.

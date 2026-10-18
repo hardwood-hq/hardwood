@@ -150,6 +150,63 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         return readLongValue();
     }
 
+    /// Reads the next `count` values into `output[offset, offset + count)`.
+    public void readLongs(long[] output, int offset, int count) {
+        int out = offset;
+        int end = offset + count;
+        while (out < end) {
+            if (bufferPos < bufferFill) {
+                int taken = Math.min(bufferFill - bufferPos, end - out);
+                System.arraycopy(buffer, bufferPos, output, out, taken);
+                bufferPos += taken;
+                out += taken;
+            }
+            else if (end - out >= buffer.length) {
+                out += fillInto(output, out);
+            }
+            else {
+                bufferFill = fillInto(buffer, 0);
+                bufferPos = 0;
+            }
+        }
+    }
+
+    /// Reads the next `count` values into `output[offset, offset + count)`, narrowed to INT32.
+    public void readInts(int[] output, int offset, int count) {
+        int out = offset;
+        int end = offset + count;
+        while (out < end) {
+            if (bufferPos < bufferFill) {
+                int taken = Math.min(bufferFill - bufferPos, end - out);
+                for (int i = 0; i < taken; i++) {
+                    output[out + i] = (int) buffer[bufferPos + i];
+                }
+                bufferPos += taken;
+                out += taken;
+            }
+            else if (end - out >= buffer.length) {
+                out += fillInto(output, out);
+            }
+            else {
+                bufferFill = fillInto(buffer, 0);
+                bufferPos = 0;
+            }
+        }
+    }
+
+    /// Passes over the next `count` values.
+    public void skip(int count) {
+        while (count > 0) {
+            if (bufferPos >= bufferFill) {
+                bufferFill = fillInto(buffer, 0);
+                bufferPos = 0;
+            }
+            int taken = Math.min(bufferFill - bufferPos, count);
+            bufferPos += taken;
+            count -= taken;
+        }
+    }
+
     /// Read INT64 values directly into a primitive long array.
     @Override
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) {
