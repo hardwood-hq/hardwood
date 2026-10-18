@@ -24,7 +24,7 @@ Everything else lives in `dev.hardwood.avro.internal`: `AvroSchemaConverter` (sc
 
 `RowReaderBuilder` forwards every setting to `ParquetFileReader.RowReaderBuilder` unchanged, so projection, filter pushdown, record filtering, `head` and `tail` have the core row reader's semantics, including over a multi-file `ParquetFileReader`. Projection paths name Parquet columns, never the rewritten Avro names. `AvroRowReader` owns the `RowReader` it wraps and closes it; it does not own the `ParquetFileReader`.
 
-**Conversion precedes the reader.** `build()` converts the schema before it builds the underlying `RowReader`. Building a `RowReader` starts a column worker per projected column, and a conversion that failed afterwards would leave those workers running with no `AvroRowReader` to close them. Every conversion rejection in this document therefore surfaces from `build()` with nothing to release. The ordering is untested.
+**Conversion precedes the reader.** `build()` converts the schema before it builds the underlying `RowReader`. Building a `RowReader` starts the read's columns, and a conversion that failed afterwards would leave those columns running with no `AvroRowReader` to close them. Every conversion rejection in this document therefore surfaces from `build()` with nothing to release. The ordering is untested.
 
 Tests: `AvroRowReaderTest` (hardwood-avro).
 

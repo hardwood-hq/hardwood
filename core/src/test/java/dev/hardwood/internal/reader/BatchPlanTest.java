@@ -38,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies the batch boundaries [BatchPlan] decides for a read, row group by row group, by
-/// replaying the planned segments the way a column worker assembles them.
+/// replaying the planned segments the way a column places them.
 class BatchPlanTest {
 
     @Test
@@ -284,7 +284,7 @@ class BatchPlanTest {
         }
     }
 
-    /// A worker whose column holds more rows of a row group than the plan takes fails instead of
+    /// A column that holds more rows of a row group than the plan takes fails instead of
     /// publishing a batch out of line with its siblings.
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -296,7 +296,7 @@ class BatchPlanTest {
                         + "Batch plan mismatch: the column holds more than the 90 rows the plan takes from the row group");
     }
 
-    /// A worker whose column holds fewer rows of a row group than the plan takes fails when it
+    /// A column that holds fewer rows of a row group than the plan takes fails when it
     /// leaves the row group.
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -309,8 +309,8 @@ class BatchPlanTest {
     }
 
     /// A filter-only column reads a boundary marker for a proven row group. Where the row cap
-    /// ends the read inside that row group, the column's worker ends its stream at the marker,
-    /// publishing no batch, and assembles none of the pages that follow.
+    /// ends the read inside that row group, the column ends its stream at the marker,
+    /// publishing no batch, and places none of the pages that follow.
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void aFilterOnlyColumnEndsItsStreamWhereTheCapEndsTheReadInASkippedRowGroup() throws Exception {
@@ -339,13 +339,14 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            try (FlatColumnWorker worker = new FlatColumnWorker(source, exchange, column, 64,
-                    context.decompressorFactory(), context.executor(), null)) {
-                worker.start();
+            ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
+            try (ScheduledFlatColumn worker = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
+                    context.decompressorFactory(), null)) {
+                scheduler.start();
 
                 assertThat(exchange.poll()).as("no batch past the cap").isNull();
                 exchange.checkError();
-                assertThat(worker.isFinished()).isTrue();
+                assertThat(worker.isDone()).isTrue();
             }
         }
     }
@@ -459,9 +460,10 @@ class BatchPlanTest {
                 }
             };
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
-            try (FlatColumnWorker worker = new FlatColumnWorker(source, exchange, column, 64,
-                    context.decompressorFactory(), context.executor(), null)) {
-                worker.start();
+            ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
+            try (ScheduledFlatColumn worker = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
+                    context.decompressorFactory(), null)) {
+                scheduler.start();
                 while (exchange.poll() != null) {
                     // drained
                 }
@@ -486,7 +488,7 @@ class BatchPlanTest {
         return iterator;
     }
 
-    /// Replays row groups' segments as a column worker assembles them, describing each batch as
+    /// Replays row groups' segments as a column places them, describing each batch as
     /// `file:rows`, with `:proven` when its always-match flag is set.
     private static List<String> replay(RowGroupBatches... rowGroups) {
         List<String> batches = new ArrayList<>();

@@ -143,14 +143,14 @@ public class RowGroupIterator implements Closeable {
 
     /// What each row group's bloom filters and dictionaries decided once the read reached it,
     /// keyed by work item index, so the decision [#hasLiveWorkItem] takes on the calling thread
-    /// is the one [#getSharedMetadata] finds on a worker.
+    /// is the one [#getSharedMetadata] finds on a fetcher.
     private final ConcurrentHashMap<Integer, Arrival> arrivalCache = new ConcurrentHashMap<>();
 
     // Per-row-group fetch plans cache (keyed by work item index).
     private final ConcurrentHashMap<Integer, RowGroupPlans> fetchPlanCache = new ConcurrentHashMap<>();
 
     /// The read's batch boundaries, set by [#planBatches] before any fetch plan is computed;
-    /// `null` for an iterator whose fetch plans no column worker drains.
+    /// `null` for an iterator whose fetch plans no scheduled column drains.
     private volatile BatchPlan batchPlan;
     /// Whether any row group's fetch plans have been computed, after which the batch plan can no
     /// longer be set.
@@ -168,7 +168,7 @@ public class RowGroupIterator implements Closeable {
     // where ChunkHandle.data is heap-allocated rather than an mmap slice).
     /// One counter per work item, added as the item is planned. Keyed rather
     /// than indexed because the work list grows, and read from every column's
-    /// retriever thread without the planning lock.
+    /// fetcher without the planning lock.
     private final Map<Integer, AtomicInteger> workItemRefCounts = new ConcurrentHashMap<>();
 
     /// Work items whose first demand access has started the next row group's prefetch, held
@@ -538,11 +538,11 @@ public class RowGroupIterator implements Closeable {
     /// Whether the read has a row group left once it reaches them: walks the work list from the
     /// first item and probes the bloom filters and dictionaries of each item they may drop, until
     /// one is not dropped. An item they cannot drop is live without a read, and a live item's
-    /// page index is left to the workers.
+    /// page index is left to the columns' fetchers.
     ///
     /// A reader asks this before it builds its pipeline, so a read whose every row group is
-    /// dropped on arrival starts no column worker and allocates no batch. The decisions are
-    /// cached, so the workers reuse those of the items walked here.
+    /// dropped on arrival starts no column and allocates no batch. The decisions are
+    /// cached, so the fetchers reuse those of the items walked here.
     public boolean hasLiveWorkItem() throws IOException {
         for (int i = 0; ; i++) {
             WorkItem workItem = workItemAt(i);
@@ -786,7 +786,7 @@ public class RowGroupIterator implements Closeable {
     }
 
     /// Decides the read's batch boundaries ([BatchPlan]) as the read plans its row groups. Every
-    /// column worker of the read closes its batches where this plan does. Must be called once,
+    /// decoded column of the read closes its batches where this plan does. Must be called once,
     /// before any column requests its fetch plan.
     ///
     /// @param batchCapacity the read's batch capacity, in rows
@@ -903,7 +903,7 @@ public class RowGroupIterator implements Closeable {
     /// is the one step of a read this prefetch exists to cover.
     ///
     /// That call stays on the caller, so that planning the next file is done by the time the
-    /// read reaches it. The caller is the retriever, and what it blocks on is the next file's
+    /// read reaches it. The caller is a column's fetcher, and what it blocks on is the next file's
     /// footer, whose read [#triggerPrefetch] has already started — except under a filter,
     /// where planning also probes that file's bloom filters, which nothing has started.
     ///
@@ -1524,8 +1524,8 @@ public class RowGroupIterator implements Closeable {
     /// iterator, so a closed child reader's work list does not stay reachable for the
     /// parent's whole lifetime.
     ///
-    /// The caller stops the column workers first, so no retriever starts a task while
-    /// this waits.
+    /// The caller closes the columns first, which joins their fetchers, so no fetcher starts a
+    /// prefetch task while this waits.
     @Override
     public void close() throws IOException {
         if (closed) {
@@ -1583,7 +1583,7 @@ public class RowGroupIterator implements Closeable {
     /// See #1107. Dictionaries are read later, when the read reaches each row group.
     ///
     /// A failure is sticky: once planning a file has thrown, every later call rethrows it.
-    /// Each column plans on its own retriever thread, and a column that found nothing left
+    /// Each column plans on its own fetcher, and a column that found nothing left
     /// to plan would end its stream cleanly while the column that hit the failure has yet
     /// to report it, so the read could end empty without an exception (#1278). Retrying the
     /// file is no option either: planning it has already advanced the shared planning state,
@@ -1603,10 +1603,10 @@ public class RowGroupIterator implements Closeable {
 
     /// Rethrows the failure that ended planning, if any, as the type it was raised as.
     ///
-    /// An `Error` is kept as well: the column worker reports one to its exchange like any
+    /// An `Error` is kept as well: the column's fetcher reports one to its exchange like any
     /// other failure, and a column handed `null` past it would end the read just as silently.
     ///
-    /// The same instance reaches every column, and the column worker never alters it: naming
+    /// The same instance reaches every column, and the column never alters it: naming
     /// where the read was, or retyping it, makes a new instance. The one change made in place
     /// is a later failure attached with `addSuppressed`, which is thread-safe.
     private void rethrowPlanningFailure() throws IOException {
@@ -1768,7 +1768,7 @@ public class RowGroupIterator implements Closeable {
     /// past what is planned. `null` once the read is done.
     ///
     /// Synchronized because every projected column walks this list on its own
-    /// retriever thread, and a step past the planned end plans another file.
+    /// fetcher, and a step past the planned end plans another file.
     /// Planning mutates shared state, so exactly one column may do it at a time;
     /// the others see the finished result, or the failure that ended planning.
     ///
@@ -2066,7 +2066,7 @@ public class RowGroupIterator implements Closeable {
 
         // The leaf's own repetition type matching does not imply its ancestors' do,
         // and both levels are read from the per-file leaf when a page is decoded but
-        // from the reference leaf when records are assembled from it (ColumnWorker).
+        // from the reference leaf when records are assembled from it (ScheduledColumn).
         // The same leaf path under an optional rather than a required ancestor group
         // misreads nulls; under a repeated rather than a non-repeated one it misreads
         // record boundaries.

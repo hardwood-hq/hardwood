@@ -114,13 +114,13 @@ public final class BinaryBatchValues {
     /// ([#deferDictionaryRange]), `0` when there are none.
     private int deferredEnd;
 
-    /// The column worker's [ViewDemand], set while dictionary values may be deferred, so that
-    /// building their views tells the worker to stop deferring.
+    /// The column's [ViewDemand], set while dictionary values may be deferred, so that building
+    /// their views tells the column to stop deferring.
     ViewDemand viewDemand;
 
     /// Raised by the first reader that needs the views of deferred dictionary values. From then
-    /// on the column's worker builds views as it assembles, on its own thread, so that only the
-    /// batches already in flight have theirs built on the reading thread. One instance per worker.
+    /// on the column builds views as it completes a cell, on the completing thread, so that only the
+    /// batches already in flight have theirs built on the reading thread. One instance per column.
     static final class ViewDemand {
         volatile boolean requested;
     }

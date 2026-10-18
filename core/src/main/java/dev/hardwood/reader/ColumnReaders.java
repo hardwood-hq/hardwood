@@ -137,8 +137,8 @@ public class ColumnReaders implements Closeable {
     ///
     /// As a defensive guard, a mismatch between the columns' decoded record counts
     /// throws [IllegalStateException]. Under correct internal behavior this can't
-    /// happen — the guard exists to detect future regressions in the per-column drain
-    /// workers, not to be triggered in production.
+    /// happen — the guard exists to detect future regressions in the decode pipeline,
+    /// not to be triggered in production.
     ///
     /// @return true if a new aligned batch is available across all readers, false if exhausted
     /// @throws IOException if the bytes could not be read

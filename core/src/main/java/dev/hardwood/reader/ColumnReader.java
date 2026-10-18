@@ -495,11 +495,11 @@ public class ColumnReader implements Closeable {
             throw new IllegalStateException(prefix() + "Real view not available for flat columns");
         }
         if (currentNestedBatch.realView != null) {
-            // Computed on the drain (real-items ColumnReader path).
+            // Computed as the cell was filled, before publish (real-items ColumnReader path).
             currentRealView = currentNestedBatch.realView;
         }
         else {
-            // A batch derived by consumer-side record selection carries no drain
+            // A batch derived by consumer-side record selection carries no precomputed
             // view; build it from the sliced levels.
             currentRealView = currentNestedBatch.fixedListK > 0
                     ? fixedListRealView(currentNestedBatch)
@@ -532,7 +532,7 @@ public class ColumnReader implements Closeable {
 
     /// Returns the leaf-values backing array sized to [#getValueCount()].
     /// For flat columns this is the underlying batch array. For nested columns
-    /// it is, in order: the drain's pre-compacted `realValues` when present;
+    /// it is, in order: the pre-compacted `realValues` of the cell's fill when present;
     /// otherwise pass-through of the batch values when no compaction is needed
     /// (no `REPEATED` layer, or an all-present batch with no phantom positions);
     /// otherwise a freshly compacted typed array (batches derived by record
@@ -546,8 +546,8 @@ public class ColumnReader implements Closeable {
     }
 
     /// The untrimmed leaf-values backing store. For flat columns this is the
-    /// underlying batch array. For nested columns it is, in order: the drain's
-    /// pre-compacted `realValues` when present; otherwise pass-through of the
+    /// underlying batch array. For nested columns it is, in order: the
+    /// pre-compacted `realValues` of the cell's fill when present; otherwise pass-through of the
     /// batch values when no compaction is needed (no `REPEATED` layer, or an
     /// all-present batch with no phantom positions); otherwise a freshly
     /// compacted typed array (batches derived by record selection).
@@ -557,7 +557,7 @@ public class ColumnReader implements Closeable {
         }
         NestedBatch batch = currentNestedBatch;
         if (batch.realValues != null) {
-            return batch.realValues;               // pre-compacted on the drain
+            return batch.realValues;               // pre-compacted by the cell's fill
         }
         int[] map = ensureRealView().realToRawLeaf();
         return map == null
@@ -636,7 +636,7 @@ public class ColumnReader implements Closeable {
         return bbv;
     }
 
-    /// The per-batch [BinaryBatchValues] is sized to the worker's batch
+    /// The per-batch [BinaryBatchValues] is sized to the read's batch
     /// capacity; only the first `leafCount` views are meaningful at the
     /// public-API surface. Trim if needed (the bytes buffer itself is not
     /// trimmed — the public contract documents it that way).

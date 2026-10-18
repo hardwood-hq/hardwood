@@ -8,7 +8,7 @@
 package dev.hardwood.internal.reader;
 
 /// Derives the structures a nested batch carries for its reader before it is published, off the
-/// serial consumer: what each [NestedColumnWorker.IndexMode] says the reader reads.
+/// serial consumer: what each [NestedIndexMode] says the reader reads.
 ///
 /// Set bits of a validity indicate **present** values; a `null` validity means every item at that
 /// scope is present in the batch. `multiLevelOffsets` is indexed by **layer** (one slot per
@@ -27,8 +27,8 @@ final class NestedIndex {
     /// @param repetitionLevels the batch's repetition levels likewise; on `REAL_VIEW` `null` also
     ///        for a column without repetition
     static void compute(NestedBatch batch, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
-                        NestedLevelComputer.Layers layers, NestedColumnWorker.IndexMode mode) {
-        if (mode == NestedColumnWorker.IndexMode.REAL_VIEW) {
+                        NestedLevelComputer.Layers layers, NestedIndexMode mode) {
+        if (mode == NestedIndexMode.REAL_VIEW) {
             // Unfiltered ColumnReader: the consumer reads only the real-items view and values. An
             // all-present batch has no phantom positions, so its offsets equal the all-items
             // offsets: only those are built, and the dense values pass through. A batch with
@@ -55,7 +55,7 @@ final class NestedIndex {
         batch.realView = null;
         batch.realValues = null;
 
-        if (mode == NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS) {
+        if (mode == NestedIndexMode.REAL_VIEW_KEEP_LEVELS) {
             // Exact-filtered ColumnReader: record selection compacts the batch from the raw levels
             // before the consumer reads it, and the consumer builds the view lazily; the
             // SelectionEngine derives the element validity of the predicate columns itself.

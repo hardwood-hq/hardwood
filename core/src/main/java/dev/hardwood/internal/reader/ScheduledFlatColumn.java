@@ -44,11 +44,13 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         return viewDemand;
     }
 
+    /// Scratch of binary pages whose segments are all filled, for the column's next binary pages.
+    /// Polled and offered without the lock, by page tasks and by the threads that size cells.
+    private final ArrayBlockingQueue<PageDecoder.LevelScratch> binaryScratch =
+            new ArrayBlockingQueue<>(4 * ScheduledColumn.MAX_INFLIGHT_PAGES);
+
     // === Guarded by `lock` ===
     private final Placer<Cell> placer;
-    /// Scratch of binary pages whose segments are all filled, for the column's next binary pages.
-    private final ArrayBlockingQueue<PageDecoder.LevelScratch> binaryScratch =
-            new ArrayBlockingQueue<>(4 * ColumnWorker.MAX_INFLIGHT_PAGES);
     /// Cells whose seal came after their last fill, which the fetcher completes once it has
     /// released the lock.
     private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
@@ -392,7 +394,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// at once, so its calls are serialized.
     private void testFilter(BatchExchange.Batch batch, int records) {
         if (batch.filterAlwaysMatches) {
-            FlatColumnWorker.fillAllOnes(batch.matches, records);
+            BitmapWords.fillAllOnes(batch.matches, records);
             return;
         }
         synchronized (columnFilter) {

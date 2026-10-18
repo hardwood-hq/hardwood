@@ -37,7 +37,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
         Thread producer = Thread.ofPlatform().start(() -> {
             try {
                 Thread.sleep(PUBLISH_DELAY_MILLIS);
-                exchange.publish("batch-1");
+                exchange.tryPublish("batch-1");
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -61,7 +61,7 @@ class BatchWaitEventTest extends AbstractJfrRecorderTest {
     @Test
     void consumerServedWithoutWaitingEmitsNoEvent() throws Exception {
         BatchExchange<String> exchange = BatchExchange.detaching("price", () -> "batch", batch -> 1, 1);
-        exchange.publish("batch-1");
+        exchange.tryPublish("batch-1");
 
         assertThat(exchange.poll()).isEqualTo("batch-1");
         awaitEvents();

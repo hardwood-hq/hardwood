@@ -309,7 +309,7 @@ class ColumnReaderExactFilterTest {
         // Or[Column(rating), And[Column(id), Column(price)]] — a compound with a
         // compound child, so the merger's plan walk has to recurse to find every
         // referenced column. The engine's merger runs the matchers itself (no
-        // workers ran them), which the one-level cases above also do; what is new
+        // column ran them), which the one-level cases above also do; what is new
         // here is the depth.
         FilterPredicate filter = FilterPredicate.or(
                 FilterPredicate.and(

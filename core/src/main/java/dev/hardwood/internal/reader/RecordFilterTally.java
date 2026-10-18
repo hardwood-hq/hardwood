@@ -24,7 +24,7 @@ import dev.hardwood.jfr.RecordFilterEvent;
 ///
 /// Not thread-safe, and does not need to be: every path that feeds it — the
 /// drain-side batch counts, the per-record wrapper, and the column-reader selection
-/// — runs on the consumer thread. Moving any of that onto a drain thread would need
+/// — runs on the consumer thread. Moving any of that onto a decode thread would need
 /// this revisited.
 public final class RecordFilterTally {
 

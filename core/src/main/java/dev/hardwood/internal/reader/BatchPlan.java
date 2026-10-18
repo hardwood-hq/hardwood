@@ -14,7 +14,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// The batch boundaries of one read, decided once for every decoded column.
 ///
 /// [RowGroupIterator] plans the row groups of a read in work-list order, as it computes their
-/// fetch plans, and hands each row group's [RowGroupBatches] to every column's worker. A worker
+/// fetch plans, and hands each row group's [RowGroupBatches] to every decoded column. A column
 /// closes a batch where the plan closes it and takes the batch's file name and always-match flag
 /// from the plan, so every column of the read closes its batches at the same rows.
 ///
@@ -36,7 +36,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// masks apply, which apply to every decoded column of the row group or to none.
 ///
 /// Planning is synchronized, since the first column to reach a row group plans it on its own
-/// retriever thread, or the previous row group's prefetch does on a speculative task.
+/// fetcher, or the previous row group's prefetch does on a speculative task.
 final class BatchPlan {
 
     /// The plan of a row group after the row cap ended the read; no column reaches it.

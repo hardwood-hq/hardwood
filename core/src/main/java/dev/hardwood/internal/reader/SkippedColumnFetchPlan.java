@@ -10,7 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.NoSuchElementException;
 
 /// The plan of a column that is not read in a row group: it fetches nothing and yields
-/// one [PageInfo#BOUNDARY_MARKER]. The column's worker assembles no rows for the row
+/// one [PageInfo#BOUNDARY_MARKER]. The column places no rows for the row
 /// group; the marker only makes it close its batch in progress at the row where its
 /// siblings close theirs.
 ///

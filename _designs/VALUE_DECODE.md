@@ -1,6 +1,6 @@
 # Value decode
 
-Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the choice of value decoder per encoding, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernels with their scalar fallback.
+Describes how the bytes of one data page become typed Java values: the page header and decompression hand-off in `PageDecoder`, the in-place value readers and the decoder each encoding drives, dictionary pages and the per-chunk reuse of dictionary strings, the leaf classification (`LeafKind`) both row readers decode through, and the Vector API kernels with their scalar fallback.
 
 Related documents:
 
@@ -14,64 +14,74 @@ Related documents:
 
 ## Page decode
 
-`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. `decodePage(buffer, dictionary, scratch)` takes one page, header included, and the chunk's `Dictionary` or `null`, and returns one `Page`.
+`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. Every data page is read in place: a page task reads the page's header and levels and locates its values, and the fills write each value once, from the decompressed page straight into the batch arrays, with no page-sized value array between.
 
-The steps, in order:
+The steps, in order (`PageDecoder.readInPlace`):
 
-1. Parse the page header from the buffer (`PageHeaderReader`) and slice the body without copying.
-2. If the header carries a CRC, check it over the stored (compressed) body (`CrcValidator`); a mismatch raises `ParquetReadException`.
+1. Parse the page header from the buffer (`PageHeaderReader`). A page that is not a data page, or whose encoding has no in-place reader for the column's type, is refused before anything is decompressed ([Refusal](#encodings-and-readers)).
+2. Slice the body without copying. If the header carries a CRC, check it over the stored (compressed) body (`CrcValidator`); a mismatch raises `ParquetReadException`.
 3. Decompress and split the body by page type:
 
 | Page type | Levels | Values |
 |---|---|---|
 | `DATA_PAGE` (v1) | inside the compressed body; the whole body is decompressed, then each level stream is read behind its 4-byte little-endian length | follow the levels in the decompressed body |
-| `DATA_PAGE_V2` | stored uncompressed ahead of the values, with lengths from the header | decompressed only when the header's `is_compressed` is set |
-| any other | | `ParquetReadException`; dictionary pages go through `DictionaryParser`, and index pages never reach the decoder |
+| `DATA_PAGE_V2` | stored uncompressed ahead of the values, with lengths from the header | decompressed only when the header's `is_compressed` is set; stored values are read where they lie |
 
-4. Decode repetition levels when `maxRepetitionLevel > 0` and definition levels when `maxDefinitionLevel > 0`, both with `RleBitPackingHybridDecoder` at the bit width of the maximum level.
-5. Decode the values with the decoder the page's encoding selects (next section) into a `Page`.
+4. Decode repetition levels when `maxRepetitionLevel > 0` and definition levels when `maxDefinitionLevel > 0`, both with `RleBitPackingHybridDecoder` at the bit width of the maximum level, and the dictionary ids of a dictionary-encoded page, into scratch.
+5. Build the page's value reader for its encoding (next section).
 
-A `PageDecodedEvent` (JFR) is committed per decoded page with the column and both sizes.
+A `PageDecodedEvent` (JFR) is committed per page read with the column and both sizes.
+
+The entry points differ in the column they serve and in where the values live:
+
+| Entry point | Column | Returns | Values in |
+|---|---|---|---|
+| `decodeFlat` | without repetition, fixed-width numeric or `BOOLEAN` | `FlatPageValues` | the decompressor's buffer, or the fetched page for stored `DATA_PAGE_V2` values, for the page's task |
+| `decodeFlatBinary` | without repetition, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` | `BinaryPageValues` | the page's own scratch, since a segment parked on its cell reads them after the task ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)) |
+| `decodeNestedInPlace` | decoded through levels | `InPlaceNestedPage`: levels, `fixedListK` and one of the two readers | the page's own scratch, until its cells are filled ([NESTED_DECODE.md](NESTED_DECODE.md#level-decode-and-scratch)) |
+| `nullsInPlace` | a null placeholder ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) | all-zero definition and repetition levels and no value bytes, without reading the page; refuses a required column | none |
 
 **Decompression hand-off.** `DecompressorFactory.getDecompressor(codec)` returns a `Decompressor` per call; a codec whose library is absent, and `LZO`, raise `UnsupportedOperationException` naming the dependency, and that type is never re-typed as a read failure (see [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md)). `GZIP` goes through libdeflate over FFM when the context has a libdeflate pool (Java 22+) and through `java.util.zip.Inflater` otherwise; the user-facing switch is in [docs/content/reference/configuration.md](../docs/content/reference/configuration.md). Every decompressor, `UNCOMPRESSED` included, checks that it produced exactly the declared uncompressed size.
 
-A decompressor returns a thread-owned, reused `byte[]` whose length may exceed the page's uncompressed size. Three rules follow. Decoders bound their reads by the page's size, never by the array's length, so a page that declares more values than its body holds fails as malformed instead of reading bytes left by an earlier page. The converse holds for `PLAIN`, whose values have no framing of their own: a value section, or a dictionary page body, with bytes left over after its last value fails as malformed too, since values of a width other than the one the decoder assumes (such as `FIXED_LEN_BYTE_ARRAY` values written with `BYTE_ARRAY` length prefixes) would otherwise decode at the wrong boundaries. Nothing a decoder produces may reference that array: every value decoder copies what it keeps (primitive arrays are filled, `byte[]` values are copied out), so a `Page` outlives the next decompression on the same thread. And decoding is confined to the thread that decompressed, since the next page on that thread overwrites the buffer.
+A decompressor returns a thread-owned, reused `byte[]` whose length may exceed the page's uncompressed size, or decompresses into a buffer the caller gives it. Three rules follow. Readers bound their reads by the page's size, never by the array's length, so a page that declares more values than its body holds fails as malformed instead of reading bytes left by an earlier page. The converse holds for `PLAIN`, whose values have no framing of their own: a value section, or a dictionary page body, with bytes left over after its last value fails as malformed too, since values of a width other than the one the reader assumes (such as `FIXED_LEN_BYTE_ARRAY` values written with `BYTE_ARRAY` length prefixes) would otherwise decode at the wrong boundaries. A reader over the decompressor's own buffer is used only within the task that decompressed it, since the next page on that thread overwrites the buffer; a page whose values outlive its task is decompressed into its own scratch.
 
-**The `Page` model.** `Page` is sealed, one variant per physical storage: `BooleanPage`, `IntPage`, `LongPage`, `FloatPage`, `DoublePage`, and `BinaryPage` for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`. Every variant carries the two level arrays, `maxDefinitionLevel`, `size()` and `fixedListK`. The primitive variants carry a value array. `BinaryPage` is itself sealed over two forms: `ByteArrayPage` carries a `byte[][]` value array and is produced by a decode without a dictionary; `DictionaryByteArrayPage` carries the chunk's dictionary and one entry index per value and is produced by a dictionary decode (see [String reuse](#string-reuse)). A dictionary-decoded page holds no reference per value because a per-value reference array on a page of hundreds of thousands of values is large enough for G1 to allocate as a humongous object, and those cost the collector far more than the decode. `BinaryPage.get(i)` reads either form.
+**Page values.** The levels and values of a page read in place follow one model:
 
 | Property | Statement |
 |---|---|
-| Positional values | The value array has one slot per level entry (`size()`), and a value sits at its entry's position. A slot whose definition level is below the maximum holds the type's default and is never read as a value. On a `DictionaryByteArrayPage`, `dictIndices` is the positional array, holding `-1` at such a slot. |
-| All-present | A `null` definition-level array means every entry is at `maxDefinitionLevel`. Required columns always produce it; an optional column produces it when its definition-level stream is one RLE run of the maximum over the whole page (`RleBitPackingHybridDecoder.isSingleRleRunOf`). Consumers test presence through `allPresent()` / `isNull(i)`. |
-| Level arrays are pooled | A non-null level array may be longer than `size()`; only the first `size()` entries are valid. The pooling is described in [NESTED_DECODE.md](NESTED_DECODE.md). |
-| Flat columns | `repetitionLevels()` is `null` when `maxRepetitionLevel == 0`. |
+| Positional values | A page has one position per level entry, and a value sits at its entry's position. A position whose definition level is below the maximum holds no value; a fill leaves the batch element there as it is, and a binary column's entry id there is `-1`. |
+| All-present | A `null` definition-level array means every entry is at `maxDefinitionLevel`. Required columns always produce it; an optional column produces it when its definition-level stream is one RLE run of the maximum over the whole page (`RleBitPackingHybridDecoder.isSingleRleRunOf`). |
+| Scratch arrays | A level, id or byte array may be longer than the page; only the page's entries are valid. The scratch is described in [READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns) and [NESTED_DECODE.md](NESTED_DECODE.md). |
+| Flat columns | The repetition levels are `null` when `maxRepetitionLevel == 0`. |
 
-Two other producers of a `Page` exist. `nullPage(n)` builds an all-null page of `n` entries without reading the body, for a page inline statistics proved non-matching ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)); it refuses a required column. The fixed-size-list fast path decodes values with `null` level arrays and stamps `fixedListK` through `Page.withFixedListK` ([NESTED_DECODE.md](NESTED_DECODE.md)).
+The fixed-size-list fast path reads a page with `null` level arrays and gives it `fixedListK` ([NESTED_DECODE.md](NESTED_DECODE.md)).
 
-A decoder failure is a `RuntimeException` on a decode task; `ColumnWorker` classifies it into `ParquetReadException` and names the file, row group, column and page ([READ_PIPELINE.md](READ_PIPELINE.md)).
+A reader failure is a `RuntimeException` on a page task; `ScheduledColumn.placeFailure` classifies it into `ParquetReadException` and names the file, row group, column and page ([READ_PIPELINE.md](READ_PIPELINE.md#error-propagation)).
 
 Tests: `CrcValidationTest`, `RleBitPackingHybridDecoderSingleRunTest`.
 
-## Encodings and decoders
+## Encodings and readers
 
-`PageDecoder.decodeTypedValues` switches on the page's encoding, then on the column's physical type. Each pair either decodes or is refused. The format defines each encoding over a fixed set of physical types, so a page declaring an encoding its column cannot carry is a malformed file and raises `ParquetReadException` naming the legal types. Decoding it would build a page of the wrong variant, wrong in its values and in the type the consumer casts to.
+`PageDecoder.readsInPlace` decides, from the page's encoding and the column's physical type, whether the page has an in-place reader. The format defines each encoding over a fixed set of physical types, and every pair it defines has one. A page declaring an encoding its column cannot carry is a malformed file and raises `ParquetReadException` naming the legal types: reading it would take values of the wrong shape, wrong in its values and in the type the consumer casts to.
 
-| Encoding | Physical types decoded | Decoder | Refused |
+| Encoding | Physical types read | Reader | Refused |
 |---|---|---|---|
-| `PLAIN` | all | `PlainDecoder` | bytes left over after the last value |
-| `RLE_DICTIONARY`, `PLAIN_DICTIONARY` | all but `BOOLEAN` (see [Dictionary](#dictionary-and-string-reuse)) | index stream through `RleBitPackingHybridDecoder`, lookup in the `Dictionary` variant | no dictionary for the chunk; an index bit width above 32; a `BOOLEAN` dictionary (`UnsupportedOperationException`, raised when the dictionary page is parsed) |
-| `DELTA_BINARY_PACKED` | `INT32`, `INT64` | `DeltaBinaryPackedDecoder` | every other type |
-| `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` | `DeltaLengthByteArrayDecoder` | every other type |
-| `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `DeltaByteArrayDecoder` | every other type |
-| `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` | `ByteStreamSplitDecoder` | `BOOLEAN`, `BYTE_ARRAY`, `INT96`, checked before the decoder is built because its byte width is derived from the type |
-| `ALP` | `FLOAT`, `DOUBLE` | `AlpDecoder` | every other type; a header element count other than the page's non-null count; a vector that does not start where the previous one ended, or a page with bytes left over after the last vector; an exponent, factor or bit width outside the format's range; an exception position outside its vector. A compression mode or integer encoding other than 0, which the format reserves for later variants, raises `UnsupportedOperationException` |
-| `RLE` | `BOOLEAN`, behind a 4-byte length | `RleBitPackingHybridDecoder` at width 1 | every other type |
+| `PLAIN` | all | `FlatPageValues.plain`, `BinaryPageValues.plain`: the values in the decompressed page | bytes left over after the last value |
+| `RLE_DICTIONARY`, `PLAIN_DICTIONARY` | all but `BOOLEAN` (see [Dictionary](#dictionary-and-string-reuse)) | ids decoded into scratch through `RleBitPackingHybridDecoder`; a numeric fill looks each up in the `Dictionary`, a binary fill writes it as the batch's entry id | no dictionary for the chunk; an index bit width above 32; an id outside the dictionary; a `BOOLEAN` dictionary (`UnsupportedOperationException`, raised when the dictionary page is parsed) |
+| `DELTA_BINARY_PACKED` | `INT32`, `INT64` | `FlatPageValues.delta`, driving `DeltaBinaryPackedDecoder` in row order | every other type; a malformed stream header, checked when the page is read |
+| `DELTA_LENGTH_BYTE_ARRAY` | `BYTE_ARRAY` | `BinaryPageValues.deltaLength`: lengths decoded up front, bytes in place | every other type |
+| `DELTA_BYTE_ARRAY` | `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` | `BinaryPageValues.deltaByteArray`: values reconstructed from prefixes and suffixes into the page's scratch | every other type |
+| `BYTE_STREAM_SPLIT` | `INT32`, `INT64`, `FLOAT`, `DOUBLE`, `FIXED_LEN_BYTE_ARRAY` | `FlatPageValues.byteStreamSplit`, `BinaryPageValues.byteStreamSplit`: each value gathered from its byte streams | `BOOLEAN`, `BYTE_ARRAY`, `INT96`; a value section that does not hold exactly the page's values |
+| `ALP` | `FLOAT`, `DOUBLE` | `FlatPageValues.alp`: every vector header checked when the page is read (`AlpDecoder.validate`), each vector decoded once into the reader's buffer as the fill reaches it | every other type; a header element count other than the page's non-null count; a vector that does not start where the previous one ended, or a page with bytes left over after the last vector; an exponent, factor or bit width outside the format's range; an exception position outside its vector. A compression mode or integer encoding other than 0, which the format reserves for later variants, raises `UnsupportedOperationException` |
+| `RLE` | `BOOLEAN`, behind a 4-byte length | `FlatPageValues.rleBooleans`: decoded into scratch through `RleBitPackingHybridDecoder` at width 1 | every other type |
 | `BIT_PACKED` | none | | always: it encodes levels, never values |
 | `UNKNOWN` | none | | `UnsupportedOperationException` carrying the raw Thrift value. It, the `BOOLEAN` dictionary and an unknown ALP variant are the refusals that mark a gap in this release; every other refusal marks a malformed file |
 
-The value decoders share one shape (`ValueDecoder`): `readX(output, definitionLevels, maxDefLevel)` fills a page-sized output array, consuming one encoded value per entry at the maximum definition level and skipping the others, or one per entry when the level array is `null`. Decoders whose encoded stream holds only the present values and must size a header or stream split first (`BYTE_STREAM_SPLIT`, `ALP` and both delta byte-array encodings) are told the non-null count before reading. `AlpDecoder` decodes the present values onto the front of the output array and then moves them out to the positions the definition levels mark present, zeroing the others.
+**Refusal.** A page no in-place reader takes is refused by `PageDecoder.rejectWithoutReader`, which runs the page through the full decode (`decodePage`, `decodeTypedValues`) only to raise that decode's error. Every page the format defines for a column has an in-place reader, so a page the full decode accepts there raises `IllegalStateException`, which marks a reader gap.
 
-ALP decodes a value as `encoded * 10^factor * 10^-exponent`: two multiplications, in binary32 for `FLOAT` and binary64 for `DOUBLE`, with power-of-ten constants written as literals. The format makes that arithmetic normative so that every reader reproduces the writer's bits; a single multiplication by `10^(factor - exponent)`, a division, or computed constants decode some values one ulp off. Exception values are restored from their stored bits, NaN payloads included. A decoder that runs out of bytes raises, and the decode task classifies the failure as a read failure (see [Page decode](#page-decode)).
+**Cursor.** A value reader is read with one forward cursor over the page's rows: a fill writes its rows in page order, and moving to a run's first row counts the non-null values the cursor passes. A fill that starts elsewhere, such as a nested cell's segment or a second cell sharing the page, reads through a `view()` with a cursor of its own, so several fills can read one page at once. An encoding decoded in order (`DELTA_BINARY_PACKED`, `ALP`) gives each view a decoder of its own; a view that starts past the page's first value decodes the values before it and passes over them.
+
+ALP decodes a value as `encoded * 10^factor * 10^-exponent`: two multiplications, in binary32 for `FLOAT` and binary64 for `DOUBLE`, with power-of-ten constants written as literals. The format makes that arithmetic normative so that every reader reproduces the writer's bits; a single multiplication by `10^(factor - exponent)`, a division, or computed constants decode some values one ulp off. Exception values are restored from their stored bits, NaN payloads included. A decoder that runs out of bytes raises, and the page task classifies the failure as a read failure (see [Page decode](#page-decode)).
 
 Tests: `PageDecoderEncodingTest`, `PageDecoderPlainSizeTest`, `ByteArrayEncodingsTest`, `DeltaBinaryPackedDecoderHeaderTest`, `DeltaBinaryPackedDecoderWidthSweepTest`, `DeltaBinaryPackedTest`, `DeltaByteArrayTest`, `DeltaByteArrayFlbaTest`, `AlpDecoderTest`, `AlpReadTest` (parquet-testing-runner).
 
@@ -83,7 +93,7 @@ A column chunk has at most one dictionary page, ahead of its first data page. `D
 
 `DictionaryParser.parsePage` is the one place a dictionary page's own claims are checked, whichever entry point reaches it: the page type is `DICTIONARY_PAGE`, the body is exactly the header's compressed size, the dictionary page header is present, its value count is not negative, and the CRC matches when present. The body is decompressed and read as `num_values` `PLAIN` values, which must fill it exactly. A failure while decompressing or parsing becomes `ParquetReadException` carrying type, counts, sizes and codec, except `UnsupportedOperationException` (an unavailable codec), which leaves as raised.
 
-`Dictionary` is sealed, one variant per storage: `IntDictionary`, `LongDictionary`, `FloatDictionary`, `DoubleDictionary` over primitive arrays, and `ByteArrayDictionary` for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`, which holds its entries back to back in one `byte[]` with an `int[]` of entry offsets, the form a batch copies in and points its values at. A `BOOLEAN` dictionary raises `UnsupportedOperationException`. Each variant decodes a data page itself (`Dictionary.decodePage`), so the per-type lookup runs in a monomorphic call and the caller does not dispatch per value. An index outside the dictionary raises at decode and is classified as a read failure: on the array access for the primitive variants, and on an explicit range check for `ByteArrayDictionary`, whose page keeps the indices without resolving them.
+`Dictionary` is sealed, one variant per storage: `IntDictionary`, `LongDictionary`, `FloatDictionary`, `DoubleDictionary` over primitive arrays, and `ByteArrayDictionary` for `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96`, which holds its entries back to back in one `byte[]` with an `int[]` of entry offsets, the form a batch copies in and points its values at. A `BOOLEAN` dictionary raises `UnsupportedOperationException`. An id outside the dictionary raises `ArrayIndexOutOfBoundsException` in the page's reader and is classified as a read failure.
 
 A chunk may mix dictionary and `PLAIN` data pages (a writer that fell back part-way); each page is decoded by its own encoding.
 
@@ -96,14 +106,14 @@ The mechanism has three parts:
 | Part | Where | Statement |
 |---|---|---|
 | Per-chunk cache | `ByteArrayDictionary.internedString(i)` | A lazily allocated `String[]` parallel to the entries; entry `i` is decoded as UTF-8 on first request and cached. |
-| Index on the page | `Page.DictionaryByteArrayPage.dictionary()` / `dictIndices()` | A dictionary-decoded byte-array page carries its `ByteArrayDictionary` and one entry index per value (`-1` at a null), and these are its only representation of the values. A `ByteArrayPage` (`PLAIN`, delta) has neither. |
+| Ids on the page | `BinaryPageValues.dictionary()` | A dictionary-encoded byte-array page's reader carries its `ByteArrayDictionary` and one id per non-null value, and these are its only representation of the values. A plain or delta page's reader has neither. |
 | Index on the batch | `BinaryBatchValues.dictionary` / `dictIndices` | For a string column the batch records, per value, the entry index or `-1`. `stringAt(i)` returns the cached `String` when the batch has a dictionary and the index is non-negative, and decodes from the value's bytes otherwise. A dictionary-aware binary matcher reads the same index to reuse its cached predicate outcome. |
 
 Every value has a byte view in the batch whatever its encoding (a dictionary value's view points into the batch's copy of the dictionary, see [COLUMN_READER.md](COLUMN_READER.md#variable-length)), so `getBinary` and raw-byte access are unaffected and the fallback in `stringAt` is always available.
 
 **Which columns.** Every `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` column records entry indices: they back `ColumnReader`'s dictionary ids ([COLUMN_READER.md](COLUMN_READER.md#dictionary-ids)) as well as string reuse. Only text columns reach `stringAt`: the consumer side asks `LeafKind.of(type, annotation) == STRING` (a `BYTE_ARRAY` annotated `STRING`, `ENUM` or `JSON`, or carrying no annotation where the accessor allows it) before routing a value through it.
 
-**Batch rules.** A batch starts with no dictionary. The first dictionary page that contributes switches it on: the batch adopts that page's dictionary and allocates `dictIndices` at the batch's value capacity. A column worker backfills `-1` over the values already written (`ensureDictionary`), and a `PLAIN` page's values record `-1` after that. A scheduled column's segments are filled in any order, so the first segment of dictionary ids installs the dictionary (`installDictionary`), and the cell's completion writes `-1` over every segment that wrote no ids (`BinaryFill.finish`). A column whose chunk is entirely `PLAIN` never allocates `dictIndices` and pays one `null` check per `stringAt`. The worker clears the batch's dictionary slot when it takes the batch for reuse, keeping the array.
+**Batch rules.** A batch starts with no dictionary. Segments are filled in any order, so the first segment of dictionary ids switches it on (`BinaryBatchValues.installDictionary`): the batch adopts that page's dictionary and allocates `dictIndices` at the batch's value capacity. The cell's completion writes `-1` over every segment that wrote no ids (`BinaryFill.finish`; `NestedFill` for a nested cell). A column whose chunk is entirely `PLAIN` never allocates `dictIndices` and pays one `null` check per `stringAt`. A cell that takes a returned holder clears its dictionary slot, keeping the array (`BinaryBatchValues.prepareForFill`).
 
 **One chunk per batch.** A read with a binary column ends every batch at a row-group boundary ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), so a batch of binary values holds values of one column chunk and draws on at most one dictionary. A batch meeting a second dictionary fails the read (`IllegalStateException`). A batch holding two chunks would have to decode one chunk's values from their bytes, a fresh `String` per value.
 
@@ -155,12 +165,12 @@ Tests: `LeafKindTest`, `LeafDecoderTest`, `DictionaryStringReuseTest`.
 
 There is no system property or reader option; omitting the module flag is the way to run scalar. The user-facing statement is in [docs/content/reference/configuration.md](../docs/content/reference/configuration.md).
 
-**Where it is used.** Only `RleBitPackingHybridDecoder` calls it, on the dictionary and `RLE`-boolean paths:
+**Where it is used.** Only `RleBitPackingHybridDecoder` calls it, from the full page decode that refuses a page without an in-place reader ([Refusal](#encodings-and-readers)):
 
 - `countNonNulls` sizes the index stream of a page with definition levels.
-- `applyDictionaryInts` / `Longs` / `Floats` / `Doubles` perform the lookup for an all-present page of a numeric dictionary, scalar in both implementations. A page with nulls, and every `ByteArrayDictionary` page, take a scalar scatter loop.
+- `applyDictionaryInts` / `Longs` / `Floats` / `Doubles` perform the lookup for an all-present page of a numeric dictionary, scalar in both implementations.
 
-The other decoders, the level decode and `PageDecoder`'s own non-null count are scalar.
+The in-place readers, the level decode and the non-null counts of the read path are scalar.
 
 **Contract.** Both implementations return identical results for every input, and the scalar path is always complete, so correctness never depends on which one is selected.
 
@@ -172,4 +182,3 @@ Tests: `SimdOperationsTest`, which loads `VectorOperations` from the multi-relea
 - **Untrusted page headers (#201).** `uncompressed_page_size` sizes the decompression buffer unchecked, and dictionary indices are not validated ahead of the lookup.
 - **Materialised levels and indices (#726).** Definition levels and dictionary indices are expanded to one `int` per entry; only the single-RLE-run all-present page is recognised without expansion.
 - **Vector API bit unpacking (#680).** The bit-packed index and level decode is scalar.
-- **Index array on non-string byte-array dictionaries.** `ByteArrayDictionary.decodePage` builds the per-value entry-index array for every byte-array dictionary page, including `INT96`, `FIXED_LEN_BYTE_ARRAY` and unannotated `BYTE_ARRAY` columns whose batches never record it.

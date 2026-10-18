@@ -18,10 +18,10 @@ import dev.hardwood.reader.ParquetReadException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Worker transport pass-through and exchange delivery for already-classified failures.
+/// Column transport pass-through and exchange delivery for already-classified failures.
 class ReadFailureTypingTest {
 
-    // ==================== What the worker passes through ====================
+    // ==================== What the column passes through ====================
 
     @Test
     void transportFailuresPassThroughUnchanged() {
@@ -30,17 +30,17 @@ class ReadFailureTypingTest {
         IOException io = new IOException("connection reset");
         UncheckedIOException unchecked = new UncheckedIOException(io);
 
-        assertThat(ColumnWorker.asReadFailure(io)).isSameAs(io);
-        assertThat(ColumnWorker.asReadFailure(unchecked)).isSameAs(unchecked);
+        assertThat(ScheduledColumn.asReadFailure(io)).isSameAs(io);
+        assertThat(ScheduledColumn.asReadFailure(unchecked)).isSameAs(unchecked);
     }
 
     /// A truncation is a read failure like any other, but its type is internal; it leaves
-    /// the worker as the public type a caller can name.
+    /// the column as the public type a caller can name.
     @Test
     void anInternalReadFailureLeavesAsAParquetReadException() {
         ThriftTruncatedException truncated = new ThriftTruncatedException("Unexpected EOF while reading varint");
 
-        Exception typed = ColumnWorker.asReadFailure(truncated);
+        Exception typed = ScheduledColumn.asReadFailure(truncated);
 
         assertThat(typed).isExactlyInstanceOf(ParquetReadException.class)
                 .hasMessage("Unexpected EOF while reading varint")

@@ -77,7 +77,7 @@ class FixedSizeListEngagementTest {
 
     /// The `vec_mixed` column of the paged fixture interleaves fixed-width pages (fast
     /// path) with pages carrying null rows (fallback). This proves the fixture
-    /// actually exercises both, so the mixed-batch handling in `NestedColumnWorker`
+    /// actually exercises both, so the mixed-batch handling in `NestedFill`
     /// is genuinely covered rather than passing vacuously.
     @Test
     void mixedColumnHasBothFixedWidthAndFallbackPages() throws Exception {

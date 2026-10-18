@@ -932,7 +932,7 @@ class DrainSideOracleTest {
             return b;
         }
 
-        /// Packs `values` back to back the way `FlatColumnWorker` assembles a byte-array batch.
+        /// Packs `values` back to back the way a flat binary cell holds a byte-array batch.
         /// With `emptyNulls` a null row occupies an empty slice (`BYTE_ARRAY`); otherwise its bytes
         /// stay in place, the scratch a null `FIXED_LEN_BYTE_ARRAY` slot keeps — so a matcher that
         /// ignored validity would compare them and diverge from the oracle.

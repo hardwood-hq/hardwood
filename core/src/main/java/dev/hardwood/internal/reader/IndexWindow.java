@@ -27,7 +27,7 @@ import dev.hardwood.metadata.RowGroup;
 ///
 /// Formed while the file is planned. The bloom filters are fetched by the first
 /// [#bloomFiltersFor] call for any member that has one, the page index by the first
-/// [#buffersFor] call for any member, whether from a column's retriever or from the prefetch of
+/// [#buffersFor] call for any member, whether from a column's fetcher or from the prefetch of
 /// the next row group. The window drops its fetched bytes once every member has been released,
 /// or when the read closes.
 final class IndexWindow {

@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiConsumer;
 
 /// Submits the pages of a read's [ScheduledColumn]s to the decode pool, in row order across the
 /// columns.
@@ -47,14 +46,19 @@ public final class ReadScheduler {
     /// Batch byte budgets a column decodes at most ahead of the batch it publishes next.
     private static final int CAP_BUDGETS = 8;
 
-    /// Whether flat columns are read by a scheduler; `false` reads every column through a
-    /// [ColumnWorker], for tests comparing the two.
-    public static final boolean ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("hardwood.internal.scheduled"));
+    /// Told of every page as it is submitted; for tests of the submission order and the
+    /// read-ahead bounds. `null` for none.
+    static volatile SubmissionObserver submissionObserver;
 
-    /// Told of every page as it is submitted, with the pages in flight then; for tests of the
-    /// submission order and the read-ahead bounds. `null` for none.
-    static volatile BiConsumer<PageTask, Integer> submissionObserver;
+    /// Sees each page the scheduler submits, on the submitting thread, after the page was taken
+    /// off its column's queue and before its task is handed to the pool.
+    interface SubmissionObserver {
+
+        /// @param column the page's column
+        /// @param page the page
+        /// @param inFlight the pages in flight across the read, this one included
+        void submitted(ScheduledColumn<?> column, PageTask page, int inFlight);
+    }
 
     private final HardwoodContextImpl context;
     private final int pagesInFlight;
@@ -141,9 +145,9 @@ public final class ReadScheduler {
                 continue;
             }
             int inFlight = submitted.incrementAndGet();
-            BiConsumer<PageTask, Integer> observer = submissionObserver;
+            SubmissionObserver observer = submissionObserver;
             if (observer != null) {
-                observer.accept(page, inFlight);
+                observer.submitted(next, page, inFlight);
             }
             ScheduledColumn<?> column = next;
             try {

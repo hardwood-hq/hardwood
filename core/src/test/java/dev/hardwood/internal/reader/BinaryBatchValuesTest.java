@@ -265,7 +265,7 @@ class BinaryBatchValuesTest {
 
         BinaryBatchValues kept = raw.compact(new int[]{ 1, 2, 4 }, 3);
 
-        // A filtered read of the ids builds no views and leaves the worker deferring.
+        // A filtered read of the ids builds no views and leaves the column deferring.
         assertThat(kept.dictIndices).containsExactly(1, 2, -1);
         assertThat(kept.hasPendingViews()).isTrue();
         assertThat(demand.requested).isFalse();

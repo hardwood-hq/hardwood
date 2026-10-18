@@ -68,7 +68,7 @@ class FileNameInExceptionTest {
     void multiFileRowReaderAttributesNullErrorsToTheirOwnFileName(@TempDir Path tempDir) throws Exception {
         // `delta_binary_packed_optional_test.parquet` has 100 rows; `optional_value`
         // is null on every third row (0-indexed positions 2, 5, 8, …). Copy the file
-        // under a second, distinct name so file-boundary detection in ColumnWorker is
+        // under a second, distinct name so file-boundary detection in the batch plan is
         // actually exercised, then read the same null offset from each copy: the NPE
         // message must be attributed to the file the current row came from. This is
         // the only multi-file RowReader path that surfaces file-prefixed errors —
@@ -152,8 +152,8 @@ class FileNameInExceptionTest {
             ColumnReader idReader = columns.getColumnReader("id");
 
             // plain_uncompressed.parquet has 3 rows — well below batch capacity — so
-            // each file yields exactly one batch. File-boundary detection in
-            // ColumnWorker ensures the first batch is from TEST_FILE and the second
+            // each file yields exactly one batch. File-boundary detection in the
+            // batch plan ensures the first batch is from TEST_FILE and the second
             // from secondFile, each carrying its own file name.
             assertThat(columns.nextBatch()).isTrue();
             assertThatThrownBy(idReader::getInts)

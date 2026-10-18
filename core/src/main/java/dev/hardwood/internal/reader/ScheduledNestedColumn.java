@@ -24,10 +24,9 @@ import dev.hardwood.schema.ColumnSchema;
 ///   at most [#MAX_UNPLACED] pages queued or decoding and not placed. A page whose metadata gives
 ///   no record count is queued at the column's last known row, a lower bound of its first, so it
 ///   is never submitted late.
-/// - A page task reads its page in two passes where it can: a `V1` `PLAIN` or dictionary page of a
-///   fixed-width or binary leaf, unmasked, is decompressed into its own scratch and only its levels
-///   and ids are decoded, its values left in place for the fill. Any other page is decoded into
-///   arrays of its own and trimmed to its mask's records. The task measures the page
+/// - A page task reads its page in two passes: it is decompressed into its own scratch and only its
+///   levels and ids are decoded, its values left in place for the fill; a masked page keeps the
+///   levels of its kept records and where their values lie ([KeptRuns]). The task measures the page
 ///   ([PageMeasure]) and places every measured page at the head of the unplaced pages into the
 ///   [NestedCell]s of the read's batch plan ([Placer]), in page order. A page borrows its scratch
 ///   from the column's pool and returns it once every cell it is placed into is filled.
@@ -39,7 +38,7 @@ import dev.hardwood.schema.ColumnSchema;
 public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     /// Pages the column keeps queued or decoding and not yet placed.
-    static final int MAX_UNPLACED = ColumnWorker.MAX_INFLIGHT_PAGES;
+    static final int MAX_UNPLACED = ScheduledColumn.MAX_INFLIGHT_PAGES;
 
     /// Scratch of pages whose cells are all filled, for the column's next pages.
     private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool =
@@ -50,7 +49,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     }
 
     private final NestedLevelComputer.Layers layers;
-    private final NestedColumnWorker.IndexMode indexMode;
+    private final NestedIndexMode indexMode;
     private final boolean fixedListFastPathEnabled;
     /// Whether the column has repetition, so that a batch is sealed at the next record start.
     private final boolean repeated;
@@ -82,7 +81,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     /// @param indexMode what the column's batches carry for their reader
     public ScheduledNestedColumn(ReadScheduler scheduler, PageSource pageSource, BatchExchange<NestedBatch> exchange,
                                  ColumnSchema column, int batchCapacity, DecompressorFactory decompressorFactory,
-                                 NestedLevelComputer.Layers layers, NestedColumnWorker.IndexMode indexMode,
+                                 NestedLevelComputer.Layers layers, NestedIndexMode indexMode,
                                  boolean fixedListFastPathEnabled) {
         super(scheduler, pageSource, exchange, column, decompressorFactory);
         this.layers = layers;
@@ -277,7 +276,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
                 pageFailed(e, lastPlaced);
             }
             else {
-                signalError(ColumnWorker.asReadFailure(e));
+                signalError(ScheduledColumn.asReadFailure(e));
             }
         }
     }

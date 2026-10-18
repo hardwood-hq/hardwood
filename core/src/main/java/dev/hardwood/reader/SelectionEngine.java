@@ -31,8 +31,8 @@ import dev.hardwood.schema.FileSchema;
 ///   top-level, supported `(type, op)`), a [BatchMatchMerger] runs the
 ///   per-column matcher fragments over the flat batches and combines them into
 ///   one survivor bitmap. This is the row reader's drain-side merge, in the
-///   mode where the merger runs the matchers itself because there are no
-///   worker threads to have run them already.
+///   mode where the merger runs the matchers itself because no column has run
+///   them as its cells completed.
 /// - **Record matcher** — otherwise (nested paths, float16, geospatial,
 ///   unsupported operators) the compiled [RowMatcher] is evaluated per record over a
 ///   [PredicateView] of the predicate columns — the accessor the row readers
@@ -93,8 +93,8 @@ final class SelectionEngine {
                 resolved, schema, decoded::toProjectedIndex);
 
         if (compiled != null) {
-            // Owning mode: no column workers ran the matchers, so the merger runs
-            // them itself into buffers it allocates.
+            // Owning mode: no column ran the matchers as its cells completed, so the
+            // merger runs them itself into buffers it allocates.
             BatchMatchMerger merger = BatchMatchMerger.owning(
                     compiled, cursorsByProjectedIndex.length, wordsLen);
             return new SelectionEngine(merger, cursorsByProjectedIndex.length,
@@ -120,7 +120,7 @@ final class SelectionEngine {
     /// `-1` without evaluating anything: a predicate column outside the
     /// projection is not read for such a batch, and its cursor holds an earlier
     /// step's batch. The first cursor is a payload column's, which every step
-    /// advances, and every worker flushes where the flag changes, so its batch
+    /// advances, and every column closes a batch where the flag changes, so its batch
     /// speaks for the step.
     int computeSelection(int recordCount) {
         if (cursorsByProjectedIndex[0].filterAlwaysMatches()) {

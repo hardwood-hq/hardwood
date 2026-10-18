@@ -29,7 +29,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// The [#BOUNDARY_MARKER] stands in for a whole row group of a column that is
 /// not read there ([SkippedColumnFetchPlan]). It carries no bytes, no metadata
-/// and no rows; the worker places nothing for it and only closes the batch
+/// and no rows; the column places nothing for it and only closes the batch
 /// in progress where its siblings close theirs.
 ///
 /// The optional [#mask()] selects which records of the decoded page are kept.

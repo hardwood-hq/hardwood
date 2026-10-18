@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -14,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -37,6 +39,24 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// @param <B> the batch type
 public abstract class ScheduledColumn<B> implements ColumnPipeline {
+
+    /// Sentinel for the `maxRows` / row-limit contract meaning "no limit".
+    static final long UNLIMITED = 0L;
+
+    /// Pages a column keeps decoded and not yet filled into its cells, at most: the unplaced pages
+    /// of a nested column, and the size of a column's scratch pool. Overridable via the
+    /// `hardwood.internal.maxOutstanding` system property.
+    static final int MAX_INFLIGHT_PAGES = Integer.getInteger("hardwood.internal.maxOutstanding", 8);
+
+    /// How long a fetcher waiting for room, and a close waiting for the column's page tasks, park
+    /// before they re-check rather than waiting to be told.
+    ///
+    /// The conditions they wait on are monotone, so re-checking is always safe. The waits are
+    /// timed because the runtime can drop an unpark: on JDK 25 through 25.0.2, and 26 before
+    /// 26.0.1, an untimed park on a virtual thread that recently did a timed park can be stranded
+    /// by the earlier park's stale timeout task (JDK-8369227, fixed in 25.0.3, 26.0.1 and 27).
+    static final long WAKE_CHECK_NANOS = 10L * 1_000_000L;
+
 
     /// Pages the fetcher keeps queued for the scheduler.
     static final int FETCH_AHEAD = 2;
@@ -112,10 +132,10 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         exchange.finish();
         unparkFetcher();
         Thread fetcher = fetcherThread;
-        boolean interrupted = fetcher != null && ColumnWorker.joinUninterruptibly(fetcher);
+        boolean interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
         // Bounded wait, re-checked: the last task to finish unparks this thread.
         while (tasks.get() > 0) {
-            LockSupport.parkNanos(this, ColumnWorker.WAKE_CHECK_NANOS);
+            LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
         }
         if (interrupted) {
             Thread.currentThread().interrupt();
@@ -199,7 +219,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// Ends the read with the decode pool's refusal of a page task, which a closed context gives.
     void rejected(RejectedExecutionException e) {
         taskEnded();
-        signalError(ColumnWorker.contextClosed(e));
+        signalError(ScheduledColumn.contextClosed(e));
     }
 
     // ==================== Fetcher ====================
@@ -221,12 +241,12 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                 }
                 scheduler.submit();
                 while (!done && !fetchStopped() && !mayQueue()) {
-                    LockSupport.parkNanos(this, ColumnWorker.WAKE_CHECK_NANOS);
+                    LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
                 }
             }
         }
         catch (Exception e) {
-            fetchFailed(ColumnWorker.placeFailure(e, column, pageSource.footersSupplied(),
+            fetchFailed(ScheduledColumn.placeFailure(e, column, pageSource.footersSupplied(),
                     pageSource.getCurrentFileName(), pageSource.getCurrentRowGroupIndex(),
                     pageSource.getCurrentPageIndex()), pageSource.isBetweenWorkItems());
         }
@@ -315,7 +335,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     /// Ends the read with a failure met on `page`'s task, placed with the page.
     void pageFailed(Exception e, PageTask page) {
-        signalError(ColumnWorker.placeFailure(e, column, pageSource.footersSupplied(), page.fileName,
+        signalError(ScheduledColumn.placeFailure(e, column, pageSource.footersSupplied(), page.fileName,
                 page.rowGroup, page.pageIndex));
     }
 
@@ -451,5 +471,58 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         if (t != null) {
             LockSupport.unpark(t);
         }
+    }
+    /// Waits for `thread` to exit, carrying on through interrupts.
+    ///
+    /// @return whether the calling thread was interrupted while waiting
+    static boolean joinUninterruptibly(Thread thread) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                thread.join();
+                return interrupted;
+            }
+            catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+    }
+
+    /// A failure met reading `column`, typed ([#asReadFailure]) and placed with the file, row group
+    /// and page it came from. Where a [dev.hardwood.MetadataSource] supplied the footers
+    /// (`footersSupplied`), a read failure also says so
+    /// ([ExceptionContext#addSuppliedFooterHint]): the checks a supplied footer passes on open do
+    /// not catch every file rewritten since the footer was read.
+    static Exception placeFailure(Exception e, ColumnSchema column, boolean footersSupplied,
+                                  String fileName, int rowGroup, int page) {
+        Exception typed = asReadFailure(e);
+        if (fileName == null || fileName.isEmpty()) {
+            return typed;
+        }
+        String columnPath = column.fieldPath().toString();
+        if (typed instanceof RuntimeException re) {
+            RuntimeException placed = ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
+            return footersSupplied ? ExceptionContext.addSuppliedFooterHint(placed) : placed;
+        }
+        if (typed instanceof IOException ioe) {
+            // Stays checked. The pipeline carries a failure across its thread boundary as a
+            // `Throwable`, so nothing between here and the reader needs it wrapped, and the
+            // reader's own signature can declare it.
+            return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, ioe);
+        }
+        return typed;
+    }
+
+    /// The failure of a read whose decode pool refused a task: its context was closed while it
+    /// was reading. It is not the file's, so it is not placed.
+    static IllegalStateException contextClosed(RejectedExecutionException e) {
+        return new IllegalStateException("The HardwoodContext was closed while a reader using it was reading", e);
+    }
+
+    /// Delegates runtime-failure classification; checked transport failures pass through unchanged.
+    static Exception asReadFailure(Exception e) {
+        return e instanceof RuntimeException runtime
+                ? ExceptionContext.asReadFailure(runtime)
+                : e;
     }
 }

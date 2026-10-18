@@ -10,7 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.Arrays;
 
 /// Word-shape bitmap helpers shared by the validity producers
-/// ([FlatColumnWorker], [NestedLevelComputer]). Set-bit-= -present polarity,
+/// ([FlatFill], [NestedLevelComputer]). Set-bit-= -present polarity,
 /// matching [BatchExchange.Batch#validity].
 final class BitmapWords {
 
@@ -34,5 +34,17 @@ final class BitmapWords {
         words[firstWord] |= firstMask;
         Arrays.fill(words, firstWord + 1, lastWord, ~0L);
         words[lastWord] |= lastMask;
+    }
+
+    /// Writes the mask a matcher would produce when every record matches: all-ones for
+    /// `[0, recordCount)` bits, tail bits of the last active word zeroed, words beyond the active
+    /// range untouched.
+    static void fillAllOnes(long[] words, int recordCount) {
+        int fullWords = recordCount >>> 6;
+        int tail = recordCount & 63;
+        Arrays.fill(words, 0, fullWords, -1L);
+        if (tail != 0) {
+            words[fullWords] = -1L >>> (64 - tail);
+        }
     }
 }

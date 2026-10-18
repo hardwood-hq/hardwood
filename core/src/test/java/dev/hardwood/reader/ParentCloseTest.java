@@ -30,7 +30,6 @@ import dev.hardwood.InMemoryFiles;
 import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
-import dev.hardwood.internal.reader.ColumnWorker;
 import dev.hardwood.internal.reader.PrefetchTasks;
 import dev.hardwood.internal.reader.ScheduledColumn;
 import dev.hardwood.metadata.PhysicalType;
@@ -63,12 +62,10 @@ class ParentCloseTest {
     /// Three row groups of about 60 pages each, with an offset index, so planning a row
     /// group reads from the file.
     private static final Path INDEXED_FILE = Paths.get("src/test/resources/prefetch_page_index.parquet");
-    /// A small fraction of a page, so a column reader's retriever stays in the first row group.
+    /// A small fraction of a page, so a column reader's fetcher stays in the first row group.
     private static final int INDEXED_BATCH_SIZE = 16;
 
-    /// Where a close stops a child reader's column workers.
-    private static final String WORKER_CLOSE = ColumnWorker.class.getName() + "#close";
-    /// Where a close stops a flat column of a column or row read.
+    /// Where a close stops a column of a column or row read.
     private static final String SCHEDULED_CLOSE = ScheduledColumn.class.getName() + "#close";
     /// Where a close waits for the speculative tasks a read has started.
     private static final String AWAIT_PREFETCHES = PrefetchTasks.class.getName() + "#awaitAll";
@@ -164,7 +161,7 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, WORKER_CLOSE, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
         consumer.join();
 
         assertThat(file.violations).isEmpty();
@@ -184,14 +181,14 @@ class ParentCloseTest {
         consumer.start();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, WORKER_CLOSE, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
         consumer.join();
 
         assertThat(file.violations).isEmpty();
         columns.close();
     }
 
-    /// Nothing consumes, so the column's retriever stays in the first row group; the read
+    /// Nothing consumes, so the column's fetcher stays in the first row group; the read
     /// held is one a speculative task on the common pool started, planning or prefetching
     /// the second row group.
     @Test

@@ -248,7 +248,7 @@ class ParquetReaderTest {
 
     @Test
     void testSmallBatchSizeNestedColumn() throws Exception {
-        // `scores` is a repeated (list) column, exercising the nested worker's
+        // `scores` is a repeated (list) column, exercising the nested column's
         // batch-size handling, where a record spans a variable number of leaf values.
         Path filePath = Paths.get("src/test/resources/filter_pushdown_list.parquet");
 

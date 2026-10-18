@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// A file is planned when the read reaches it, so a caller who stops early never
 /// pays for the files beyond where they stopped. The counts here are deliberately
-/// bounds rather than exact numbers: the retriever prefetches ahead until
+/// bounds rather than exact numbers: the fetchers prefetch ahead until
 /// backpressure stops it, and how far it gets is a timing question.
 ///
 /// That it stops short of the end is only a property of a read something stops — a
@@ -61,7 +61,7 @@ class MultiFilePlanningTest {
     }
 
     /// The cap is what bounds planning, not the caller walking away after one row. An
-    /// abandoned loop leaves the retriever free to run on, so without `head` this asserts
+    /// abandoned loop leaves the fetchers free to run on, so without `head` this asserts
     /// only that the calling thread reached the assertion first — which on a loaded
     /// machine it does not. See [#anUncappedFilteredReadYieldsWithoutPlanningTheWholeRead],
     /// which is the same read without a cap and therefore asserts no bound at all.
@@ -125,12 +125,12 @@ class MultiFilePlanningTest {
     /// its first row without the whole read having been planned first.
     ///
     /// No bound on files touched is asserted here, unlike the capped and unfiltered
-    /// cases above. Those two stop the drain — one on the row budget, one on the cap —
+    /// cases above. Those two stop the read — one on the row budget, one on the cap —
     /// and it is that stop, not the abandoned loop, which bounds how far planning runs.
     /// An uncapped filtered read has neither, so it is bounded only by batch
     /// backpressure, and these fixtures hold fewer rows in total than one batch: walking
     /// every file to fill the first batch is the pipeline working, not planning running
-    /// away. A bound here would only pass while the calling thread beat the retriever
+    /// away. A bound here would only pass while the calling thread beat the fetchers
     /// to the assertion.
     @Test
     void anUncappedFilteredReadYieldsWithoutPlanningTheWholeRead() throws IOException {

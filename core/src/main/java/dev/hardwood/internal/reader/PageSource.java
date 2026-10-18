@@ -18,7 +18,7 @@ import dev.hardwood.internal.ExceptionContext;
 /// pre-computed (OffsetIndex) or lazily discovered (sequential scan) — both are
 /// hidden behind the [FetchPlan] iterator.
 ///
-/// This is the only interface the [ColumnWorker] sees — a simple
+/// This is the only interface a [ScheduledColumn]'s fetcher sees — a simple
 /// `PageInfo next()` iterator.
 public class PageSource {
 
@@ -54,14 +54,14 @@ public class PageSource {
     }
 
     /// Returns the name of the file currently being read, or `null` if no work item
-    /// is active. Only valid on the retriever thread.
+    /// is active. Only valid on the fetcher.
     public String getCurrentFileName() {
         return currentWorkItem != null ? currentWorkItem.inputFile().name() : null;
     }
 
     /// Index of the row group currently being read, or
     /// [dev.hardwood.internal.ExceptionContext#UNKNOWN_ROW_GROUP] if no work item is
-    /// active. Only valid on the retriever thread.
+    /// active. Only valid on the fetcher.
     public int getCurrentRowGroupIndex() {
         return currentWorkItem != null
                 ? currentWorkItem.rowGroupIndex()
@@ -69,20 +69,20 @@ public class PageSource {
     }
 
     /// The batches of the current work item's row group, or `null` if no work item is active.
-    /// Only valid on the retriever thread.
+    /// Only valid on the fetcher.
     BatchPlan.RowGroupBatches getCurrentBatches() {
         return currentBatches;
     }
 
     /// Which page of the current column chunk is being read, or
     /// [dev.hardwood.internal.ExceptionContext#UNKNOWN_PAGE] when no plan is walking one.
-    /// Only valid on the retriever thread.
+    /// Only valid on the fetcher.
     public int getCurrentPageIndex() {
         return currentPlan != null ? currentPlan.currentPage() : ExceptionContext.UNKNOWN_PAGE;
     }
 
     /// Whether no work item is active: the column has not started, or has finished one and
-    /// not yet been handed the next. Only valid on the retriever thread.
+    /// not yet been handed the next. Only valid on the fetcher.
     public boolean isBetweenWorkItems() {
         return currentWorkItem == null;
     }
@@ -114,7 +114,7 @@ public class PageSource {
             }
             workItemCursor++;
             // Recorded before it is planned. Planning reads — the page index, the
-            // dictionary, the chunk they sit in — and the retriever can only report a
+            // dictionary, the chunk they sit in — and the fetcher can only report a
             // failure in there against a work item it knows about. The old plan goes with
             // it: leaving it in place would answer "which page" with the last page of the
             // row group before this one.

@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A file whose planning fails fails every later request for a work item.
 ///
-/// Each projected column asks [RowGroupIterator#workItemAt] on its own retriever thread. A
+/// Each projected column asks [RowGroupIterator#workItemAt] on its own fetcher. A
 /// column that asks after another column's request has failed must see that failure too:
 /// were it handed `null` it would end its stream cleanly, and the read could end empty without
 /// an exception (#1278).

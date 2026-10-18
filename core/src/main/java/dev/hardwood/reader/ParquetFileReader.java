@@ -91,7 +91,7 @@ public class ParquetFileReader implements Closeable {
     /// size set": the size is then resolved at build time from the projected column
     /// widths and the rows the read can produce, via
     /// [BatchSizing#computeOptimalBatchSize(dev.hardwood.internal.schema.ProjectedSchema,double[],long)].
-    /// Never reaches the workers — [#resolveBatchSize] turns it into a concrete
+    /// Never reaches the pipeline — [#resolveBatchSize] turns it into a concrete
     /// positive count.
     private static final int AUTO_BATCH_SIZE = 0;
 
@@ -460,7 +460,7 @@ public class ParquetFileReader implements Closeable {
     /// physical within-row-group residue (no-filter `skip`) and the logical `OFFSET`
     /// (filtered `skip`). Stops early if the reader is exhausted before `count`. If
     /// iteration fails, the partially built reader is closed before the error
-    /// propagates, so its worker pipeline never leaks.
+    /// propagates, so its pipeline never leaks.
     private static RowReader discardLeadingRows(RowReader reader, long count)
             throws IOException {
         try {
@@ -717,7 +717,7 @@ public class ParquetFileReader implements Closeable {
         ProjectedSchema decoded = iterator.initialize(readProjection, resolved, metadataFilteringEnabled);
         // Statistics dropped every row group while planning, or bloom filters and
         // dictionaries drop each one the read reaches — no record can match.
-        // Skip building the cursors (worker threads + ~batch-sized buffers) and the
+        // Skip building the cursors (fetcher threads + ~batch-sized buffers) and the
         // selection engine entirely: the scan has no cursors and is exhausted from
         // the start. Closing the reader or the group closes the scan, which
         // releases the fetch plans and the parent's tracking entry.
@@ -1236,7 +1236,7 @@ public class ParquetFileReader implements Closeable {
     }
 
     /// Waits for the child builds under way, which fail and close what they built, then
-    /// closes every child reader still open, which stops its workers and waits for the
+    /// closes every child reader still open, which stops its columns and waits for the
     /// prefetches its read started, then this reader's metadata, an owned context and
     /// owned input files. A failure to close a child does not stop the rest from being
     /// closed; the first failure is thrown, later ones suppressed beneath it.

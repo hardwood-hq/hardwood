@@ -54,7 +54,7 @@ class ReadSchedulerTest {
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void pagesOfEveryColumnAreSubmittedInRowOrder() throws Exception {
         List<long[]> submissions = Collections.synchronizedList(new ArrayList<>());
-        ReadScheduler.submissionObserver = (page, inFlight) ->
+        ReadScheduler.submissionObserver = (column, page, inFlight) ->
                 submissions.add(new long[]{ page.firstRow, inFlight, page.info.records() });
 
         Map<String, Long> sums = new HashMap<>();

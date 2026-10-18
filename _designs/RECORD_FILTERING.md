@@ -6,7 +6,7 @@ Related documents:
 
 - [PREDICATE_MODEL.md](PREDICATE_MODEL.md): the public predicate, its literal rules and its resolution to `ResolvedPredicate`
 - [STATISTICS_PRUNING.md](STATISTICS_PRUNING.md): the CANNOT/MIGHT/ALWAYS decision for row groups and pages
-- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (the batch plan, the reorder buffer)
+- [READ_PIPELINE.md](READ_PIPELINE.md): pipeline mechanics shared with unfiltered reads (the batch plan, the scheduled columns)
 - [FETCH_PLANNING.md](FETCH_PLANNING.md): fetch plans and page row masks, shared with unfiltered reads
 - [docs/content/concepts/row-selection.md](../docs/content/concepts/row-selection.md): the user-facing semantics of row selection
 
@@ -33,7 +33,7 @@ Tests: `PredicatePathAgreementTest`, `ColumnReaderExactFilterTest`, `PredicatePu
 A filtered read decodes more than it exposes. `ReadProjection` (`internal.schema`) holds two projected schemas:
 
 - `payload()`: the leaves of `p`, which the reader exposes.
-- `decoded()`: the payload plus every leaf `pred` references that the payload does not cover. Every worker, exchange, fetch plan and batch array spans `decoded()`.
+- `decoded()`: the payload plus every leaf `pred` references that the payload does not cover. Every column, exchange, fetch plan and batch array spans `decoded()`.
 
 `ReadProjection.withPredicateColumns(schema, requests, predicateColumns, completeContainers)` builds the pair. The predicate's leaf columns are appended to the requests by index (`ColumnRequests`), never by path, since a path can be shared by two fields. The row path passes `completeContainers = true`, the column path `false`, since the column readers read individual leaves. A read without a filter, a filter that adds no column, or a `ColumnProjection.all()` projection yields `ReadProjection.of(payload)`: the payload is decoded alone.
 
@@ -68,7 +68,7 @@ Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExact
 
 ## Drain-side matchers
 
-For an eligible predicate the flat row reader evaluates it as each column's batches are completed, rather than one row at a time on the consumer thread: on the column worker's drain thread, or for a scheduled column on the thread that completes the batch, usually the decode task that fills it last ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). On one thread the batch matchers are slower per row than the per-row matcher; they pay off because each column's fragment runs in parallel with the other columns and while the values just assembled are still in that core's cache. Evaluating them on the consumer thread keeps the answer and forfeits the gain. `BatchFilterCompiler.tryCompile` decides once, at reader construction, and returns either a `CompiledBatchFilter` (per-column `ColumnBatchMatcher` fragments plus a `MergePlan`) or `null`, in which case the reader falls back to the per-row matcher. There is no configuration switch.
+For an eligible predicate the flat row reader evaluates it on each column's batches as they complete, on the thread that completes the batch, usually the page task that fills it last ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). On one thread the batch matchers are slower per row than the per-row matcher; they pay off because each column's fragment runs in parallel with the other columns and while the values just assembled are still in that core's cache. Evaluating them on the consumer thread keeps the answer and forfeits the gain. `BatchFilterCompiler.tryCompile` decides once, at reader construction, and returns either a `CompiledBatchFilter` (per-column `ColumnBatchMatcher` fragments plus a `MergePlan`) or `null`, in which case the reader falls back to the per-row matcher. There is no configuration switch.
 
 ### Eligibility
 
@@ -118,8 +118,8 @@ Tests: `DrainSideOracleTest`.
 
 `BatchMatchMerger` (`internal.reader`) combines the per-column bitmaps into one survivor bitmap per batch, once per batch. It has two modes, fixed at construction:
 
-- **Aliasing** (`FlatRowReader`): each `FlatColumnWorker` ran its fragment into the batch's own `matches` array on the drain thread, before handing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
-- **Owning** (`SelectionEngine`): the column readers' workers carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.
+- **Aliasing** (`FlatRowReader`): each `ScheduledFlatColumn` ran its fragment into the batch's own `matches` array as the batch's cell completed, before publishing the batch to the exchange, so the handoff makes the bitmap visible to the consumer; the merger reads those arrays.
+- **Owning** (`SelectionEngine`): the column readers' columns carry no fragment, so the merger runs the fragments itself into buffers it owns, on the consumer thread.
 
 A plan that is a single `MergePlan.Column` yields that column's bitmap directly; any other plan goes through `MergePlanEvaluator` into a combined buffer. The merger dereferences only the columns its plan references (`referencedColumns()`), so a caller that stages the batch array need keep only those entries current.
 
@@ -129,7 +129,7 @@ Tests: `DrainSideOracleTest`, `PredicatePathAgreementTest`.
 
 ## Column readers
 
-A filtered `ColumnReaders` is a grouped drain over `decoded()` plus a per-batch **selection**; a single `ColumnReader` with a filter is a one-column group (`ParquetFileReader.buildSingleColumnReader`). `ColumnScan` owns one `ColumnCursor` per decoded column over one shared `RowGroupIterator`, which keeps all columns row-aligned regardless of each column's page-skip capability.
+A filtered `ColumnReaders` is a grouped read over `decoded()` plus a per-batch **selection**; a single `ColumnReader` with a filter is a one-column group (`ParquetFileReader.buildSingleColumnReader`). `ColumnScan` owns one `ColumnCursor` per decoded column over one shared `RowGroupIterator`, which keeps all columns row-aligned regardless of each column's page-skip capability.
 
 **Selection, once per batch.** On each advance `ColumnScan` polls the cursors, checks lockstep (every column produced a batch of the same record count, or `IllegalStateException`), and asks `SelectionEngine.computeSelection` for the ascending indices of the matching records. It returns `-1` when every record matches, and compaction is skipped. The selection is computed from the pre-compaction batches and applied to every payload cursor before the next advance; a payload column that is also a predicate column is read before it is compacted.
 
@@ -142,7 +142,7 @@ Both backends produce the same selection representation, so compaction does not 
 
 **Flat compaction.** `ColumnScan` gathers a fixed-width value array in place (the selection is strictly ascending with `kept[j] >= j`, so no slot is overwritten before it is read), compacts the validity bitmap, and rebuilds a variable-length leaf through `LeafCompaction.compactBinary`, which carries a dictionary-encoded leaf's dictionary and entry indices through.
 
-**Nested compaction.** A nested batch is compacted on its raw `(definitionLevels, repetitionLevels, values)` triplet, before the real-items view exists: each selected top-level record is the contiguous level run starting at its record offset, and compaction copies those runs. `ColumnReader` then derives layer offsets, validity and the real-items leaf from the compacted triplet, through the same code an unfiltered read uses, so no layer bookkeeping is recomputed by hand. The filtered column path therefore runs nested workers in `REAL_VIEW_KEEP_LEVELS` mode. A fixed-size-list batch has no level arrays and stays fixed-width, since selection keeps whole records.
+**Nested compaction.** A nested batch is compacted on its raw `(definitionLevels, repetitionLevels, values)` triplet, before the real-items view exists: each selected top-level record is the contiguous level run starting at its record offset, and compaction copies those runs. `ColumnReader` then derives layer offsets, validity and the real-items leaf from the compacted triplet, through the same code an unfiltered read uses, so no layer bookkeeping is recomputed by hand. The filtered column path therefore runs nested columns in `REAL_VIEW_KEEP_LEVELS` mode. A fixed-size-list batch has no level arrays and stays fixed-width, since selection keeps whole records.
 
 Independently built single readers over the same file and predicate each decode the predicate columns themselves; nothing is shared between them. Each also sizes its batches from the columns it decodes, so two such readers return the same rows in the same order but not in the same batches: a reader of `id` filtered on `id` batches wider than a reader of a string column filtered on `id`. Per-batch alignment holds within one `ColumnReaders` group, or across readers given the same explicit `batchSize`. Untested for the explicit-size case.
 
@@ -154,13 +154,13 @@ Tests: `ColumnReaderExactFilterTest`.
 
 ### Homogeneous batches
 
-When a filter is installed, the read's batch plan closes the batch in progress before a row group whose `filterAlwaysMatches` differs from the batch's ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and every `ColumnWorker` stamps the plan's flag on the published batch (`Batch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every worker of a read follows the one plan, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. Unfiltered reads do not close batches on the flag.
+When a filter is installed, the read's batch plan closes the batch in progress before a row group whose `filterAlwaysMatches` differs from the batch's ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)), and every column stamps the plan's flag on the batches it publishes (`Batch.filterAlwaysMatches`, `NestedBatch.filterAlwaysMatches`). Every column of a read follows the one plan, so all columns close their batches at the same rows and a batch is either wholly proven or wholly undecided. Unfiltered reads do not close batches on the flag.
 
-A worker reads the flag of its own batch; a reader reads it from the first payload column's batch, which speaks for the step:
+A column reads the flag of its own batch; a reader reads it from the first payload column's batch, which speaks for the step:
 
 | Consumer | Proven batch |
 |---|---|
-| `FlatColumnWorker` with a fragment | Writes the all-ones mask instead of running the fragment |
+| `ScheduledFlatColumn` with a fragment | Writes the all-ones mask instead of running the fragment |
 | `FlatRowReader`, no cap | Clears the active matcher and merger; the batch takes the plain cursor and is tallied whole |
 | `FlatRowReader` with `head(N)` | Drain-side: uses an all-ones survivor bitmap without merging. Per-row: counts every row as a match without calling the matcher |
 | `NestedRowReader` | As `FlatRowReader`'s per-row path |
@@ -180,11 +180,11 @@ A filter-only column serves only the predicate, and the predicate needs it only 
 | `MIGHT_MATCH` | read | read |
 | `ALWAYS_MATCHES` | read | not fetched, decompressed or decoded |
 
-`RowGroupIterator.skipsColumn` gives a column the `SkippedColumnFetchPlan` exactly when the work item carries `filterAlwaysMatches` and the column is filter-only. The plan holds no chunk handle, takes no part in cross-column coalescing, and yields one `PageInfo.BOUNDARY_MARKER`: a page with no bytes and no rows. The retriever hands the marker to the drain without decoding; the drain takes the row group's batches from the plan and assembles nothing. A proven row group never shares a batch with an undecided one, so the plan closes the column's undecided batch in progress before the marker's row group, where the payload columns close theirs, and the column stays aligned across a proven row group placed between undecided ones; a batch the plan continues from a skipped row group into a read one fails the read. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
+`RowGroupIterator.skipsColumn` gives a column the `SkippedColumnFetchPlan` exactly when the work item carries `filterAlwaysMatches` and the column is filter-only. The plan holds no chunk handle, takes no part in cross-column coalescing, and yields one `PageInfo.BOUNDARY_MARKER`: a page with no bytes and no rows. The column's fetcher places the marker with no page task: the placement takes the row group's batches from the plan and places nothing. A proven row group never shares a batch with an undecided one, so the plan closes the column's undecided batch in progress before the marker's row group, where the payload columns close theirs, and the column stays aligned across a proven row group placed between undecided ones; a batch the plan continues from a skipped row group into a read one fails the read. No page of the column is scanned, so it emits no `RowGroupScanned` event for the row group.
 
-**Planning and polling must agree.** Every consumer takes a step's payload batches first and takes a batch from each filter-only column only when the step is not proven; otherwise the lockstep checks cover every column. The skip condition in `skipsColumn` is exactly this poll condition. If a filter-only column were read in a proven row group, it would publish batches no consumer takes, and the next undecided step would take them in place of its own. Nothing else, such as a page mask narrowing the payload columns in a proven row group or a row cap, may enter the skip decision, since the skipped column assembles no rows; a page mask changes how many rows the plan places in the payload columns' batches, which the skipped column holds none of. A `ColumnScan` filter-only cursor keeps its previous batch through a proven step, and nothing reads it. At the end of the stream every exchange is checked for errors, so a failure on a filter-only column's worker surfaces. Untested.
+**Planning and polling must agree.** Every consumer takes a step's payload batches first and takes a batch from each filter-only column only when the step is not proven; otherwise the lockstep checks cover every column. The skip condition in `skipsColumn` is exactly this poll condition. If a filter-only column were read in a proven row group, it would publish batches no consumer takes, and the next undecided step would take them in place of its own. Nothing else, such as a page mask narrowing the payload columns in a proven row group or a row cap, may enter the skip decision, since the skipped column assembles no rows; a page mask changes how many rows the plan places in the payload columns' batches, which the skipped column holds none of. A `ColumnScan` filter-only cursor keeps its previous batch through a proven step, and nothing reads it. At the end of the stream every exchange is checked for errors, so a failure on a filter-only column surfaces. Untested.
 
-A filter-only column keeps its worker and exchange for the whole read, since the decode set is fixed before the first row group is planned.
+A filter-only column keeps its `ScheduledColumn` and exchange for the whole read, since the decode set is fixed before the first row group is planned.
 
 Tests: `FilterOnlyColumnSkipTest`.
 

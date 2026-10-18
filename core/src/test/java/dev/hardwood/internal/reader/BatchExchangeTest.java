@@ -33,11 +33,11 @@ class BatchExchangeTest {
     @Test
     void deliversEveryQueuedBatchBeforeTheEnd() throws Exception {
         BatchExchange<Object> exchange = BatchExchange.recycling("c", Object::new);
-        Object first = exchange.takeBatch();
-        Object second = exchange.takeBatch();
+        Object first = exchange.newBatch();
+        Object second = exchange.newBatch();
 
-        exchange.publish(first);
-        exchange.publish(second);
+        assertThat(exchange.tryPublish(first)).isTrue();
+        assertThat(exchange.tryPublish(second)).isTrue();
         exchange.finish();
 
         assertThat(exchange.poll()).as("first batch").isSameAs(first);
@@ -53,7 +53,7 @@ class BatchExchangeTest {
         BatchExchange<Object> exchange = BatchExchange.detaching("c", Object::new, batch -> 1, 1);
         Object only = new Object();
 
-        exchange.publish(only);
+        assertThat(exchange.tryPublish(only)).isTrue();
         exchange.finish();
 
         assertThat(exchange.poll()).as("the batch").isSameAs(only);
@@ -73,8 +73,8 @@ class BatchExchangeTest {
         assertThat(exchange.poll()).as("third poll past the end").isNull();
     }
 
-    /// In recycling mode the consumer's leftovers go back to the free pool for the drain to
-    /// refill. The sentinel is not one of them: a pool holding it would hand the drain something
+    /// In recycling mode the consumer's leftovers go back to the free pool for the column to
+    /// refill. The sentinel is not one of them: a pool holding it would hand the column something
     /// to write a batch of values into that is not a batch.
     @Test
     void doesNotRecycleTheSentinelIntoTheFreePool() throws Exception {
@@ -85,26 +85,26 @@ class BatchExchangeTest {
             return holder;
         });
 
-        Object taken = exchange.takeBatch();
-        exchange.publish(taken);
+        int preallocated = holders.size();
+        Object taken = exchange.newBatch();
+        assertThat(exchange.tryPublish(taken)).isTrue();
         exchange.finish();
         exchange.drainReady();
 
         List<Object> pooled = new ArrayList<>();
-        Object holder;
-        while ((holder = exchange.takeBatch()) != null) {
-            pooled.add(holder);
+        for (int i = 0; i < preallocated; i++) {
+            pooled.add(exchange.newBatch());
         }
 
-        assertThat(pooled)
-                .as("everything the free pool holds was made by the batch factory")
-                .isSubsetOf(holders);
+        assertThat(holders)
+                .as("the free pool held every holder, so the factory made no new one")
+                .hasSize(preallocated);
         assertThat(pooled)
                 .as("the published batch came back and nothing was lost with it")
                 .containsExactlyInAnyOrderElementsOf(holders);
     }
 
-    /// A worker that publishes without waiting fills a returned holder when one is free, and a new
+    /// A column that publishes without waiting fills a returned holder when one is free, and a new
     /// one from the factory otherwise.
     @Test
     void handsOutAReturnedHolderBeforeANewOne() {

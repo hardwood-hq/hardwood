@@ -4,7 +4,7 @@ Describes how `RowReader` presents the published batches of the read pipeline as
 
 Related documents:
 
-- [READ_PIPELINE.md](READ_PIPELINE.md): the pipeline that produces the batches (workers, exchanges, batch sizing, multi-file planning, `ReaderConfig`)
+- [READ_PIPELINE.md](READ_PIPELINE.md): the pipeline that produces the batches (scheduled columns, exchanges, batch sizing, multi-file planning, `ReaderConfig`)
 - [NESTED_DECODE.md](NESTED_DECODE.md): how levels become nested batches
 - [VALUE_DECODE.md](VALUE_DECODE.md): leaf decoding
 - [LOGICAL_TYPES.md](LOGICAL_TYPES.md): annotation, timestamp and Variant accessor semantics
@@ -25,7 +25,7 @@ The test is asked of the file schema (the first file's, in a multi-file read), n
 
 Both are `final`, implement `RowReader` through the internal `FileAwareRowReader`, and share no base class, though their iteration code is similar. `FlatRowReader` keeps every hot method in one concrete class so the JIT sees monomorphic call sites and inlines `hasNext`, `next` and the primitive accessors into the caller's loop; a base class carrying the nested path's delegation would put that indirection on the flat path. A change that pulls shared behaviour up into a superclass needs that trade-off argued again.
 
-**Wiring.** Each reader's `create` builds one column worker and one `BatchExchange` in recycling mode per decoded column, all drawing from one `RowGroupIterator`, starts the workers and loads the first batch. The reader owns the iterator: no worker does, so the reader releases it on close, and that release is what stops the owning `ParquetFileReader` tracking it. Batch size is resolved once by `ParquetFileReader.resolveBatchSize`, the same funnel the column readers use, so a projection batches the same whichever reader reads it.
+**Wiring.** Each reader's `create` builds one `ScheduledColumn` and one `BatchExchange` in recycling mode per decoded column, all drawing from one `RowGroupIterator` and submitted by one `ReadScheduler`, starts the columns and loads the first batch. The reader owns the iterator: no column does, so the reader releases it on close, and that release is what stops the owning `ParquetFileReader` tracking it. Batch size is resolved once by `ParquetFileReader.resolveBatchSize`, the same funnel the column readers use, so a projection batches the same whichever reader reads it.
 
 **Flat accessor state.** At construction `FlatRowReader` precomputes, per payload column, the physical type, the column schema, a `LeafKind` for `getValue` and whether `getString` may read it. Per batch it holds the column's value array and validity bitmap. A column whose batch has no nulls points its validity slot at a shared all-ones sentinel sized for the largest batch, so the per-row null test is one word load and mask with no null guard.
 
@@ -45,7 +45,7 @@ An index is a position among the projected children of the accessor, in request 
 
 Each schema node has one position. The row is a tree addressed by simple names one level at a time, and several names can lead into the same node (`address.zip`, `address.city`, `address`), so repeated and overlapping names merge into it rather than add positions. `ColumnReaders` addresses flat leaf columns by full path and can keep every name's positions instead (see [COLUMN_READER.md](COLUMN_READER.md#index-order)); the two agree for a projection of distinct top-level columns.
 
-The order lives in `ProjectedSchema` and applies to exposure only. Projected column indices, which address workers, exchanges and batches, stay in file schema order, and so does the decoded projection a filter extends (see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)); a reader maps between the two once, when it is built or when a batch is installed, never per value. Views the predicate builds over its own columns resolve indices through the same `ProjectedSchema`, so they agree with the view they index.
+The order lives in `ProjectedSchema` and applies to exposure only. Projected column indices, which address columns, exchanges and batches, stay in file schema order, and so does the decoded projection a filter extends (see [RECORD_FILTERING.md](RECORD_FILTERING.md#augmented-projection)); a reader maps between the two once, when it is built or when a batch is installed, never per value. Views the predicate builds over its own columns resolve indices through the same `ProjectedSchema`, so they agree with the view they index.
 
 A projected name resolves to exactly one schema node, the node at that path from the root; a field name may itself contain dots (see [PREDICATE_MODEL.md](PREDICATE_MODEL.md#column-addressing)). A nested node has no other name, since a leaf's own name can recur in several structs.
 
@@ -63,7 +63,7 @@ Names are single path segments. Dot notation belongs to `ColumnProjection`: `col
 
 `FlatRowReader` reads `array[rowIndex]`. In a nested batch a top-level primitive reads `values[offsets[row]]`; a struct is null when the definition level of its first projected leaf is below the struct's own maximum; a list or map is null or empty by its definition levels against the descriptor's `nullDefLevel` and element (or entry) level. Elements of a list or map of structs are position-mode `PqStructImpl`s fixed at a value index; a top-level struct is record-mode, resolving its value index from the row.
 
-**Flyweight lifetime.** A `PqStruct`, `PqList` or `PqMap` reads the batch it was obtained from on every call and copies nothing. The reader recycles that batch to its exchange when it loads the next one, and the worker then overwrites it, so a flyweight held past `next()` can read another row's data without any error. The public JavaDoc states the flyweights are not safe to hold across `next()`. Untested.
+**Flyweight lifetime.** A `PqStruct`, `PqList` or `PqMap` reads the batch it was obtained from on every call and copies nothing. The reader recycles that batch to its exchange when it loads the next one, and the column then refills it, so a flyweight held past `next()` can read another row's data without any error. The public JavaDoc states the flyweights are not safe to hold across `next()`. Untested.
 
 ### Failures
 
@@ -94,13 +94,13 @@ Tests: `ColumnProjectionTest`, `ProjectionOrderTest`, `PqStructByIndexTest`, `Pq
 1. Recycle the previous step's batch of every column to its exchange.
 2. Poll the payload columns, then the filter-only columns unless statistics proved the step (see [RECORD_FILTERING.md](RECORD_FILTERING.md#always-match-row-groups)).
 3. Check lockstep: every column's batch has the first column's record count, or `IllegalStateException`. A column that ends while the first has produced a batch is also an `IllegalStateException`.
-4. At the end of the stream, check every exchange for a worker error before reporting exhaustion, so a failure that ended a worker is raised instead of a short read.
+4. At the end of the stream, check every exchange for a column's error before reporting exhaustion, so a failure that ended a column is raised instead of a short read.
 
 A schema with no columns yields an empty relation: there is no column to take a record count from.
 
-**File boundaries.** Every column worker flushes its batch in progress when the page it assembles comes from another file than the batch's, and stamps the file name on the batch. All columns see the same file sequence, so they cut at the same row and no batch spans two files. Batches span row groups unless the read decodes a binary column ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). The reader takes the file name from the first column's batch; it prefixes exception messages, attributes `RecordFilterTally` counts, and answers `FileAwareRowReader.currentFileName()`, which `AvroRowReader` (avro module) uses to name the file in its own failures. The accessor state is built once from the reference schema; how a later file's columns are mapped onto it is in [READ_PIPELINE.md](READ_PIPELINE.md).
+**File boundaries.** The batch plan closes a batch where the next row group comes from another file, and every column stamps the file name on its batches. All columns follow the one plan, so they cut at the same row and no batch spans two files. Batches span row groups unless the read decodes a binary column ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). The reader takes the file name from the first column's batch; it prefixes exception messages, attributes `RecordFilterTally` counts, and answers `FileAwareRowReader.currentFileName()`, which `AvroRowReader` (avro module) uses to name the file in its own failures. The accessor state is built once from the reference schema; how a later file's columns are mapped onto it is in [READ_PIPELINE.md](READ_PIPELINE.md).
 
-**Close.** `close()` is idempotent. It closes the workers, recycles the held batches, drains every exchange and releases the iterator; the release runs even when teardown fails, with its own failure suppressed under the original. A reader closed early stops its workers without reading further.
+**Close.** `close()` is idempotent. It closes the columns, recycles the held batches, drains every exchange and releases the iterator; the release runs even when teardown fails, with its own failure suppressed under the original. A reader closed early stops its columns without reading further.
 
 Tests: `PqRowApiTest`, `NoColumnsFileReadTest`, `IteratorTrackingTest`, `MultiFileRowReaderTest`.
 
@@ -118,7 +118,7 @@ Tests: `PqRowApiTest`, `NoColumnsFileReadTest`, `IteratorTrackingTest`, `MultiFi
 
 ### head
 
-`head(n)` is `maxRows`, passed to the `RowGroupIterator` and to every column worker. The iterator stops planning row groups once their rows cover the budget, and truncates the pages of each flat column, and of each column with an OffsetIndex, to the rows each row group must supply; each worker stops assembling at `n` rows and publishes its partial batch. The planning and fetch mechanics are in [READ_PIPELINE.md](READ_PIPELINE.md) and [FETCH_PLANNING.md](FETCH_PLANNING.md).
+`head(n)` is `maxRows`, passed to the `RowGroupIterator` and to the read's batch plan. The iterator stops planning row groups once their rows cover the budget, and truncates the pages of each flat column, and of each column with an OffsetIndex, to the rows each row group must supply; the plan ends the last batch at `n` rows, and every column publishes that partial batch and finishes. The planning and fetch mechanics are in [READ_PIPELINE.md](READ_PIPELINE.md) and [FETCH_PLANNING.md](FETCH_PLANNING.md).
 
 ### skip
 
@@ -126,9 +126,9 @@ Without a filter, `skip(n)` starts the read at physical row `n` of the concatena
 
 - **Whole row groups are dropped in planning.** `RowGroupIterator` plans a file at a time with a remaining-skip counter. A kept row group whose row count is at most the remainder is subtracted and never becomes a work item, so its pages are neither fetched nor decoded. The first row group the remainder falls inside becomes work item 0, and the remainder is its **residue** (`firstRowGroupSkip`).
 - **Across files.** A file whose rows are all skipped has its footer read (and its schema checked against the reference) to count its rows; none of its data pages is fetched. Asking for the residue plans only as far as work item 0, so building a skipping reader does not plan the whole read.
-- **The residue is decoded and discarded.** `ParquetFileReader.discardLeadingRows` calls `next()` residue times before handing the reader over, so the target row group's leading pages are fetched and decoded. Because those rows pass through the reader, the row cap is raised by the residue: the reader and workers get `head + residue`, and the iterator adds the residue to the first row group's page truncation budget. Without that term, a seek near the end of a row group would spend the `head` budget on discarded rows.
+- **The residue is decoded and discarded.** `ParquetFileReader.discardLeadingRows` calls `next()` residue times before handing the reader over, so the target row group's leading pages are fetched and decoded. Because those rows pass through the reader, the row cap is raised by the residue: the reader and the batch plan get `head + residue`, and the iterator adds the residue to the first row group's page truncation budget. Without that term, a seek near the end of a row group would spend the `head` budget on discarded rows.
 - **Past the end.** `skip(n)` at or beyond the total row count leaves no work item and yields an empty reader with no data fetched.
-- **Failure while discarding** closes the partly built reader before the exception propagates, so its workers do not leak.
+- **Failure while discarding** closes the partly built reader before the exception propagates, so its columns do not leak.
 
 `dive`'s data preview relies on this seek; see [DIVE_ARCHITECTURE.md](DIVE_ARCHITECTURE.md).
 
@@ -138,7 +138,7 @@ Without a filter, `skip(n)` starts the read at physical row `n` of the concatena
 
 | Condition | Path |
 |---|---|
-| Every kept row group can take a per-page row mask on every decoded column (`RowGroupIterator.canFastSkipAllRowGroups`) | `setTailSkip(residue)` gives work item 0 the matching range `[residue, numRows)`. Pages wholly before it are skipped: an indexed column does not fetch them, a sequential one fetches its chunk and skips their bodies ([FETCH_PLANNING.md](FETCH_PLANNING.md#sequential-plans-under-a-mask)). The first page it touches is trimmed to it, so the workers assemble exactly `n` rows |
+| Every kept row group can take a per-page row mask on every decoded column (`RowGroupIterator.canFastSkipAllRowGroups`) | `setTailSkip(residue)` gives work item 0 the matching range `[residue, numRows)`. Pages wholly before it are skipped: an indexed column does not fetch them, a sequential one fetches its chunk and skips their bodies ([FETCH_PLANNING.md](FETCH_PLANNING.md#sequential-plans-under-a-mask)). The first page it touches is trimmed to it, so the columns place exactly `n` rows |
 | Any kept row group cannot (for example a nested column with v1 data pages and no OffsetIndex) | The residue is decoded and discarded through `next()`, as for `skip` |
 
 The mask applies to every column of the row group or to none, since masking a subset would leave columns row-misaligned (the capability gate is described in [FETCH_PLANNING.md](FETCH_PLANNING.md)). The tail range must be set before any column requests its fetch plan; `setTailSkip` raises `IllegalStateException` afterwards. The probe plans the whole read, which is one footer because tail is single-file.
