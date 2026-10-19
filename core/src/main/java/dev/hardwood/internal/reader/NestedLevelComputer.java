@@ -13,6 +13,7 @@ import java.util.List;
 
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.LayerKind;
+import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// Computes multi-level offsets and null bitmaps from Parquet repetition/definition levels.
@@ -20,6 +21,9 @@ import dev.hardwood.schema.SchemaNode;
 /// These algorithms are used by both [dev.hardwood.reader.ColumnReader] for columnar
 /// access and by [NestedBatchIndex] for flyweight row-level access.
 public final class NestedLevelComputer {
+
+    /// The layers of a column with no `STRUCT` or `REPEATED` layer, shared by every such column.
+    private static final Layers NO_LAYERS = Layers.of(new LayerKind[0], new int[0]);
 
     private NestedLevelComputer() {
     }
@@ -258,10 +262,10 @@ public final class NestedLevelComputer {
         return result;
     }
 
-    /// Compute the layer descriptor for the given leaf column by walking the
-    /// schema chain from `root` to the leaf at `columnIndex`.
+    /// Compute the layer descriptor of every leaf column of `schema` in one walk of the
+    /// schema tree, indexed by column index.
     ///
-    /// Each `OPTIONAL` non-LIST/non-MAP group along the path contributes a
+    /// Each `OPTIONAL` non-LIST/non-MAP group along a leaf's path contributes a
     /// [LayerKind#STRUCT] layer; each `LIST`/`MAP`-annotated group contributes
     /// a [LayerKind#REPEATED] layer. The synthetic inner `repeated group` of a
     /// LIST/MAP is folded into its parent's REPEATED layer and contributes no
@@ -270,26 +274,16 @@ public final class NestedLevelComputer {
     /// The threshold for each layer is the def-level at-or-above which the
     /// node at that layer is **present**. Validity bit is then
     /// `defLevels[i] >= threshold`.
-    public static Layers computeLayers(SchemaNode.GroupNode root, int columnIndex) {
-        List<LayerKind> kinds = new ArrayList<>();
-        List<Integer> thresholds = new ArrayList<>();
-        walkLayersToLeaf(root, columnIndex, kinds, thresholds, false);
-        LayerKind[] kindArr = kinds.toArray(new LayerKind[0]);
-        int[] threshArr = new int[thresholds.size()];
-        for (int i = 0; i < threshArr.length; i++) {
-            threshArr[i] = thresholds.get(i);
-        }
-        return Layers.of(kindArr, threshArr);
+    public static Layers[] computeLayers(FileSchema schema) {
+        Layers[] result = new Layers[schema.getColumnCount()];
+        walkLayers(schema.getRootNode(), new ArrayList<>(), new ArrayList<>(), false, result);
+        return result;
     }
 
-    private static boolean walkLayersToLeaf(SchemaNode node, int columnIndex,
-                                            List<LayerKind> kinds, List<Integer> thresholds,
-                                            boolean parentWasListMap) {
-        return switch (node) {
+    private static void walkLayers(SchemaNode node, List<LayerKind> kinds, List<Integer> thresholds,
+                                   boolean parentWasListMap, Layers[] result) {
+        switch (node) {
             case SchemaNode.PrimitiveNode prim -> {
-                if (prim.columnIndex() != columnIndex) {
-                    yield false;
-                }
                 // A repeated primitive that is not the suppressed element of a
                 // LIST/MAP wrapper contributes its own `REPEATED` layer: the bare
                 // unannotated repeated field, including the inner repeated element
@@ -298,11 +292,15 @@ public final class NestedLevelComputer {
                 // accounts for that repetition level. The threshold is the
                 // container's def level (one below the leaf's), so the leaf items
                 // appear at `threshold + 1 == prim.maxDefinitionLevel()`.
-                if (!parentWasListMap && prim.repetitionType() == RepetitionType.REPEATED) {
+                boolean ownLayer = !parentWasListMap && prim.repetitionType() == RepetitionType.REPEATED;
+                if (ownLayer) {
                     kinds.add(LayerKind.REPEATED);
                     thresholds.add(prim.maxDefinitionLevel() - 1);
                 }
-                yield true;
+                result[prim.columnIndex()] = toLayers(kinds, thresholds);
+                if (ownLayer) {
+                    removeLast(kinds, thresholds, 1);
+                }
             }
             case SchemaNode.GroupNode group -> {
                 boolean isListOrMap = group.isList() || group.isMap();
@@ -340,24 +338,30 @@ public final class NestedLevelComputer {
                 // REQUIRED, and the synthetic `repeated group` inside LIST/MAP
                 // scaffolding: no layer; the outer LIST/MAP already added its own.
 
-                boolean found = false;
                 for (SchemaNode child : group.children()) {
-                    if (walkLayersToLeaf(child, columnIndex, kinds, thresholds, isListOrMap)) {
-                        found = true;
-                        break;
-                    }
+                    walkLayers(child, kinds, thresholds, isListOrMap, result);
                 }
-
-                if (!found) {
-                    for (int k = 0; k < added; k++) {
-                        kinds.remove(kinds.size() - 1);
-                        thresholds.remove(thresholds.size() - 1);
-                    }
-                }
-
-                yield found;
+                removeLast(kinds, thresholds, added);
             }
-        };
+        }
+    }
+
+    private static Layers toLayers(List<LayerKind> kinds, List<Integer> thresholds) {
+        if (kinds.isEmpty()) {
+            return NO_LAYERS;
+        }
+        int[] threshArr = new int[thresholds.size()];
+        for (int i = 0; i < threshArr.length; i++) {
+            threshArr[i] = thresholds.get(i);
+        }
+        return Layers.of(kinds.toArray(new LayerKind[0]), threshArr);
+    }
+
+    private static void removeLast(List<LayerKind> kinds, List<Integer> thresholds, int count) {
+        for (int k = 0; k < count; k++) {
+            kinds.removeLast();
+            thresholds.removeLast();
+        }
     }
 
     /// Real-items-only view of a raw-counting batch.

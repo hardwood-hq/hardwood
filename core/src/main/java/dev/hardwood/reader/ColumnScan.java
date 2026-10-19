@@ -18,11 +18,13 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedIndexMode;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.ReadScheduler;
 import dev.hardwood.internal.reader.RecordFilterTally;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// One column-reader read: the [ColumnCursor]s of every decoded column, advanced
@@ -62,10 +64,12 @@ final class ColumnScan implements Closeable {
     /// A scan over every decoded column of `projection`. With a `filter`, the
     /// filter-only columns past the payload carry the predicate and are decoded to
     /// evaluate it; the payload columns are compacted to the matching records.
+    /// `layers` holds the layers of every column of `schema`, indexed by column index.
     static ColumnScan open(HardwoodContextImpl context,
                            boolean fixedListFastPathEnabled,
                            RowGroupIterator rowGroupIterator,
                            FileSchema schema,
+                           NestedLevelComputer.Layers[] layers,
                            ReadProjection projection,
                            ResolvedPredicate filter,
                            int batchSize,
@@ -80,8 +84,9 @@ final class ColumnScan implements Closeable {
         ReadScheduler scheduler = new ReadScheduler(context, batchSize, budgetRows);
         ColumnCursor[] cursors = new ColumnCursor[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            cursors[i] = ColumnCursor.create(schema.getColumn(decoded.toOriginalIndex(i)), schema,
-                    rowGroupIterator, context, fixedListFastPathEnabled, i, batchSize, indexMode, scheduler);
+            ColumnSchema column = schema.getColumn(decoded.toOriginalIndex(i));
+            cursors[i] = ColumnCursor.create(column, layers[column.columnIndex()], rowGroupIterator, context,
+                    fixedListFastPathEnabled, i, batchSize, indexMode, scheduler);
         }
         if (scheduler.hasColumns()) {
             scheduler.start();

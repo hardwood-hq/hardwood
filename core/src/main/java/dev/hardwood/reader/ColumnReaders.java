@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -59,7 +60,8 @@ public class ColumnReaders implements Closeable {
     private final ColumnReader[] readersByIndex;
 
     /// A group of views over the payload columns of `scan`, the columns of `payload`.
-    ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema payload) {
+    /// `layers` holds the layers of every column of `schema`, indexed by column index.
+    ColumnReaders(ColumnScan scan, FileSchema schema, ProjectedSchema payload, NestedLevelComputer.Layers[] layers) {
         int positionCount = payload.requestedColumnCount();
         this.scan = scan;
         this.readers = new ArrayList<>(positionCount);
@@ -71,7 +73,8 @@ public class ColumnReaders implements Closeable {
             ColumnReader reader = readersByProjected[projectedIndex];
             if (reader == null) {
                 ColumnSchema columnSchema = schema.getColumn(payload.toOriginalIndex(projectedIndex));
-                reader = new ColumnReader(scan, projectedIndex, schema, columnSchema, true);
+                reader = new ColumnReader(scan, projectedIndex, layers[columnSchema.columnIndex()], columnSchema,
+                        true);
                 readersByProjected[projectedIndex] = reader;
                 readers.add(reader);
                 String path = columnSchema.fieldPath().toString();

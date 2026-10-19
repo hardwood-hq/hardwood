@@ -29,6 +29,7 @@ import dev.hardwood.internal.reader.FileMetadataCache;
 import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.InputFileCloser;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
@@ -653,7 +654,7 @@ public class ParquetFileReader implements Closeable {
         ColumnRead read = openColumnRead(requests, filter, rowGroupFilter, batchSize);
         int payloadIndex = read.payload().requestedColumn(0);
         ColumnSchema column = schema.getColumn(read.payload().toOriginalIndex(payloadIndex));
-        return new ColumnReader(read.scan(), payloadIndex, schema, column, false);
+        return new ColumnReader(read.scan(), payloadIndex, read.layers()[column.columnIndex()], column, false);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) throws IOException {
@@ -666,11 +667,12 @@ public class ParquetFileReader implements Closeable {
             RowGroupPredicate rowGroupFilter,
             int batchSize) throws IOException {
         ColumnRead read = openColumnRead(ColumnRequests.of(projection), filter, rowGroupFilter, batchSize);
-        return new ColumnReaders(read.scan(), schema, read.payload());
+        return new ColumnReaders(read.scan(), schema, read.payload(), read.layers());
     }
 
-    /// A column-reader scan and the payload columns its views expose.
-    private record ColumnRead(ColumnScan scan, ProjectedSchema payload) {
+    /// A column-reader scan, the payload columns its views expose, and the layers of every
+    /// column of the schema, indexed by column index.
+    private record ColumnRead(ColumnScan scan, ProjectedSchema payload, NestedLevelComputer.Layers[] layers) {
     }
 
     private ColumnRead openColumnRead(
@@ -688,6 +690,7 @@ public class ParquetFileReader implements Closeable {
             int batchSize) throws IOException {
         ResolvedPredicate resolved = resolveFilter(filter);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
+        NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
 
         if (resolved == null) {
             RowGroupIterator iterator = trackedIterator(0, 0, 0);
@@ -697,12 +700,12 @@ public class ParquetFileReader implements Closeable {
             // them all): nothing to decode. Asked of the first work item rather than
             // the whole list, which would plan every file before the first batch.
             if (!iterator.hasLiveWorkItem()) {
-                return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected);
+                return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), projected, layers);
             }
             ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                    schema, ReadProjection.of(projected), null, resolveBatchSize(batchSize, projected, rowGroups),
-                    budgetRows(projected, rowGroups)));
-            return new ColumnRead(scan, projected);
+                    schema, layers, ReadProjection.of(projected), null,
+                    resolveBatchSize(batchSize, projected, rowGroups), budgetRows(projected, rowGroups)));
+            return new ColumnRead(scan, projected, layers);
         }
 
         // Exact filtering (#624): decode the payload columns *and* the predicate
@@ -724,14 +727,15 @@ public class ParquetFileReader implements Closeable {
         // Decided up to the first row group that survives, so a read that has one
         // consults and plans no further.
         if (!iterator.hasLiveWorkItem()) {
-            return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), readProjection.payload());
+            return new ColumnRead(trackedChild(iterator, ColumnScan.empty(iterator)), readProjection.payload(),
+                    layers);
         }
         // Size against the decoded columns — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
-                schema, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
+                schema, layers, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
                 budgetRows(decoded, rowGroups)));
-        return new ColumnRead(scan, readProjection.payload());
+        return new ColumnRead(scan, readProjection.payload(), layers);
     }
 
     /// Iterators still tracked for teardown by [#close()]. Visible for testing.

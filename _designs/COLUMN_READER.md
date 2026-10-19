@@ -19,7 +19,7 @@ The model follows Apache Arrow's nested columnar layout: one validity bitmap per
 
 ### Deriving layers
 
-`NestedLevelComputer.computeLayers` walks the chain once per reader and returns a `Layers` descriptor (`LayerKind[] kinds` plus the definition-level thresholds that drive validity and item counting). Each node contributes zero or one layer:
+`NestedLevelComputer.computeLayers` derives each leaf's chain in one walk of the schema per read and returns a `Layers` descriptor per leaf (`LayerKind[] kinds` plus the definition-level thresholds that drive validity and item counting). Each node contributes zero or one layer:
 
 | Schema node on the chain | Layer |
 |---|---|

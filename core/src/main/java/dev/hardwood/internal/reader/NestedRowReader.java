@@ -209,6 +209,7 @@ public final class NestedRowReader implements FileAwareRowReader {
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
 
+        NestedLevelComputer.Layers[] layers = NestedLevelComputer.computeLayers(schema);
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = decoded.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
@@ -217,11 +218,10 @@ public final class NestedRowReader implements FileAwareRowReader {
 
             // A batch's arrays are allocated for it when it is filled, so a holder comes without any.
             BatchExchange<NestedBatch> buffer = BatchExchange.recycling(columnSchema.name(), NestedBatch::new);
-            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
-                    schema.getRootNode(), columnSchema.columnIndex());
             buffers[i] = buffer;
             pipelines[i] = new ScheduledNestedColumn(scheduler, pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), layers, NestedIndexMode.ALL_ITEMS, fixedListFastPathEnabled);
+                    context.decompressorFactory(), layers[originalIndex], NestedIndexMode.ALL_ITEMS,
+                    fixedListFastPathEnabled);
         }
         if (scheduler.hasColumns()) {
             scheduler.start();

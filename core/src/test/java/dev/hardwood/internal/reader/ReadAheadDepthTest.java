@@ -134,8 +134,7 @@ class ReadAheadDepthTest {
                 BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), BATCH);
                 try (ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, source, exchange,
                         column, BATCH, context.decompressorFactory(),
-                        NestedLevelComputer.computeLayers(iterator.referenceSchema().getRootNode(),
-                                column.columnIndex()),
+                        NestedLevelComputer.computeLayers(iterator.referenceSchema())[column.columnIndex()],
                         NestedIndexMode.ALL_ITEMS, false)) {
                     scheduler.start();
                     awaitSettled(submissions, lastSubmission);

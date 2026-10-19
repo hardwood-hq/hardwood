@@ -22,7 +22,6 @@ import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.reader.ScheduledFlatColumn;
 import dev.hardwood.internal.reader.ScheduledNestedColumn;
 import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.schema.FileSchema;
 
 /// The decode pipeline of one column in a [ColumnScan]: the column's scheduled column, the
 /// [BatchExchange] it publishes into, and the batch most recently taken from it.
@@ -66,7 +65,7 @@ final class ColumnCursor {
     /// close where the batch plan of `rowGroupIterator` closes them. The column is a
     /// [dev.hardwood.internal.reader.ScheduledColumn] added to `scheduler`, which starts it;
     /// `scheduler` must not be `null`.
-    static ColumnCursor create(ColumnSchema column, FileSchema schema,
+    static ColumnCursor create(ColumnSchema column, NestedLevelComputer.Layers layers,
                                RowGroupIterator rowGroupIterator,
                                HardwoodContextImpl context,
                                boolean fixedListFastPathEnabled,
@@ -74,8 +73,6 @@ final class ColumnCursor {
                                int batchSize,
                                NestedIndexMode indexMode,
                                ReadScheduler scheduler) {
-        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
-                schema.getRootNode(), column.columnIndex());
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
 
         if (isNested(layers, column)) {

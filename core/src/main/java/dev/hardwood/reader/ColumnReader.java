@@ -22,7 +22,6 @@ import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.schema.FileSchema;
 
 /// Batch-oriented column reader for reading a single column across all row groups.
 ///
@@ -116,12 +115,13 @@ public class ColumnReader implements Closeable {
 
     /// A view of payload column `payloadIndex` of `scan`, advanced by a [ColumnReaders] group
     /// when `groupMember` is set and by its own [#nextBatch()] otherwise.
-    ColumnReader(ColumnScan scan, int payloadIndex, FileSchema schema, ColumnSchema column, boolean groupMember) {
+    ColumnReader(ColumnScan scan, int payloadIndex, NestedLevelComputer.Layers layers, ColumnSchema column,
+                 boolean groupMember) {
         this.scan = scan;
         this.payloadIndex = payloadIndex;
         this.groupMember = groupMember;
         this.column = column;
-        this.layers = NestedLevelComputer.computeLayers(schema.getRootNode(), column.columnIndex());
+        this.layers = layers;
         this.nested = ColumnCursor.isNested(layers, column);
     }
 

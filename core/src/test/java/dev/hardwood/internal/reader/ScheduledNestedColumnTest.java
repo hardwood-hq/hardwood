@@ -152,7 +152,7 @@ class ScheduledNestedColumnTest {
         }
         for (int c = 0; c < schema.getColumnCount(); c++) {
             ColumnSchema column = schema.getColumn(c);
-            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema.getRootNode(), c);
+            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[c];
             List<String> expected = reference(file, c, mode, layers);
             if (maxRows > 0 && expected.size() > maxRows) {
                 expected = expected.subList(0, maxRows);
@@ -212,7 +212,7 @@ class ScheduledNestedColumnTest {
             iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
             iterator.initialize(ProjectedSchema.create(schema, ColumnProjection.all()), null);
             iterator.planBatches(batchSize, maxRows);
-            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema.getRootNode(), columnIndex);
+            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(schema)[columnIndex];
             BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), batchSize);
             PageSource pageSource = new PageSource(iterator, columnIndex);
             ReadScheduler scheduler = new ReadScheduler(context, batchSize, batchSize);

@@ -125,7 +125,7 @@ class NestedFillMaskedPageTest {
         FileSchema schema = FileSchema.builder("schema")
                 .list("v", RepetitionType.OPTIONAL, el -> el.primitive(type, RepetitionType.OPTIONAL))
                 .build();
-        return new Column(schema.getColumn(0), NestedLevelComputer.computeLayers(schema.getRootNode(), 0));
+        return new Column(schema.getColumn(0), NestedLevelComputer.computeLayers(schema)[0]);
     }
 
     /// A page of `INT32` values in place, the present ones as `PLAIN` bytes.

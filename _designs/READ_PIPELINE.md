@@ -303,6 +303,6 @@ Tests: `MetadataFilteringOptionTest`, `FixedSizeListFastPathReadTest`.
 - **Files stay open until the reader closes (#100).** A multi-file read releases no file as it moves past it.
 - **Single-threaded mode (#1022).** A read always uses a fetcher per column and page tasks on the pool, even on a one-thread context.
 - **Schema drift across files (#941).** Every file must match the reference schema for the columns a read touches.
-- **Very wide reads (#1544, #1545).** Building the readers derives each column's layers by walking the schema from the root, which is quadratic in the column count, and every fetcher's bounded wait wakes it every 10 ms, which costs CPU in proportion to the column count while the read runs. A read of 100,000 columns spends most of its time in the two.
+- **Very wide reads (#1545).** Every fetcher's bounded wait wakes it every 10 ms, which costs CPU in proportion to the column count while the read runs; a read of 100,000 columns spends most of its time in these wake-ups.
 - **`BYTE_ARRAY` width estimate (#899).** Batch sizing guesses a fixed width per `BYTE_ARRAY` value instead of reading the recorded unencoded size.
 - **Row caps on the column readers (#433).** `ColumnReaderBuilder` and `ColumnReadersBuilder` have no `head`, so no cap reaches their columns.
