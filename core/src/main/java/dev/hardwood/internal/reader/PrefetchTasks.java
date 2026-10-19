@@ -28,10 +28,25 @@ public final class PrefetchTasks {
     private final Set<CompletableFuture<Void>> running = ConcurrentHashMap.newKeySet();
     /// Guarded by `this`, so no task is admitted after [#awaitAll()] has taken its snapshot.
     private boolean closed;
+    /// Set for a read on one thread ([HardwoodContextImpl#inlineReads()]), which starts no
+    /// speculative task: every task is dropped.
+    private final boolean dropAll;
+
+    public PrefetchTasks() {
+        this(false);
+    }
+
+    /// @param dropAll whether every task is dropped, for a read that starts none
+    public PrefetchTasks(boolean dropAll) {
+        this.dropAll = dropAll;
+    }
 
     /// Runs `task` on the common pool, carrying the caller's [FetchReason], unless
     /// [#awaitAll()] has been called, in which case the task is dropped.
     public void submit(Runnable task) {
+        if (dropAll) {
+            return;
+        }
         CompletableFuture<Void> future;
         synchronized (this) {
             if (closed) {

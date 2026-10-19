@@ -87,7 +87,7 @@ public class RowGroupIterator implements Closeable {
     /// which [#close()] waits for after setting it, read it.
     private volatile boolean closed;
     /// The speculative tasks this iterator's read has started; [#close()] waits for them.
-    private final PrefetchTasks prefetchTasks = new PrefetchTasks();
+    private final PrefetchTasks prefetchTasks;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -282,7 +282,8 @@ public class RowGroupIterator implements Closeable {
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles, context.metadataSource()), true, NO_CLOSE_LISTENER, context,
+        this(new FileMetadataCache(inputFiles, context.metadataSource(), context.inlineReads()), true,
+                NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
 
@@ -318,6 +319,7 @@ public class RowGroupIterator implements Closeable {
         this.closeListener = closeListener;
         this.inputFiles = fileMetadataCache.inputFiles();
         this.context = context;
+        this.prefetchTasks = new PrefetchTasks(context != null && context.inlineReads());
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;

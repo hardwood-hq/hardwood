@@ -127,6 +127,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         this.decompressorFactory = decompressorFactory;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
         exchange.setRoomListener(this::roomPossible);
+        if (scheduler.inline()) {
+            exchange.setDriver(scheduler);
+        }
         scheduler.add(this);
     }
 
@@ -251,25 +254,28 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     // ==================== Fetcher ====================
 
     private void runFetcher() {
-        try {
-            while (!done && !fetchStopped()) {
-                PageInfo info = pageSource.next();
-                if (info == null) {
-                    pagesEnded();
-                    break;
-                }
-                if (!info.isBoundaryMarker()
-                        && (pageDecoder == null || !pageDecoder.isCompatibleWith(info.columnMetaData()))) {
-                    pageDecoder = newPageDecoder(info);
-                }
-                if (!queue(info, pageDecoder)) {
-                    break;
-                }
-                scheduler.submit(this);
-                while (!done && !fetchStopped() && !mayQueue()) {
-                    LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
-                }
+        while (fetchStep()) {
+            while (!done && !fetchStopped() && !mayQueue()) {
+                LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
             }
+        }
+    }
+
+    /// Whether an inline read may fetch the column's next page now: its fetch has not ended and
+    /// it has room for the page, or it is stopped and only its end is left to record.
+    boolean mayFetch() {
+        return !fetchEnded && (done || fetchStopped() || mayQueue());
+    }
+
+    /// Fetches, places and queues the column's next page, on the fetcher or, in an inline read,
+    /// on the consumer ([ReadScheduler#step()]), and ends the fetch when the column has no
+    /// further page or failed.
+    ///
+    /// @return whether the column fetches further pages
+    boolean fetchStep() {
+        boolean goesOn = false;
+        try {
+            goesOn = fetchNext();
         }
         catch (Exception e) {
             fetchFailed(ScheduledColumn.placeFailure(e, column, pageSource.footersSupplied(),
@@ -281,17 +287,46 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             throw err;
         }
         finally {
-            fetchEnded = true;
-            lock.lock();
-            try {
-                nextRow = Long.MAX_VALUE;
-                updatePublishedRow();
+            if (!goesOn) {
+                endFetch();
             }
-            finally {
-                lock.unlock();
-            }
-            scheduler.submit(this);
         }
+        return goesOn;
+    }
+
+    /// @return whether the column fetches further pages
+    private boolean fetchNext() throws IOException {
+        if (done || fetchStopped()) {
+            return false;
+        }
+        PageInfo info = pageSource.next();
+        if (info == null) {
+            pagesEnded();
+            return false;
+        }
+        if (!info.isBoundaryMarker()
+                && (pageDecoder == null || !pageDecoder.isCompatibleWith(info.columnMetaData()))) {
+            pageDecoder = newPageDecoder(info);
+        }
+        if (!queue(info, pageDecoder)) {
+            return false;
+        }
+        scheduler.submit(this);
+        return true;
+    }
+
+    /// Records that the column queues no more pages, and lets the scheduler look again.
+    private void endFetch() {
+        fetchEnded = true;
+        lock.lock();
+        try {
+            nextRow = Long.MAX_VALUE;
+            updatePublishedRow();
+        }
+        finally {
+            lock.unlock();
+        }
+        scheduler.submit(this);
     }
 
     /// A decoder for the column chunk `info` starts.

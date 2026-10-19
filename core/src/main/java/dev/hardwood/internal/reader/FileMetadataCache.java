@@ -36,15 +36,24 @@ public final class FileMetadataCache {
     private final Map<Integer, CompletableFuture<PreparedFile>> fileFutures = new HashMap<>();
     private final CompletableFuture<Void> closeCompletion = new CompletableFuture<>();
     private boolean closeStarted;
+    /// Whether footers load on the thread asking for them, and none is loaded ahead
+    /// ([HardwoodContextImpl#inlineReads()]).
+    private final boolean inline;
 
     /// @param metadataSource the context's source of footers, [ParquetMetadataReader#FROM_FILE]
     ///        to read each footer from its file
     FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource) {
+        this(inputFiles, metadataSource, false);
+    }
+
+    /// @param inline whether footers load on the thread asking for them, with no load ahead
+    FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource, boolean inline) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         this.inputFiles = List.copyOf(inputFiles);
         this.metadataSource = metadataSource;
+        this.inline = inline;
     }
 
     /// Seeds the first file's footer, already loaded by the owning
@@ -52,7 +61,14 @@ public final class FileMetadataCache {
     /// inspecting index `0` never load it twice.
     public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
                              MetadataSource metadataSource) {
-        this(inputFiles, metadataSource);
+        this(inputFiles, firstFileFooter, metadataSource, false);
+    }
+
+    /// As [#FileMetadataCache(List, FileFooter, MetadataSource)], loading footers on the thread
+    /// asking for them, with no load ahead, when `inline` is set.
+    public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
+                             MetadataSource metadataSource, boolean inline) {
+        this(inputFiles, metadataSource, inline);
         fileFutures.put(0, CompletableFuture.completedFuture(
                 PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter)));
     }
@@ -100,6 +116,9 @@ public final class FileMetadataCache {
     }
 
     void prefetch(int fileIndex) {
+        if (inline) {
+            return;
+        }
         registerLoad(fileIndex, false);
     }
 
@@ -158,6 +177,15 @@ public final class FileMetadataCache {
     }
 
     private CompletableFuture<PreparedFile> loadFileAsync(int fileIndex) {
+        if (inline) {
+            // Loaded under the lifecycle lock, on the one thread an inline read has
+            try {
+                return CompletableFuture.completedFuture(loadFile(fileIndex));
+            }
+            catch (RuntimeException | Error e) {
+                return CompletableFuture.failedFuture(e);
+            }
+        }
         return CompletableFuture.supplyAsync(() -> loadFile(fileIndex));
     }
 

@@ -111,6 +111,18 @@ public class BatchExchange<B> {
     /// Run on the consumer's thread after it takes a batch, for a column whose [#tryPublish]
     /// found no room; `null` for none.
     private volatile Runnable roomListener;
+    /// Drives the read on the consumer's thread when it finds no batch; `null` when the read
+    /// has threads of its own.
+    private Driver driver;
+
+    /// Advances a read that runs on its consumer's thread ([ReadScheduler#step()]).
+    interface Driver {
+
+        /// Takes one step of the read: runs a page task or fetches a page.
+        ///
+        /// @throws IllegalStateException if the read cannot progress
+        void step();
+    }
 
     private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
                           ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory,
@@ -230,6 +242,12 @@ public class BatchExchange<B> {
         this.roomListener = listener;
     }
 
+    /// Makes the consumer drive the read through `driver` whenever it finds no batch, rather
+    /// than wait for one.
+    void setDriver(Driver driver) {
+        this.driver = driver;
+    }
+
     private boolean queue(B batch, long rows) {
         readyRows.addAndGet(rows);
         readyQueue.offer(batch);
@@ -328,6 +346,9 @@ public class BatchExchange<B> {
         if (finished) {
             return (B) drop(taken(readyQueue.poll()));
         }
+        if (driver != null) {
+            return driveUntilReady();
+        }
         // Past this point the consumer is stalled on the pipeline: the ready
         // queue is empty and the column has not finished. The event's duration
         // is the stall, so it spans every exit from the timed poll loop.
@@ -349,6 +370,25 @@ public class BatchExchange<B> {
         finally {
             event.column = columnName;
             event.commit();
+        }
+    }
+
+    /// Steps the read on the consumer's thread until a batch is published or the stream ends.
+    @SuppressWarnings("unchecked")
+    private B driveUntilReady() throws IOException {
+        while (true) {
+            driver.step();
+            Object batch = taken(readyQueue.poll());
+            if (batch == END_OF_STREAM) {
+                checkError();
+                return null;
+            }
+            if (batch != null) {
+                return (B) batch;
+            }
+            if (finished) {
+                return (B) drop(taken(readyQueue.poll()));
+            }
         }
     }
 

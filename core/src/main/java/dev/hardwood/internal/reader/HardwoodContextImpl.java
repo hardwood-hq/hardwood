@@ -30,14 +30,20 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     private static final System.Logger LOG = System.getLogger(HardwoodContextImpl.class.getName());
 
+    /// Runs every read of a context on the thread consuming it ([#inlineReads()]). A prototype
+    /// switch for single-threaded reads (#1022), applied to every context created while it is set.
+    private static final String INLINE_READS_PROPERTY = "hardwood.internal.inlineReads";
+
     private final ExecutorService executor;
     private final int threads;
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
     private final MetadataSource metadataSource;
+    private final boolean inlineReads;
 
     private HardwoodContextImpl(ExecutorService executor, int threads, LibdeflatePool libdeflatePool,
-                                 MetadataSource metadataSource) {
+                                 MetadataSource metadataSource, boolean inlineReads) {
+        this.inlineReads = inlineReads;
         this.executor = executor;
         this.threads = threads;
         this.libdeflatePool = libdeflatePool;
@@ -55,7 +61,18 @@ public class HardwoodContextImpl implements HardwoodContext {
         return create(threads, ParquetMetadataReader.FROM_FILE);
     }
 
+    /// Creates a context whose reads run on the thread consuming them alone, or on the pool, for
+    /// comparing the two in one JVM. The pool's threads are started only when a writer submits
+    /// to it.
+    public static HardwoodContextImpl create(int threads, boolean inlineReads) {
+        return create(threads, ParquetMetadataReader.FROM_FILE, inlineReads);
+    }
+
     private static HardwoodContextImpl create(int threads, MetadataSource metadataSource) {
+        return create(threads, metadataSource, Boolean.getBoolean(INLINE_READS_PROPERTY));
+    }
+
+    private static HardwoodContextImpl create(int threads, MetadataSource metadataSource, boolean inlineReads) {
         AtomicInteger threadCounter = new AtomicInteger(0);
         ThreadFactory threadFactory = r -> {
             Thread t = new Thread(r, "hardwood-" + threadCounter.getAndIncrement());
@@ -64,7 +81,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         };
         ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, threads, libdeflatePool, metadataSource);
+        return new HardwoodContextImpl(executor, threads, libdeflatePool, metadataSource, inlineReads);
     }
 
     /// Start building a context.
@@ -99,6 +116,18 @@ public class HardwoodContextImpl implements HardwoodContext {
     @Override
     public ExecutorService executor() {
         return executor;
+    }
+
+    /// Whether a read runs on the thread consuming it alone: its consumer fetches, places and
+    /// decodes each page as it polls, no page task reaches [#executor()], and no speculative
+    /// task is started.
+    public boolean inlineReads() {
+        return inlineReads;
+    }
+
+    /// Whether the context was closed.
+    public boolean isClosed() {
+        return executor.isShutdown();
     }
 
     /// The number of threads in [#executor()].

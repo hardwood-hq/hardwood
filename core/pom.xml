@@ -212,8 +212,11 @@
       at 1, run on the nested and V1 subset, every record start is a batch edge. Tests asserting
       the shape of a batch rather than the values read stay out of both lists.
 
+      The first list runs once more at 7 with every read on its consumer thread, through the
+      internal `hardwood.internal.inlineReads` property (single-threaded reads, #1022).
+
       Activated on the absence of `test`, as `-Dtest=...` replaces every execution's includes and
-      would run the selection three times.
+      would run the selection four times.
     -->
     <profile>
       <id>small-batches</id>
@@ -264,6 +267,45 @@
                     <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
                   </systemPropertyVariables>
                   <reportsDirectory>${project.build.directory}/surefire-reports-small-batches-7</reportsDirectory>
+                </configuration>
+              </execution>
+              <execution>
+                <id>inline-reads-7</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>test</goal>
+                </goals>
+                <configuration>
+                  <includes>
+                    <include>**/DifferentialReadTest.java</include>
+                    <include>**/DifferentialNullTest.java</include>
+                    <include>**/DifferentialValueTest.java</include>
+                    <include>**/DifferentialFixedSizeListTest.java</include>
+                    <include>**/DifferentialColumnOrderTest.java</include>
+                    <include>**/MisalignedPageBoundariesTest.java</include>
+                    <include>**/NestedV1NoIndexFallbackTest.java</include>
+                    <include>**/NestedV1MidRecordPagesTest.java</include>
+                    <include>**/NestedV2NoIndexMaskingTest.java</include>
+                    <include>**/NestedDictBatchBoundaryTest.java</include>
+                    <include>**/FixedSizeListFastPathReadTest.java</include>
+                    <include>**/FilterOnlyColumnSkipTest.java</include>
+                    <include>**/AlwaysMatchingRowGroupTest.java</include>
+                    <include>**/PredicatePushDownTest.java</include>
+                    <include>**/DrainSideOracleTest.java</include>
+                    <include>**/ColumnReaderExactFilterTest.java</include>
+                    <include>**/ColumnReaderLayerModelTest.java</include>
+                    <include>**/MultiFileRowReaderTest.java</include>
+                    <include>**/LaterFileFailureTest.java</include>
+                    <include>**/InlineNullPageDropTest.java</include>
+                    <include>**/DictionaryEndToEndTest.java</include>
+                    <include>**/DictionaryFallbackNullsTest.java</include>
+                    <include>**/EncodingRoundTripTest.java</include>
+                  </includes>
+                  <systemPropertyVariables>
+                    <hardwood.internal.batchSize>7</hardwood.internal.batchSize>
+                    <hardwood.internal.inlineReads>true</hardwood.internal.inlineReads>
+                  </systemPropertyVariables>
+                  <reportsDirectory>${project.build.directory}/surefire-reports-inline-reads-7</reportsDirectory>
                 </configuration>
               </execution>
               <execution>

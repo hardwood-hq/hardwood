@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -49,7 +50,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// make up one and none of them stops counting until its whole batch is published. Beyond that
 /// it decodes no further ahead than its threads need. The budgets cap the bytes a column
 /// decodes ahead where its pages are large against the budget.
-public final class ReadScheduler {
+///
+/// **Inline reads.** On a context that runs reads on their consumer
+/// ([HardwoodContextImpl#inlineReads()]) no thread is started: the columns have no fetcher, and a
+/// submitted page joins the scheduler's own queue of tasks instead of the pool's. The consumer
+/// drives the read from its poll ([#step()]), one step at a time: it runs the oldest task queued,
+/// in the order the scheduler submitted them, and when none is queued it fetches a page for the
+/// column whose fetch is furthest behind. Placement, cells, fills and publishing are the threaded
+/// read's, run on the one thread.
+public final class ReadScheduler implements BatchExchange.Driver {
 
     /// Pages in flight per decode thread, across the read.
     private static final int PAGES_PER_THREAD = atLeastOne("hardwood.internal.pagesPerThread", 2);
@@ -94,6 +103,10 @@ public final class ReadScheduler {
     private volatile boolean started;
     /// Set by the first [#stop()].
     private final AtomicBoolean stopped = new AtomicBoolean();
+    /// Whether the consumer drives the read ([#step()]); see the type's documentation.
+    private final boolean inline;
+    /// Inline reads only: the page tasks submitted and not yet run, in submission order.
+    private final ArrayDeque<Runnable> inlineTasks = new ArrayDeque<>();
 
     /// @param context the context whose decode pool runs the page tasks
     /// @param batchCapacity the read's batch capacity
@@ -103,6 +116,12 @@ public final class ReadScheduler {
         this.pagesInFlight = PAGES_PER_THREAD * context.threads();
         this.batchCapacity = batchCapacity;
         this.capRows = CAP_BUDGETS * Math.max(batchCapacity, budgetRows);
+        this.inline = context.inlineReads();
+    }
+
+    /// Whether the consumer drives the read ([#step()]) and no thread is started for it.
+    boolean inline() {
+        return inline;
     }
 
     private static int atLeastOne(String property, int defaultValue) {
@@ -133,9 +152,37 @@ public final class ReadScheduler {
         for (ScheduledColumn<?> column : columns) {
             markChanged(column);
         }
+        if (inline) {
+            return;
+        }
         for (ScheduledColumn<?> column : columns) {
             column.start();
         }
+    }
+
+    /// Takes one step of an inline read on the consumer's thread: runs the oldest page task
+    /// submitted, or, when none is, fetches the next page of the column whose fetch is furthest
+    /// behind, among those that may fetch.
+    ///
+    /// @throws IllegalStateException if neither is possible while a consumer waits: the read
+    ///         cannot progress
+    @Override
+    public void step() {
+        Runnable task = inlineTasks.pollFirst();
+        if (task != null) {
+            task.run();
+            return;
+        }
+        ScheduledColumn<?> fetching = null;
+        for (ScheduledColumn<?> column : columns) {
+            if (column.mayFetch() && (fetching == null || column.nextRow() < fetching.nextRow())) {
+                fetching = column;
+            }
+        }
+        if (fetching == null) {
+            throw new IllegalStateException("Inline read stalled: no page task is queued and no column may fetch");
+        }
+        fetching.fetchStep();
     }
 
     /// Stops every column of the read without waiting for any ([ScheduledColumn#signalStop()]).
@@ -147,6 +194,11 @@ public final class ReadScheduler {
         }
         for (ScheduledColumn<?> column : columns) {
             column.signalStop();
+        }
+        // The columns are done, so each task returns without decoding and uncounts itself
+        Runnable task;
+        while ((task = inlineTasks.pollFirst()) != null) {
+            task.run();
         }
     }
 
@@ -204,6 +256,16 @@ public final class ReadScheduler {
                 observer.submitted(next, page, inFlight);
             }
             ScheduledColumn<?> column = next;
+            if (inline) {
+                if (context.isClosed()) {
+                    // As the pool of a closed context refuses the task
+                    column.rejected(new RejectedExecutionException("The context is closed"));
+                }
+                else {
+                    inlineTasks.addLast(() -> column.runPage(page));
+                }
+                continue;
+            }
             try {
                 context.executor().execute(() -> column.runPage(page));
             }
