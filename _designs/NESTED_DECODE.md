@@ -106,7 +106,7 @@ Invariants:
 
 `NestedBatch.allPresent` records whether every page with a segment in the batch passed the all-present gate.
 
-Tests: `ScheduledNestedColumnTest`, which compares each read, at several batch capacities, with the records `ReferencePageDecoder` decodes, `PlacerTest`, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `FileLogicalTypeTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
+Tests: `ScheduledNestedColumnTest`, which compares each read, at several batch capacities, with the records `ReferencePageDecoder` decodes, `PlacerTest`, `ShuffledTaskOrderTest`, which measures pages ahead of the pages before them, `NestedV1MidRecordPagesTest`, `NestedDictBatchBoundaryTest`, `ColumnReaderBatchArrayIdentityTest`, `FileLogicalTypeTest`, `NestedV2NoIndexMaskingTest`, `NestedV1NoIndexFallbackTest`, `WideListBatchBoundTest`, `BadDataHandlingTest` (parquet-testing-runner).
 
 ## Index modes
 

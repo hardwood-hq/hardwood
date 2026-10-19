@@ -53,6 +53,14 @@ public class HardwoodContextImpl implements HardwoodContext {
         return create(threads, ParquetMetadataReader.FROM_FILE);
     }
 
+    /// Create a context whose page tasks run on `executor`, which the context takes as having
+    /// `threads` threads and shuts down when it closes; for tests that decide the order a read's
+    /// tasks run in.
+    static HardwoodContextImpl create(ExecutorService executor, int threads) {
+        return new HardwoodContextImpl(executor, threads, createLibdeflatePoolIfAvailable(),
+                ParquetMetadataReader.FROM_FILE);
+    }
+
     private static HardwoodContextImpl create(int threads, MetadataSource metadataSource) {
         AtomicInteger threadCounter = new AtomicInteger(0);
         ThreadFactory threadFactory = r -> {

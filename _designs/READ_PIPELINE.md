@@ -10,6 +10,7 @@ Related documents:
 - [VALUE_DECODE.md](VALUE_DECODE.md): how a page's values are read in place
 - [NESTED_DECODE.md](NESTED_DECODE.md): how pages become nested batches
 - [RECORD_FILTERING.md](RECORD_FILTERING.md): filter evaluation over the published batches
+- [TESTING.md](../TESTING.md#task-orders): the harness that runs a read's page tasks in seeded random orders
 - [docs/content/concepts/concurrency-model.md](../docs/content/concepts/concurrency-model.md): the user-facing model
 
 ## Components and threading
@@ -107,7 +108,7 @@ A flat binary page's values are decompressed into its own scratch because a park
 
 **Publishing.** Each column publishes its completed cells in plan order (`BatchExchange.tryPublish`), without waiting: a cell that finds the ready queue at its limit stays at the head of the column's publish order, and the consumer publishes it on its own thread when it takes a batch (`BatchExchange.setRoomListener`). No pool thread waits on the exchange, and no publish is queued behind read-ahead on the pool. A published cell drops its segments and its batch, which a page spanning several cells would otherwise keep alive. The thread that completes a cell also runs the column's filter fragment on its batch ([RECORD_FILTERING.md](RECORD_FILTERING.md#batch-matchers)): its last page task, or the fetcher once it has released the column lock when the seal comes last. A fragment's calls are serialized, since cells complete on several threads at once. The column lock guards placement, the queue and the publish order and is held for bookkeeping only: no decoding, filling or I/O runs under it.
 
-Tests: `ReadSchedulerTest`, `ReadAheadDepthTest`, `HeadOfLineGatingTest`, `PlacerTest`, `ParallelFillValidityTest`, `ParallelBinaryFillTest`, `BinaryScratchHoldTest`, `ScheduledBinaryViewsTest`, `ScheduledNestedColumnTest`, `DictionaryFallbackNullsTest`, `BatchPlanTest`, `BatchExchangeTest`, `FilterOnlyColumnSkipTest`, and the result-comparing suites, which read every fixture through the column readers at small batch capacities.
+Tests: `ReadSchedulerTest`, `ReadAheadDepthTest`, `HeadOfLineGatingTest`, `PlacerTest`, `ParallelFillValidityTest`, `ParallelBinaryFillTest`, `BinaryScratchHoldTest`, `ScheduledBinaryViewsTest`, `ScheduledNestedColumnTest`, `DictionaryFallbackNullsTest`, `BatchPlanTest`, `BatchExchangeTest`, `FilterOnlyColumnSkipTest`, `ShuffledTaskOrderTest`, which runs the page tasks in seeded random orders and counts the parks, sizings and out-of-order placements they reach, and the result-comparing suites, which read every fixture through the column readers at small batch capacities.
 
 ### When a batch closes
 

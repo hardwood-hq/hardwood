@@ -95,6 +95,12 @@ The suites that compare the values a read returns run a second time with the int
 
 A test that asserts the shape of a batch, such as its record count or a value at a fixed index of its first batch, stays out of these lists. The profiles are inactive under `-Dtest=...`, which would otherwise run the selection once per execution.
 
+## Task orders
+
+A scheduled read's correctness depends on the order its page tasks run in: which task measures, sizes, places, fills and completes a cell, and which segment parks ([READ_PIPELINE.md](_designs/READ_PIPELINE.md#scheduled-columns)). The decode pool runs them in whatever order its threads take, which on a machine with few cores is close to submission order. `TaskOrderExecutor` (core tests) replaces the pool through `HardwoodContextImpl.create(ExecutorService, int)` and runs a read's tasks one at a time, each time picking at random, from a seed, among those submitted, so the tasks of a column run in any order. Its listener sees each task before and after it runs, with its page, on the one thread that runs tasks, where a test can read the page's segments and cells without racing them. A test's failure names the seed; since the fetchers run on threads of their own, a seed reproduces its order most of the time, not always.
+
+`ShuffledTaskOrderTest` reads flat binary columns, in `PLAIN` and dictionary-encoded, and lists of strings, including the fixture whose pages begin inside a record, over 10 seeds, checks every value, and counts the orders it reached: parked segments, sizings that write several parked segments, and pages measured ahead of the page before them. A count at zero fails the test, so a change that stops the reads from reaching an order is noticed. It runs in the default build, in a few seconds. A new step whose outcome depends on task order gets a count there. The races inside one step, which a cell's monitor and atomics settle, are covered by the tests running real threads (`ParallelBinaryFillTest`, `ParallelFillValidityTest`).
+
 ## Differential testing
 
 The differential tests read the same Parquet file through Hardwood and through DuckDB and require the two results to agree. They catch composition defects (a reader control that is correct alone and wrong once combined with a filter) and decode defects (a value decoded wrongly for some type or encoding).
