@@ -8,6 +8,7 @@
 package dev.hardwood.internal.compression.lz4;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Random;
 
 import org.junit.jupiter.params.ParameterizedTest;
@@ -49,9 +50,11 @@ class Lz4PageBoundsTest {
         ByteBuffer chunk = ByteBuffer.allocate(firstPage.length + secondPage.length).put(firstPage).put(secondPage);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        byte[] decodedFirst = decompressor.decompress(chunk.duplicate().position(0).limit(firstPage.length),
-                first.length);
-        byte[] decodedSecond = decompressor.decompress(chunk.duplicate().position(firstPage.length), second.length);
+        // The plain call returns the thread's buffer, so each result is copied before the next call
+        byte[] decodedFirst = Arrays.copyOf(decompressor.decompress(
+                chunk.duplicate().position(0).limit(firstPage.length), first.length), first.length);
+        byte[] decodedSecond = Arrays.copyOf(decompressor.decompress(
+                chunk.duplicate().position(firstPage.length), second.length), second.length);
 
         assertThat(decodedFirst).isEqualTo(first);
         assertThat(decodedSecond).isEqualTo(second);
@@ -67,8 +70,9 @@ class Lz4PageBoundsTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
         String message = codec == CompressionCodec.LZ4
-                ? "LZ4 decompression failed (tried both raw and Hadoop formats): LZ4 raw block ends at byte "
-                        + page.length + " of a " + (page.length - 5) + "-byte page"
+                ? "LZ4 decompression failed (tried both raw and Hadoop formats): raw: LZ4 raw block ends at byte "
+                        + page.length + " of a " + (page.length - 5) + "-byte page; Hadoop: "
+                        + "Invalid LZ4 Hadoop block sizes: uncompressed=-251658364, compressed=1818388327"
                 : "LZ4_RAW decompression did not consume all input: expected " + (page.length - 5)
                         + " bytes, consumed " + page.length;
         assertThatThrownBy(() -> decompressor.decompress(truncated, body.length))

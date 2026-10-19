@@ -23,7 +23,7 @@ public class UncompressedDecompressor implements Decompressor {
             throw new ParquetReadException(
                     "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
         }
-        byte[] data = borrowOutputBuffer(storedSize);
+        byte[] data = OutputBuffers.borrow(OUTPUT_BUFFER, storedSize);
         compressed.get(compressed.position(), data, 0, storedSize);
         return data;
     }
@@ -37,15 +37,6 @@ public class UncompressedDecompressor implements Decompressor {
         }
         compressed.get(compressed.position(), dest, 0, storedSize);
         return dest;
-    }
-
-    private static byte[] borrowOutputBuffer(int minSize) {
-        byte[] buf = OUTPUT_BUFFER.get();
-        if (buf == null || buf.length < minSize) {
-            buf = new byte[minSize];
-            OUTPUT_BUFFER.set(buf);
-        }
-        return buf;
     }
 
     @Override

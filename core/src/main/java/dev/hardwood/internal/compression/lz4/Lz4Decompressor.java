@@ -11,20 +11,21 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.compression.OutputBuffers;
 import dev.hardwood.reader.ParquetReadException;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import net.jpountz.lz4.LZ4SafeDecompressor;
 
-/// Decompressor for LZ4 compressed data (Hadoop-style format).
+/// Decompressor for LZ4 compressed data.
 ///
-/// The Parquet LZ4 codec has historically been ambiguous. This implementation
-/// supports the Hadoop native LZ4 format which uses blocks with headers:
+/// The Parquet LZ4 codec has historically been ambiguous. A page is read as one raw LZ4 block
+/// first and, failing that, in the Hadoop format, which frames each block with its sizes:
 ///
-/// Format: [4-byte original_len, LE][4-byte compressed_len, LE][compressed data]...
-///
-/// If the data doesn't match Hadoop format, falls back to raw LZ4 block decompression.
+/// Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
 public class Lz4Decompressor implements Decompressor {
+
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
 
     private final LZ4FastDecompressor fastDecompressor;
     private final LZ4SafeDecompressor safeDecompressor;
@@ -37,20 +38,29 @@ public class Lz4Decompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
+        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
+    }
+
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         // Try raw LZ4 first (most common case), then fall back to Hadoop format
         try {
-            return decompressRaw(compressed, uncompressedSize);
+            return decompressRaw(compressed, uncompressedSize, dest);
         }
-        catch (Exception e) {
+        catch (Exception rawFailure) {
             // Fall back to Hadoop's block format - needs byte[] for block parsing
             try {
                 byte[] compressedBytes = new byte[compressed.remaining()];
                 compressed.duplicate().get(compressedBytes);
-                return decompressHadoopFormat(compressedBytes, uncompressedSize);
+                return decompressHadoopFormat(compressedBytes, uncompressedSize, dest);
             }
-            catch (Exception e2) {
-                throw new ParquetReadException("LZ4 decompression failed (tried both raw and Hadoop formats): " +
-                        e.getMessage(), e);
+            catch (Exception hadoopFailure) {
+                ParquetReadException failure = new ParquetReadException(
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: "
+                                + rawFailure.getMessage() + "; Hadoop: " + hadoopFailure.getMessage(),
+                        rawFailure);
+                failure.addSuppressed(hadoopFailure);
+                throw failure;
             }
         }
     }
@@ -60,15 +70,15 @@ public class Lz4Decompressor implements Decompressor {
     /// Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
     ///
     /// Each block has both the uncompressed and compressed sizes in big-endian format,
-    /// followed by the compressed data.
-    private byte[] decompressHadoopFormat(byte[] compressed, int uncompressedSize) {
-        byte[] uncompressed = new byte[uncompressedSize];
+    /// followed by the compressed data. The blocks must fill `uncompressedSize` bytes and end with
+    /// the page.
+    private byte[] decompressHadoopFormat(byte[] compressed, int uncompressedSize, byte[] uncompressed) {
         int srcOffset = 0;
         int destOffset = 0;
 
         ByteBuffer buffer = ByteBuffer.wrap(compressed).order(ByteOrder.BIG_ENDIAN);
 
-        while (destOffset < uncompressedSize && srcOffset < compressed.length) {
+        while (srcOffset < compressed.length) {
             if (srcOffset + 8 > compressed.length) {
                 throw new ParquetReadException("Truncated LZ4 Hadoop block header");
             }
@@ -90,7 +100,13 @@ public class Lz4Decompressor implements Decompressor {
                         blockUncompressedSize + ", compressed=" + blockCompressedSize);
             }
 
-            if (srcOffset + blockCompressedSize > compressed.length) {
+            if (blockUncompressedSize > uncompressedSize - destOffset) {
+                throw new ParquetReadException("LZ4 Hadoop block ends at byte "
+                        + ((long) destOffset + blockUncompressedSize) + ", past the expected "
+                        + uncompressedSize + " bytes");
+            }
+
+            if (blockCompressedSize > compressed.length - srcOffset) {
                 throw new ParquetReadException("LZ4 compressed block extends beyond buffer");
             }
 
@@ -125,17 +141,16 @@ public class Lz4Decompressor implements Decompressor {
     }
 
     /// Decompress using raw LZ4 block format (no framing).
-    private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize) {
-        byte[] uncompressed = new byte[uncompressedSize];
-        ByteBuffer dest = ByteBuffer.wrap(uncompressed);
-        int consumed = fastDecompressor.decompress(compressed, compressed.position(), dest, 0, uncompressedSize);
+    private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+        int consumed = fastDecompressor.decompress(compressed, compressed.position(), ByteBuffer.wrap(dest), 0,
+                uncompressedSize);
         // The decompressor bounds its reads by the buffer's capacity, not its limit, so a block
         // ending anywhere but at the limit is not a raw block of this page
         if (consumed != compressed.remaining()) {
             throw new ParquetReadException("LZ4 raw block ends at byte " + consumed + " of a "
                     + compressed.remaining() + "-byte page");
         }
-        return uncompressed;
+        return dest;
     }
 
     @Override

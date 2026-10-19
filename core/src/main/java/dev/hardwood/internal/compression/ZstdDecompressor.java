@@ -20,7 +20,7 @@ public class ZstdDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, borrowOutputBuffer(uncompressedSize));
+        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
     }
 
     @Override
@@ -46,15 +46,6 @@ public class ZstdDecompressor implements Decompressor {
         }
 
         return output;
-    }
-
-    private static byte[] borrowOutputBuffer(int minSize) {
-        byte[] buf = OUTPUT_BUFFER.get();
-        if (buf == null || buf.length < minSize) {
-            buf = new byte[minSize];
-            OUTPUT_BUFFER.set(buf);
-        }
-        return buf;
     }
 
     @Override

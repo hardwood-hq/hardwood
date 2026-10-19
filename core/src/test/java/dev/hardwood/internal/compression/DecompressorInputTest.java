@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.metadata.CompressionCodec;
@@ -84,6 +85,29 @@ class DecompressorInputTest {
             assertThat(dest).as("%s %s, attempt %d", codec, buffer, attempt).isEqualTo(body);
             assertThat(compressed.position()).as("%s %s position", codec, buffer).isEqualTo(position);
             assertThat(compressed.limit()).as("%s %s limit", codec, buffer).isEqualTo(limit);
+        }
+    }
+
+    /// `LZ4` in Hadoop's framing, several blocks to a page, through both entry points.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void decompressesTheSameHadoopLz4BufferTwice(PageBuffer buffer) {
+        byte[] body = body();
+        ByteBuffer compressed = buffer.wrap(Lz4HadoopFrames.frame(body, 1_500));
+        int position = compressed.position();
+        int limit = compressed.limit();
+        Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            byte[] result = decompressor.decompress(compressed, body.length);
+            assertThat(Arrays.copyOf(result, body.length)).as("%s, attempt %d", buffer, attempt).isEqualTo(body);
+
+            byte[] dest = new byte[body.length];
+            decompressor.decompress(compressed, body.length, dest);
+            assertThat(dest).as("%s into the caller's buffer, attempt %d", buffer, attempt).isEqualTo(body);
+
+            assertThat(compressed.position()).as("%s position", buffer).isEqualTo(position);
+            assertThat(compressed.limit()).as("%s limit", buffer).isEqualTo(limit);
         }
     }
 }

@@ -13,6 +13,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.compression.OutputBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// High-performance GZIP decompressor using libdeflate via FFM API.
@@ -83,6 +84,10 @@ public final class LibdeflateDecompressor implements Decompressor {
                     throw new ParquetReadException("libdeflate invocation failed", t);
                 }
 
+                if (result == LibdeflateBindings.LIBDEFLATE_INSUFFICIENT_SPACE) {
+                    throw new ParquetReadException("GZIP data decompresses to more than the expected " +
+                            uncompressedSize + " bytes");
+                }
                 if (result != LibdeflateBindings.LIBDEFLATE_SUCCESS) {
                     throw new ParquetReadException("libdeflate decompression failed: " +
                             LibdeflateBindings.errorMessage(result));
@@ -101,7 +106,7 @@ public final class LibdeflateDecompressor implements Decompressor {
                         uncompressedSize, outputOffset));
             }
 
-            byte[] result = dest != null ? dest : borrowOutputBuffer(uncompressedSize);
+            byte[] result = dest != null ? dest : OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize);
             MemorySegment.copy(output, ValueLayout.JAVA_BYTE, 0, result, 0, uncompressedSize);
             return result;
         }
@@ -117,15 +122,6 @@ public final class LibdeflateDecompressor implements Decompressor {
             tl.set(seg);
         }
         return seg;
-    }
-
-    private static byte[] borrowOutputBuffer(int minSize) {
-        byte[] buf = OUTPUT_BUFFER.get();
-        if (buf == null || buf.length < minSize) {
-            buf = new byte[minSize];
-            OUTPUT_BUFFER.set(buf);
-        }
-        return buf;
     }
 
     private static MemorySegment borrowSizePtr(ThreadLocal<MemorySegment> tl) {

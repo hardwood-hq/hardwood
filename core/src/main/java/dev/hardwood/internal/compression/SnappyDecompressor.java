@@ -22,7 +22,7 @@ public class SnappyDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, borrowOutputBuffer(uncompressedSize));
+        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
     }
 
     /// Decompresses into `dest`: heap to heap where the compressed page is on the heap, otherwise
@@ -71,15 +71,6 @@ public class SnappyDecompressor implements Decompressor {
             DIRECT_OUTPUT_BUFFER.set(buf);
         }
         buf.clear();
-        return buf;
-    }
-
-    private static byte[] borrowOutputBuffer(int minSize) {
-        byte[] buf = OUTPUT_BUFFER.get();
-        if (buf == null || buf.length < minSize) {
-            buf = new byte[minSize];
-            OUTPUT_BUFFER.set(buf);
-        }
         return buf;
     }
 

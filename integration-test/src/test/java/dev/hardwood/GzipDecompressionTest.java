@@ -8,6 +8,7 @@
 package dev.hardwood;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,9 +23,11 @@ import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Integration tests for GZIP decompression.
 ///
@@ -122,6 +125,77 @@ class GzipDecompressionTest {
                     assertThat(buffer.position()).as("%s position", buffer).isEqualTo(position);
                     assertThat(buffer.limit()).as("%s limit", buffer).isEqualTo(position + page.length);
                 }
+            }
+        }
+        finally {
+            pool.clear();
+        }
+    }
+
+    private static byte[] body(int length, int seed) {
+        byte[] body = new byte[length];
+        for (int i = 0; i < length; i++) {
+            body[i] = (byte) ('a' + (i * seed) % 13);
+        }
+        return body;
+    }
+
+    private static byte[] member(byte[] body) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (GZIPOutputStream out = new GZIPOutputStream(bytes)) {
+            out.write(body);
+        }
+        return bytes.toByteArray();
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (byte[] part : parts) {
+            out.writeBytes(part);
+        }
+        return out.toByteArray();
+    }
+
+    /// The rule `GzipPageTailTest` pins for the `Inflater` path, with the same messages: members are
+    /// read until the declared size is produced and the bytes after it are ignored; a member that
+    /// inflates past the declared size, or whose CRC32 or length trailer disagrees with its output,
+    /// fails.
+    @Test
+    void libdeflateReadsAPageTailAsTheInflaterDoes() throws Exception {
+        Assumptions.assumeTrue(LibdeflateLoader.isAvailable(), "libdeflate not available on this system");
+        byte[] body = body(4_000, 1);
+        byte[] garbage = new byte[16];
+        Arrays.fill(garbage, (byte) 0x55);
+        byte[] first = body(2_000, 1);
+        byte[] second = body(2_000, 3);
+        byte[] twoMembers = concat(member(first), member(second));
+        LibdeflatePool pool = new LibdeflatePool();
+        try {
+            Decompressor decompressor = new LibdeflateDecompressor(pool);
+
+            assertThat(decompressor.decompress(ByteBuffer.wrap(concat(member(body), garbage)), body.length,
+                    new byte[body.length])).as("bytes after a complete page").isEqualTo(body);
+            assertThat(decompressor.decompress(ByteBuffer.wrap(concat(member(body), member(second))),
+                    body.length, new byte[body.length])).as("a member after a complete page").isEqualTo(body);
+            assertThat(decompressor.decompress(ByteBuffer.wrap(twoMembers), 4_000, new byte[4_000]))
+                    .as("members until the declared size").isEqualTo(concat(first, second));
+            assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(twoMembers), 3_000,
+                    new byte[3_000]))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("GZIP data decompresses to more than the expected 3000 bytes");
+            assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(member(body)), 5_000,
+                    new byte[5_000]))
+                    .isInstanceOf(ParquetReadException.class)
+                    .hasMessage("Decompressed size mismatch: expected 5000, got 4000");
+            // A trailer that disagrees with the output: libdeflate does not say which field
+            for (int fromEnd : new int[]{ 8, 4 }) {
+                byte[] corrupt = member(body);
+                corrupt[corrupt.length - fromEnd] ^= 0x01;
+                assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(corrupt), body.length,
+                        new byte[body.length]))
+                        .as("trailer byte %d from the end", fromEnd)
+                        .isInstanceOf(ParquetReadException.class)
+                        .hasMessage("libdeflate decompression failed: Bad data (invalid or corrupt compressed data)");
             }
         }
         finally {

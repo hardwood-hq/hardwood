@@ -10,10 +10,13 @@ package dev.hardwood.internal.compression;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.xerial.snappy.Snappy;
 
 import dev.hardwood.metadata.CompressionCodec;
@@ -70,6 +73,88 @@ class DecompressorCallerBufferTest {
         ByteBuffer compressed = ByteBuffer.wrap(backing, 7, bytes.length);
 
         assertDecompressesInto(codec, compressed, body);
+    }
+
+    /// A buffer of exactly the page's size: nothing is written past it, so nothing fails on it.
+    @ParameterizedTest
+    @EnumSource(value = CompressionCodec.class,
+            names = {"UNCOMPRESSED", "GZIP", "SNAPPY", "ZSTD", "LZ4_RAW", "BROTLI"})
+    void fillsABufferOfExactlyThePagesSize(CompressionCodec codec) {
+        byte[] body = body();
+        ByteBuffer compressed = ByteBuffer.wrap(new CompressorFactory().getCompressor(codec).compress(body, 0,
+                body.length));
+        byte[] dest = new byte[body.length];
+        Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
+
+        assertThat(decompressor.decompress(compressed, body.length, dest)).isSameAs(dest).isEqualTo(body);
+    }
+
+    /// `LZ4` is read in its raw block form and, failing that, in Hadoop's framing; Hardwood writes
+    /// neither, so both streams are built here. The Hadoop page holds several blocks, the shape its
+    /// framing exists for.
+    @Test
+    void writesAnLz4PageOfEitherFramingIntoTheCallersBuffer() {
+        byte[] body = body();
+        byte[] raw = new CompressorFactory().getCompressor(CompressionCodec.LZ4_RAW).compress(body, 0, body.length);
+        byte[] hadoop = Lz4HadoopFrames.frame(body, 1_500);
+
+        assertDecompressesInto(CompressionCodec.LZ4, ByteBuffer.wrap(raw), body);
+        assertDecompressesInto(CompressionCodec.LZ4, ByteBuffer.wrap(hadoop), body);
+        assertDecompressesInto(CompressionCodec.LZ4, PageBuffer.DIRECT.wrap(hadoop), body);
+        byte[] dest = new byte[body.length];
+        assertThat(new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4)
+                .decompress(ByteBuffer.wrap(hadoop), body.length, dest)).isSameAs(dest).isEqualTo(body);
+    }
+
+    static Stream<Arguments> streamsOfAnotherLength() {
+        byte[] body = body();
+        CompressorFactory compressors = new CompressorFactory();
+        byte[] gzip = compressors.getCompressor(CompressionCodec.GZIP).compress(body, 0, body.length);
+        byte[] lz4Raw = compressors.getCompressor(CompressionCodec.LZ4_RAW).compress(body, 0, body.length);
+        byte[] brotli = compressors.getCompressor(CompressionCodec.BROTLI).compress(body, 0, body.length);
+        byte[] hadoop = Lz4HadoopFrames.frame(body, 1_500);
+        return Stream.of(
+                Arguments.of("GZIP longer", CompressionCodec.GZIP, gzip, 1_000,
+                        "GZIP data decompresses to more than the expected 1000 bytes"),
+                Arguments.of("GZIP shorter", CompressionCodec.GZIP, gzip, 5_000,
+                        "Decompressed size mismatch: expected 5000, got 4000"),
+                Arguments.of("LZ4_RAW longer", CompressionCodec.LZ4_RAW, lz4Raw, 1_000,
+                        "LZ4_RAW decompression failed: Malformed input at 432"),
+                Arguments.of("LZ4_RAW shorter", CompressionCodec.LZ4_RAW, lz4Raw, 5_000,
+                        "LZ4_RAW decompression failed: Malformed input at 3964"),
+                Arguments.of("LZ4 raw longer", CompressionCodec.LZ4, lz4Raw, 1_000,
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 432; Hadoop: "
+                                + "Invalid LZ4 Hadoop block sizes: uncompressed=-251685780, compressed=1818715243"),
+                Arguments.of("LZ4 raw shorter", CompressionCodec.LZ4, lz4Raw, 5_000,
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3964; Hadoop: "
+                                + "Invalid LZ4 Hadoop block sizes: uncompressed=-251685780, compressed=1818715243"),
+                Arguments.of("LZ4 Hadoop longer", CompressionCodec.LZ4, hadoop, 2_000,
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3; Hadoop: "
+                                + "LZ4 Hadoop block ends at byte 3000, past the expected 2000 bytes"),
+                Arguments.of("LZ4 Hadoop shorter", CompressionCodec.LZ4, hadoop, 5_000,
+                        "LZ4 decompression failed (tried both raw and Hadoop formats): raw: Malformed input at 3; Hadoop: "
+                                + "LZ4 Hadoop decompression size mismatch: expected 5000, got 4000"),
+                Arguments.of("BROTLI longer", CompressionCodec.BROTLI, brotli, 1_000,
+                        "Brotli decompression produced more than the expected 1000 bytes"),
+                Arguments.of("BROTLI shorter", CompressionCodec.BROTLI, brotli, 5_000,
+                        "Brotli decompression size mismatch: expected 5000, got 4000"));
+    }
+
+    /// A stream that decodes to more or fewer bytes than the page declares is refused, and nothing
+    /// is written past the declared size.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("streamsOfAnotherLength")
+    void refusesAStreamOfAnotherLengthThanThePageDeclares(String label, CompressionCodec codec, byte[] page,
+                                                          int declared, String message) {
+        byte[] dest = new byte[declared + 64];
+        Arrays.fill(dest, SENTINEL);
+        Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
+
+        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(page), declared, dest))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage(message);
+        assertThat(Arrays.copyOfRange(dest, declared, dest.length)).as("past the declared size")
+                .containsOnly(SENTINEL);
     }
 
     /// Snappy decompresses a heap page natively into the caller's buffer, which bounds nothing;

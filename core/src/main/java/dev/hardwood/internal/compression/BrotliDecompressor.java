@@ -20,20 +20,21 @@ public class BrotliDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        BrotliLoader.ensureLoaded();
+        return decompress(compressed, uncompressedSize, new byte[uncompressedSize]);
+    }
 
-        // Brotli4j has no direct ByteBuffer API, so extract to a byte array.
-        byte[] compressedBytes = new byte[compressed.remaining()];
-        compressed.duplicate().get(compressedBytes);
+    @Override
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+        BrotliLoader.ensureLoaded();
 
         // BrotliInputStream decodes through DecoderJNI directly. The one-shot
         // Decoder.decompress()/DirectDecompress path returns its output wrapped in a
         // Netty ByteBuf, which would otherwise force io.netty:netty-buffer onto the
         // classpath just to unwrap the bytes.
-        byte[] decompressed;
+        int decompressedLength;
         boolean trailingBytes;
-        try (BrotliInputStream in = new BrotliInputStream(new ByteArrayInputStream(compressedBytes))) {
-            decompressed = in.readNBytes(uncompressedSize);
+        try (BrotliInputStream in = new BrotliInputStream(inputStream(compressed))) {
+            decompressedLength = in.readNBytes(dest, 0, uncompressedSize);
             trailingBytes = in.read() != -1;
         }
         catch (IOException | RuntimeException e) {
@@ -46,17 +47,29 @@ public class BrotliDecompressor implements Decompressor {
         // with the header is what the bytes say rather than the decoder refusing them. Raised
         // inside, these would be caught by the arm above and reported as the generic failure
         // with their own message demoted to a cause.
-        if (decompressed.length != uncompressedSize) {
+        if (decompressedLength != uncompressedSize) {
             throw new ParquetReadException(
                     "Brotli decompression size mismatch: expected " + uncompressedSize +
-                            ", got " + decompressed.length);
+                            ", got " + decompressedLength);
         }
         if (trailingBytes) {
             throw new ParquetReadException(
                     "Brotli decompression produced more than the expected " + uncompressedSize + " bytes");
         }
 
-        return decompressed;
+        return dest;
+    }
+
+    /// Brotli4j has no direct ByteBuffer API: a heap buffer is read where it lies, a direct one is
+    /// extracted to a byte array first.
+    private static ByteArrayInputStream inputStream(ByteBuffer compressed) {
+        if (compressed.hasArray()) {
+            return new ByteArrayInputStream(compressed.array(), compressed.arrayOffset() + compressed.position(),
+                    compressed.remaining());
+        }
+        byte[] compressedBytes = new byte[compressed.remaining()];
+        compressed.duplicate().get(compressedBytes);
+        return new ByteArrayInputStream(compressedBytes);
     }
 
     @Override
