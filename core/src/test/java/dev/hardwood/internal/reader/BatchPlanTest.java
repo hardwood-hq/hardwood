@@ -437,6 +437,50 @@ class BatchPlanTest {
         assertThat(published).containsExactly(64);
     }
 
+    /// A binary column's cell is sized by the page task of its last measure, since the placement
+    /// of its last page seals it before that page is measured. A plan that left a binary column's
+    /// batch open across a row group would have the next row group's placement seal it after its
+    /// pages were measured, on the fetcher; the column fails instead. The pool runs each task as
+    /// it is submitted, so the first row group's page is measured before the second's is placed.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aBinaryBatchSealedAfterItsPagesWereMeasuredFails() throws Exception {
+        BatchPlan plan = new BatchPlan(64, false, false, 0);
+        String fileName = DICT_CROSS_CHUNK.getFileName().toString();
+        RowGroupBatches first = plan.plan(0, 0, fileName, false, 100);
+        RowGroupBatches second = plan.plan(1, 1, fileName, false, 100);
+        assertThat(first.lastOpen()).isTrue();
+        assertThat(second.closesOpenBatch()).isTrue();
+        try (HardwoodContextImpl context = TaskOrderExecutor.inline(null).context(1);
+             RowGroupIterator iterator = iterator(context, DICT_CROSS_CHUNK)) {
+            iterator.planBatches(64, 0);
+            ColumnSchema column = iterator.referenceSchema().getColumn(0);
+            PageSource source = new PageSource(iterator, 0) {
+                @Override
+                RowGroupBatches getCurrentBatches() {
+                    RowGroupBatches planned = super.getCurrentBatches();
+                    return planned == null ? null : planned.workItemIndex() == 0 ? first : second;
+                }
+            };
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
+            ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
+            try (ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
+                    context.decompressorFactory(), null)) {
+                scheduler.start();
+                assertThatThrownBy(() -> {
+                    while (exchange.poll() != null) {
+                        // drained
+                    }
+                    exchange.checkError();
+                })
+                        .isInstanceOf(ParquetReadException.class)
+                        .hasMessage("[dict_cross_chunk.parquet: row group 0, column 'label', page 0] Batch plan "
+                                + "mismatch: the batch of a binary column at row 64 is sealed after its last page, "
+                                + "but a read with a binary column ends every batch at the end of its row group");
+            }
+        }
+    }
+
     /// A page whose metadata gives it more rows than it holds fails when it is decoded, instead
     /// of filling its batches from values it does not have.
     @Test

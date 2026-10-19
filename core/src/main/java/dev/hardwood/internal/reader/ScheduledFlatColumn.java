@@ -54,9 +54,9 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     /// Cells whose seal came after their last fill, which the fetcher completes once it has
     /// released the lock.
     private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
-    /// Measured cells whose seal came after their last measure, which the fetcher sizes once it
-    /// has released the lock.
-    private final ArrayDeque<Cell> sealedSizable = new ArrayDeque<>();
+    /// A measured cell whose seal came after its last measure, which fails the read once the
+    /// fetcher has released the lock; `null` while none is.
+    private Cell sealedMeasured;
 
     // === Fetcher only ===
     private BatchPlan.RowGroupBatches rowGroup;
@@ -149,40 +149,50 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         completeSealed();
     }
 
-    /// Sizes and completes the cells the fetcher's placement sealed after their last measure or
-    /// fill, outside the lock: sizing a cell allocates its bytes, and completing it runs the
-    /// column's filter fragment.
+    /// Completes the cells the fetcher's placement sealed after their last fill, outside the
+    /// lock: completing a cell runs the column's filter fragment. A measured cell sealed after
+    /// its last measure fails the read instead ([#sealedAfterItsMeasures]).
     private void completeSealed() {
         while (true) {
-            Cell sizable;
+            Cell measured;
             Cell complete = null;
             lock.lock();
             try {
-                sizable = sealedSizable.pollFirst();
-                if (sizable == null) {
+                measured = sealedMeasured;
+                sealedMeasured = null;
+                if (measured == null) {
                     complete = sealedComplete.pollFirst();
                 }
             }
             finally {
                 lock.unlock();
             }
-            if (sizable == null && complete == null) {
+            if (measured == null && complete == null) {
                 return;
             }
+            Cell cell = measured != null ? measured : complete;
             try {
-                if (sizable != null) {
-                    size(sizable);
+                if (measured != null) {
+                    throw sealedAfterItsMeasures(measured);
                 }
-                else {
-                    completeAndPublish(complete);
-                }
+                completeAndPublish(complete);
             }
             catch (RuntimeException e) {
                 // The cell cannot complete, and a failure queued behind it would never be raised
-                pageFailed(e, (sizable != null ? sizable : complete).lastPage());
+                pageFailed(e, cell.lastPage());
                 return;
             }
         }
+    }
+
+    /// The failure of a measured cell sealed after every segment placed into it was measured. A
+    /// cell is sealed by the placement of its last page, before that page is measured, unless its
+    /// batch spans the end of a row group, which a read with a binary column never plans
+    /// ([BatchPlan#endsBatchesAtRowGroupBoundaries]). Sizing it would allocate its bytes on the
+    /// fetcher, and its batch would draw on two column chunks' dictionaries.
+    private static IllegalStateException sealedAfterItsMeasures(Cell cell) {
+        return new IllegalStateException("Batch plan mismatch: the batch of a binary column at row " + cell.firstRow
+                + " is sealed after its last page, but a read with a binary column ends every batch at the end of its row group");
     }
 
     /// What the placer's decisions do to the column; runs under the column lock.
@@ -202,8 +212,8 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
 
         @Override
         public void sealed(Cell cell) {
-            if (cell.measured && cell.unsized.decrementAndGet() == 0) {
-                sealedSizable.addLast(cell);
+            if (cell.measured && cell.unsized.decrementAndGet() == 0 && sealedMeasured == null) {
+                sealedMeasured = cell;
             }
             if (cell.pending.decrementAndGet() == 0) {
                 sealedComplete.addLast(cell);
