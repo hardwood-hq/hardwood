@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -90,8 +89,8 @@ public class BatchExchange<B> {
     }
 
     /// Handed to the consumer by [#finish()] so that a poll already waiting on the queue learns
-    /// of the end of the stream from the queue itself, rather than from the next expiry of its
-    /// timed poll. See [#finish()] for why offering it can be left to succeed or not.
+    /// of the end of the stream from the queue itself. See [#finish()] for why offering it can be
+    /// left to succeed or not.
     private static final Object END_OF_STREAM = new Object();
 
     private final BlockingQueue<Object> readyQueue;
@@ -261,17 +260,18 @@ public class BatchExchange<B> {
 
     /// Marks the stream ended, and hands a waiting consumer the sentinel that says so.
     ///
-    /// The flag alone is not enough. A consumer inside [#poll()]'s timed loop is waiting on the
-    /// queue, not on the flag, and reads the flag only when its 10 ms poll expires.
+    /// The flag alone is not enough. A consumer inside [#poll()]'s wait is waiting on the queue,
+    /// not on the flag, and reads the flag only when the queue hands it something.
     ///
     /// The offer is deliberately non-blocking and its result deliberately ignored. A consumer is
     /// only ever left waiting when it found the queue empty, and in that state the offer has room
     /// and succeeds. It fails only when the queue is full, which only the recycling mode's bounded
     /// queue can be, and a consumer with batches still to take is not waiting for anything: by the
-    /// time it has taken them, `finished` is set and [#poll()] returns without waiting at all. So the sentinel removes a delay where there is
-    /// one, and where it cannot be delivered there was none to remove.
+    /// time it has taken them, `finished` is set and [#poll()] returns without waiting at all.
     ///
-    /// Nothing rests on it arriving. The timed poll remains the liveness guarantee.
+    /// That makes the sentinel or a batch the element that releases every waiting consumer: the
+    /// flag is set before the offer, a consumer waits only after reading it unset, so a consumer
+    /// waiting when the offer fails is waiting on a full queue, and takes a batch.
     public void finish() {
         finished = true;
         readyQueue.offer(END_OF_STREAM);
@@ -306,8 +306,8 @@ public class BatchExchange<B> {
     ///
     /// This method handles the ordering between `readyQueue` and `finished`
     /// correctly: a non-blocking poll is attempted first, and if the queue is
-    /// empty the method falls through to a timed poll loop. The `finished` flag
-    /// is only checked **after** a timed poll returns null, guaranteeing that any
+    /// empty the method falls through to a waiting take. The `finished` flag
+    /// is only checked **after** a poll returns null, guaranteeing that any
     /// batch published before `finish()` is visible.
     ///
     /// The end of the stream arrives twice over, and the ordering above is why that is safe. It
@@ -330,16 +330,11 @@ public class BatchExchange<B> {
         }
         // Past this point the consumer is stalled on the pipeline: the ready
         // queue is empty and the column has not finished. The event's duration
-        // is the stall, so it spans every exit from the timed poll loop.
+        // is the stall, so it spans every exit from the wait.
         BatchWaitEvent event = new BatchWaitEvent();
         event.begin();
         try {
-            while ((batch = taken(readyQueue.poll(10, TimeUnit.MILLISECONDS))) == null) {
-                if (finished) {
-                    return (B) drop(taken(readyQueue.poll()));
-                }
-                checkError();
-            }
+            batch = taken(readyQueue.take());
             if (batch == END_OF_STREAM) {
                 checkError();
                 return null;
@@ -370,6 +365,11 @@ public class BatchExchange<B> {
     /// Drains any batches left in the ready queue back to the free pool.
     /// Called from the consumer's `close()` after the column has stopped.
     /// No-op in detaching mode.
+    ///
+    /// The close can run on another thread than a consumer still inside [#poll()], as a parent
+    /// reader's close does. The queue ends holding the sentinel once the stream has finished, so
+    /// that such a consumer is released: draining it, or the batches that took the room its offer
+    /// in [#finish()] needed, would otherwise leave the consumer waiting on an empty queue.
     public void drainReady() {
         if (freeQueue == null) {
             return;
@@ -381,6 +381,9 @@ public class BatchExchange<B> {
                 B batch = (B) leftover;
                 freeQueue.offer(batch);
             }
+        }
+        if (finished) {
+            readyQueue.offer(END_OF_STREAM);
         }
     }
 

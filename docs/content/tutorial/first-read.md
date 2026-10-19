@@ -22,7 +22,7 @@ summed a column the fast columnar way. Follow the steps in order and run each sn
 
 ## Before you start
 
-- Java 21 or newer (`java -version` to check).
+- A Java version [Getting Started](../getting-started.md) lists as supported (`java -version` to check).
 - Hardwood on the classpath. If you haven't set up a project yet, follow
   [Getting Started](../getting-started.md) first. You need `hardwood-core`, and because the
   sample file is ZSTD-compressed, also add the `zstd-jni` dependency.

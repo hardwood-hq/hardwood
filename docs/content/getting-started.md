@@ -13,6 +13,8 @@
 
 Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
+On Java 25, use 25.0.3 or later: on 25.0.0 to 25.0.2, a virtual thread's park can be stranded ([JDK-8369227](https://bugs.openjdk.org/browse/JDK-8369227)).
+
 To inspect or convert Parquet files from the command line without writing code, install the [command-line tool](#command-line-tool).
 
 ## Dependency Management

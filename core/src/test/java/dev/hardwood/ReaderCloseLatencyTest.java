@@ -41,9 +41,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// sixteen. [dev.hardwood.internal.reader.ScheduledColumn#close()] joins its column's fetcher
 /// thread and then waits for the column's page tasks, and [ColumnReaders#close()] closes the
 /// columns one at a time. The first close stops every column of the read, so the columns' waits
-/// overlap. The test fails as soon as a column's stop signal does not reach its fetcher thread
-/// directly, or a column is stopped only when its own close is reached: a per-column delay of any
-/// kind then adds up rather than overlapping, and the total goes linear in the projection width.
+/// overlap. The waits are untimed, so a column whose stop does not reach its parked fetcher, or
+/// whose last page task does not wake the close, leaves the close waiting forever, which the
+/// `@Timeout` catches. A column stopped only when its own close is reached waits for its page
+/// tasks in turn rather than alongside the others, and the total goes linear in the projection
+/// width, which the bound catches.
 ///
 /// When close() arrives mid-file, each column's ready queue is at its limit, so its completed
 /// cells wait for the consumer to publish them, the scheduler submits none of its pages past the
@@ -58,14 +60,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// On the bound: sub-millisecond closes are typical, but the distribution has a heavy tail,
 /// and under 8x CPU oversubscription maxima of 27 / 61 / 67 / 101 ms have been observed across
-/// four runs — a badly loaded machine can fail this test. The bound is deliberately *not*
-/// raised to paper that over: the regression's floor at this width is about 150 ms, and every
-/// millimetre the bound moves toward it costs discriminating power. 60 ms keeps a real gap on
-/// both sides; a failure here on a saturated CI box is a false positive worth re-running
-/// rather than a reason to widen it.
+/// four runs — a badly loaded machine can fail this test. A failure here on a saturated CI box
+/// is a false positive worth re-running rather than a reason to widen the bound.
 class ReaderCloseLatencyTest {
 
-    /// Wide enough that one per-column stall is unmistakable against the bound, and still a
+    /// Wide enough that per-column waits adding up show against the bound, and still a
     /// projection a caller might plausibly ask for.
     ///
     /// Also wide enough for the row-reader case to reproduce at all. Batch size there is
@@ -93,14 +92,7 @@ class ReaderCloseLatencyTest {
     /// The struct of the nested row-reader case, whose fields are named like the flat columns.
     private static final String STRUCT = "s";
 
-    /// The per-column cost a teardown that fails to signal its fetcher directly settles at: the
-    /// bound on the fetcher's timed wait for room. Used only to state the expected magnitude in
-    /// the assertion messages.
-    private static final Duration PER_COLUMN_STALL_DURATION = Duration.ofMillis(10L);
-
-    /// Passes comfortably when no close stalls, and cannot pass when they all do: a stalling
-    /// close needs about `(COLUMNS - 1) * 10 ms` = 150 ms. See the class comment for the
-    /// actual margin and its tail.
+    /// Passes comfortably when the columns' waits overlap. See the class comment for its tail.
     private static final Duration BOUND = Duration.ofMillis(60L);
 
     @Test
@@ -117,10 +109,7 @@ class ReaderCloseLatencyTest {
             Duration elapsed = timeCloseAfterOneBatch(hardwood, file, columns);
 
             assertThat(elapsed)
-                    .as("close() of a %d-column projection; a %d ms stall per column "
-                            + "would be about %d ms",
-                            COLUMNS, PER_COLUMN_STALL_DURATION.toMillis(),
-                            stallAcrossColumns().toMillis())
+                    .as("close() of a %d-column projection", COLUMNS)
                     .isLessThan(BOUND);
         }
     }
@@ -165,10 +154,8 @@ class ReaderCloseLatencyTest {
             Duration elapsed = timeRowReaderCloseAfterFewRows(hardwood, file, columns);
 
             assertThat(elapsed)
-                    .as("RowReader.close() over a %d-column projection after reading %d rows; "
-                            + "a %d ms stall per column would be about %d ms",
-                            COLUMNS, ROWS_READ, PER_COLUMN_STALL_DURATION.toMillis(),
-                            stallAcrossColumns().toMillis())
+                    .as("RowReader.close() over a %d-column projection after reading %d rows",
+                            COLUMNS, ROWS_READ)
                     .isLessThan(BOUND);
         }
     }
@@ -188,10 +175,8 @@ class ReaderCloseLatencyTest {
             Duration elapsed = timeRowReaderCloseAfterFewRows(hardwood, file, columns);
 
             assertThat(elapsed)
-                    .as("RowReader.close() over a struct of %d fields after reading %d rows; "
-                            + "a %d ms stall per column would be about %d ms",
-                            COLUMNS, ROWS_READ, PER_COLUMN_STALL_DURATION.toMillis(),
-                            stallAcrossColumns().toMillis())
+                    .as("RowReader.close() over a struct of %d fields after reading %d rows",
+                            COLUMNS, ROWS_READ)
                     .isLessThan(BOUND);
         }
     }
@@ -254,12 +239,6 @@ class ReaderCloseLatencyTest {
             readers.close();
             return Duration.ofNanos(System.nanoTime() - start);
         }
-    }
-
-    /// What a teardown that stalls once per column would cost in total, for the assertion
-    /// messages. The first column's stall overlaps nothing, so it is `COLUMNS - 1` of them.
-    private static Duration stallAcrossColumns() {
-        return PER_COLUMN_STALL_DURATION.multipliedBy(COLUMNS - 1L);
     }
 
     private static List<String> columnNames() {

@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,16 +48,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// of a nested column, and the size of a column's scratch pool. Overridable via the
     /// `hardwood.internal.maxOutstanding` system property.
     static final int MAX_INFLIGHT_PAGES = Integer.getInteger("hardwood.internal.maxOutstanding", 8);
-
-    /// How long a fetcher waiting for room, and a close waiting for the column's page tasks, park
-    /// before they re-check rather than waiting to be told.
-    ///
-    /// The conditions they wait on are monotone, so re-checking is always safe. The waits are
-    /// timed because the runtime can drop an unpark: on JDK 25 through 25.0.2, and 26 before
-    /// 26.0.1, an untimed park on a virtual thread that recently did a timed park can be stranded
-    /// by the earlier park's stale timeout task (JDK-8369227, fixed in 25.0.3, 26.0.1 and 27).
-    static final long WAKE_CHECK_NANOS = 10L * 1_000_000L;
-
 
     /// Pages the fetcher keeps queued for the scheduler.
     static final int FETCH_AHEAD = 2;
@@ -112,7 +103,12 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// Raised when a publish found no room, so the consumer publishes when it takes a batch.
     private final AtomicBoolean publishWanted = new AtomicBoolean();
     private volatile Thread fetcherThread;
+    /// The thread that claimed the close and waits for the page tasks; the last task unparks it.
     private volatile Thread closingThread;
+    /// Claimed by the one thread that closes the column ([#close()]).
+    private final AtomicBoolean closeClaimed = new AtomicBoolean();
+    /// Released once the claiming thread has closed the column, for every other closer.
+    private final CountDownLatch closed = new CountDownLatch(1);
 
     // === Fetcher only ===
     private PageDecoder pageDecoder;
@@ -144,14 +140,50 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// close lets the waits of every column overlap: a column still running while an earlier one
     /// is awaited would go on submitting and decoding pages, and its fetcher would only be woken
     /// once its own close is reached.
+    ///
+    /// A reader and its parent can close a read on two threads at once. One thread claims the
+    /// close and waits for the column; every other closer returns once that close has completed.
     @Override
     public void close() {
-        scheduler.stop();
-        Thread fetcher = fetcherThread;
-        boolean interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
-        // Bounded wait, re-checked: the last task to finish unparks this thread.
-        while (tasks.get() > 0) {
-            LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
+        if (!closeClaimed.compareAndSet(false, true)) {
+            awaitClosed();
+            return;
+        }
+        boolean interrupted;
+        try {
+            scheduler.stop();
+            Thread fetcher = fetcherThread;
+            interrupted = fetcher != null && ScheduledColumn.joinUninterruptibly(fetcher);
+            // Written before the count is read, as a task reads it after the count: either this
+            // sees the last task's decrement or that task sees this thread and unparks it.
+            closingThread = Thread.currentThread();
+            while (tasks.get() > 0) {
+                LockSupport.park(this);
+                // A park returns at once while the interrupt flag is set: cleared here and
+                // restored on the way out, so an interrupted close waits instead of spinning.
+                interrupted |= Thread.interrupted();
+            }
+        }
+        finally {
+            closed.countDown();
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /// Waits until the thread that claimed the close has completed it, carrying on through
+    /// interrupts and restoring them.
+    private void awaitClosed() {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                closed.await();
+                break;
+            }
+            catch (InterruptedException e) {
+                interrupted = true;
+            }
         }
         if (interrupted) {
             Thread.currentThread().interrupt();
@@ -159,10 +191,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Stops the column without waiting for it: no publish runs after it, its consumer sees the
-    /// end of the stream, its fetcher is woken to exit, and the calling thread is the one its last
-    /// page task wakes. Called by [ReadScheduler#stop()], on the thread that closes the read.
+    /// end of the stream, and its fetcher is woken to exit. Called by [ReadScheduler#stop()], on
+    /// the thread that closes the read.
     void signalStop() {
-        closingThread = Thread.currentThread();
         stop();
         exchange.finish();
         unparkFetcher();
@@ -266,8 +297,11 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
                     break;
                 }
                 scheduler.submit(this);
-                while (!done && !fetchStopped() && !mayQueue()) {
-                    LockSupport.parkNanos(this, ScheduledColumn.WAKE_CHECK_NANOS);
+                // The flags are read after `mayQueue()`, last before the park: a contended lock
+                // acquire inside `mayQueue()` can consume the unpark of a stop, so a flag read
+                // before it could be stale by the time the thread parks.
+                while (!mayQueue() && !done && !fetchStopped()) {
+                    LockSupport.park(this);
                 }
             }
         }

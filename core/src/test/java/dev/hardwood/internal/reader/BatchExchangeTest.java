@@ -9,8 +9,12 @@ package dev.hardwood.internal.reader;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -18,12 +22,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// What [BatchExchange#finish()] may and may not do to the batches already in flight.
 ///
 /// `finish()` hands the consumer an end-of-stream sentinel through the ready queue, so that a
-/// poll already waiting learns of the end from the queue rather than from the next expiry of its
-/// timed poll. That puts a non-batch into the same queue the batches travel through, and these
-/// are the three ways that could go wrong: the sentinel overtaking a batch, the sentinel being
-/// recycled as if it were one, and the queue reading as ended only once.
+/// poll already waiting, which waits on the queue alone, learns of the end at all. That puts a
+/// non-batch into the same queue the batches travel through, and these are the ways that could go
+/// wrong: the sentinel overtaking a batch, the sentinel being recycled as if it were one, the
+/// queue reading as ended only once, and a drain taking the sentinel from a waiting consumer.
 ///
-/// The latency the sentinel exists for is asserted separately, in
+/// That the end reaches a waiting consumer in a full read is asserted separately, in
 /// [dev.hardwood.ReaderEofLatencyTest].
 class BatchExchangeTest {
 
@@ -188,5 +192,33 @@ class BatchExchangeTest {
                 .isSameAs(error)
                 .hasMessage("page 3 is corrupt");
         assertThat(error.getSuppressed()).isEmpty();
+    }
+
+    /// A parent reader's close drains a row read's exchanges on its own thread while the read's
+    /// consumer can still be waiting in `poll()`. The consumer woken by `finish()`'s sentinel
+    /// has to find the sentinel still there once it gets to take it, however quickly the drain
+    /// follows the finish.
+    @RepeatedTest(20)
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void releasesAWaitingConsumerThatADrainOvertakes() throws Exception {
+        BatchExchange<Object> exchange = BatchExchange.recycling("c", Object::new);
+        AtomicReference<Object> polled = new AtomicReference<>(new Object());
+        Thread consumer = Thread.ofPlatform().start(() -> {
+            try {
+                polled.set(exchange.poll());
+            }
+            catch (Exception e) {
+                polled.set(e);
+            }
+        });
+        while (consumer.getState() != Thread.State.WAITING && consumer.getState() != Thread.State.TIMED_WAITING) {
+            Thread.onSpinWait();
+        }
+
+        exchange.finish();
+        exchange.drainReady();
+        consumer.join();
+
+        assertThat(polled.get()).as("end of stream").isNull();
     }
 }
