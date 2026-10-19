@@ -45,9 +45,15 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     /// Pages the column keeps queued or decoding and not yet placed.
     static final int MAX_UNPLACED = ScheduledColumn.MAX_INFLIGHT_PAGES;
 
+    /// Scratch a column keeps for its next pages once their pages' cells are all filled. Fixed,
+    /// and not tied to [#MAX_UNPLACED]: a scratch is sized by the largest page it held, so a
+    /// larger pool keeps many times a large-page file's live scratch alive and saves little
+    /// allocation.
+    static final int SCRATCH_POOL = 4;
+
     /// Scratch of pages whose cells are all filled, for the column's next pages.
     private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool =
-            new ArrayBlockingQueue<>(4 * MAX_UNPLACED);
+            new ArrayBlockingQueue<>(SCRATCH_POOL);
 
     /// Told of every cell as it is filled, on the filling thread; for tests of where cells are
     /// filled. `null` for none.

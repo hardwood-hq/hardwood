@@ -45,7 +45,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     static final long UNLIMITED = 0L;
 
     /// Pages a column keeps decoded and not yet filled into its cells, at most: the unplaced pages
-    /// of a nested column, and the size of a column's scratch pool. Overridable via the
+    /// of a nested column, and the size of a flat binary column's scratch pool. Overridable via the
     /// `hardwood.internal.maxOutstanding` system property.
     static final int MAX_INFLIGHT_PAGES = Integer.getInteger("hardwood.internal.maxOutstanding", 8);
 
