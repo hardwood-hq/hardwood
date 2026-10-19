@@ -80,6 +80,11 @@ public final class BinaryBatchValues {
     /// ([#installDictionary]).
     public int[] dictIndices;
 
+    /// Whether every present value has an entry id in [#dictIndices]: set by the fill when every
+    /// segment of the batch wrote ids. `false` means a present value may have none, and a reader
+    /// that needs to know looks at the ids.
+    public boolean idsComplete;
+
     /// An empty batch slot for `capacity` values.
     public BinaryBatchValues(int capacity, int bytesPerValueHint) {
         this(EMPTY, null, null, 0, bytesPerValueHint);
@@ -178,6 +183,7 @@ public final class BinaryBatchValues {
     void prepareForFill() {
         byteCount = 0;
         dictionary = null;
+        idsComplete = false;
         viewedDictionary = null;
         appendedDictionaryBytes = 0;
         deferredEnd = 0;
@@ -338,6 +344,7 @@ public final class BinaryBatchValues {
         }
         dictionary = raw.dictionary;
         dictIndices = ids;
+        idsComplete = raw.idsComplete;
     }
 
     /// Materialise value `idx` as a fresh `byte[]` copy. Allocates one array

@@ -7470,6 +7470,36 @@ pq.write_table(
 print("\nGenerated dict_plain_fallback_nulls.parquet:")
 print(f"  - {FALLBACK_NULLS_ROWS} rows, label (optional): dictionary pages, then PLAIN once the dictionary outgrows 1 KiB; nulls on page edges and every 7th row; id: INT64")
 
+# The fallback on a repeated leaf: `labels` holds two optional strings per row, three
+# repeated values over the first 1,500 rows (dictionary pages) and distinct ones after (PLAIN
+# pages); pages hold 150 rows, both elements are null on each page's first row and the first
+# one every fifth row. A batch then mixes entry ids, plain values and nulls across pages of
+# both encodings.
+FALLBACK_NESTED_ROWS = 3000
+def _fallback_nested_label(row, element):
+    if row % 150 == 0 or (element == 0 and row % 5 == 2):
+        return None
+    return ['alpha', 'bravo', 'charlie'][(row + element) % 3] if row < 1500 else f'distinct-{row:06d}-{element}'
+pq.write_table(
+    pa.table({
+        'labels': pa.array([[_fallback_nested_label(i, e) for e in range(2)] for i in range(FALLBACK_NESTED_ROWS)],
+                           type=pa.list_(pa.string())),
+        'id': pa.array(range(FALLBACK_NESTED_ROWS), type=pa.int64()),
+    }, schema=pa.schema([
+        pa.field('labels', pa.list_(pa.string()), nullable=False),
+        pa.field('id', pa.int64(), nullable=False),
+    ])),
+    'core/src/test/resources/dict_plain_fallback_nested.parquet',
+    use_dictionary=['labels.list.element'],
+    compression='none',
+    data_page_version='1.0',
+    dictionary_pagesize_limit=1024,
+    write_batch_size=300,
+    data_page_size=1,
+)
+print("\nGenerated dict_plain_fallback_nested.parquet:")
+print(f"  - {FALLBACK_NESTED_ROWS} rows, labels: list<string> of two, dictionary pages, then PLAIN once the dictionary outgrows 1 KiB; nulls on page edges and every 5th row; id: INT64")
+
 # Dictionary-encoded INT96 timestamps: a few distinct instants repeated, written in
 # the legacy INT96 form, so a column reader exposes dictionary ids for an INT96 column.
 INT96_DICT_ROWS = 300

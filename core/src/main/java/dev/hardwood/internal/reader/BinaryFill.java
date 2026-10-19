@@ -136,14 +136,17 @@ final class BinaryFill implements FlatFill.Run {
     }
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments
-    /// that wrote none have none.
+    /// that wrote none have none, and the ids are complete when every segment wrote them.
     static void finish(Cell cell, BinaryBatchValues out, BinaryBatchValues.ViewDemand demand) {
         if (out.dictionary != null) {
+            boolean complete = true;
             for (Segment segment : cell.segments()) {
                 if (!segment.wroteIds) {
                     Arrays.fill(out.dictIndices, segment.cellOffset, segment.cellOffset + segment.records(), -1);
+                    complete = false;
                 }
             }
+            out.idsComplete = complete;
         }
         out.finishFill(cell.records(), demand);
     }

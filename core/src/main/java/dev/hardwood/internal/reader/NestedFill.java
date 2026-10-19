@@ -140,12 +140,15 @@ final class NestedFill {
             }
         }
         if (out.dictionary != null) {
+            boolean complete = true;
             for (int i = 0; i < segments.size(); i++) {
                 if (!wroteIds[i]) {
                     NestedSegment segment = segments.get(i);
                     Arrays.fill(out.dictIndices, segment.cellValueOffset, segment.cellValueOffset + segment.values(), -1);
+                    complete = false;
                 }
             }
+            out.idsComplete = complete;
         }
         out.finishFill(valueCount, viewDemand);
         if (viewDemand.requested) {

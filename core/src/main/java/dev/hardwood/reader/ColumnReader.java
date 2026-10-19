@@ -612,19 +612,26 @@ public class ColumnReader implements Closeable {
             return;
         }
         int leafCount = nested ? getValueCount() : recordCount;
-        int[] ids = trimToLeafCount(bbv.dictIndices, leafCount);
-        Validity validity = getLeafValidity();
-        boolean anyNull = validity.hasNulls();
-        for (int i = 0; i < leafCount; i++) {
-            if (ids[i] < 0 && (!anyNull || validity.isNotNull(i))) {
-                return;
-            }
+        if (!bbv.idsComplete && lacksAnEntry(bbv.dictIndices, leafCount)) {
+            return;
         }
-        cachedDictionaryIds = ids;
+        cachedDictionaryIds = trimToLeafCount(bbv.dictIndices, leafCount);
         if (lastBinaryDictionary == null || !lastBinaryDictionary.wraps(bbv.dictionary)) {
             lastBinaryDictionary = new BinaryDictionary(bbv.dictionary, column, currentFileName);
         }
         cachedBinaryDictionary = lastBinaryDictionary;
+    }
+
+    /// Whether a present value among the first `leafCount` has no entry id.
+    private boolean lacksAnEntry(int[] ids, int leafCount) {
+        Validity validity = getLeafValidity();
+        boolean anyNull = validity.hasNulls();
+        for (int i = 0; i < leafCount; i++) {
+            if (ids[i] < 0 && (!anyNull || validity.isNotNull(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// The current batch's varlength leaf values, after any nested compaction.
