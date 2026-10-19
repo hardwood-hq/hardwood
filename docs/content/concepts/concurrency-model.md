@@ -28,7 +28,8 @@ an ordinary single-threaded read loop, and the parallelism happens underneath it
 Worker threads live in a pool owned by a context, not by individual readers.
 `ParquetFileReader.open(InputFile)` creates and owns a context sized to the available processors,
 and closing the reader shuts it down. An explicitly created `HardwoodContext` outlives any one
-reader and is shared across all readers opened against it; the caller closes it. See
+reader and is shared across all readers opened against it; the caller closes it. Closing a
+context lets the tasks already submitted to its pool finish, waiting up to five seconds for them. See
 [Read Multiple Files as One Dataset](../how-to/multi-file.md) for creating and passing one.
 
 Share one context across many reads. The pool is the expensive, reusable resource; readers are

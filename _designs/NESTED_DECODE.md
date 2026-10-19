@@ -187,5 +187,6 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 - **Fixed-size list element types** are limited to fixed-width primitives; byte-array-backed leaves (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) and nullable elements take the regular path.
 - **Legacy `BIT_PACKED` levels (#569).** `DataPageV1` level streams are decoded as the RLE / bit-packing hybrid whatever the header's level encoding says, so a page with `BIT_PACKED` levels is misread.
 - **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group keeps its annotation and is refused when a read projects it, rather than read as a list of variants.
+- **Layers per column (#1544).** `computeLayers` walks the schema from the root for each column it is asked about, so building the readers of a very wide read is quadratic in its column count.
 - **Real view per leaf (#1023).** Each leaf column computes its real-items view from its own levels, so sibling leaves of one repetition domain derive the same ancestor structure once each.
 - **Phantom-bearing batches** on `REAL_VIEW` build the full `computeRealView` and gather the leaf values; only all-present batches get the lean view.

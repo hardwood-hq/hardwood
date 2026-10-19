@@ -84,7 +84,7 @@ Or attach dynamically via `jcmd <pid> JFR.start`.
 | `dev.hardwood.FileOpened` | I/O | File opened and metadata read. Fields: file, fileSize, rowGroupCount, columnCount |
 | `dev.hardwood.FileMapping` | I/O | Memory-mapping of a file region. Fields: file, offset, size |
 | `dev.hardwood.RowGroupScanned` | Decode | Page boundaries scanned in a column chunk. Fields: file, rowGroupIndex, column, pageCount, scanStrategy (`sequential` or `offset-index`) |
-| `dev.hardwood.PageDecoded` | Decode | Single data page decoded. Fields: column, compressedSize, uncompressedSize |
+| `dev.hardwood.PageDecoded` | Decode | Single data page read: decompression, levels and dictionary ids, after its header is parsed. Writing the page's values into batches comes after and is not part of the event's duration. Fields: column, compressedSize, uncompressedSize |
 | `dev.hardwood.RowGroupFilter` | Filter | Row groups dropped by statistics predicate pushdown. Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped, rowGroupsFullyMatching |
 | `dev.hardwood.RowGroupBloomFilter` | Filter | Row group dropped by bloom filter predicate pushdown when the read reaches it, one event per row group dropped. `RowGroupFilter` counts that row group as kept. Fields: file, rowGroupIndex |
 | `dev.hardwood.RowGroupDictionaryFilter` | Filter | Row group dropped by dictionary predicate pushdown when the read reaches it, one event per row group dropped. `RowGroupFilter` counts that row group as kept. Fields: file, rowGroupIndex |

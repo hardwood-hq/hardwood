@@ -32,6 +32,8 @@ public interface HardwoodContext extends AutoCloseable {
     /// Get the executor service for parallel operations.
     ExecutorService executor();
 
+    /// Closes the context. The pool accepts no new task, and the tasks already submitted to
+    /// [#executor()] run to completion; the call waits up to five seconds for them.
     @Override
     void close();
 
