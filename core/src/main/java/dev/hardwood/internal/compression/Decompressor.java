@@ -12,6 +12,10 @@ import java.nio.ByteBuffer;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Interface for decompressing compressed page data.
+///
+/// Both methods read `compressed` from its position to its limit and leave the position and the
+/// limit as they were, whether the buffer is on the heap or direct, so the same buffer
+/// decompresses again.
 public interface Decompressor {
 
     /// Decompress the given compressed data from a buffer.

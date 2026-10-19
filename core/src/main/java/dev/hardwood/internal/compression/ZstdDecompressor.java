@@ -27,11 +27,16 @@ public class ZstdDecompressor implements Decompressor {
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] output) {
         int actualSize;
         try {
-            actualSize = Zstd.decompress(output, DirectBuffers.ensureDirect(compressed));
+            actualSize = compressed.hasArray()
+                    // Heap to heap, bounded to the declared size
+                    ? Math.toIntExact(Zstd.decompressByteArray(output, 0, uncompressedSize, compressed.array(),
+                            compressed.arrayOffset() + compressed.position(), compressed.remaining()))
+                    // zstd-jni advances the position of the buffer it reads
+                    : Zstd.decompress(output, DirectBuffers.ensureDirect(compressed).duplicate());
         }
         catch (RuntimeException e) {
-            // zstd-jni reports a frame it cannot read by throwing rather than by the
-            // return code the size check below covers.
+            // zstd-jni reports a frame it cannot read, or one decoding past the bound, by throwing
+            // rather than by the return code the size check below covers.
             throw new ParquetReadException("ZSTD decompression failed: " + e.getMessage(), e);
         }
 

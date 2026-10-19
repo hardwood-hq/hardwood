@@ -128,7 +128,13 @@ public class Lz4Decompressor implements Decompressor {
     private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize) {
         byte[] uncompressed = new byte[uncompressedSize];
         ByteBuffer dest = ByteBuffer.wrap(uncompressed);
-        fastDecompressor.decompress(compressed, 0, dest, 0, uncompressedSize);
+        int consumed = fastDecompressor.decompress(compressed, compressed.position(), dest, 0, uncompressedSize);
+        // The decompressor bounds its reads by the buffer's capacity, not its limit, so a block
+        // ending anywhere but at the limit is not a raw block of this page
+        if (consumed != compressed.remaining()) {
+            throw new ParquetReadException("LZ4 raw block ends at byte " + consumed + " of a "
+                    + compressed.remaining() + "-byte page");
+        }
         return uncompressed;
     }
 

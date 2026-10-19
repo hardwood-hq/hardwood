@@ -308,7 +308,6 @@ public final class DictionaryParser {
         // add, which is the only actionable thing about it, and it is not the file
         // being wrong — so it must not be caught and re-typed as one.
         Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
-        // Taken ahead of the decompressor, which consumes the buffer.
         int compressedSize = compressedData.remaining();
         try {
             byte[] data = decompressor.decompress(compressedData, uncompressedSize);

@@ -7,12 +7,20 @@
  */
 package dev.hardwood;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.zip.GZIPOutputStream;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
+import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -78,6 +86,46 @@ class GzipDecompressionTest {
                 // No more rows
                 assertThat(rowReader.hasNext()).isFalse();
             }
+        }
+    }
+
+    /// libdeflate reads a page from position to limit and leaves both as they were, whether the page
+    /// is a heap slice with an array offset or sits inside a larger direct buffer.
+    @Test
+    void libdeflateLeavesThePageBufferAsItWas() throws Exception {
+        Assumptions.assumeTrue(LibdeflateLoader.isAvailable(), "libdeflate not available on this system");
+        byte[] original = new byte[4_000];
+        for (int i = 0; i < original.length; i++) {
+            original[i] = (byte) ('a' + i % 13);
+        }
+        ByteArrayOutputStream gzip = new ByteArrayOutputStream();
+        try (GZIPOutputStream out = new GZIPOutputStream(gzip)) {
+            out.write(original);
+        }
+        byte[] page = gzip.toByteArray();
+        byte[] backing = new byte[page.length + 20];
+        Arrays.fill(backing, (byte) 0x55);
+        System.arraycopy(page, 0, backing, 7, page.length);
+        ByteBuffer slicedHeap = ByteBuffer.wrap(backing).position(3).slice().position(4).limit(4 + page.length);
+        ByteBuffer positionedDirect = ByteBuffer.allocateDirect(backing.length).put(backing).position(7)
+                .limit(7 + page.length);
+        LibdeflatePool pool = new LibdeflatePool();
+        try {
+            Decompressor decompressor = new LibdeflateDecompressor(pool);
+            for (ByteBuffer buffer : new ByteBuffer[]{ slicedHeap, positionedDirect }) {
+                int position = buffer.position();
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    byte[] dest = new byte[original.length];
+                    decompressor.decompress(buffer, original.length, dest);
+
+                    assertThat(dest).as("%s, attempt %d", buffer, attempt).isEqualTo(original);
+                    assertThat(buffer.position()).as("%s position", buffer).isEqualTo(position);
+                    assertThat(buffer.limit()).as("%s limit", buffer).isEqualTo(position + page.length);
+                }
+            }
+        }
+        finally {
+            pool.clear();
         }
     }
 

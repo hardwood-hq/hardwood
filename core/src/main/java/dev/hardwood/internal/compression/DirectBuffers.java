@@ -12,7 +12,7 @@ import java.nio.ByteBuffer;
 /// Utility for ensuring a [ByteBuffer] is direct, as required by JNI-based
 /// compression libraries (Snappy, ZSTD). If the source buffer is already
 /// direct, it is returned as-is. Otherwise, its contents are copied into
-/// a freshly allocated direct buffer.
+/// a freshly allocated direct buffer, leaving the source's position where it was.
 final class DirectBuffers {
 
     private DirectBuffers() {
@@ -23,7 +23,7 @@ final class DirectBuffers {
             return src;
         }
         ByteBuffer direct = ByteBuffer.allocateDirect(src.remaining());
-        direct.put(src);
+        direct.put(src.duplicate());
         direct.flip();
         return direct;
     }

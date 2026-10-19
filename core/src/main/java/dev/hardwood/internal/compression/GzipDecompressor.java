@@ -28,7 +28,9 @@ public class GzipDecompressor implements Decompressor {
     private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
+    public byte[] decompress(ByteBuffer page, int uncompressedSize) {
+        // Members are consumed from a duplicate, so the caller's buffer is left as it was
+        ByteBuffer compressed = page.duplicate();
         byte[] result = borrowOutputBuffer(uncompressedSize);
         int totalDecompressed = 0;
 

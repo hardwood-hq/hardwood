@@ -24,7 +24,7 @@ public class UncompressedDecompressor implements Decompressor {
                     "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
         }
         byte[] data = borrowOutputBuffer(storedSize);
-        compressed.get(data, 0, storedSize);
+        compressed.get(compressed.position(), data, 0, storedSize);
         return data;
     }
 

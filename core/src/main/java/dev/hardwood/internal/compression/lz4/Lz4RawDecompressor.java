@@ -28,25 +28,27 @@ public class Lz4RawDecompressor implements Decompressor {
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
+        // Decompress directly from ByteBuffer - no copying
+        byte[] uncompressed = new byte[uncompressedSize];
+        ByteBuffer dest = ByteBuffer.wrap(uncompressed);
+
+        int compressedLength = compressed.remaining();
+        int consumedLength;
         try {
-            // Decompress directly from ByteBuffer - no copying
-            byte[] uncompressed = new byte[uncompressedSize];
-            ByteBuffer dest = ByteBuffer.wrap(uncompressed);
-
-            int compressedLength = compressed.remaining();
-            int consumedLength = decompressor.decompress(compressed, 0, dest, 0, uncompressedSize);
-
-            if (consumedLength != compressedLength) {
-                throw new ParquetReadException(
-                        "LZ4_RAW decompression did not consume all input: expected " + compressedLength +
-                                " bytes, consumed " + consumedLength);
-            }
-
-            return uncompressed;
+            consumedLength = decompressor.decompress(compressed, compressed.position(), dest, 0, uncompressedSize);
         }
         catch (Exception e) {
             throw new ParquetReadException("LZ4_RAW decompression failed: " + e.getMessage(), e);
         }
+
+        // The decompressor bounds its reads by the buffer's capacity, not its limit
+        if (consumedLength != compressedLength) {
+            throw new ParquetReadException(
+                    "LZ4_RAW decompression did not consume all input: expected " + compressedLength +
+                            " bytes, consumed " + consumedLength);
+        }
+
+        return uncompressed;
     }
 
     @Override

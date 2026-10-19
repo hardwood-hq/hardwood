@@ -16,10 +16,13 @@ import java.util.zip.GZIPOutputStream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.GzipDecompressor;
+import dev.hardwood.internal.compression.PageBuffer;
 import dev.hardwood.metadata.CompressionCodec;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +43,34 @@ class LibdeflateDecompressorIT {
     static void cleanup() {
         if (pool != null) {
             pool.clear();
+        }
+    }
+
+    /// Reads from position to limit and leaves both as they were, so the same buffer
+    /// decompresses again, through both entry points.
+    @ParameterizedTest
+    @EnumSource(PageBuffer.class)
+    void decompressesTheSameBufferTwice(PageBuffer kind) throws Exception {
+        byte[] original = new byte[4_000];
+        Random random = new Random(13);
+        for (int i = 0; i < original.length; i++) {
+            original[i] = (byte) (random.nextInt(16) + 'a');
+        }
+        ByteBuffer buffer = kind.wrap(gzipCompress(original));
+        int position = buffer.position();
+        int limit = buffer.limit();
+        LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            byte[] result = decompressor.decompress(buffer, original.length);
+            byte[] dest = new byte[original.length];
+            decompressor.decompress(buffer, original.length, dest);
+
+            assertThat(Arrays.copyOf(result, original.length)).as("%s, attempt %d", kind, attempt)
+                    .isEqualTo(original);
+            assertThat(dest).as("%s into the caller's buffer, attempt %d", kind, attempt).isEqualTo(original);
+            assertThat(buffer.position()).as("%s position", kind).isEqualTo(position);
+            assertThat(buffer.limit()).as("%s limit", kind).isEqualTo(limit);
         }
     }
 

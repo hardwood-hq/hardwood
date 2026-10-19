@@ -102,6 +102,23 @@ class DecompressorCallerBufferTest {
                         + body.length);
     }
 
+    /// ZSTD decompresses a heap page natively into the caller's buffer, bounded to the declared
+    /// size, so a stream longer than the page declares fails without a byte written past it.
+    @Test
+    void refusesAZstdHeapStreamLongerThanThePageDeclares() {
+        byte[] body = body();
+        ByteBuffer compressed = ByteBuffer.wrap(new CompressorFactory().getCompressor(CompressionCodec.ZSTD)
+                .compress(body, 0, body.length));
+        byte[] dest = new byte[body.length + 64];
+        Arrays.fill(dest, SENTINEL);
+        Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.ZSTD);
+
+        assertThatThrownBy(() -> decompressor.decompress(compressed, 1_000, dest))
+                .isInstanceOf(ParquetReadException.class)
+                .hasMessage("ZSTD decompression failed: Destination buffer is too small");
+        assertThat(Arrays.copyOfRange(dest, 1_000, dest.length)).containsOnly(SENTINEL);
+    }
+
     private static void assertDecompressesInto(CompressionCodec codec, ByteBuffer compressed, byte[] body) {
         byte[] dest = new byte[body.length + 64];
         Arrays.fill(dest, SENTINEL);
