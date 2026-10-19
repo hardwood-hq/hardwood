@@ -258,13 +258,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     /// Ends the placement at the end of the stream or at the fetcher's failure.
     private void end(Object end) {
         if (end instanceof FetchFailure(Exception failure, boolean betweenWorkItems)) {
-            NestedCell abandoned = null;
-            if (betweenWorkItems) {
-                placer.sealOpenCell();
-            }
-            else {
-                abandoned = placer.abandonOpenCell();
-            }
+            NestedCell abandoned = betweenWorkItems ? placer.sealOpenCell(failure, column.fieldPath().toString()) : placer.abandonOpenCell();
             endWithFailure(failure, abandoned);
             return;
         }

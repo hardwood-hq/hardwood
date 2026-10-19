@@ -136,16 +136,10 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     void fetchFailed(Exception failure, boolean betweenWorkItems) {
         lock.lock();
         try {
-            Cell abandoned = null;
-            if (betweenWorkItems) {
-                placer.sealOpenCell();
-            }
-            else {
-                abandoned = placer.abandonOpenCell();
-                if (abandoned != null) {
-                    // Its pages still fill it; they must not complete it.
-                    abandoned.pending.incrementAndGet();
-                }
+            Cell abandoned = betweenWorkItems ? placer.sealOpenCell(failure, column.fieldPath().toString()) : placer.abandonOpenCell();
+            if (abandoned != null) {
+                // Its pages still fill it; they must not complete it.
+                abandoned.pending.incrementAndGet();
             }
             endWithFailure(failure, abandoned);
         }

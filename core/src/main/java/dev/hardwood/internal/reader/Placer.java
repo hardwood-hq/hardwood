@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Places one column's pages, in page order, into the cells of the read's batch plan.
@@ -65,6 +66,8 @@ final class Placer<C> {
 
     /// The batches of the row group being placed, `null` before the first page.
     private BatchPlan.RowGroupBatches rowGroupBatches;
+    /// The row group of the column chunk the current row group's pages come from, for failures.
+    private int rowGroup = ExceptionContext.UNKNOWN_ROW_GROUP;
     /// The segment of [#rowGroupBatches] the next records go to.
     private int segment;
     /// Records the current plan segment still takes.
@@ -128,7 +131,11 @@ final class Placer<C> {
         if (stopped) {
             return false;
         }
-        return page.batches == rowGroupBatches || enterRowGroup(page.batches, page.isBoundaryMarker());
+        if (page.batches == rowGroupBatches) {
+            return true;
+        }
+        rowGroup = page.rowGroup;
+        return enterRowGroup(page.batches, page.isBoundaryMarker());
     }
 
     /// Ends the stream of pages: checks the last row group, and ends the read.
@@ -138,13 +145,42 @@ final class Placer<C> {
         }
     }
 
-    /// Seals the open cell, if any, without checking it against the plan, and stops: the read
-    /// failed between two work items, where every column's batch ends at the same row.
-    void sealOpenCell() {
-        if (!stopped) {
-            sealOpen();
+    /// Stops where the read failed between two work items. Every column that placed every record
+    /// the plan takes from its last row group ends its batch at the same row there, so the open
+    /// cell, if any, is sealed; a column short of the plan holds a batch no other column ends at
+    /// that row, and its open cell is returned unsealed, as [#abandonOpenCell] does. The
+    /// shortfall is attached to `failure` as a suppressed "Batch plan mismatch" naming the file,
+    /// row group and column, since a failure between work items can be one every column shares.
+    ///
+    /// @param failure the failure that ended the read
+    /// @param column the column's path, for the shortfall's message
+    /// @return the open cell, unsealed, if the column is short of the plan; `null` otherwise
+    C sealOpenCell(Throwable failure, String column) {
+        if (stopped) {
+            return null;
         }
         stopped = true;
+        if (!placedRowGroup()) {
+            failure.addSuppressed(ExceptionContext.addReadContext(rowGroupBatches.fileName(), rowGroup, column,
+                    shortOfPlan()));
+            C cell = openCell;
+            openCell = null;
+            return cell;
+        }
+        sealOpen();
+        return null;
+    }
+
+    /// Whether the column placed every record the plan takes from its current row group.
+    private boolean placedRowGroup() {
+        BatchPlan.RowGroupBatches batches = rowGroupBatches;
+        return batches == null || rowGroupSkipped
+                || (segment >= batches.segmentCount() - 1 && segmentRowsLeft == 0);
+    }
+
+    private IllegalStateException shortOfPlan() {
+        return new IllegalStateException("Batch plan mismatch: the column holds " + rowsPlaced + " of the "
+                + rowGroupBatches.plannedRows() + " rows the plan takes from the row group");
     }
 
     /// Stops without sealing the open cell, and returns it: the read failed inside a work item,
@@ -308,9 +344,8 @@ final class Placer<C> {
             return true;
         }
         int last = batches.segmentCount() - 1;
-        if (segment < last || segmentRowsLeft != 0) {
-            throw new IllegalStateException("Batch plan mismatch: the column holds " + rowsPlaced + " of the "
-                    + batches.plannedRows() + " rows the plan takes from the row group");
+        if (!placedRowGroup()) {
+            throw shortOfPlan();
         }
         if (last >= 0 && batches.closes(last) && openCell != null) {
             return closeSegmentBatch();

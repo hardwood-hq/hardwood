@@ -258,16 +258,16 @@ Where a failure ends the stream depends on where it was met:
 | Failure | Ends the stream |
 |---|---|
 | A page task's, or one sizing or filling a cell | at once |
-| The fetcher's, between two work items, where only a planning failure is raised | after the open cell is sealed and every cell before the failure is published |
+| The fetcher's, between two work items, where only a planning failure is raised | after every cell before the failure is published; the open cell is sealed, or abandoned when the column holds fewer rows of its row group than the plan takes |
 | The fetcher's, inside a work item | after every cell before the open one is published; the open cell is abandoned |
 | One while submitting | at once, for every column of the read |
 | The decode pool's refusal of a page task, which a closed `HardwoodContext` gives | at once, as an `IllegalStateException` whose cause is the refusal |
 
-A page whose placement failed part way is still decoded into the cells it was placed into, so the cells before the failure complete. A failure between work items is met by every column at the same row, the end of the files planned before it, so the partial batches stay aligned. A failure inside a work item is met by one column at a row the others read past; its partial batch would be shorter than theirs, and a reader taking the columns in lockstep would report the mismatch instead of the failure. The context's close lets the tasks already queued run, so no column waits for a task that never runs.
+A page whose placement failed part way is still decoded into the cells it was placed into, so the cells before the failure complete. A failure between work items is met by every column at the same row, the end of the files planned before it, so the partial batches stay aligned; a column short of the plan's rows is not at that row, and its partial batch is abandoned as inside a work item, with the shortfall attached to the failure as a suppressed "Batch plan mismatch". A failure inside a work item is met by one column at a row the others read past; its partial batch would be shorter than theirs, and a reader taking the columns in lockstep would report the mismatch instead of the failure. The context's close lets the tasks already queued run, so no column waits for a task that never runs.
 
 The consumer receives every batch published before the failure, then the failure. A reader that finds any column's stream ended checks every exchange for an error before reporting the end, so a failure on a column other than the first, a filter-only column included, is not reported as a short read.
 
-Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `ColumnReadersTransportFailureTest`, `ContextClosedMidReadTest`, `PlacerTest`, `BatchExchangeTest`.
+Tests: `ReadFailureTypingTest`, `ReadFailurePositionTest`, `ColumnReadersTransportFailureTest`, `ContextClosedMidReadTest`, `PlacerTest`, `BatchPlanTest`, `BatchExchangeTest`.
 
 ### Cancellation and close
 

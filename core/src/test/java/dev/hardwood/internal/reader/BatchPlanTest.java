@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -373,6 +374,67 @@ class BatchPlanTest {
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("[longs.parquet: row group 1, column 'v', page 0] "
                         + "Batch plan mismatch: the column holds 100 of the 120 rows the plan takes from the row group");
+    }
+
+    /// A column that placed fewer rows of a row group than the plan takes from it, and whose read
+    /// then fails between two work items, publishes no batch short of its plan: the batch it holds
+    /// is not the one every other column ends at that row, so only the failure is raised behind
+    /// the batches the column completed.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void aColumnShortOfItsPlanPublishesNoPartialBatchWhenTheReadFailsBetweenWorkItems() throws Exception {
+        RowGroupBatches firstRowGroup = new BatchPlan(64, true, false, 0)
+                .plan(0, 0, DICT_CROSS_CHUNK.getFileName().toString(), false, 120);
+        List<Integer> published = new ArrayList<>();
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             RowGroupIterator iterator = iterator(context, DICT_CROSS_CHUNK)) {
+            iterator.planBatches(64, 0);
+            ColumnSchema column = iterator.referenceSchema().getColumn(0);
+            PageSource source = new PageSource(iterator, 0) {
+                private boolean failed;
+
+                @Override
+                public PageInfo next() throws IOException {
+                    PageInfo page = super.next();
+                    if (getCurrentRowGroupIndex() == 1) {
+                        failed = true;
+                        throw new IOException("The next work item cannot be read");
+                    }
+                    return page;
+                }
+
+                @Override
+                public boolean isBetweenWorkItems() {
+                    return failed || super.isBetweenWorkItems();
+                }
+
+                @Override
+                RowGroupBatches getCurrentBatches() {
+                    RowGroupBatches planned = super.getCurrentBatches();
+                    return planned != null && planned.workItemIndex() == 0 ? firstRowGroup : planned;
+                }
+            };
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.detachingFlat(column.name(), 64);
+            ReadScheduler scheduler = new ReadScheduler(context, 64, 64);
+            try (ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source, exchange, column, 64,
+                    context.decompressorFactory(), null)) {
+                scheduler.start();
+                assertThatThrownBy(() -> {
+                    BatchExchange.Batch batch;
+                    while ((batch = exchange.poll()) != null) {
+                        published.add(batch.recordCount);
+                    }
+                    exchange.checkError();
+                })
+                        .isInstanceOf(IOException.class)
+                        .hasMessage("[dict_cross_chunk.parquet: row group 1, column 'label', page 0] "
+                                + "The next work item cannot be read")
+                        .satisfies(e -> assertThat(e.getSuppressed()).singleElement(InstanceOfAssertFactories.THROWABLE)
+                                .isInstanceOf(IllegalStateException.class)
+                                .hasMessage("[dict_cross_chunk.parquet: row group 0, column 'label'] Batch plan mismatch: the column holds 100 of the 120 rows the plan takes from the row group"));
+            }
+        }
+        assertThat(published).containsExactly(64);
     }
 
     /// A page whose metadata gives it more rows than it holds fails when it is decoded, instead
