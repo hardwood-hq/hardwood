@@ -87,7 +87,7 @@ Tests: `ColumnProjectionTest`, `ProjectionOrderTest`, `PqStructByIndexTest`, `Pq
 
 **`hasNext()` loads, `next()` commits.** Only `hasNext()` moves to a new batch. Unfiltered, `next()` advances within the current batch and throws `NoSuchElementException` at its end rather than loading the next one; on a filtered batch `hasNext()` parks the matching row and `next()` only commits it, throwing `NoSuchElementException` when nothing is parked. The protocol is therefore `hasNext()` before every `next()`. The check at the batch end exists because the value arrays are sized to the batch capacity: without it `next()` would walk into the stale tail, where the all-present sentinel lets an accessor return a value from an earlier batch.
 
-**The flat row loop is a bound check.** `FlatRowReader.hasNext` and `next` compare the row index against `plainLimit`, which holds the batch's row count while the plain cursor serves it and `0` otherwise. Everything else (loading a batch, drain-side bit scans, per-row matching) sits in out-of-line slow-path methods, so an unfiltered loop, or a batch statistics proved to match, inlines to a counter and a compare. A per-batch decision added to `hasNext` or `next` themselves breaks this.
+**The flat row loop is a bound check.** `FlatRowReader.hasNext` and `next` compare the row index against `plainLimit`, which holds the batch's row count while the plain cursor serves it and `0` otherwise. Everything else (loading a batch, batch-matcher bit scans, per-row matching) sits in out-of-line slow-path methods, so an unfiltered loop, or a batch statistics proved to match, inlines to a counter and a compare. A per-batch decision added to `hasNext` or `next` themselves breaks this.
 
 **Loading a batch.** Both readers do the same steps:
 
@@ -98,7 +98,7 @@ Tests: `ColumnProjectionTest`, `ProjectionOrderTest`, `PqStructByIndexTest`, `Pq
 
 A schema with no columns yields an empty relation: there is no column to take a record count from.
 
-**File boundaries.** The batch plan closes a batch where the next row group comes from another file, and every column stamps the file name on its batches. All columns follow the one plan, so they cut at the same row and no batch spans two files. Batches span row groups unless the read decodes a binary column ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). The reader takes the file name from the first column's batch; it prefixes exception messages, attributes `RecordFilterTally` counts, and answers `FileAwareRowReader.currentFileName()`, which `AvroRowReader` (avro module) uses to name the file in its own failures. The accessor state is built once from the reference schema; how a later file's columns are mapped onto it is in [READ_PIPELINE.md](READ_PIPELINE.md).
+**File boundaries.** The batch plan closes a batch where the next row group comes from another file, and every column stamps the file name on its batches. No batch spans two files ([READ_PIPELINE.md](READ_PIPELINE.md#when-a-batch-closes)). The reader takes the file name from the first column's batch; it prefixes exception messages, attributes `RecordFilterTally` counts, and answers `FileAwareRowReader.currentFileName()`, which `AvroRowReader` (avro module) uses to name the file in its own failures. The accessor state is built once from the reference schema; how a later file's columns are mapped onto it is in [READ_PIPELINE.md](READ_PIPELINE.md).
 
 **Close.** `close()` is idempotent. It closes the columns, recycles the held batches, drains every exchange and releases the iterator; the release runs even when teardown fails, with its own failure suppressed under the original. A reader closed early stops its columns without reading further.
 
@@ -152,6 +152,6 @@ Tests: `ParquetReaderTest`, `BuilderCombinationTest`, `MultiFilePlanningTest`, `
 - **`tail` over several files.** Rejected at `build()` with `UnsupportedOperationException`; the tail plan and its mask probe are single-file.
 - **`tail` with a filter (#542).** Rejected at `build()`; see [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation).
 - **Row-layer overhead (#1045).** Reading a file through `RowReader` costs measurably more CPU and allocation than reading the same columns through `ColumnReaders`.
-- **Reader choice per file (#732).** The flat/nested choice is made from the file schema, so one repeated or group column puts every column of the read on the nested path, projected or not.
+- **Reader choice per file (#1335).** The flat/nested choice is made from the file schema, so one repeated or group column puts every column of the read on the nested path, projected or not.
 - **File name in nested caller-mistake messages (#1156).** `TopLevelFieldMap` and the nested flyweights raise their caller-mistake messages without the file name, which in a multi-file read leaves the file unidentified.
 - **Forward-only.** A `RowReader` has no backward step, reset or reposition; a new position is a new reader.

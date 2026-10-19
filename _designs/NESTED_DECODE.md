@@ -91,17 +91,9 @@ Tests: `PageTrimmerTest`, `KeptRunsTest`, `NestedFillMaskedPageTest`, `NestedV2N
 
 A nested column's batches are built from cells of the read's batch plan ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). Where a page's records start, and how many values each holds, only its levels say, so a page is placed into cells once its task has decoded and measured it, and a cell is filled only once every page placed into it is measured. The pages of one column are decoded on several threads at once, so no fill can take its write position from the fill before it: the measure and the placement give every segment its offset, and every array of the cell its size, before any value is written, so each value is written once, into an array allocated once.
 
-**Measure** (`PageMeasure`, on the page's task, after a masked page is trimmed). The page's values, its records and where each starts, and the values before its first record start:
+**Measure** (`PageMeasure`, on the page's task, after a masked page is trimmed). The page's values, its records and where each starts (as in [Masked pages](#masked-pages); on a regular page the values before the first repetition level `0` are its leading values), and, for a binary leaf, the bytes of any range of its plain values. A page whose metadata gives a record count (a column without repetition) that disagrees with its levels fails the read.
 
-| Page | Records |
-|---|---|
-| `fixedListK > 0` | one per `k` values |
-| no repetition levels (no repeated ancestor) | one per value |
-| anything else | one per repetition level `0`; the values before the first are the page's leading values |
-
-and, for a binary leaf, the bytes of any range of its plain values. A page whose metadata gives a record count (a column without repetition) that disagrees with its levels fails the read.
-
-**Placement** (`Placer`, under the column lock, in page order). The placer splits a page's records into one `NestedSegment` per batch they fall into, each a record range and the value range those records hold; a page's leading values go, as a segment of no records, into the cell holding the previous page's last record. A cell of a column without repetition is sealed as soon as its last planned record is placed; a cell of a column with repetition is sealed at the next record start, at the end of its row group where the plan closes its batch there, or at the end of the read, since its last record's values can follow on later pages.
+**Placement** (`Placer`, under the column lock, in page order). A page task places every measured page at the head of the column's unplaced pages: a page measured before the one ahead of it waits, and the task of the one ahead places both, so no page task blocks on another. The placer splits a page's records into one `NestedSegment` per batch they fall into, each a record range and the value range those records hold; a page's leading values go, as a segment of no records, into the cell holding the previous page's last record. A cell of a column without repetition is sealed as soon as its last planned record is placed; a cell of a column with repetition is sealed at the next record start, at the end of its row group where the plan closes its batch there, or at the end of the read, since its last record's values can follow on later pages.
 
 **Fill** (`NestedFill`, outside the lock, on the thread whose placement sealed the cell or another that takes it first off the column's sealed cells). The cell's arrays are allocated once at their final size: values and levels at the sum of its segments' values, record offsets at its records, a binary leaf's byte buffer at the sum of its segments' plain bytes. Each segment's values are one contiguous range of its page's kept values. A segment writes its values straight from the page's decompressed bytes through the page's value reader ([VALUE_DECODE.md](VALUE_DECODE.md#page-decode)), through a view of its own, since two cells sharing a page can be filled at once, and run by run where the page is masked. It copies its levels by `System.arraycopy`, fills the levels its page has none of (definition levels of an all-present page, repetition levels of a column without repetition), and writes the offsets of the records it starts. A binary segment writes each plain value's bytes and view, or each dictionary value's entry id, whose view is built when a reader first needs it ([COLUMN_READER.md](COLUMN_READER.md#variable-length)). The thread then computes the batch's index ([Index modes](#index-modes)) and completes the cell. A page keeps its scratch until every cell it is placed into is filled, and then returns it to the column's pool; a filled cell drops its segments, so a cell waiting for room in the exchange holds only its own arrays.
 
@@ -132,7 +124,7 @@ On a fixed-width batch every mode skips the level scans: `ALL_ITEMS` gets `multi
 
 ## Real view
 
-The real-items view (`NestedLevelComputer.RealView`) is what `ColumnReader` exposes: per-layer offsets and validity with phantom positions removed, leaf validity, and `realToRawLeaf`, the map from each real leaf to its raw position (`null` when the map would be the identity). It is a pure function of the batch's levels, record count, max definition level and layers. On `REAL_VIEW` the batch carries no levels: the fill writes the levels the view reads to the filling thread's scratch instead, the repetition levels of a column with repetition and the definition levels of a batch that is not all present, and builds the view from them.
+The real-items view (`NestedLevelComputer.RealView`, defined in [COLUMN_READER.md](COLUMN_READER.md#real-view)) is a pure function of the batch's levels, record count, max definition level and layers. On `REAL_VIEW` the batch carries no levels: the fill writes the levels the view reads to the filling thread's scratch instead, the repetition levels of a column with repetition and the definition levels of a batch that is not all present, and builds the view from them.
 
 On `REAL_VIEW` the fill builds one of two views:
 
@@ -180,7 +172,6 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 
 ## Boundaries
 
-- **Page scratch.** A nested page's decompressed bytes, levels and ids are held in its scratch from its task until every cell it is placed into is filled, so a page spanning several batches holds its scratch until its last cell fills.
 - **Non-repeated columns** in a nested row read are decoded through levels and pay the levels machinery; direct addressing for them is #732.
 - **Fixed-size list, 2-level required lists and bare repeated primitives** (`maxDefinitionLevel == 1` with a `REPEATED` leaf) take the regular path; #808.
 - **Fixed-size list with null rows** takes the regular path: the definition gate accepts a single max-value run only; #809.
@@ -188,4 +179,3 @@ Tests: `FixedSizeListDetectorTest`, `FixedSizeListEngagementTest`, `FixedSizeLis
 - **Legacy `BIT_PACKED` levels (#569).** `DataPageV1` level streams are decoded as the RLE / bit-packing hybrid whatever the header's level encoding says, so a page with `BIT_PACKED` levels is misread.
 - **Bare repeated Variant groups** (#1378). A repeated `VARIANT` group outside a `LIST` or `MAP` group keeps its annotation and is refused when a read projects it, rather than read as a list of variants.
 - **Real view per leaf (#1023).** Each leaf column computes its real-items view from its own levels, so sibling leaves of one repetition domain derive the same ancestor structure once each.
-- **Phantom-bearing batches** on `REAL_VIEW` build the full `computeRealView` and gather the leaf values; only all-present batches get the lean view.

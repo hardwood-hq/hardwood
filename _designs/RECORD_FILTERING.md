@@ -1,6 +1,6 @@
 # Record filtering
 
-Describes how a filtered read tests the rows that survive statistics pruning and returns exactly the matching ones, on the row readers (`FlatRowReader`, `NestedRowReader`) and the column readers (`ColumnReader`, `ColumnReaders`). It covers the augmented projection, the per-row matcher, the drain-side batch matchers, record selection and compaction on the column path, the consumption of row groups statistics proved to match in full, and how `head`, `skip` and `tail` count over the filtered relation.
+Describes how a filtered read tests the rows that survive statistics pruning and returns exactly the matching ones, on the row readers (`FlatRowReader`, `NestedRowReader`) and the column readers (`ColumnReader`, `ColumnReaders`). It covers the augmented projection, the per-row matcher, the batch matchers, record selection and compaction on the column path, the consumption of row groups statistics proved to match in full, and how `head`, `skip` and `tail` count over the filtered relation.
 
 Related documents:
 
@@ -48,13 +48,13 @@ Everything downstream relies on this prefix property: readers take the payload b
 - A flat column below a struct (a leaf under a required-only path, which the column path decodes as flat) is reachable by index only, so its leaf name cannot shadow a top-level column of the same name.
 - It is refreshed once per evaluated batch and positioned per record.
 
-The column readers' `SelectionEngine` evaluates through the same view, so both reader families test `pred` through one accessor. The drain-side matchers read batches by decoded index and use neither surface.
+The column readers' `SelectionEngine` evaluates through the same view, so both reader families test `pred` through one accessor. The batch matchers read batches by decoded index and use neither surface.
 
 Tests: `ReadProjectionTest`, `RequiredStructPredicateTest`.
 
 ## Per-row matcher
 
-`RecordFilterCompiler` (`internal.predicate`) compiles a `ResolvedPredicate` once per reader into a `RowMatcher`, a single-method `test(StructAccessor)`. Field paths, leaf names, operators and literals are resolved at compile time; the per-row work is value reads and comparisons. It is the fallback for every shape the drain-side compiler refuses, and the only path on `NestedRowReader`.
+`RecordFilterCompiler` (`internal.predicate`) compiles a `ResolvedPredicate` once per reader into a `RowMatcher`, a single-method `test(StructAccessor)`. Field paths, leaf names, operators and literals are resolved at compile time; the per-row work is value reads and comparisons. It is the fallback for every shape the batch compiler refuses, and the only path on `NestedRowReader`.
 
 **One lambda per `(type, operator)`.** Each leaf factory switches on the operator at compile time and returns a distinct lambda class per pair. Comparison semantics per type (NaN and signed-zero ordering through `Float.compare`/`Double.compare`, unsigned orders, the binary `Comparison`) are those of [PREDICATE_MODEL.md](PREDICATE_MODEL.md). A boolean leaf takes `EQ`/`NOT_EQ` only; any ordered operator reaching it raises `IllegalStateException`, since the resolver answers those as an equality or a constant.
 
@@ -66,7 +66,7 @@ Tests: `ReadProjectionTest`, `RequiredStructPredicateTest`.
 
 Tests: `RecordFilterCompilerTest`, `RecordFilterIndexedTest`, `ColumnReaderExactFilterTest`, `RequiredGroupNullPruningTest`.
 
-## Drain-side matchers
+## Batch matchers
 
 For an eligible predicate the flat row reader evaluates it on each column's batches as they complete, on the thread that completes the batch, usually the page task that fills it last ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)). On one thread the batch matchers are slower per row than the per-row matcher; they pay off because each column's fragment runs in parallel with the other columns and while the values just assembled are still in that core's cache. Evaluating them on the consumer thread keeps the answer and forfeits the gain. `BatchFilterCompiler.tryCompile` decides once, at reader construction, and returns either a `CompiledBatchFilter` (per-column `ColumnBatchMatcher` fragments plus a `MergePlan`) or `null`, in which case the reader falls back to the per-row matcher. There is no configuration switch.
 
@@ -85,7 +85,7 @@ and no column appears in two independent subtrees. `Not` never reaches the compi
 | `FLOAT16` comparison or `IN` | No batch matcher |
 | `intersects` | Row-group decision only |
 | A column in two independent subtrees, e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)` | One column holds one bitmap per batch |
-| Any predicate on `NestedRowReader` | That reader has no drain-side path |
+| Any predicate on `NestedRowReader` | That reader has no batch-matcher path |
 
 `isSupported` is an exhaustive switch over the `ResolvedPredicate` hierarchy with no `default`, so a new predicate type cannot reach or silently skip the batch path without an answer there.
 
@@ -123,7 +123,7 @@ Tests: `DrainSideOracleTest`.
 
 A plan that is a single `MergePlan.Column` yields that column's bitmap directly; any other plan goes through `MergePlanEvaluator` into a combined buffer. The merger dereferences only the columns its plan references (`referencedColumns()`), so a caller that stages the batch array need keep only those entries current.
 
-**Oracle.** The per-row matcher and the drain-side fragments plus merge select the same rows for each supported column type under its comparison operators, the `IN` forms and the null tests, as single leaves and in cross-type `And`/`Or` compounds. A single byte-array leaf is also checked against a reference that bypasses `BinaryComparator` (decimals as `BigInteger`, byte strings through `Arrays.compareUnsigned`), since both paths compare through it. The unsigned leaves and the constant leaves are covered end to end only, where the row path runs every corpus case both drain-side and forced onto the per-row matcher.
+**Oracle.** The per-row matcher and the batch fragments plus merge select the same rows for each supported column type under its comparison operators, the `IN` forms and the null tests, as single leaves and in cross-type `And`/`Or` compounds. A single byte-array leaf is also checked against a reference that bypasses `BinaryComparator` (decimals as `BigInteger`, byte strings through `Arrays.compareUnsigned`), since both paths compare through it. The unsigned leaves and the constant leaves are covered end to end only, where the row path runs every corpus case both through the batch matchers and forced onto the per-row matcher.
 
 Tests: `DrainSideOracleTest`, `PredicatePathAgreementTest`.
 
@@ -162,7 +162,7 @@ A column reads the flag of its own batch; a reader reads it from the first paylo
 |---|---|
 | `ScheduledFlatColumn` with a fragment | Writes the all-ones mask instead of running the fragment |
 | `FlatRowReader`, no cap | Clears the active matcher and merger; the batch takes the plain cursor and is tallied whole |
-| `FlatRowReader` with `head(N)` | Drain-side: uses an all-ones survivor bitmap without merging. Per-row: counts every row as a match without calling the matcher |
+| `FlatRowReader` with `head(N)` | Batch matchers: use an all-ones survivor bitmap without merging. Per-row: counts every row as a match without calling the matcher |
 | `NestedRowReader` | As `FlatRowReader`'s per-row path |
 | `SelectionEngine` | Returns `-1` before either backend runs |
 
@@ -218,7 +218,7 @@ Tests: `RowGroupFilterTest`, `PredicatePushDownTest`, `BuilderCombinationTest`.
 
 ## Boundaries
 
-- **Nested and remaining leaf shapes on the drain side (#485).** Nested-path leaves, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to the drain side would let `RecordFilterCompiler` go.
+- **Nested and remaining leaf shapes as batch matchers (#485).** Nested-path leaves, `FLOAT16`, `intersects` and every predicate on `NestedRowReader` are evaluated a row at a time on the consumer thread. Moving them to batch matchers would let `RecordFilterCompiler` go.
 - **Late materialization (#500).** Payload columns are decoded in full for every undecided row group and then compacted; decoding them only for matching rows is a different pipeline shape.
 - **Fixed-width dictionary-space evaluation (#1447).** Binary matchers decide referenced dictionary entries once; fixed-width primitive matchers still evaluate dictionary-encoded columns per row.
 - **Fused same-column range matchers (#454)** and **Vector API matchers (#456).** `id >= a AND id < b` runs two passes over the column and one word-wise AND.

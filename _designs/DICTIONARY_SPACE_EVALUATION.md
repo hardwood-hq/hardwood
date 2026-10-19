@@ -1,10 +1,10 @@
 # Dictionary-space predicate evaluation
 
-Describes how a drain-side binary matcher decides a dictionary-encoded batch once per referenced dictionary entry rather than once per row: the per-value matcher contract, the lazy per-entry outcomes and their lifetime, and how rows without an entry id are decided.
+Describes how a binary batch matcher decides a dictionary-encoded batch once per referenced dictionary entry rather than once per row: the per-value matcher contract, the lazy per-entry outcomes and their lifetime, and how rows without an entry id are decided.
 
 Related documents:
 
-- [RECORD_FILTERING.md](RECORD_FILTERING.md): the drain-side matchers this wraps, their eligibility and the merge of their masks
+- [RECORD_FILTERING.md](RECORD_FILTERING.md): the batch matchers this wraps, their eligibility and the merge of their masks
 - [VALUE_DECODE.md](VALUE_DECODE.md): the dictionary page and the per-value entry indices a batch records
 - [COLUMN_READER.md](COLUMN_READER.md): the batch layout, including the deferred byte views of dictionary values
 - [READ_PIPELINE.md](READ_PIPELINE.md): why a batch of a binary column holds values of one column chunk
