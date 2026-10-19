@@ -78,6 +78,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// The end rows ([PageTask#endRow]) of the pages submitted whose rows are not all published,
     /// in page order.
     private final ArrayDeque<long[]> submittedPages = new ArrayDeque<>();
+    /// The size of [#submittedPages] when it last changed, read without the lock.
+    private volatile int submittedPageCount;
     /// Set once the fetcher queues no more pages.
     volatile boolean fetchEnded;
 
@@ -248,6 +250,11 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         }
     }
 
+    /// [#pagesAhead()] as of the last page submitted or rows published, without taking the lock.
+    int lastPagesAhead() {
+        return submittedPageCount;
+    }
+
     /// Takes the column's next queued page off the queue and counts it as a task. The task is
     /// counted before `done` is read, so [#close()] either sees the count or this sees `done`.
     ///
@@ -260,6 +267,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
             page = done ? null : ready.pollFirst();
             if (page != null) {
                 submittedPages.addLast(page.endRow);
+                submittedPageCount = submittedPages.size();
             }
         }
         finally {
@@ -478,6 +486,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         while (!submittedPages.isEmpty() && submittedPages.peekFirst()[0] <= published) {
             submittedPages.pollFirst();
         }
+        submittedPageCount = submittedPages.size();
     }
 
     /// Recomputes [#publishedRow] after the publish order or [#nextRow] changed (lock held).

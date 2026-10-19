@@ -102,7 +102,7 @@ class ReadAheadDepthTest {
         AtomicLong submissions = new AtomicLong();
         AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
         AtomicLong maxFirstRow = new AtomicLong(-1);
-        ReadScheduler.submissionObserver = (column, page, inFlight) -> {
+        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
             // Both only grow past the scheduler's decision: the published row as cells publish,
             // and the pages ahead by the page just taken alone
             long ahead = page.firstRow - column.publishedRow();

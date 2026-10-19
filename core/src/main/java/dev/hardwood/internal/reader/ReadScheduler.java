@@ -22,7 +22,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// The pool runs tasks in the order they arrive. The scheduler submits the queued page that
 /// starts at the lowest row of the read, so the tasks of the batch the consumer waits for are
 /// ahead of every read-ahead task in the pool's queue, whatever the number of columns and their
-/// page sizes. It has no thread of its own and does no I/O and no decoding: it runs on whichever
+/// page sizes. While that page is past its column's read-ahead depth, every page below it is
+/// submitted; if fewer of the read's pages are in flight than the pool has threads, the scheduler
+/// then submits the next page of the first column past it with fewer pages ahead than the pool
+/// has threads, if that page is within its column's depth. A column of pages spanning many
+/// batches so decodes ahead beside a column of small pages, whose depth ends a few batches past
+/// the read's first unpublished row.
+///
+/// The scheduler has no thread of its own and does no I/O and no decoding: it runs on whichever
 /// thread changes what may be submitted (a fetcher queuing a page, a page task ending, a column
 /// publishing a batch or ending), one thread at a time, and a call made while another thread
 /// submits makes that thread look again ([#submit()]).
@@ -30,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// A page is submitted once:
 ///
 /// - every column whose queue is empty and whose next page could start before that page has
-///   queued it, so that no page is submitted ahead of an earlier one;
+///   queued it, so that no page is submitted ahead of an earlier one not yet queued;
 /// - fewer than [#PAGES_PER_THREAD] pages per decode thread are submitted and not finished,
 ///   across the read;
 /// - it holds rows of the batch its column publishes next, or it is within the column's
@@ -42,7 +49,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// a column's next queued page, the next row of a column with nothing queued, the first row a
 /// column has not published), and re-reads a column's keys only when the column reports a
 /// change. Finding the page to submit costs a logarithm of the column count, not a pass over the
-/// columns, so a read of thousands of columns is not quadratic in them.
+/// columns, so a read of thousands of columns is not quadratic in them; past a page beyond its
+/// depth, the scheduler looks at no more columns than the pool has threads.
 ///
 /// The depth gives every decode thread work on the column alone, in whichever unit runs out
 /// first: a page, where pages are large against batches, or a batch, where many small pages
@@ -67,7 +75,10 @@ public final class ReadScheduler {
         /// @param column the page's column
         /// @param page the page
         /// @param inFlight the pages in flight across the read, this one included
-        void submitted(ScheduledColumn<?> column, PageTask page, int inFlight);
+        /// @param lowestRow the first row of the lowest page queued across the read when the page
+        ///     was chosen, the page's own row when it is that page
+        /// @param readPublishedRow the read's first unpublished row the choice was made against
+        void submitted(ScheduledColumn<?> column, PageTask page, int inFlight, long lowestRow, long readPublishedRow);
     }
 
     private final HardwoodContextImpl context;
@@ -88,6 +99,10 @@ public final class ReadScheduler {
     /// Columns not done, by their first row not published.
     private final TreeSet<ScheduledColumn<?>> unpublished = new TreeSet<>(
             Comparator.comparingLong((ScheduledColumn<?> c) -> c.indexedPublishedRow).thenComparingInt(c -> c.scheduleId));
+    /// The lowest queued row and the read's first unpublished row of the last choice, for the
+    /// [SubmissionObserver].
+    private long chosenLowestRow;
+    private long chosenReadPublished;
     private final AtomicInteger submitted = new AtomicInteger();
     /// Calls to [#submit()] not yet served; the caller that raises it from zero submits.
     private final AtomicInteger submitting = new AtomicInteger();
@@ -201,7 +216,7 @@ public final class ReadScheduler {
             int inFlight = submitted.incrementAndGet();
             SubmissionObserver observer = submissionObserver;
             if (observer != null) {
-                observer.submitted(next, page, inFlight);
+                observer.submitted(next, page, inFlight, chosenLowestRow, chosenReadPublished);
             }
             ScheduledColumn<?> column = next;
             try {
@@ -231,11 +246,33 @@ public final class ReadScheduler {
         long pendingRow = pending.isEmpty() ? Long.MAX_VALUE : pending.first().indexedNextRow;
         // The read's first row a column has not published: the slowest column's
         long readPublished = unpublished.isEmpty() ? Long.MAX_VALUE : unpublished.first().indexedPublishedRow;
-        if (pendingRow < bestRow || submitted.get() >= pagesInFlight
-                || !withinDepth(best, bestRow, readPublished)) {
+        if (pendingRow < bestRow || submitted.get() >= pagesInFlight) {
             return null;
         }
-        return best;
+        chosenLowestRow = bestRow;
+        chosenReadPublished = readPublished;
+        if (withinDepth(best, bestRow, readPublished)) {
+            return best;
+        }
+        // The page at the lowest row is past its depth, so every page below it is submitted and
+        // any page submitted now is read-ahead, which is worth submitting only to a thread the
+        // read leaves idle. A column with fewer pages ahead than the pool has threads may still
+        // be within its own depth. Such a column's page is past its depth only past the cap, so
+        // where the first of them fails, every later one does too. The search passes at most as
+        // many columns as the pool has threads, so that it does not grow with the column count.
+        if (submitted.get() >= context.threads()) {
+            return null;
+        }
+        int passed = 0;
+        for (ScheduledColumn<?> candidate : queued.tailSet(best, false)) {
+            if (candidate.indexedHeadRow > pendingRow || passed++ == context.threads()) {
+                return null;
+            }
+            if (candidate.lastPagesAhead() < context.threads()) {
+                return withinDepth(candidate, candidate.indexedHeadRow, readPublished) ? candidate : null;
+            }
+        }
+        return null;
     }
 
     /// Re-reads `column`'s keys and moves it to where they place it in the index.

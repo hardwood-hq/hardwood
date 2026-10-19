@@ -36,14 +36,15 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The read's scheduler submits the pages of its columns in row order across the columns, keeps
-/// at most two pages per decode thread in flight. The columns' pages differ in size: under
-/// one page byte target, the `INT64` column cuts its pages at about half the rows the `INT32`
-/// columns do.
+/// The read's scheduler submits the pages of its columns in row order across the columns, past
+/// the lowest queued page only while that page is past its depth, and keeps at most two pages per
+/// decode thread in flight. The columns' pages differ in size: under one page byte target, the
+/// `INT64` column cuts its pages at about half the rows the `INT32` columns do.
 class ReadSchedulerTest {
 
     private static final int ROWS = 60_000;
     private static final int THREADS = 3;
+    private static final int BATCH = 1_000;
 
     @AfterEach
     void removeObserver() {
@@ -52,16 +53,16 @@ class ReadSchedulerTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    void pagesOfEveryColumnAreSubmittedInRowOrder() throws Exception {
+    void pagesAreSubmittedInRowOrderUnlessTheLowestIsPastItsDepth() throws Exception {
         List<long[]> submissions = Collections.synchronizedList(new ArrayList<>());
-        ReadScheduler.submissionObserver = (column, page, inFlight) ->
-                submissions.add(new long[]{ page.firstRow, inFlight, page.info.records() });
+        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) ->
+                submissions.add(new long[]{ page.firstRow, inFlight, lowestRow, readPublishedRow });
 
         Map<String, Long> sums = new HashMap<>();
         try (HardwoodContext context = HardwoodContext.create(THREADS);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file())), context);
              ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("longs", "ints", "small"))
-                     .batchSize(1_000)
+                     .batchSize(BATCH)
                      .build()) {
             while (columns.nextBatch()) {
                 for (String name : List.of("longs", "ints", "small")) {
@@ -79,8 +80,15 @@ class ReadSchedulerTest {
         assertThat(sums).containsExactlyInAnyOrderEntriesOf(Map.of("longs", expected, "ints", expected,
                 "small", expected));
         assertThat(submissions).hasSizeGreaterThan(10);
-        for (int i = 1; i < submissions.size(); i++) {
-            assertThat(submissions.get(i)[0]).as("submission %d", i).isGreaterThanOrEqualTo(submissions.get(i - 1)[0]);
+        for (int i = 0; i < submissions.size(); i++) {
+            long[] submission = submissions.get(i);
+            if (submission[0] != submission[2]) {
+                // Past a page at least as many batches past the read's first unpublished row as
+                // the pool has threads: the consumer's next batches wait on no queued page
+                assertThat(submission[2] - submission[3])
+                        .as("submission %d at row %d, past a page at row %d", i, submission[0], submission[2])
+                        .isGreaterThanOrEqualTo((long) THREADS * BATCH);
+            }
         }
         for (long[] submission : submissions) {
             assertThat(submission[1]).isLessThanOrEqualTo(2L * THREADS);
