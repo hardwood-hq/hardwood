@@ -298,10 +298,10 @@ non-repeated column is then read flat wherever it appears, which is what closes 
 2 — not by making `ScheduledNestedColumn` cheaper for it, but by no longer sending it
 there. Finding 5 goes with it: `BatchSizing.levelBytesPerValue` returning `0` for a
 non-repeated column becomes true, because such a column no longer carries level arrays.
-The scalar columns of a mixed projection gain drain-side batch filtering, which exists
+The scalar columns of a mixed projection gain batch-matcher filtering, which exists
 only on the flat column.
 
-The work is the heterogeneous batch set: reconciling addressing and the drain-side
+The work is the heterogeneous batch set: reconciling addressing and the batch-matcher
 intersect-matches logic across `BatchExchange.Batch` and `NestedBatch`. #732 prices this
 as one hoistable per-column branch in the accessor. `ColumnReader` is the existence
 proof — it has selected its pipeline per column since it shipped — though it splits on
@@ -333,7 +333,7 @@ the JIT keeps its field accesses monomorphic on the flat hot path. Aligning the 
 the fields that mean the same thing (`Batch.validity` and `NestedBatch.elementValidity`,
 same polarity) costs nothing and is worth doing.
 
-Drain-side batch filtering (`Batch.matches`, `BatchMatchMerger`, `ColumnBatchMatcher`)
+Batch-matcher filtering (`Batch.matches`, `BatchMatchMerger`, `ColumnBatchMatcher`)
 exists only on the flat path, so a mixed schema loses it for its scalar columns as well.
 Stage 5 reads those columns flat and gives them the filter; a genuinely repeated
 column still has none, which is a capability gap in the neighbourhood of #222.

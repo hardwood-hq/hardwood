@@ -16,8 +16,9 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// Both children must be valid matchers for the column's batch — the composite
 /// is type-agnostic and delegates the `batch.values` cast to each child. The
 /// scratch buffer is allocated lazily on the first [#test] call and reused
-/// across batches, so calls must not overlap: a drain makes them one at a time, and a
-/// scheduled column serializes the calls of the tasks that complete its batches.
+/// across batches, so calls must not overlap: a scheduled column serializes the calls of the
+/// tasks that complete its batches, and the column readers' merger calls it on the
+/// consumer thread.
 public final class AndBatchMatcher implements ColumnBatchMatcher {
 
     private final ColumnBatchMatcher first;

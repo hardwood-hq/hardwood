@@ -17,7 +17,7 @@ package dev.hardwood.internal.predicate;
 /// persist across calls — zero per-call allocations after warm-up.
 ///
 /// Instances are owned by [dev.hardwood.internal.reader.BatchMatchMerger] on
-/// the hot path and by `DrainSideOracleTest`, which merges the bitmaps itself
+/// the hot path and by `BatchMatcherOracleTest`, which merges the bitmaps itself
 /// to verify equivalence with the per-row compile path.
 public final class MergePlanEvaluator {
 

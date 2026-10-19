@@ -60,7 +60,7 @@ class ColumnReaderExactFilterTest {
     private static final Path NESTED_FILE = Paths.get("src/test/resources/filter_pushdown_nested.parquet");
     private static final Path MIXED_FILE = Paths.get("src/test/resources/filter_pushdown_mixed.parquet");
 
-    // ==================== Flat, drain-side-eligible predicate ====================
+    // ==================== Flat, batch-matcher-eligible predicate ====================
 
     @Test
     void selfColumnExact() throws Exception {
@@ -176,7 +176,7 @@ class ColumnReaderExactFilterTest {
         }
     }
 
-    // ==================== Flat, drain-side-ineligible predicate (RowMatcher fallback) ====================
+    // ==================== Flat, batch-matcher-ineligible predicate (RowMatcher fallback) ====================
 
     @Test
     void flatStringEqualityUsesFallbackAndIsExact() throws Exception {
@@ -389,12 +389,12 @@ class ColumnReaderExactFilterTest {
     // ==================== Equivalence: distinct == grouped == row reader ====================
 
     /// Predicate shapes spanning the implementation's branches: single-column
-    /// drain-side, multi-column AND/OR merge, the `RowMatcher` fallback (string
+    /// batch-matcher, multi-column AND/OR merge, the `RowMatcher` fallback (string
     /// equality), and a `NOT` lowering. Each must agree across distinct single
     /// readers, the grouped reader, and the row reader.
     static Stream<Arguments> equivalenceFilters() {
         return Stream.of(
-                Arguments.of("self/cross drain-side", FilterPredicate.lt("id", 150L)),
+                Arguments.of("self/cross batch-matcher", FilterPredicate.lt("id", 150L)),
                 Arguments.of("multi-column AND",
                         FilterPredicate.and(FilterPredicate.gt("id", 150L), FilterPredicate.lt("value", 250L))),
                 Arguments.of("multi-column OR",

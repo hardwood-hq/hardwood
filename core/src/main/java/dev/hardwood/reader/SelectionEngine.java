@@ -27,10 +27,10 @@ import dev.hardwood.schema.FileSchema;
 ///
 /// Two backends, chosen once at construction:
 ///
-/// - **Drain-side** — when [BatchFilterCompiler] accepts the predicate (flat,
+/// - **Batch-matcher** — when [BatchFilterCompiler] accepts the predicate (flat,
 ///   top-level, supported `(type, op)`), a [BatchMatchMerger] runs the
 ///   per-column matcher fragments over the flat batches and combines them into
-///   one survivor bitmap. This is the row reader's drain-side merge, in the
+///   one survivor bitmap. This is the row reader's batch-matcher merge, in the
 ///   mode where the merger runs the matchers itself because no column has run
 ///   them as its cells completed.
 /// - **Record matcher** — otherwise (nested paths, float16, geospatial,
@@ -39,7 +39,7 @@ import dev.hardwood.schema.FileSchema;
 ///   evaluate the same matcher against.
 final class SelectionEngine {
 
-    // Drain-side backend (null when the record-matcher backend is used).
+    // Batch-matcher backend (null when the record-matcher backend is used).
     private final BatchMatchMerger merger;
     /// The batches [#merger] reads, indexed by projected column index. Staged
     /// here rather than passed straight through because the merger takes the
@@ -53,11 +53,11 @@ final class SelectionEngine {
 
     private final ColumnCursor[] cursorsByProjectedIndex;
 
-    // Record-matcher backend (null when the drain-side backend is used).
+    // Record-matcher backend (null when the batch-matcher backend is used).
     private final RowMatcher rowMatcher;
     private final PredicateView predicateView;
     /// The batches [#predicateView] reads, indexed by projected column index and
-    /// refreshed per evaluated batch. `null` on the drain-side backend.
+    /// refreshed per evaluated batch. `null` on the batch-matcher backend.
     private final BatchExchange.Batch[] flatBatches;
     private final NestedBatch[] nestedBatches;
 
@@ -127,7 +127,7 @@ final class SelectionEngine {
             return -1;
         }
         return merger != null
-                ? computeDrainSide(recordCount)
+                ? computeBatchMatchers(recordCount)
                 : computeRecordMatcher(recordCount);
     }
 
@@ -137,7 +137,7 @@ final class SelectionEngine {
         return selection;
     }
 
-    private int computeDrainSide(int recordCount) {
+    private int computeBatchMatchers(int recordCount) {
         for (int i = 0; i < stagedColumns.length; i++) {
             int p = stagedColumns[i];
             stagedBatches[p] = cursorsByProjectedIndex[p].flatBatch();

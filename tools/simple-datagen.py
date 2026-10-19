@@ -337,12 +337,12 @@ print("\nGenerated nested_struct_test.parquet:")
 print("  - Data: id=[1,2,3], address=[{street,city,zip}, {street,city,zip}, null]")
 
 # 1b. Nested dictionary-encoded string decoded across a batch boundary.
-# Regression fixture for a nested-read bug: the drain reused one bytes buffer
-# across batches and published each batch by aliasing it, so assembling the next
-# batch overwrote the previous batch's still-unread values. It triggers whenever
+# Regression fixture for a nested-read bug: a column that reuses one bytes buffer
+# across batches and publishes each batch by aliasing it lets assembling the next
+# batch overwrite the previous batch's still-unread values. It triggers whenever
 # a single nested variable-length leaf spans more than one batch. The row reader
 # auto-sizes its batch to 6 MB / row width (so a lone string column needs
-# > ~393k rows to cross), but the ColumnReader path shares the same worker and
+# > ~393k rows to cross), but the ColumnReader path shares the same fill and
 # takes an explicit batch size, so the test reads this fixture with a batch of 64
 # and 300 rows suffice. Values are distinct so any corruption is obvious; the
 # struct is null on every 7th row, the name on every 3rd. data_page_version
@@ -5618,7 +5618,7 @@ print("  - Wide metric_* tail columns for horizontal scrolling in data preview")
 # `score` is a top-level primitive whose LEAF-column index (4) differs from its
 # top-level FIELD index (3): the `point` struct contributes two extra leaf
 # columns in front of it. `tag` is a string column; a predicate on a BYTE_ARRAY
-# column is not drain-side eligible, so AND-ing it with an int predicate on
+# column is not batch-matcher eligible, so AND-ing it with an int predicate on
 # `score` forces the whole query onto the record-side (FilteredRowReader)
 # filter path — the path that must keep field-index and leaf-column-index
 # distinct when struct-of-primitives files move to the flat reader.

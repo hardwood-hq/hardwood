@@ -31,7 +31,7 @@ import jdk.jfr.consumer.RecordedEvent;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Asserts that record-level filtering emits `dev.hardwood.RecordFilter`, one event per
-/// file, across all three paths that evaluate a predicate per record: the drain-side
+/// file, across all three paths that evaluate a predicate per record: the batch-matcher
 /// batch matchers, the row-reader wrapper they fall back to, and the column-reader
 /// selection engine.
 ///
@@ -54,8 +54,8 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
     private static final long KEPT = 150;
 
     @Test
-    void drainSideFilterReportsCountsForItsFile() throws Exception {
-        // A flat int comparison compiles to the drain-side batch matchers, where the
+    void batchMatcherFilterReportsCountsForItsFile() throws Exception {
+        // A flat int comparison compiles to the batch matchers, where the
         // row group proven to match in full is never tested record by record. Those
         // records still count as evaluated and kept: the event reports the filter's
         // selectivity, not which mechanism decided each record.
@@ -77,7 +77,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
     @Test
     void rowReaderFallbackReportsCountsForItsFile() throws Exception {
         // `label = 'rg2_150'` spelled as two conjunctions over `label` and `id`, which the
-        // drain-side compiler rejects, so this read goes through the per-record wrapper — the
+        // batch-matcher compiler rejects, so this read goes through the per-record wrapper — the
         // path where the counts are gathered one evaluation at a time. Every `id` is positive,
         // so the second conjunction matches nothing.
         FilterPredicate filter = FilterPredicate.or(

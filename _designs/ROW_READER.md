@@ -33,7 +33,7 @@ Both are `final`, implement `RowReader` through the internal `FileAwareRowReader
 
 A filter is installed inside the reader; which path evaluates it is in [RECORD_FILTERING.md](RECORD_FILTERING.md).
 
-Tests: `NestedSchemaTest`, `PqRowApiTest`, `DrainSideRowReaderTest`.
+Tests: `NestedSchemaTest`, `PqRowApiTest`, `BatchMatcherRowReaderTest`.
 
 ## Accessor addressing
 

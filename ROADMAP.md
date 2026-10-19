@@ -378,7 +378,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`PageDropPredicates` + `SequentialFetchPlan`)
-- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/RECORD_FILTERING.md`)
+- [x] Per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/RECORD_FILTERING.md`)
 - [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `ColumnScan`; see `_designs/RECORD_FILTERING.md`)
 - [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs/STATISTICS_PRUNING.md`)
 - [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/STATISTICS_PRUNING.md`)

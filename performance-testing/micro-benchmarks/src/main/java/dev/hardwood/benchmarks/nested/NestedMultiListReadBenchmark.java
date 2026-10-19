@@ -34,10 +34,10 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 /// The general nested read path over **many** top-level `LIST<primitive>` columns
 /// folded through one consumer thread, against the same flat decode floor. The
 /// single-column [NestedListReadBenchmark] hides consumer-side reconstruction cost
-/// once it is moved onto the per-column drains, because one consumer folding one
+/// once it is moved onto the threads that fill the batches, because one consumer folding one
 /// column is rarely the bottleneck; this fans the fold across
 /// [NestedListFileGenerator#MULTI_COLUMN_COUNT] columns so the shared consumer does
-/// that many columns' work while the drains reconstruct in parallel.
+/// that many columns' work while the decode threads reconstruct in parallel.
 ///
 /// - `columnMulti` — one [dev.hardwood.reader.ColumnReader] per column, all folded
 ///   on the calling thread.

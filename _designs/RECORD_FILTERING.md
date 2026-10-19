@@ -26,7 +26,7 @@ For a reader built with projection `p` and filter `pred`:
 
 Every row of a row group statistics left undecided is evaluated. Rows of a row group statistics proved to match in full are returned without evaluation (see [Always-match row groups](#always-match-row-groups)), so exactness there rests on the statistics being correct.
 
-Tests: `PredicatePathAgreementTest`, `ColumnReaderExactFilterTest`, `PredicatePushDownTest`, `FilterOnlyColumnSkipTest`, `DrainSideOracleTest`.
+Tests: `PredicatePathAgreementTest`, `ColumnReaderExactFilterTest`, `PredicatePushDownTest`, `FilterOnlyColumnSkipTest`, `BatchMatcherOracleTest`.
 
 ## Augmented projection
 
@@ -112,7 +112,7 @@ Equality tests bytes only when `Comparison.byteExact()` holds. Otherwise it comp
 
 Every compiled binary leaf is wrapped for dictionary-space evaluation: in a batch with a dictionary, each referenced entry is decided once through the matcher's comparison and rows read the cached outcome by their entry id ([DICTIONARY_SPACE_EVALUATION.md](DICTIONARY_SPACE_EVALUATION.md)).
 
-Tests: `DrainSideOracleTest`.
+Tests: `BatchMatcherOracleTest`.
 
 ### Merge
 
@@ -125,7 +125,7 @@ A plan that is a single `MergePlan.Column` yields that column's bitmap directly;
 
 **Oracle.** The per-row matcher and the batch fragments plus merge select the same rows for each supported column type under its comparison operators, the `IN` forms and the null tests, as single leaves and in cross-type `And`/`Or` compounds. A single byte-array leaf is also checked against a reference that bypasses `BinaryComparator` (decimals as `BigInteger`, byte strings through `Arrays.compareUnsigned`), since both paths compare through it. The unsigned leaves and the constant leaves are covered end to end only, where the row path runs every corpus case both through the batch matchers and forced onto the per-row matcher.
 
-Tests: `DrainSideOracleTest`, `PredicatePathAgreementTest`.
+Tests: `BatchMatcherOracleTest`, `PredicatePathAgreementTest`.
 
 ## Column readers
 

@@ -374,7 +374,7 @@ class PredicatePushDownTest {
     @Test
     void testNestedSchemaProvenRowGroupSkipsEvaluationAndHandsBackTheCap() throws Exception {
         // lt(id, 5) fully matches RG1 (id 1-3), splits RG2 (id 4-6) and drops RG3 (id 7-9).
-        // The nested reader has no drain-side path, so this is the record matcher reading
+        // The nested reader has no batch-matcher path, so this is the record matcher reading
         // NestedBatch.filterAlwaysMatches: RG1's batch is proven and served without the
         // predicate being evaluated on any of its rows, RG2's is evaluated a row at a time.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {

@@ -133,7 +133,7 @@ public final class NestedReads {
     // reads the same leaf stream as foldLong/foldDouble, so the sum agrees, but it
     // forces the per-layer view every batch — where foldLong/foldDouble touch only
     // the leaf values, count, and leaf validity. This is the workload that exposes
-    // whether the RealView is built on the drain or lazily on the consumer.
+    // whether the RealView is built on the filling thread or lazily on the consumer.
 
     /// Index of the (single) REPEATED layer — the list boundary. Found by kind so
     /// the fold is agnostic to whether an optional wrapper adds a STRUCT layer.

@@ -76,15 +76,15 @@ public class BatchExchange<B> {
         public int capacity;
         public String fileName;
         /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.ColumnBatchMatcher]
-        /// on the task that completes the batch when drain-side filtering is enabled. `null` means "no
+        /// on the task that completes the batch when batch-matcher filtering is enabled. `null` means "no
         /// fragment for this column" — [BatchMatchMerger] never reads those columns, since
         /// it visits exactly the ones its plan references. When non-null, sized to
-        /// `(batchCapacity + 63) >>> 6` and overwritten on every drain-side test call.
+        /// `(batchCapacity + 63) >>> 6` and overwritten on every batch-matcher test call.
         public long[] matches;
 
         /// Whether statistics proved every record of this batch matches the filter
         /// predicate, making [#matches] all-ones without per-record evaluation.
-        /// Only set on the drain-side filter path; `false` is always safe.
+        /// Only set on the batch-matcher filter path; `false` is always safe.
         public boolean filterAlwaysMatches;
     }
 

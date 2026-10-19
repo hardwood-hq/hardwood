@@ -51,10 +51,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// - **Match-all / compound match-all**: predicates that keep every row — worst case
 ///   overhead because the filter is evaluated for each row but never prunes.
 /// - **Selective**: predicates that drop most rows — real-world wins.
-/// - **Drain-eligible compound ANDs** (2/3/4 leaves across `id`, `value`, `tag`, `flag`):
+/// - **Batch-eligible compound ANDs** (2/3/4 leaves across `id`, `value`, `tag`, `flag`):
 ///   exercise the column-local AND fast path.
 /// - **Fallback shapes** (single-leaf, OR, same-column range, IN-list): trip the
-///   drain-eligibility gate so the record matcher handles them. See [BatchFilterCompiler].
+///   batch-eligibility gate so the record matcher handles them. See [BatchFilterCompiler].
 /// - **Page+record**: id range that prunes ~99% of pages via column-index min/max,
 ///   then a per-row `value<500` filter on the survivors.
 ///
@@ -122,7 +122,7 @@ class RecordFilterBenchmarkTest {
     private static final int DEFAULT_RUNS = 10;
     private static final int CATEGORY_EQ_WARMUPS = 3;
 
-    private static final String PATH_DRAIN = "(Drain Side filtration)";
+    private static final String PATH_BATCH = "(Batch Matcher Filtration)";
     private static final String PATH_CONSUMER = "(Consumer Side Filtration)";
     private static final String PATH_NONE = "";
 
@@ -204,7 +204,7 @@ class RecordFilterBenchmarkTest {
                 // ~50% selectivity but on a **sorted** column — every batch's bitset
                 // is one long run of 1s followed by 0s (or all 0s after id crosses
                 // TOTAL/2). Pairs with `compoundMid` to isolate the run-structure
-                // effect: same drain shape, same selectivity, very different runs.
+                // effect: same batch-matcher shape, same selectivity, very different runs.
                 FilterPredicate.and(
                         FilterPredicate.lt("id", (long) (TOTAL_ROWS / 2)),
                         FilterPredicate.gtEq("tag", 0)),
@@ -225,7 +225,7 @@ class RecordFilterBenchmarkTest {
         Run mixedAndOr = timeFilter(
                 // Outer AND narrows by `flag`, inner OR picks rows from either
                 // end of the `id`/`tag` distributions — three distinct columns
-                // so all branches stay drain-eligible. Roughly:
+                // so all branches stay batch-eligible. Roughly:
                 //   flag!=false: ~50%
                 //   (id<N/4 OR tag<25): id<N/4 is exactly 25%, tag<25 ~25% uniform,
                 //                       independent OR ≈ 43.75%
@@ -238,7 +238,7 @@ class RecordFilterBenchmarkTest {
                 runs);
 
         Run rangeDup = timeFilter(
-                // Same-column range on `id` is not drain-eligible (duplicate column).
+                // Same-column range on `id` is not batch-eligible (duplicate column).
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 1_000_000L),
                         FilterPredicate.lt("id", 2_000_000L),
@@ -424,24 +424,24 @@ class RecordFilterBenchmarkTest {
                 .isEqualTo(variableDecimalRange.rows[0]);
         assertThat(fixedDecimalEq.rows[0]).isPositive().isEqualTo(variableDecimalEq.rows[0]);
         assertThat(fixedDecimalIn.rows[0]).isPositive().isEqualTo(variableDecimalIn.rows[0]);
-        assertThat(fixedDecimalIn.path()).isEqualTo(PATH_DRAIN);
-        assertThat(variableDecimalIn.path()).isEqualTo(PATH_DRAIN);
+        assertThat(fixedDecimalIn.path()).isEqualTo(PATH_BATCH);
+        assertThat(variableDecimalIn.path()).isEqualTo(PATH_BATCH);
         // Binary range: half the pool sorts below the literal.
         assertThat(binaryRange.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
         // Binary compound: two independent ~50% leaves.
         assertThat(binaryCompound.rows[0]).isBetween((long) (TOTAL_ROWS * 0.2), (long) (TOTAL_ROWS * 0.3));
-        // binaryIn: 5 of 100 categories, expect ~5%, and it must stay drain-side.
+        // binaryIn: 5 of 100 categories, expect ~5%, and it must stay on the batch matchers.
         assertThat(binaryIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.035), (long) (TOTAL_ROWS * 0.065));
-        assertThat(binaryIn.path()).isEqualTo(PATH_DRAIN);
-        // Not binary in: the complement of three ~1% categories, and it must stay drain-side.
+        assertThat(binaryIn.path()).isEqualTo(PATH_BATCH);
+        // Not binary in: the complement of three ~1% categories, and it must stay on the batch matchers.
         assertThat(notBinaryIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.955), (long) (TOTAL_ROWS * 0.985));
-        assertThat(notBinaryIn.path()).isEqualTo(PATH_DRAIN);
+        assertThat(notBinaryIn.path()).isEqualTo(PATH_BATCH);
         // The long spellings are one-to-one with the categories, so they keep the same rows.
         for (EqualityRuns longRuns : List.of(urlTail, urlHead)) {
             assertThat(longRuns.eq().rows[0]).isEqualTo(binaryEq.rows[0]);
             assertThat(longRuns.in().rows[0]).isEqualTo(binaryIn.rows[0]);
             assertThat(longRuns.notIn().rows[0]).isEqualTo(notBinaryIn.rows[0]);
-            assertThat(longRuns.in().path()).isEqualTo(PATH_DRAIN);
+            assertThat(longRuns.in().path()).isEqualTo(PATH_BATCH);
         }
     }
 
@@ -548,10 +548,10 @@ class RecordFilterBenchmarkTest {
         return fileSchema;
     }
 
-    /// Probes whether `filter` is drain-eligible by calling [BatchFilterCompiler.tryCompile]
+    /// Probes whether `filter` is batch-eligible by calling [BatchFilterCompiler.tryCompile]
     /// once against the file schema and the contender's projection. Mirrors the gate in
     /// [dev.hardwood.internal.reader.FlatRowReader]: `tryCompile` returns `null` → consumer-side;
-    /// all-null matcher array → consumer-side; otherwise → drain-side.
+    /// all-null matcher array → consumer-side; otherwise → batch-matcher.
     private String probePath(FilterPredicate filter, ColumnProjection projection) throws IOException {
         FileSchema schema = fileSchema();
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
@@ -563,7 +563,7 @@ class RecordFilterBenchmarkTest {
         }
         for (ColumnBatchMatcher matcher : compiled.columnMatchers()) {
             if (matcher != null) {
-                return PATH_DRAIN;
+                return PATH_BATCH;
             }
         }
         return PATH_CONSUMER;

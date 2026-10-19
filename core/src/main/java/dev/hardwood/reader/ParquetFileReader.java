@@ -595,7 +595,7 @@ public class ParquetFileReader implements Closeable {
     ///
     /// Selects [dev.hardwood.internal.reader.FlatRowReader] for flat schemas and
     /// [dev.hardwood.internal.reader.NestedRowReader] for nested schemas.
-    /// Either evaluates a filter per batch on the drain side or per record in the
+    /// Either evaluates a filter per batch by the batch matchers or per record in the
     /// reader, by the predicate's shape.
     ///
     /// @param rowGroupIterator initialized iterator over row groups

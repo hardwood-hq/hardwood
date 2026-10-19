@@ -111,7 +111,7 @@ class MetadataFilteringOptionTest extends AbstractJfrRecorderTest {
 
     @Test
     void filteredColumnReaderReturnsExactRowsWithoutPruning() throws Exception {
-        // Exact column filtering on the drain-side path: filter on id, read
+        // Exact column filtering on the batch-matcher path: filter on id, read
         // value, statistics filtering off.
         try (HardwoodContext context = HardwoodContext.create();
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE), context, STATS_OFF);

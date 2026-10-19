@@ -23,7 +23,7 @@ import dev.hardwood.jfr.RecordFilterEvent;
 /// path twice in a row reports one event covering both passes over it.
 ///
 /// Not thread-safe, and does not need to be: every path that feeds it — the
-/// drain-side batch counts, the per-record wrapper, and the column-reader selection
+/// batch-matcher batch counts, the per-record wrapper, and the column-reader selection
 /// — runs on the consumer thread. Moving any of that onto a decode thread would need
 /// this revisited.
 public final class RecordFilterTally {
@@ -50,7 +50,7 @@ public final class RecordFilterTally {
         }
     }
 
-    /// Records a batch the predicate decided on in one go, as the drain-side and
+    /// Records a batch the predicate decided on in one go, as the batch-matcher and
     /// column-reader paths do.
     public void recordBatch(int evaluatedRecords, int matchedRecords) {
         evaluated += evaluatedRecords;

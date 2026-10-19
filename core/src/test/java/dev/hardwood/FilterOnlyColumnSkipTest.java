@@ -276,13 +276,13 @@ class FilterOnlyColumnSkipTest {
         assertSkipped(flatFile, "id", "label", 2);
     }
 
-    /// `id >= 1500`, compiled drain-side, or through the record matcher when `recordMatcher`.
+    /// `id >= 1500`, compiled to batch matchers, or through the record matcher when `recordMatcher`.
     private static FilterPredicate atLeastThreshold(boolean recordMatcher) {
         FilterPredicate atLeast = FilterPredicate.gtEq("id", THRESHOLD);
         return recordMatcher ? forRecordMatcher(atLeast, FilterPredicate.gt("id", 5000L)) : atLeast;
     }
 
-    /// `matching OR never`, in a shape the drain side does not compile — two branches that
+    /// `matching OR never`, in a shape the batch matchers do not compile — two branches that
     /// each read both `id` and `label` — so the record matcher evaluates it. Every label is
     /// at least `"L"` and none is below `"A"`, so the result is the rows `matching` accepts,
     /// and statistics decide each row group as they decide `matching`.
@@ -559,7 +559,7 @@ class FilterOnlyColumnSkipTest {
         return FilterPredicate.and(FilterPredicate.gtEq(column, LOWER), FilterPredicate.lt(column, UPPER));
     }
 
-    /// [#between] on `id`, compiled drain-side, or through the record matcher when `recordMatcher`.
+    /// [#between] on `id`, compiled to batch matchers, or through the record matcher when `recordMatcher`.
     private static FilterPredicate idBetween(boolean recordMatcher) {
         return recordMatcher
                 ? forRecordMatcher(between("id"), FilterPredicate.lt("id", -5L))

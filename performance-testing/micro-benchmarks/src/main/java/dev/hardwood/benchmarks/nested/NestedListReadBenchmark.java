@@ -33,7 +33,7 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 
 /// The general nested read path over a top-level `LIST<primitive>`, isolated against a
 /// flat decode floor. This is the workload the reconstruction improvements (#750
-/// bulk-copy of present runs, #751 `RealView` on the drain) target, kept numeric so
+/// bulk-copy of present runs, #751 `RealView` on the filling thread) target, kept numeric so
 /// the measured time is level handling and value copy rather than string decode.
 ///
 /// - `columnNested` — the [dev.hardwood.reader.ColumnReader] real-items path as a
@@ -42,7 +42,7 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 /// - `columnNestedStructural` — the same real-items path as a list-reconstructing
 ///   consumer: read `getLayerOffsets`/`getLayerValidity` and walk the lists. It
 ///   forces the per-layer view every batch, so it measures whether that view is
-///   built on the drain or lazily on the serial consumer.
+///   built on the filling thread or lazily on the serial consumer.
 /// - `rowNested` — the [dev.hardwood.reader.RowReader] all-items path: materialize the
 ///   `PqList` per row and fold its elements. #751 must not regress this path.
 /// - `flatFloor` — the identical leaf stream as a plain primitive column read through

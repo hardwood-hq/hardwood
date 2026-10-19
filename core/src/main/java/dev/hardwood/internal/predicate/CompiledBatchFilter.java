@@ -9,7 +9,7 @@ package dev.hardwood.internal.predicate;
 
 import java.util.Objects;
 
-/// Result of compiling an eligible [ResolvedPredicate] for the drain-side
+/// Result of compiling an eligible [ResolvedPredicate] for the batch-matcher
 /// filter path.
 ///
 /// - `columnMatchers[i]` is the [ColumnBatchMatcher] installed on projected

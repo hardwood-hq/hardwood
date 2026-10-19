@@ -49,9 +49,9 @@ import dev.hardwood.schema.FileSchema;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-/// Equivalence: compiled [RecordFilterCompiler] and drain-side [BatchFilterCompiler] + per-column
+/// Equivalence: compiled [RecordFilterCompiler] and batch-matcher [BatchFilterCompiler] + per-column
 /// [ColumnBatchMatcher] agree on which rows survive a given predicate. Constitutes the load-bearing
-/// correctness gate for the drain-side path. A single byte-array leaf is also checked against a
+/// correctness gate for the batch-matcher path. A single byte-array leaf is also checked against a
 /// reference that does not go through [BinaryComparator] — decimals as `BigInteger`s, byte strings
 /// through `Arrays.compareUnsigned` — since both paths compare through it and a shared bug would
 /// otherwise leave them agreeing on the wrong rows.
@@ -66,7 +66,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /// The byte-array leaves run under each [Comparison]: `BYTE_STRING` over `name`, `FIXED_DECIMAL`
 /// over the equal-width `amount`, and `VARIABLE_DECIMAL` over `name`, whose differing widths are
 /// where byte order and value order disagree.
-class DrainSideOracleTest {
+class BatchMatcherOracleTest {
 
     // 200 = 3 full 64-bit words + an 8-bit tail. Not a multiple of 64, so every
     // oracle method exercises the matcher's `tail != 0` branch and the consumer's
@@ -554,18 +554,18 @@ class DrainSideOracleTest {
 
     private static void assertSurvivorsAgree(ResolvedPredicate predicate, Workload w) {
         BitSet compiled = compiledSurvivors(predicate, w);
-        BitSet drainSide = drainSideSurvivors(predicate, w);
-        // Every predicate used in this file is intentionally drain-eligible. A `null`
+        BitSet batchMatchers = batchMatcherSurvivors(predicate, w);
+        // Every predicate used in this file is intentionally batch-eligible. A `null`
         // here means BatchFilterCompiler.tryCompile newly refused to compile something
         // it used to handle — that's a regression we want to catch loudly, not skip.
         // Ineligibility tests live in BatchFilterCompilerTest.IneligibleShapes.
-        assertNotNull(drainSide,
+        assertNotNull(batchMatchers,
                 () -> "BatchFilterCompiler.tryCompile returned null for an expected-eligible predicate: "
                         + describe(predicate));
-        assertEquals(compiled, drainSide, () -> "compiled/drain-side diverged for " + describe(predicate));
+        assertEquals(compiled, batchMatchers, () -> "compiled/batch-matcher diverged for " + describe(predicate));
         BitSet reference = binaryLeafReference(predicate, w);
         if (reference != null) {
-            assertEquals(reference, drainSide, () -> "reference/drain-side diverged for " + describe(predicate));
+            assertEquals(reference, batchMatchers, () -> "reference/batch-matcher diverged for " + describe(predicate));
         }
     }
 
@@ -665,8 +665,8 @@ class DrainSideOracleTest {
                     + " " + Arrays.toString(p.value()) + ", " + p.comparison() + "]";
             case ResolvedPredicate.BinaryInPredicate p -> "BinaryInPredicate[column=" + p.columnIndex() + ", IN "
                     + Arrays.deepToString(p.values()) + ", " + p.comparison() + "]";
-            case ResolvedPredicate.And and -> "And" + and.children().stream().map(DrainSideOracleTest::describe).toList();
-            case ResolvedPredicate.Or or -> "Or" + or.children().stream().map(DrainSideOracleTest::describe).toList();
+            case ResolvedPredicate.And and -> "And" + and.children().stream().map(BatchMatcherOracleTest::describe).toList();
+            case ResolvedPredicate.Or or -> "Or" + or.children().stream().map(BatchMatcherOracleTest::describe).toList();
             default -> predicate.toString();
         };
     }
@@ -683,11 +683,11 @@ class DrainSideOracleTest {
         return out;
     }
 
-    private static BitSet drainSideSurvivors(ResolvedPredicate predicate, Workload w) {
+    private static BitSet batchMatcherSurvivors(ResolvedPredicate predicate, Workload w) {
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, w.schema,
                 w.projection::toProjectedIndex);
         if (compiled == null) {
-            // Predicate not eligible for drain-side compilation. Callers in this file
+            // Predicate not eligible for batch-matcher compilation. Callers in this file
             // intentionally use eligible predicates, so `assertSurvivorsAgree` will
             // fail loudly on a null return rather than silently skipping.
             return null;

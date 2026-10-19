@@ -250,7 +250,7 @@
                     <include>**/FilterOnlyColumnSkipTest.java</include>
                     <include>**/AlwaysMatchingRowGroupTest.java</include>
                     <include>**/PredicatePushDownTest.java</include>
-                    <include>**/DrainSideOracleTest.java</include>
+                    <include>**/BatchMatcherOracleTest.java</include>
                     <include>**/ColumnReaderExactFilterTest.java</include>
                     <include>**/ColumnReaderLayerModelTest.java</include>
                     <include>**/MultiFileRowReaderTest.java</include>

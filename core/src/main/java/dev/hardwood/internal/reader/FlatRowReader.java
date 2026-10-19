@@ -101,8 +101,8 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// per-row state to consult — which is the whole of what the proof is worth.
     private RowMatcher activeMatcher;
 
-    /// Record-level predicate for filters the drain side cannot compile, or `null` when
-    /// the read has no filter or filters on the drain side. Present or absent purely by
+    /// Record-level predicate for filters the batch matchers cannot compile, or `null` when
+    /// the read has no filter or is filtered by the batch matchers. Present or absent purely by
     /// whether the caller asked for a filter — never by what any file turned out to hold.
     private final RowMatcher recordMatcher;
     /// What [#recordMatcher] is tested against: the predicate columns of the current batch.
@@ -123,19 +123,19 @@ public final class FlatRowReader implements FileAwareRowReader {
 
     /// Owns the whole per-batch match merge — the plan, the evaluator and its
     /// scratch, the per-column bitmap slots and the combined buffer. Non-null is
-    /// what makes this a drain-side read: [#hasNext] then iterates each batch it
+    /// what makes this a batch-matcher read: [#hasNext] then iterates each batch it
     /// evaluates via [#nextSetBit] over [#combinedWords] instead of the plain
-    /// `rowIndex++` cursor. `null` when the read has no drain-side filter.
+    /// `rowIndex++` cursor. `null` when the read has no batch-matcher filter.
     private final BatchMatchMerger matchMerger;
     /// The merger in force for the batch being served: [#matchMerger], or `null` when
     /// statistics decided the batch and there is no cap to count matches against. The
-    /// drain-side counterpart of [#activeMatcher]: a proven batch is served by the plain
+    /// batch-matcher counterpart of [#activeMatcher]: a proven batch is served by the plain
     /// cursor rather than walked bit by bit through an all-ones bitmap.
     private BatchMatchMerger activeMerger;
     /// The current batch's survivor bitmap, as [BatchMatchMerger#merge] returned
     /// it when the batch loaded. Cached in the reader so the per-row
     /// [#nextSetBit] and run walk read the array through one field rather than
-    /// reaching through the merger. `null` when there is no drain-side filter.
+    /// reaching through the merger. `null` when there is no batch-matcher filter.
     private long[] combinedWords;
     private int pendingRowIndex = -1;
     /// Cap on the number of *matching* rows yielded (SQL LIMIT over the filtered
@@ -216,7 +216,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     /// a [ScheduledFlatColumn] for each column, starts them and initializes the reader. A read with no row group left once
     /// its leading row groups' bloom filters and dictionaries are probed
     /// ([RowGroupIterator#hasLiveWorkItem]) starts no column and is exhausted from the start. A filter is installed on
-    /// whichever path can carry it — per batch on the drain side, per record otherwise —
+    /// whichever path can carry it — per batch by the batch matchers, per record otherwise —
     /// which is decided by the predicate's shape alone, never by what a file holds.
     ///
     /// @param rowGroupIterator pre-configured iterator (file opened, first file set, initialized)
@@ -247,27 +247,27 @@ public final class FlatRowReader implements FileAwareRowReader {
         // A row-level filter changes what `maxRows` counts: under SQL LIMIT semantics
         // the cap is on *matching* rows, not scanned rows. The batch plan still takes it —
         // it holds it only while statistics prove every row it reaches matches, and
-        // drops it at the first row group that is not proven, from where the drain-side
+        // drops it at the first row group that is not proven, from where the batch-matcher
         // reader counts matches instead.
         //
         // Nothing here asks a question about the read as a whole, so nothing here plans
         // beyond the first file: statistics reach both filtering paths per row group,
         // on Batch.filterAlwaysMatches (see #1107).
 
-        // Try the drain-side path first. tryCompile returns null for any non-eligible
+        // Try the batch-matcher path first. tryCompile returns null for any non-eligible
         // predicate; null falls through to the record-matcher path below.
         CompiledBatchFilter compiledFilter = null;
         if (filter != null) {
             compiledFilter = BatchFilterCompiler.tryCompile(filter, schema, decoded::toProjectedIndex);
         }
         ColumnBatchMatcher[] columnBatchMatchers = compiledFilter != null ? compiledFilter.columnMatchers() : null;
-        final boolean drainSide = compiledFilter != null;
+        final boolean batchMatchers = compiledFilter != null;
         final int wordsLen = (batchSize + 63) >>> 6;
 
-        // Whatever the drain side could not compile, the reader evaluates a record at a
+        // Whatever the batch matchers could not compile, the reader evaluates a record at a
         // time, against a view of the predicate columns rather than the reader itself,
         // whose accessors reach the projected columns alone.
-        PredicateView predicateView = !drainSide && filter != null
+        PredicateView predicateView = !batchMatchers && filter != null
                 ? PredicateView.create(schema, decoded, filter, p -> false, false)
                 : null;
         RowMatcher recordMatcher = predicateView != null
@@ -276,7 +276,7 @@ public final class FlatRowReader implements FileAwareRowReader {
         // Filtering happens in the reader on both paths, so the reader caps matched
         // rows. Without a filter the batch plan already capped scanned == matched rows.
         long readerMatchLimit = filter != null ? maxRows : ScheduledColumn.UNLIMITED;
-        // The tally spans both filtered paths: the drain side feeds it whole batches,
+        // The tally spans both filtered paths: the batch matchers feed it whole batches,
         // the record matcher single records, and either way the reader marks the file
         // boundaries as it loads batches.
         RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
@@ -308,7 +308,7 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Allocate matches[] only when this column actually has a filter installed.
             // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
             final boolean allocateMatches =
-                    drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
+                    batchMatchers && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
@@ -328,9 +328,9 @@ public final class FlatRowReader implements FileAwareRowReader {
             scheduler.start();
         }
 
-        // The merger *is* the drain-side path in the reader: present exactly when the
+        // The merger *is* the batch-matcher path in the reader: present exactly when the
         // predicate compiled to one, absent when the record matcher takes over.
-        BatchMatchMerger matchMerger = drainSide
+        BatchMatchMerger matchMerger = batchMatchers
                 ? BatchMatchMerger.aliasing(compiledFilter.mergePlan(), projectedColumnCount, wordsLen)
                 : null;
 
@@ -512,7 +512,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     }
 
     /// Finds the next set bit in `words` at or above `from`, bounded above by `limit` (exclusive).
-    /// Returns `-1` if no such bit exists. Used by the drain-side iteration path so
+    /// Returns `-1` if no such bit exists. Used by the batch-matcher iteration path so
     /// `hasNext()`/`next()` stay monomorphic without a wrapping reader.
     private static int nextSetBit(long[] words, int from, int limit) {
         if (from >= limit) return -1;

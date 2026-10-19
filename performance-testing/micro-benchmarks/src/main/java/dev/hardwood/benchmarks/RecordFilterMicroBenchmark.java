@@ -92,14 +92,14 @@ public class RecordFilterMicroBenchmark {
     private StructAccessor[] rows;
     private RowMatcher compiled;
 
-    // Drain-side state — populated whenever the predicate is drain-eligible.
-    private CompiledBatchFilter drainCompiled;
-    private BatchExchange.Batch[] drainBatches;
-    private long[] drainCombined;
+    // Batch-matcher state — populated whenever the predicate is batch-eligible.
+    private CompiledBatchFilter batchCompiled;
+    private BatchExchange.Batch[] batchBatches;
+    private long[] batchCombined;
     // Per-column match bitmaps, indexed by projected column; entries for
     // columns with no matcher stay null. Reused across invocations.
-    private long[][] drainPerColumnMatches;
-    private MergePlanEvaluator drainMergeEvaluator;
+    private long[][] batchPerColumnMatches;
+    private MergePlanEvaluator batchMergeEvaluator;
 
     @Setup
     public void setup() {
@@ -109,20 +109,20 @@ public class RecordFilterMicroBenchmark {
         compiled = RecordFilterCompiler.compile(predicate, schema);
 
         ProjectedSchema projection = ProjectedSchema.create(schema, ColumnProjection.all());
-        drainCompiled = BatchFilterCompiler.tryCompile(predicate, schema,
+        batchCompiled = BatchFilterCompiler.tryCompile(predicate, schema,
                 projection::toProjectedIndex);
-        if (drainCompiled != null) {
-            ColumnBatchMatcher[] fragments = drainCompiled.columnMatchers();
-            drainBatches = buildDrainBatches(rows, fragments.length);
+        if (batchCompiled != null) {
+            ColumnBatchMatcher[] fragments = batchCompiled.columnMatchers();
+            batchBatches = buildMatcherBatches(rows, fragments.length);
             int wordsLen = (BATCH_SIZE + 63) >>> 6;
-            drainCombined = new long[wordsLen];
-            drainPerColumnMatches = new long[fragments.length][];
+            batchCombined = new long[wordsLen];
+            batchPerColumnMatches = new long[fragments.length][];
             for (int c = 0; c < fragments.length; c++) {
                 if (fragments[c] != null) {
-                    drainPerColumnMatches[c] = new long[wordsLen];
+                    batchPerColumnMatches[c] = new long[wordsLen];
                 }
             }
-            drainMergeEvaluator = new MergePlanEvaluator(wordsLen);
+            batchMergeEvaluator = new MergePlanEvaluator(wordsLen);
         }
     }
 
@@ -135,7 +135,7 @@ public class RecordFilterMicroBenchmark {
         }
     }
 
-    /// Drain-side variant: mirrors the production pipeline — per-column
+    /// Batch-matcher variant: mirrors the production pipeline — per-column
     /// [ColumnBatchMatcher]s write per-column long[] match bitmaps, then the
     /// shared [MergePlanEvaluator] combines them via the compiled `MergePlan`
     /// into one survivor mask. Surviving rows are then iterated via
@@ -143,26 +143,26 @@ public class RecordFilterMicroBenchmark {
     /// against the value array, isolated from the parallelism story which
     /// requires the full reader pipeline.
     ///
-    /// Skipped (no-op) only when the predicate isn't drain-eligible at all
+    /// Skipped (no-op) only when the predicate isn't batch-eligible at all
     /// (`BatchFilterCompiler.tryCompile` returns `null`).
     @Benchmark
-    public void drainSide(Blackhole bh) {
-        CompiledBatchFilter cf = drainCompiled;
+    public void batchMatchers(Blackhole bh) {
+        CompiledBatchFilter cf = batchCompiled;
         if (cf == null) {
             return;
         }
         ColumnBatchMatcher[] fragments = cf.columnMatchers();
-        BatchExchange.Batch[] batches = drainBatches;
-        long[][] perColumn = drainPerColumnMatches;
+        BatchExchange.Batch[] batches = batchBatches;
+        long[][] perColumn = batchPerColumnMatches;
         for (int c = 0; c < fragments.length; c++) {
             ColumnBatchMatcher m = fragments[c];
             if (m != null) {
                 m.test(batches[c], perColumn[c]);
             }
         }
-        long[] combined = drainCombined;
+        long[] combined = batchCombined;
         int activeWords = (BATCH_SIZE + 63) >>> 6;
-        drainMergeEvaluator.eval(cf.mergePlan(), combined, activeWords, perColumn);
+        batchMergeEvaluator.eval(cf.mergePlan(), combined, activeWords, perColumn);
 
         // Iterate surviving rows. Each call to Blackhole defeats DCE.
         int n = BATCH_SIZE;
@@ -229,7 +229,7 @@ public class RecordFilterMicroBenchmark {
     /// used by `legacy` and `compiled`, ensuring all three benchmarks evaluate
     /// the same predicate on the same values. The returned array is indexed by
     /// projected column index (id=0, value=1, tag=2, flag=3).
-    private static BatchExchange.Batch[] buildDrainBatches(StructAccessor[] sourceRows, int columnCount) {
+    private static BatchExchange.Batch[] buildMatcherBatches(StructAccessor[] sourceRows, int columnCount) {
         BatchExchange.Batch[] out = new BatchExchange.Batch[columnCount];
         int n = sourceRows.length;
         long[] ids = new long[n];

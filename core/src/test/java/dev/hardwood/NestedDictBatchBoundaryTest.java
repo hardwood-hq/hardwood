@@ -23,9 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Regression test for value corruption when a variable-length leaf nested in a
 /// struct is decoded across a batch boundary.
 ///
-/// The former per-column drain reused one bytes buffer across batches and
-/// published each batch by aliasing it, so assembling the next batch overwrote
-/// the previous batch's still-unread values. It triggers whenever a single
+/// A column that reuses one bytes buffer across batches and publishes each
+/// batch by aliasing it lets assembling the next batch overwrite the previous
+/// batch's still-unread values. It triggers whenever a single
 /// nested variable-length leaf spans more than one batch — no sibling column is
 /// involved.
 ///

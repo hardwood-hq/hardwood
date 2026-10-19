@@ -26,14 +26,14 @@ import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// End-to-end coverage for the drain-side path in `FlatRowReader`: reads a real
-/// Parquet file via the public API with a drain-eligible predicate and asserts
+/// End-to-end coverage for the batch-matcher path in `FlatRowReader`: reads a real
+/// Parquet file via the public API with a batch-eligible predicate and asserts
 /// the surviving rows match what the predicate semantically demands. Exercises
 /// `BatchMatchMerger` in its aliasing mode (compound merge and single-column
 /// alias), the `nextSetBit` / `scanRunEnd` helpers, and the `combinedWords`
 /// lifecycle across `loadNextBatch` — none of which the in-memory
-/// `DrainSideOracleTest` touches, since it merges the bitmaps itself.
-class DrainSideRowReaderTest {
+/// `BatchMatcherOracleTest` touches, since it merges the bitmaps itself.
+class BatchMatcherRowReaderTest {
 
     /// 3 row groups × 5 rows. Columns: id (INT32, 1..15), price (FLOAT64, sorted
     /// 10..150), rating (FLOAT32), name (STRING), active (BOOLEAN). See
@@ -41,9 +41,9 @@ class DrainSideRowReaderTest {
     private static final Path MIXED_FILE = Paths.get("src/test/resources/filter_pushdown_mixed.parquet");
 
     @Test
-    void multiColumnAnd_drainSidePath_returnsExpectedRows() throws Exception {
+    void multiColumnAnd_batchMatcherPath_returnsExpectedRows() throws Exception {
         // id > 5 AND price < 100.0 — distinct top-level columns, supported (type, op):
-        // takes the multi-column drain-side path via BatchFilterCompiler.tryCompile.
+        // takes the multi-column batch-matcher path via BatchFilterCompiler.tryCompile.
         FilterPredicate filter = FilterPredicate.and(
                 FilterPredicate.gt("id", 5),
                 FilterPredicate.lt("price", 100.0));
@@ -55,8 +55,8 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void singleColumnDrainEligible_aliasesBatchMatches_returnsExpectedRows() throws Exception {
-        // Single-leaf drain-eligible — exercises the `combinedWords` aliasing branch
+    void singleColumnBatchEligible_aliasesBatchMatches_returnsExpectedRows() throws Exception {
+        // Single-leaf batch-eligible — exercises the `combinedWords` aliasing branch
         // in BatchMatchMerger where there is no merge to do.
         FilterPredicate filter = FilterPredicate.gt("id", 10);
 
@@ -95,7 +95,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void matchAllPredicate_drainSidePath_returnsAllRows() throws Exception {
+    void matchAllPredicate_batchMatcherPath_returnsAllRows() throws Exception {
         // Match-all forces the consumer through every row via the runEndExclusive
         // fast path in hasNext — exercises scanRunEnd plus the dense iteration loop.
         FilterPredicate filter = FilterPredicate.and(
@@ -109,7 +109,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void stringEq_drainSidePath_returnsExpectedRows() throws Exception {
+    void stringEq_batchMatcherPath_returnsExpectedRows() throws Exception {
         // String equality compiles to a byte-array matcher on the `name` column.
         FilterPredicate filter = FilterPredicate.eq("name", "grape");
 
@@ -120,7 +120,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void stringRangeAndInt_drainSidePath_returnsExpectedRows() throws Exception {
+    void stringRangeAndInt_batchMatcherPath_returnsExpectedRows() throws Exception {
         // name >= "c" AND id < 12 — a string range beside an int leaf, so the merge has to
         // combine a byte-array bitmap with a typed one.
         FilterPredicate filter = FilterPredicate.and(
@@ -134,7 +134,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void stringIn_drainSidePath_returnsExpectedRows() throws Exception {
+    void stringIn_batchMatcherPath_returnsExpectedRows() throws Exception {
         // "missing" is absent from the fixture on purpose: a member matching nothing must not
         // change the result.
         FilterPredicate filter = FilterPredicate.inStrings("name", "banana", "kiwi", "missing");
@@ -146,7 +146,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void stringOrDouble_drainSidePath_returnsExpectedRows() throws Exception {
+    void stringOrDouble_batchMatcherPath_returnsExpectedRows() throws Exception {
         // A string leaf OR'ed with a leaf on another column — merged by MergePlan.Or.
         FilterPredicate filter = FilterPredicate.or(
                 FilterPredicate.eq("name", "apple"),
@@ -166,7 +166,7 @@ class DrainSideRowReaderTest {
     private static final Path DECIMAL_FILE = Paths.get("src/test/resources/compat_decimal_10_2.parquet");
 
     @Test
-    void fixedDecimalRange_drainSidePath_returnsExpectedRows() throws Exception {
+    void fixedDecimalRange_batchMatcherPath_returnsExpectedRows() throws Exception {
         // Every value is padded to the column width, so the comparison is signed over equal
         // widths: the sign byte decides first, then the rest compares unsigned.
         // At the maximum: the bound itself must stay out.
@@ -181,7 +181,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void fixedDecimalEq_drainSidePath_matchesTheStoredValue() throws Exception {
+    void fixedDecimalEq_batchMatcherPath_matchesTheStoredValue() throws Exception {
         // Equality is byte equality here, which is sound only because a fixed-width column holds a
         // value as exactly one byte string.
         BigDecimal literal = new BigDecimal("678.90");
@@ -194,7 +194,7 @@ class DrainSideRowReaderTest {
     }
 
     @Test
-    void fixedDecimalGtEq_drainSidePath_includesTheBound() throws Exception {
+    void fixedDecimalGtEq_batchMatcherPath_includesTheBound() throws Exception {
         // At the maximum: the bound itself must be kept. At the minimum, statistics would prove every
         // row matches and the matcher would never run.
         BigDecimal literal = new BigDecimal("678.90");
@@ -225,7 +225,7 @@ class DrainSideRowReaderTest {
         List<Long> out = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(DECIMAL_FILE));
              RowReader rows = reader.buildRowReader().filter(filter).build()) {
-            assertDrainSide(filter, reader.getFileSchema());
+            assertBatchMatchers(filter, reader.getFileSchema());
             while (rows.hasNext()) {
                 rows.next();
                 out.add(rows.getLong("id"));
@@ -256,7 +256,7 @@ class DrainSideRowReaderTest {
         List<Integer> out = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE));
              RowReader rows = reader.buildRowReader().filter(filter).build()) {
-            assertDrainSide(filter, reader.getFileSchema());
+            assertBatchMatchers(filter, reader.getFileSchema());
             while (rows.hasNext()) {
                 rows.next();
                 out.add(rows.getInt("id"));
@@ -265,13 +265,13 @@ class DrainSideRowReaderTest {
         return out;
     }
 
-    /// Fails unless `filter` takes the drain-side path, applying the same gate `FlatRowReader`
+    /// Fails unless `filter` takes the batch-matcher path, applying the same gate `FlatRowReader`
     /// does: a non-null [BatchFilterCompiler#tryCompile] result. Without it, a filter that falls
     /// back to consumer-side filtering would still return the right rows and pass silently.
-    private static void assertDrainSide(FilterPredicate filter, FileSchema schema) {
+    private static void assertBatchMatchers(FilterPredicate filter, FileSchema schema) {
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
         CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
                 FilterPredicateResolver.resolve(filter, schema), schema, projected::toProjectedIndex);
-        assertThat(compiled).as("filter %s must be drain-side eligible", filter).isNotNull();
+        assertThat(compiled).as("filter %s must be batch-matcher eligible", filter).isNotNull();
     }
 }

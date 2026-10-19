@@ -38,11 +38,11 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 ### A4. Concurrency: happens-before and field finality
 - **Rule:** Fields read by a thread other than the writer must be `final` (set in constructor) or `volatile`, or there must be a documented happens-before edge (e.g. `Thread.start()`, `BlockingQueue`).
 - **Why:** Setters called "before start()" are an unenforced contract; one refactor away from a JMM bug.
-- **How:** For any new setter or non-final mutable field touched by a drain/worker/executor, ask whether constructor injection would work. Prefer it.
+- **How:** For any new setter or non-final mutable field touched by a worker or executor thread, ask whether constructor injection would work. Prefer it.
 
 ### A5. Iterator contracts
 - **Rule:** `next()` without prior `hasNext()` must throw or assert, not silently return a poisoned value.
-- **Why:** Drain-side iteration in `FlatRowReader` used a `pendingRowIndex = -1` sentinel that became `rowIndex = -1` if invoked out of order — silent index error.
+- **Why:** Batch-matcher iteration in `FlatRowReader` used a `pendingRowIndex = -1` sentinel that became `rowIndex = -1` if invoked out of order — silent index error.
 - **How:** New `RowReader` paths: read both `hasNext()` and `next()` and trace what happens when only one is called.
 
 ### A6. Observability
@@ -150,7 +150,7 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 
 ### D4. Oracle / equivalence tests
 - **Rule:** New paths that replicate behaviour from an existing path should have a three-way oracle: legacy ↔ new ↔ reference.
-- **How:** PR #418 has `DrainSideOracleTest`. This is the model.
+- **How:** PR #418 has `BatchMatcherOracleTest`. This is the model.
 
 ### D5. Bug-fix PRs start with a failing test
 - **Rule:** CLAUDE.md: "When fixing issues which are bug reports, start with a test case which is failing."

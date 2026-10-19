@@ -54,7 +54,7 @@ import dev.hardwood.reader.RowReader;
 ///
 /// Each selectivity runs on three read paths, one per way a filter reaches the
 /// rows: `rowReaderLong` filters on `id`, which the batch compiler accepts, so
-/// the row reader iterates the drain-side survivor bitmap; `rowReaderString`
+/// the row reader iterates the batch-matcher survivor bitmap; `rowReaderString`
 /// filters on the string column through a shape the batch compiler rejects — two
 /// conjunctions over `label` and `id` — so the row reader falls back to the
 /// record-matcher path (where per-row evaluation is most expensive);
@@ -124,7 +124,7 @@ public class AlwaysMatchReadBenchmark {
         }
     }
 
-    /// The drain-side path: `id` is a long compared with `>=`, which the batch
+    /// The batch-matcher path: `id` is a long compared with `>=`, which the batch
     /// filter compiler accepts, so the workers mark matches per batch and the
     /// reader walks the merged bitmap.
     @Benchmark

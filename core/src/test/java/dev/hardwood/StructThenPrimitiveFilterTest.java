@@ -68,7 +68,7 @@ class StructThenPrimitiveFilterTest {
     /// The predicate is evaluated on the record-side path (`RecordFilterCompiler` →
     /// the row reader's record matcher), where columns are addressed through the
     /// reader's indexed accessors. The `point` struct is what puts it there: a file
-    /// with a struct column is read by the nested row reader, which has no drain-side
+    /// with a struct column is read by the nested row reader, which has no batch-matcher
     /// filter, whichever leaves the predicate holds. The `tag` conjunct does not force
     /// the path — a string comparison compiles to a batch matcher on a flat file.
     ///
