@@ -19,11 +19,6 @@ import dev.hardwood.reader.ParquetReadException;
 public class BrotliDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, new byte[uncompressedSize]);
-    }
-
-    @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         BrotliLoader.ensureLoaded();
 

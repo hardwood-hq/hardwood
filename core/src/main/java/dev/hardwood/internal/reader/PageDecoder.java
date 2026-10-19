@@ -38,6 +38,22 @@ import dev.hardwood.schema.ColumnSchema;
 /// [DictionaryParser].
 public class PageDecoder {
 
+    /// The decoding thread's buffer for decompressed bytes that do not outlive the decode which
+    /// asks for them: a page whose values are read within its task, or a dictionary page, whose
+    /// entries [Dictionary#parse] copies out.
+    private static final ThreadLocal<byte[]> TRANSIENT_BYTES = new ThreadLocal<>();
+
+    /// The thread's [#TRANSIENT_BYTES] buffer, grown to at least `size` bytes. Its contents are
+    /// valid until the thread's next call.
+    static byte[] transientBytes(int size) {
+        byte[] bytes = TRANSIENT_BYTES.get();
+        if (bytes == null || bytes.length < size) {
+            bytes = new byte[size];
+            TRANSIENT_BYTES.set(bytes);
+        }
+        return bytes;
+    }
+
     /// Reusable level-decoding buffers owned by one in-flight page slot.
     static final class LevelScratch {
         private int[] repetitionLevels;
@@ -214,8 +230,8 @@ public class PageDecoder {
     /// repetition whose values a fill reads in place, in any encoding the format defines for its
     /// type.
     ///
-    /// The returned values hold `scratch`'s definition levels and ids, and the decompressor's
-    /// buffer or the fetched page, until the fill is done.
+    /// The returned values hold `scratch`'s definition levels and ids, and the thread's
+    /// [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException if the page is malformed, or its encoding is not defined over
     ///         the column's type
@@ -367,7 +383,7 @@ public class PageDecoder {
     /// defined over the column's type ([#requireReader]), and decodes its levels.
     ///
     /// @param ownBytes whether the values must outlive the task: they are then decompressed or
-    ///        copied into `scratch`'s own buffer rather than the decompressor's
+    ///        copied into `scratch`'s own buffer rather than the thread's [#transientBytes]
     private InPlacePage readInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
                                     boolean ownBytes) {
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
@@ -403,9 +419,8 @@ public class PageDecoder {
     private InPlacePage readV1InPlace(DataPageHeader header, ByteBuffer pageData, int limit, int compressedSize,
                                       PageDecodedEvent event, LevelScratch scratch, boolean ownBytes) {
         Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-        byte[] data = ownBytes
-                ? decompressor.decompress(pageData, limit, scratch.bytes(limit))
-                : decompressor.decompress(pageData, limit);
+        byte[] data = decompressor.decompress(pageData, limit,
+                ownBytes ? scratch.bytes(limit) : transientBytes(limit));
         int numValues = header.numValues();
         int offset = 0;
         int repOffset = 0;
@@ -451,9 +466,8 @@ public class PageDecoder {
             int valuesLength = uncompressedPageSize - repLength - defLength;
             ByteBuffer compressedValues = pageData.slice(valuesOffset, storedValuesLength);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-            data = ownBytes
-                    ? decompressor.decompress(compressedValues, valuesLength, scratch.bytes(valuesLength))
-                    : decompressor.decompress(compressedValues, valuesLength);
+            data = decompressor.decompress(compressedValues, valuesLength,
+                    ownBytes ? scratch.bytes(valuesLength) : transientBytes(valuesLength));
             offset = 0;
             limit = valuesLength;
         }

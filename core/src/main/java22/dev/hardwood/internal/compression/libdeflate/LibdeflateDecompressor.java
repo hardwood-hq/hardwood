@@ -13,7 +13,6 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
-import dev.hardwood.internal.compression.OutputBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// High-performance GZIP decompressor using libdeflate via FFM API.
@@ -28,17 +27,11 @@ public final class LibdeflateDecompressor implements Decompressor {
     private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> IN_SIZE_PTR = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> OUT_SIZE_PTR = new ThreadLocal<>();
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
 
     private final LibdeflatePool pool;
 
     public LibdeflateDecompressor(LibdeflatePool pool) {
         this.pool = pool;
-    }
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, null);
     }
 
     @Override
@@ -106,7 +99,7 @@ public final class LibdeflateDecompressor implements Decompressor {
                         uncompressedSize, outputOffset));
             }
 
-            byte[] result = dest != null ? dest : OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize);
+            byte[] result = dest;
             MemorySegment.copy(output, ValueLayout.JAVA_BYTE, 0, result, 0, uncompressedSize);
             return result;
         }

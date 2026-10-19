@@ -130,7 +130,7 @@ public final class ReferencePageDecoder {
     }
 
     private byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return Arrays.copyOf(decompressorFactory.getDecompressor(codec).decompress(compressed, uncompressedSize),
+        return Arrays.copyOf(decompressorFactory.getDecompressor(codec).decompress(compressed, uncompressedSize, new byte[uncompressedSize]),
                 uncompressedSize);
     }
 

@@ -18,12 +18,6 @@ import dev.hardwood.reader.ParquetReadException;
 public class SnappyDecompressor implements Decompressor {
 
     private static final ThreadLocal<ByteBuffer> DIRECT_OUTPUT_BUFFER = new ThreadLocal<>();
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
-    }
 
     /// Decompresses into `dest`: heap to heap where the compressed page is on the heap, otherwise
     /// through direct buffers for the native codec and copied into `dest` once.

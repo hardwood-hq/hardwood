@@ -58,7 +58,7 @@ class GzipPageTailTest {
     }
 
     private static void assertDecodes(byte[] page, byte[] body) {
-        byte[] plain = DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length);
+        byte[] plain = DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, new byte[body.length]);
         assertThat(Arrays.copyOf(plain, body.length)).isEqualTo(body);
         byte[] dest = new byte[body.length];
         assertThat(DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, dest)).isEqualTo(body);

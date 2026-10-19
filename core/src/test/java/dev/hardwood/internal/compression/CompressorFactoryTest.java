@@ -149,7 +149,7 @@ class CompressorFactoryTest {
 
     private byte[] decompress(CompressionCodec codec, byte[] compressed, int uncompressedSize) throws IOException {
         byte[] decompressed = decompressors.getDecompressor(codec)
-                .decompress(ByteBuffer.wrap(compressed), uncompressedSize);
+                .decompress(ByteBuffer.wrap(compressed), uncompressedSize, new byte[uncompressedSize]);
         // The decompressors hand back a reusable thread-local buffer that may be longer than the
         // body, so the comparison is over the body's own bytes.
         return Arrays.copyOf(decompressed, uncompressedSize);

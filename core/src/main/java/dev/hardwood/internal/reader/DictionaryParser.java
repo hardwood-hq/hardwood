@@ -310,7 +310,8 @@ public final class DictionaryParser {
         Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
         int compressedSize = compressedData.remaining();
         try {
-            byte[] data = decompressor.decompress(compressedData, uncompressedSize);
+            byte[] data = decompressor.decompress(compressedData, uncompressedSize,
+                    PageDecoder.transientBytes(uncompressedSize));
             return Dictionary.parse(data, uncompressedSize, numValues, column.type(), column.typeLength());
         }
         catch (UnsupportedOperationException e) {

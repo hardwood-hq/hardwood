@@ -149,7 +149,7 @@ public class PageHandlingBenchmark {
 
             // Decompress using the file's actual codec
             Decompressor decompressor = context.decompressorFactory().getDecompressor(pageInfo.columnMetaData().codec());
-            byte[] decompressed = decompressor.decompress(compressedData, uncompressedSize);
+            byte[] decompressed = decompressor.decompress(compressedData, uncompressedSize, new byte[uncompressedSize]);
             blackhole.consume(decompressed);
         }
     }

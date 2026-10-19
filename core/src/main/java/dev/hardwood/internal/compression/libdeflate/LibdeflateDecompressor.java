@@ -20,7 +20,7 @@ public final class LibdeflateDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         throw new UnsupportedOperationException("libdeflate requires Java 22+");
     }
 

@@ -27,12 +27,6 @@ public class GzipDecompressor implements Decompressor {
     private static final int FNAME = 8;
     private static final int FCOMMENT = 16;
 
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
-    }
 
     @Override
     public byte[] decompress(ByteBuffer page, int uncompressedSize, byte[] dest) {

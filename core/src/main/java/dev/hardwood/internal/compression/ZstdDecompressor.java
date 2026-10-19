@@ -16,13 +16,6 @@ import dev.hardwood.reader.ParquetReadException;
 /// Decompressor for ZSTD compressed data.
 public class ZstdDecompressor implements Decompressor {
 
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
-    }
-
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] output) {
         int actualSize;

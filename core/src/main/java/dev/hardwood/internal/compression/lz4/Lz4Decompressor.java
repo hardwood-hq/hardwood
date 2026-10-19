@@ -11,7 +11,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import dev.hardwood.internal.compression.Decompressor;
-import dev.hardwood.internal.compression.OutputBuffers;
 import dev.hardwood.reader.ParquetReadException;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
@@ -25,8 +24,6 @@ import net.jpountz.lz4.LZ4SafeDecompressor;
 /// Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
 public class Lz4Decompressor implements Decompressor {
 
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
     private final LZ4FastDecompressor fastDecompressor;
     private final LZ4SafeDecompressor safeDecompressor;
 
@@ -34,11 +31,6 @@ public class Lz4Decompressor implements Decompressor {
         LZ4Factory factory = LZ4Factory.fastestInstance();
         this.fastDecompressor = factory.fastDecompressor();
         this.safeDecompressor = factory.safeDecompressor();
-    }
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
     }
 
     @Override

@@ -14,20 +14,6 @@ import dev.hardwood.reader.ParquetReadException;
 /// Decompressor for uncompressed data (passthrough).
 public class UncompressedDecompressor implements Decompressor {
 
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        int storedSize = compressed.remaining();
-        if (storedSize != uncompressedSize) {
-            throw new ParquetReadException(
-                    "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
-        }
-        byte[] data = OutputBuffers.borrow(OUTPUT_BUFFER, storedSize);
-        compressed.get(compressed.position(), data, 0, storedSize);
-        return data;
-    }
-
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         int storedSize = compressed.remaining();

@@ -52,9 +52,9 @@ class Lz4PageBoundsTest {
 
         // The plain call returns the thread's buffer, so each result is copied before the next call
         byte[] decodedFirst = Arrays.copyOf(decompressor.decompress(
-                chunk.duplicate().position(0).limit(firstPage.length), first.length), first.length);
+                chunk.duplicate().position(0).limit(firstPage.length), first.length, new byte[first.length]), first.length);
         byte[] decodedSecond = Arrays.copyOf(decompressor.decompress(
-                chunk.duplicate().position(firstPage.length), second.length), second.length);
+                chunk.duplicate().position(firstPage.length), second.length, new byte[second.length]), second.length);
 
         assertThat(decodedFirst).isEqualTo(first);
         assertThat(decodedSecond).isEqualTo(second);
@@ -75,7 +75,7 @@ class Lz4PageBoundsTest {
                         + "Invalid LZ4 Hadoop block sizes: uncompressed=-251658364, compressed=1818388327"
                 : "LZ4_RAW decompression did not consume all input: expected " + (page.length - 5)
                         + " bytes, consumed " + page.length;
-        assertThatThrownBy(() -> decompressor.decompress(truncated, body.length))
+        assertThatThrownBy(() -> decompressor.decompress(truncated, body.length, new byte[body.length]))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(message);
     }

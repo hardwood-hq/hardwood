@@ -59,7 +59,7 @@ class DecompressorInputTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            byte[] result = decompressor.decompress(compressed, body.length);
+            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length]);
 
             assertThat(Arrays.copyOf(result, body.length)).as("%s %s, attempt %d", codec, buffer, attempt)
                     .isEqualTo(body);
@@ -99,7 +99,7 @@ class DecompressorInputTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4);
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            byte[] result = decompressor.decompress(compressed, body.length);
+            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length]);
             assertThat(Arrays.copyOf(result, body.length)).as("%s, attempt %d", buffer, attempt).isEqualTo(body);
 
             byte[] dest = new byte[body.length];

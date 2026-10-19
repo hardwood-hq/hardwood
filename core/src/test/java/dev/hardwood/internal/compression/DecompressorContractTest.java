@@ -50,7 +50,7 @@ class DecompressorContractTest {
         byte[] compressed = new BrotliCompressor().compress(body, 0, body.length);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.BROTLI);
 
-        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(compressed), body.length + 1024))
+        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(compressed), body.length + 1024, new byte[body.length + 1024]))
                 .as("the stream decoded; what disagrees is the length, and that is what to report")
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Brotli decompression size mismatch: expected 1536, got 512");
@@ -62,7 +62,7 @@ class DecompressorContractTest {
     void bytesThatDoNotDecodeRaiseParquetReadException(CompressionCodec codec) {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(garbage()), 1024))
+        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(garbage()), 1024, new byte[1024]))
                 .as("%s: corrupt bytes are the file's fault, and no retry changes them", codec)
                 .isInstanceOf(ParquetReadException.class)
                 .isNotInstanceOf(java.io.IOException.class);

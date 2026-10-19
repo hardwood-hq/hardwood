@@ -62,7 +62,7 @@ class LibdeflateDecompressorIT {
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            byte[] result = decompressor.decompress(buffer, original.length);
+            byte[] result = decompressor.decompress(buffer, original.length, new byte[original.length]);
             byte[] dest = new byte[original.length];
             decompressor.decompress(buffer, original.length, dest);
 
@@ -82,7 +82,7 @@ class LibdeflateDecompressorIT {
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
         ByteBuffer buffer = createDirectBuffer(compressed);
 
-        byte[] result = decompressor.decompress(buffer, original.length);
+        byte[] result = decompressor.decompress(buffer, original.length, new byte[original.length]);
 
         assertThat(result).startsWith(original);
     }
@@ -97,7 +97,7 @@ class LibdeflateDecompressorIT {
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
         ByteBuffer buffer = createDirectBuffer(compressed);
 
-        byte[] result = decompressor.decompress(buffer, original.length);
+        byte[] result = decompressor.decompress(buffer, original.length, new byte[original.length]);
 
         assertThat(result).startsWith(original);
     }
@@ -110,8 +110,8 @@ class LibdeflateDecompressorIT {
         ByteBuffer buffer1 = createDirectBuffer(compressed);
         ByteBuffer buffer2 = createDirectBuffer(compressed);
 
-        byte[] libdeflateResult = new LibdeflateDecompressor(pool).decompress(buffer1, original.length);
-        byte[] javaResult = new GzipDecompressor().decompress(buffer2, original.length);
+        byte[] libdeflateResult = new LibdeflateDecompressor(pool).decompress(buffer1, original.length, new byte[original.length]);
+        byte[] javaResult = new GzipDecompressor().decompress(buffer2, original.length, new byte[original.length]);
 
         assertThat(libdeflateResult).startsWith(original);
         assertThat(javaResult).startsWith(original);
@@ -125,7 +125,7 @@ class LibdeflateDecompressorIT {
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
         ByteBuffer buffer = createHeapBuffer(compressed);
 
-        byte[] result = decompressor.decompress(buffer, original.length);
+        byte[] result = decompressor.decompress(buffer, original.length, new byte[original.length]);
 
         assertThat(result).startsWith(original);
     }
@@ -146,7 +146,7 @@ class LibdeflateDecompressorIT {
         buffer.position(prefix);
 
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
-        byte[] result = decompressor.decompress(buffer, original.length);
+        byte[] result = decompressor.decompress(buffer, original.length, new byte[original.length]);
 
         assertThat(result).startsWith(original);
     }
@@ -170,7 +170,7 @@ class LibdeflateDecompressorIT {
         System.arraycopy(part2, 0, expectedOutput, part1.length, part2.length);
 
         ByteBuffer buffer = createDirectBuffer(concatenated);
-        byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, expectedOutput.length);
+        byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, expectedOutput.length, new byte[expectedOutput.length]);
 
         assertThat(result).startsWith(expectedOutput);
     }

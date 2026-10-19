@@ -10,7 +10,6 @@ package dev.hardwood.internal.compression.lz4;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
-import dev.hardwood.internal.compression.OutputBuffers;
 import dev.hardwood.reader.ParquetReadException;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
@@ -21,17 +20,10 @@ import net.jpountz.lz4.LZ4FastDecompressor;
 /// without any framing or headers.
 public class Lz4RawDecompressor implements Decompressor {
 
-    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
-
     private final LZ4FastDecompressor decompressor;
 
     public Lz4RawDecompressor() {
         this.decompressor = LZ4Factory.fastestInstance().fastDecompressor();
-    }
-
-    @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return decompress(compressed, uncompressedSize, OutputBuffers.borrow(OUTPUT_BUFFER, uncompressedSize));
     }
 
     @Override
