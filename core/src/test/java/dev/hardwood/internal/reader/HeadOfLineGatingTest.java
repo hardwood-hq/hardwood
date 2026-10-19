@@ -7,12 +7,19 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -33,22 +40,26 @@ import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
-/// [ReadScheduler] submits the queued page with the lowest row of the read; while that page is
-/// past its column's read-ahead depth and the read leaves a decode thread idle, it submits a page
-/// of another column that is within its own depth, which every page below the waiting one being
-/// submitted makes read-ahead.
+/// [ReadScheduler] submits the queued page with the lowest row of the read, once no column with
+/// nothing queued may yet queue a page below it; while that page is past its column's read-ahead
+/// depth and the read leaves a decode thread idle, it submits a page of another column that is
+/// within its own depth, which every page below the waiting one being submitted makes read-ahead.
 ///
-/// The read has two flat columns on a pool of four threads: `small`, an `INT64` column cut into
-/// pages of 16 rows, and `large`, a `BOOLEAN` column cut into pages of 200 rows, a little over
-/// three batches. The consumer takes nothing until the read settles, so each column publishes
-/// the two batches its exchange holds and the read's first unpublished row stops at 128.
+/// The reads have flat columns: `small`, an `INT64` column cut into pages of 16 rows, and
+/// `large`, a `BOOLEAN` column cut into pages of 200 or 600 rows. The consumer takes nothing from
+/// them until the read reaches the state the test expects, so each column publishes the two
+/// batches its exchange holds and the read's first unpublished row stops at 128. On a pool of
+/// four threads:
 ///
 /// - `small` is admitted up to fewer than four batches past that row: its last page submitted
 ///   starts at 368, and its page at 384 waits.
-/// - `large`'s pages at 400 and 600 start past `small`'s waiting page and are submitted, being
-///   fewer pages ahead than the pool has threads and within the eight batches of the cap; its page
-///   at 800 is past the cap and waits.
+/// - `large`'s pages of 200 rows at 400 and 600 start past `small`'s waiting page and are
+///   submitted, being fewer pages ahead than the pool has threads and within the eight batches of
+///   the cap; its page at 800 is past the cap and waits.
+/// - `large`'s page of 600 rows at 1200 is past the cap and waits, and the pages of a third column,
+///   `ahead`, whose consumer takes every batch, are submitted past it.
 ///
 /// Every page submitted past a lower waiting page is checked to start at least four batches past
 /// the read's first unpublished row the choice was made against. Each read then takes every batch,
@@ -62,8 +73,11 @@ class HeadOfLineGatingTest {
     private static final int LARGE_PAGE = 200;
     /// The batch byte budget the scheduler is given, in rows: the cap is eight batches.
     private static final long BUDGET_ROWS = BATCH;
-    /// How long no page may be submitted for the read to count as settled.
-    private static final long SETTLED_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
+    /// How long the read may take to reach the state the test expects.
+    private static final long STATE_NANOS = TimeUnit.SECONDS.toNanos(30);
+    /// How long no page may be submitted, once the read is in that state, for it to count as
+    /// settled there.
+    private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
 
     @AfterEach
     void removeObserver() {
@@ -73,25 +87,12 @@ class HeadOfLineGatingTest {
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void aPageWithinItsDepthIsSubmittedPastALowerPageBeyondItsDepth() throws Exception {
-        byte[] file = write();
+        byte[] file = write(LARGE_PAGE, false);
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
-        AtomicLong submissions = new AtomicLong();
         AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
         AtomicLong lastSmall = new AtomicLong(-1);
         AtomicLong lastLarge = new AtomicLong(-1);
-        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
-            if (page.firstRow != lowestRow && lowestRow - readPublishedRow < (long) THREADS * BATCH) {
-                violations.add("page at row " + page.firstRow + " past one at row " + lowestRow
-                        + " with the read published to row " + readPublishedRow);
-            }
-            boolean small = column.column.name().equals("small");
-            if (page.info.records() != Math.min(small ? SMALL_PAGE : LARGE_PAGE, ROWS - page.firstRow)) {
-                violations.add("page at row " + page.firstRow + " of " + page.info.records() + " rows");
-            }
-            (small ? lastSmall : lastLarge).set(page.firstRow);
-            submissions.incrementAndGet();
-            lastSubmission.set(System.nanoTime());
-        };
+        observe(LARGE_PAGE, violations, lastSubmission, lastSmall, lastLarge);
 
         long longSum = 0;
         long misplaced = 0;
@@ -102,10 +103,13 @@ class HeadOfLineGatingTest {
             ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
             BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
             BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
-            try (ScheduledFlatColumn small = column(scheduler, iterator, context, 0, smallExchange);
-                 ScheduledFlatColumn large = column(scheduler, iterator, context, 1, largeExchange)) {
+            try (ScheduledFlatColumn small = column(scheduler, iterator, 0, context, smallExchange);
+                 ScheduledFlatColumn large = column(scheduler, iterator, 1, context, largeExchange)) {
                 scheduler.start();
-                awaitSettled(submissions, lastSubmission);
+                awaitState(() -> lastSmall.get() == 368 && lastLarge.get() == 3 * LARGE_PAGE
+                        && small.publishedRow() == 2 * BATCH && large.publishedRow() == 2 * BATCH
+                        && queuedAt(small, 384) && queuedAt(large, 4 * LARGE_PAGE) && large.pagesAhead() == 4,
+                        () -> observed(lastSmall, lastLarge, small, large), lastSubmission);
 
                 assertThat(Math.min(small.publishedRow(), large.publishedRow()))
                         .as("the read's first unpublished row").isEqualTo(2 * BATCH);
@@ -115,24 +119,10 @@ class HeadOfLineGatingTest {
                 assertThat(large.peekReady().firstRow).as("large's waiting page").isEqualTo(4 * LARGE_PAGE);
                 assertThat(large.pagesAhead()).as("large's pages ahead").isEqualTo(4);
 
-                BatchExchange.Batch smallBatch;
-                while ((smallBatch = smallExchange.poll()) != null) {
-                    BatchExchange.Batch largeBatch = largeExchange.poll();
-                    assertThat(largeBatch).isNotNull();
-                    assertThat(largeBatch.recordCount).isEqualTo(smallBatch.recordCount);
-                    long[] longs = (long[]) smallBatch.values;
-                    boolean[] booleans = (boolean[]) largeBatch.values;
-                    for (int i = 0; i < smallBatch.recordCount; i++) {
-                        longSum += longs[i] - records - i;
-                        if (booleans[i] != ((records + i) % 3 == 0)) {
-                            misplaced++;
-                        }
-                    }
-                    records += smallBatch.recordCount;
-                }
-                assertThat(largeExchange.poll()).isNull();
-                smallExchange.checkError();
-                largeExchange.checkError();
+                long[] read = takeAll(smallExchange, largeExchange);
+                records = read[0];
+                longSum = read[1];
+                misplaced = read[2];
             }
         }
         assertThat(records).isEqualTo(ROWS);
@@ -141,28 +131,277 @@ class HeadOfLineGatingTest {
         assertThat(violations).isEmpty();
     }
 
-    private static ScheduledFlatColumn column(ReadScheduler scheduler, RowGroupIterator iterator,
-                                              HardwoodContextImpl context, int index,
-                                              BatchExchange<BatchExchange.Batch> exchange) {
-        return new ScheduledFlatColumn(scheduler, new PageSource(iterator, index), exchange,
-                iterator.referenceSchema().getColumn(index), BATCH, context.decompressorFactory(), null);
+    /// A column whose page is past the cap does not keep the walk past a waiting page from a later
+    /// column whose page is within its depth: `ahead`, its batches taken as they are published,
+    /// has published far past the read's first unpublished row, and each of its pages starts
+    /// within a batch of its own first unpublished row.
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void aColumnPastTheCapHoldsBackNoLaterColumnWithinItsDepth() throws Exception {
+        int largePage = 3 * LARGE_PAGE;
+        byte[] file = write(largePage, true);
+        List<String> violations = Collections.synchronizedList(new ArrayList<>());
+        AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
+        AtomicLong lastSmall = new AtomicLong(-1);
+        AtomicLong lastLarge = new AtomicLong(-1);
+        observe(largePage, violations, lastSubmission, lastSmall, lastLarge);
+
+        long[] read;
+        long[] aheadRead;
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(THREADS);
+             RowGroupIterator iterator = iterator(context, file)) {
+            iterator.planBatches(BATCH, 0);
+            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
+            BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
+            BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
+            BatchExchange<BatchExchange.Batch> aheadExchange = BatchExchange.detachingFlat("ahead", BATCH);
+            FutureTask<long[]> takeAhead = new FutureTask<>(() -> takeAll(aheadExchange));
+            try (ScheduledFlatColumn small = column(scheduler, iterator, 0, context, smallExchange);
+                 ScheduledFlatColumn large = column(scheduler, iterator, 1, context, largeExchange);
+                 ScheduledFlatColumn ahead = column(scheduler, iterator, 2, context, aheadExchange)) {
+                Thread.ofVirtual().start(takeAhead);
+                scheduler.start();
+                awaitState(() -> takeAhead.isDone() && lastSmall.get() == 368 && lastLarge.get() == largePage
+                        && small.publishedRow() == 2 * BATCH && large.publishedRow() == 2 * BATCH
+                        && queuedAt(small, 384) && queuedAt(large, 2 * largePage),
+                        () -> observed(lastSmall, lastLarge, small, large) + "; " + observed("ahead", ahead)
+                                + ", taken: " + takeAhead.isDone(),
+                        lastSubmission);
+
+                assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(368);
+                assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(384);
+                assertThat(lastLarge.get()).as("last page of large submitted").isEqualTo(largePage);
+                assertThat(large.peekReady().firstRow).as("large's waiting page").isEqualTo(2 * largePage);
+                aheadRead = takeAhead.get();
+                read = takeAll(smallExchange, largeExchange);
+            }
+        }
+        assertThat(aheadRead[0]).as("rows of ahead").isEqualTo(ROWS);
+        assertThat(aheadRead[1]).as("values of ahead off their row").isZero();
+        assertThat(read[0]).isEqualTo(ROWS);
+        assertThat(read[1]).as("values off their row").isZero();
+        assertThat(read[2]).as("booleans off their row").isZero();
+        assertThat(violations).isEmpty();
     }
 
-    /// Waits until no page was submitted for [#SETTLED_NANOS], after the first.
-    private static void awaitSettled(AtomicLong submissions, AtomicLong lastSubmission) throws InterruptedException {
-        while (submissions.get() == 0 || System.nanoTime() - lastSubmission.get() < SETTLED_NANOS) {
-            Thread.sleep(20);
+    /// No page is submitted while a column with nothing queued may yet queue a page below it:
+    /// `large`'s fetcher is held before its first page, so its next page may start at row 0, and
+    /// `small`'s page at 16 waits for it. The pool runs each task on the thread submitting it,
+    /// so every choice the scheduler makes after `small` queues that page is made before
+    /// `small`'s fetcher asks for its next page.
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void aPageWaitsForAColumnWithNothingQueuedThatMayStartBelowIt() throws Exception {
+        byte[] file = write(LARGE_PAGE, false);
+        List<String> violations = Collections.synchronizedList(new ArrayList<>());
+        List<ScheduledColumn<?>> columns = new CopyOnWriteArrayList<>();
+        AtomicLong lastSmall = new AtomicLong(-1);
+        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
+            for (ScheduledColumn<?> other : columns) {
+                // The queue is read before the next row, which only grows as pages are queued
+                if (other != column && other.peekReady() == null && other.nextRow() < page.firstRow) {
+                    violations.add("page of " + column.column.name() + " at row " + page.firstRow + " with "
+                            + other.column.name() + "'s next page, at or after row " + other.nextRow()
+                            + ", not queued");
+                }
+            }
+            if (column.column.name().equals("small")) {
+                lastSmall.set(page.firstRow);
+            }
+        };
+        CountDownLatch largeHeld = new CountDownLatch(1);
+        // Counted down as the fetcher asks for each of small's first three pages
+        CountDownLatch smallAsked = new CountDownLatch(3);
+
+        TaskOrderExecutor executor = TaskOrderExecutor.inline(null);
+        long[] read;
+        try (HardwoodContextImpl context = executor.context(1);
+             RowGroupIterator iterator = iterator(context, file)) {
+            iterator.planBatches(BATCH, 0);
+            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
+            BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
+            BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
+            PageSource smallSource = new PageSource(iterator, 0) {
+                @Override
+                public PageInfo next() throws IOException {
+                    smallAsked.countDown();
+                    return super.next();
+                }
+            };
+            PageSource largeSource = new PageSource(iterator, 1) {
+                @Override
+                public PageInfo next() throws IOException {
+                    try {
+                        largeHeld.await();
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new InterruptedIOException("Interrupted while held");
+                    }
+                    return super.next();
+                }
+            };
+            try (ScheduledFlatColumn small = column(scheduler, iterator, smallSource, 0, context, smallExchange);
+                 ScheduledFlatColumn large = column(scheduler, iterator, largeSource, 1, context, largeExchange)) {
+                columns.add(small);
+                columns.add(large);
+                try {
+                    scheduler.start();
+                    assertThat(smallAsked.await(STATE_NANOS, TimeUnit.NANOSECONDS))
+                            .as("small's fetcher asked for its third page").isTrue();
+                    assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(0);
+                    assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(SMALL_PAGE);
+                }
+                finally {
+                    largeHeld.countDown();
+                }
+                read = takeAll(smallExchange, largeExchange);
+            }
+        }
+        assertThat(executor.failure()).isNull();
+        assertThat(read[0]).isEqualTo(ROWS);
+        assertThat(read[1]).as("values off their row").isZero();
+        assertThat(read[2]).as("booleans off their row").isZero();
+        assertThat(violations).isEmpty();
+    }
+
+    /// Checks each page submitted and records the last page of `small` and of `large` submitted:
+    /// a page past a lower queued page starts at least four batches past the read's first
+    /// unpublished row, and each page holds the rows its column's pages are cut into.
+    private static void observe(int largePage, List<String> violations, AtomicLong lastSubmission,
+                                AtomicLong lastSmall, AtomicLong lastLarge) {
+        ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
+            if (page.firstRow != lowestRow && lowestRow - readPublishedRow < (long) THREADS * BATCH) {
+                violations.add("page at row " + page.firstRow + " past one at row " + lowestRow
+                        + " with the read published to row " + readPublishedRow);
+            }
+            String name = column.column.name();
+            boolean large = name.equals("large");
+            if (page.info.records() != Math.min(large ? largePage : SMALL_PAGE, ROWS - page.firstRow)) {
+                violations.add("page of " + name + " at row " + page.firstRow + " of " + page.info.records()
+                        + " rows");
+            }
+            if (name.equals("small")) {
+                lastSmall.set(page.firstRow);
+            }
+            else if (large) {
+                lastLarge.set(page.firstRow);
+            }
+            lastSubmission.set(System.nanoTime());
+        };
+    }
+
+    /// Takes every batch of `small` and `large` together.
+    ///
+    /// @return the rows taken, the sum of `small`'s values less their rows, and the rows whose
+    ///     `large` value is not the one written there
+    private static long[] takeAll(BatchExchange<BatchExchange.Batch> smallExchange,
+                                  BatchExchange<BatchExchange.Batch> largeExchange) throws Exception {
+        long records = 0;
+        long longSum = 0;
+        long misplaced = 0;
+        BatchExchange.Batch smallBatch;
+        while ((smallBatch = smallExchange.poll()) != null) {
+            BatchExchange.Batch largeBatch = largeExchange.poll();
+            assertThat(largeBatch).isNotNull();
+            assertThat(largeBatch.recordCount).isEqualTo(smallBatch.recordCount);
+            long[] longs = (long[]) smallBatch.values;
+            boolean[] booleans = (boolean[]) largeBatch.values;
+            for (int i = 0; i < smallBatch.recordCount; i++) {
+                longSum += longs[i] - records - i;
+                if (booleans[i] != ((records + i) % 3 == 0)) {
+                    misplaced++;
+                }
+            }
+            records += smallBatch.recordCount;
+        }
+        assertThat(largeExchange.poll()).isNull();
+        smallExchange.checkError();
+        largeExchange.checkError();
+        return new long[]{ records, longSum, misplaced };
+    }
+
+    /// Takes every batch of an `INT64` column holding its row.
+    ///
+    /// @return the rows taken and the sum of the values less their rows
+    private static long[] takeAll(BatchExchange<BatchExchange.Batch> exchange) throws Exception {
+        long records = 0;
+        long sum = 0;
+        BatchExchange.Batch batch;
+        while ((batch = exchange.poll()) != null) {
+            long[] longs = (long[]) batch.values;
+            for (int i = 0; i < batch.recordCount; i++) {
+                sum += longs[i] - records - i;
+            }
+            records += batch.recordCount;
+        }
+        exchange.checkError();
+        return new long[]{ records, sum };
+    }
+
+    private static ScheduledFlatColumn column(ReadScheduler scheduler, RowGroupIterator iterator, int index,
+                                              HardwoodContextImpl context,
+                                              BatchExchange<BatchExchange.Batch> exchange) {
+        return column(scheduler, iterator, new PageSource(iterator, index), index, context, exchange);
+    }
+
+    private static ScheduledFlatColumn column(ReadScheduler scheduler, RowGroupIterator iterator, PageSource source,
+                                              int index, HardwoodContextImpl context,
+                                              BatchExchange<BatchExchange.Batch> exchange) {
+        return new ScheduledFlatColumn(scheduler, source, exchange, iterator.referenceSchema().getColumn(index),
+                BATCH, context.decompressorFactory(), null);
+    }
+
+    /// Whether `column`'s next queued page starts at `row`.
+    private static boolean queuedAt(ScheduledColumn<?> column, long row) {
+        PageTask head = column.peekReady();
+        return head != null && head.firstRow == row;
+    }
+
+    /// The rows the tests' expected states compare: the last pages submitted, and each column's
+    /// first unpublished row, waiting page and pages ahead.
+    private static String observed(AtomicLong lastSmall, AtomicLong lastLarge, ScheduledFlatColumn small,
+                                   ScheduledFlatColumn large) {
+        return "last page submitted: small " + lastSmall.get() + ", large " + lastLarge.get()
+                + "; " + observed("small", small) + "; " + observed("large", large);
+    }
+
+    private static String observed(String name, ScheduledColumn<?> column) {
+        PageTask head = column.peekReady();
+        return name + ": published to " + column.publishedRow() + ", waiting page "
+                + (head == null ? "none" : String.valueOf(head.firstRow)) + ", " + column.pagesAhead()
+                + " pages ahead";
+    }
+
+    /// Waits until `reached` holds, then until no page was submitted for [#QUIET_NANOS]; fails with
+    /// the `observed` state if `reached` does not hold within [#STATE_NANOS].
+    private static void awaitState(BooleanSupplier reached, Supplier<String> observed, AtomicLong lastSubmission)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + STATE_NANOS;
+        while (!reached.getAsBoolean()) {
+            if (System.nanoTime() - deadline >= 0) {
+                fail("Expected state not reached within " + TimeUnit.NANOSECONDS.toSeconds(STATE_NANOS)
+                        + " s; observed " + observed.get());
+            }
+            Thread.sleep(10);
+        }
+        while (System.nanoTime() - lastSubmission.get() < QUIET_NANOS) {
+            Thread.sleep(10);
         }
     }
 
     /// One row group of `ROWS` rows: a required `INT64` column `small` holding its row, cut into
-    /// pages of 16 rows by a 128-byte page target, and a required `BOOLEAN` column `large`, true
-    /// on every third row, whose bit-packed pages the 200-row page target cuts first.
-    private static byte[] write() throws Exception {
-        FileSchema schema = FileSchema.builder("skewed")
+    /// pages of 16 rows by a 128-byte page target, a required `BOOLEAN` column `large`, true on
+    /// every third row, whose bit-packed pages the `largePage`-row page target cuts first, and,
+    /// with `ahead`, a required `INT64` column `ahead` alike `small`.
+    private static byte[] write(int largePage, boolean ahead) throws Exception {
+        FileSchema.Builder builder = FileSchema.builder("skewed")
                 .addColumn("small", PhysicalType.INT64, RepetitionType.REQUIRED)
-                .addColumn("large", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
-                .build();
+                .addColumn("large", PhysicalType.BOOLEAN, RepetitionType.REQUIRED);
+        if (ahead) {
+            builder.addColumn("ahead", PhysicalType.INT64, RepetitionType.REQUIRED);
+        }
+        FileSchema schema = builder.build();
         long[] longs = new long[ROWS];
         boolean[] booleans = new boolean[ROWS];
         for (int i = 0; i < ROWS; i++) {
@@ -172,11 +411,16 @@ class HeadOfLineGatingTest {
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
                 .pageTargetBytes(SMALL_PAGE * Long.BYTES)
-                .pageTargetRows(LARGE_PAGE)
+                .pageTargetRows(largePage)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
-            writer.columnWriter().writeBatch(batch -> batch.longs("small", longs).booleans("large", booleans));
+            writer.columnWriter().writeBatch(batch -> {
+                batch.longs("small", longs).booleans("large", booleans);
+                if (ahead) {
+                    batch.longs("ahead", longs);
+                }
+            });
         }
         return InMemoryFiles.toByteArray(out);
     }

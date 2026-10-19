@@ -36,10 +36,10 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// The read's scheduler submits the pages of its columns in row order across the columns, past
-/// the lowest queued page only while that page is past its depth, and keeps at most two pages per
-/// decode thread in flight. The columns' pages differ in size: under one page byte target, the
-/// `INT64` column cuts its pages at about half the rows the `INT32` columns do.
+/// The read's scheduler submits the pages of its columns in row order across the columns, never
+/// below the lowest queued page and past it only while that page is past its depth, and keeps at
+/// most two pages per decode thread in flight. The columns' pages differ in size: under one page
+/// byte target, the `INT64` column cuts its pages at about half the rows the `INT32` columns do.
 class ReadSchedulerTest {
 
     private static final int ROWS = 60_000;
@@ -80,9 +80,19 @@ class ReadSchedulerTest {
         assertThat(sums).containsExactlyInAnyOrderEntriesOf(Map.of("longs", expected, "ints", expected,
                 "small", expected));
         assertThat(submissions).hasSizeGreaterThan(10);
+        long lastLowest = -1;
         for (int i = 0; i < submissions.size(); i++) {
             long[] submission = submissions.get(i);
-            if (submission[0] != submission[2]) {
+            assertThat(submission[0]).as("submission %d at row %d, below the lowest queued row %d", i,
+                    submission[0], submission[2]).isGreaterThanOrEqualTo(submission[2]);
+            if (submission[0] == submission[2]) {
+                // The lowest queued page, with no column of an empty queue able to start lower:
+                // these submissions follow row order
+                assertThat(submission[0]).as("submission %d at row %d, after one at row %d", i, submission[0],
+                        lastLowest).isGreaterThanOrEqualTo(lastLowest);
+                lastLowest = submission[0];
+            }
+            else {
                 // Past a page at least as many batches past the read's first unpublished row as
                 // the pool has threads: the consumer's next batches wait on no queued page
                 assertThat(submission[2] - submission[3])

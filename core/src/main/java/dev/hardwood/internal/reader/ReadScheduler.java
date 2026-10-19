@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// ahead of every read-ahead task in the pool's queue, whatever the number of columns and their
 /// page sizes. While that page is past its column's read-ahead depth, every page below it is
 /// submitted; if fewer of the read's pages are in flight than the pool has threads, the scheduler
-/// then submits the next page of the first column past it with fewer pages ahead than the pool
-/// has threads, if that page is within its column's depth. A column of pages spanning many
+/// then submits the next page of the first column past it that has fewer pages ahead than the
+/// pool has threads and whose page is within its depth. A column of pages spanning many
 /// batches so decodes ahead beside a column of small pages, whose depth ends a few batches past
 /// the read's first unpublished row.
 ///
@@ -257,19 +257,27 @@ public final class ReadScheduler {
         // The page at the lowest row is past its depth, so every page below it is submitted and
         // any page submitted now is read-ahead, which is worth submitting only to a thread the
         // read leaves idle. A column with fewer pages ahead than the pool has threads may still
-        // be within its own depth. Such a column's page is past its depth only past the cap, so
-        // where the first of them fails, every later one does too. The search passes at most as
-        // many columns as the pool has threads, so that it does not grow with the column count.
-        if (submitted.get() >= context.threads()) {
+        // be within its own depth; the first such column whose page is within it is taken. A
+        // column whose page is not within its depth does not decide for a later one: a page
+        // within one batch capacity of its own column's first unpublished row is within depth
+        // past the cap. A column with at least as many pages ahead as the pool has threads is
+        // passed without a depth check, so only the waiting page is known to be past its depth;
+        // the pages passed start above it, and the consumer reaches the waiting page first. The
+        // search stops at a page a column with nothing queued may yet start below, and passes at
+        // most as many columns as the pool has threads, so that it does not grow with the column
+        // count.
+        int threads = context.threads();
+        if (submitted.get() >= threads) {
             return null;
         }
         int passed = 0;
         for (ScheduledColumn<?> candidate : queued.tailSet(best, false)) {
-            if (candidate.indexedHeadRow > pendingRow || passed++ == context.threads()) {
+            if (candidate.indexedHeadRow > pendingRow || passed++ == threads) {
                 return null;
             }
-            if (candidate.lastPagesAhead() < context.threads()) {
-                return withinDepth(candidate, candidate.indexedHeadRow, readPublished) ? candidate : null;
+            if (candidate.lastPagesAhead() < threads
+                    && withinDepth(candidate, candidate.indexedHeadRow, readPublished)) {
+                return candidate;
             }
         }
         return null;

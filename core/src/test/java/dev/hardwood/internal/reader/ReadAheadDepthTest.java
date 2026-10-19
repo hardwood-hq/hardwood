@@ -13,6 +13,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -36,6 +38,7 @@ import dev.hardwood.writer.ParquetFileWriter;
 import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 /// The read-ahead depth of [ReadScheduler]: how far past its first unpublished row a column's
 /// pages are submitted while the consumer takes nothing, on pools of one, two and twelve threads,
@@ -43,8 +46,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// The read has one column, so the column's first unpublished row is the read's. The scheduler
 /// is given a batch byte budget of one batch, which puts the cap at eight batches. Each read first
-/// runs until the column's ready queue is full and the scheduler submits nothing more, and then
-/// takes every batch, which a read that is not live never ends.
+/// runs until the column has published the two batches its exchange holds and, for the flat
+/// column, has submitted its pages up to the expected lead, and then until no page is submitted
+/// for a moment; it then takes every batch, which a read that is not live never ends.
 class ReadAheadDepthTest {
 
     private static final int BATCH = 64;
@@ -55,8 +59,13 @@ class ReadAheadDepthTest {
     private static final long CAP_ROWS = 8 * BUDGET_ROWS;
     /// Elements per record of the column with repetition.
     private static final int K = 3;
-    /// How long no page may be submitted for the read to count as settled.
-    private static final long SETTLED_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
+    /// The column's first unpublished row once its exchange is full.
+    private static final long PUBLISHED_ROW = 2 * BATCH;
+    /// How long the read may take to reach the state the test expects.
+    private static final long STATE_NANOS = TimeUnit.SECONDS.toNanos(30);
+    /// How long no page may be submitted, once the read is in that state, for it to count as
+    /// settled there.
+    private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
 
     @AfterEach
     void removeObserver() {
@@ -99,7 +108,6 @@ class ReadAheadDepthTest {
             throws Exception {
         byte[] file = write(repeated, pageRows);
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
-        AtomicLong submissions = new AtomicLong();
         AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
         AtomicLong maxFirstRow = new AtomicLong(-1);
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
@@ -117,7 +125,6 @@ class ReadAheadDepthTest {
                 violations.add("page at row " + page.firstRow + " with " + inFlight + " pages in flight");
             }
             maxFirstRow.accumulateAndGet(page.firstRow, Math::max);
-            submissions.incrementAndGet();
             lastSubmission.set(System.nanoTime());
         };
 
@@ -137,7 +144,8 @@ class ReadAheadDepthTest {
                         NestedLevelComputer.computeLayers(iterator.referenceSchema())[column.columnIndex()],
                         NestedIndexMode.ALL_ITEMS, false)) {
                     scheduler.start();
-                    awaitSettled(submissions, lastSubmission);
+                    awaitState(() -> scheduled.publishedRow() == PUBLISHED_ROW,
+                            () -> "published to " + scheduled.publishedRow(), lastSubmission);
                     NestedBatch batch;
                     while ((batch = exchange.poll()) != null) {
                         long[] longs = (long[]) batch.values;
@@ -156,7 +164,11 @@ class ReadAheadDepthTest {
                 try (ScheduledFlatColumn scheduled = new ScheduledFlatColumn(scheduler, source, exchange, column,
                         BATCH, context.decompressorFactory(), null)) {
                     scheduler.start();
-                    awaitSettled(submissions, lastSubmission);
+                    awaitState(() -> scheduled.publishedRow() == PUBLISHED_ROW
+                            && maxFirstRow.get() == PUBLISHED_ROW + expectedLead,
+                            () -> "published to " + scheduled.publishedRow() + ", last page submitted at "
+                                    + maxFirstRow.get(),
+                            lastSubmission);
                     assertThat(maxFirstRow.get() - scheduled.publishedRow())
                             .as("lead of the last page submitted over the first unpublished row")
                             .isEqualTo(expectedLead);
@@ -177,10 +189,20 @@ class ReadAheadDepthTest {
         assertThat(violations).isEmpty();
     }
 
-    /// Waits until no page was submitted for [#SETTLED_NANOS], after the first.
-    private static void awaitSettled(AtomicLong submissions, AtomicLong lastSubmission) throws InterruptedException {
-        while (submissions.get() == 0 || System.nanoTime() - lastSubmission.get() < SETTLED_NANOS) {
-            Thread.sleep(20);
+    /// Waits until `reached` holds, then until no page was submitted for [#QUIET_NANOS]; fails with
+    /// the `observed` state if `reached` does not hold within [#STATE_NANOS].
+    private static void awaitState(BooleanSupplier reached, Supplier<String> observed, AtomicLong lastSubmission)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + STATE_NANOS;
+        while (!reached.getAsBoolean()) {
+            if (System.nanoTime() - deadline >= 0) {
+                fail("Expected state not reached within " + TimeUnit.NANOSECONDS.toSeconds(STATE_NANOS)
+                        + " s; observed " + observed.get());
+            }
+            Thread.sleep(10);
+        }
+        while (System.nanoTime() - lastSubmission.get() < QUIET_NANOS) {
+            Thread.sleep(10);
         }
     }
 
