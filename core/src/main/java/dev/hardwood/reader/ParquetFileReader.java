@@ -35,6 +35,7 @@ import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ColumnRequests;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -154,7 +155,7 @@ public class ParquetFileReader implements Closeable {
     private static final Set<String> KNOWN_READER_OPTIONS = Set.of(FIXED_LIST_FAST_PATH_OPTION,
             METADATA_FILTERING_OPTION);
 
-    private static final System.Logger LOG = System.getLogger(ParquetFileReader.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(ParquetFileReader.class.getName()));
 
     /// Resolves the fixed-size-list fast-path flag from a [ReaderConfig]. The fast
     /// path is **opt-in**: it stays disabled unless the option is explicitly
@@ -182,7 +183,7 @@ public class ParquetFileReader implements Closeable {
     private static void warnUnknownReaderOptions(ReaderConfig readerConfig) {
         for (String key : readerConfig.options().keySet()) {
             if (!KNOWN_READER_OPTIONS.contains(key)) {
-                LOG.log(System.Logger.Level.WARNING,
+                LOG.get().log(System.Logger.Level.WARNING,
                         "Ignoring unknown reader option ''{0}'' (recognised options: {1})",
                         key, KNOWN_READER_OPTIONS);
             }

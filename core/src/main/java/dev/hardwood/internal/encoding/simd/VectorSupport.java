@@ -17,12 +17,10 @@ package dev.hardwood.internal.encoding.simd;
 /// (`--add-modules jdk.incubator.vector`).
 public final class VectorSupport {
 
-    private static final System.Logger LOG = System.getLogger(VectorSupport.class.getName());
     private static final SimdOperations INSTANCE;
 
     static {
         INSTANCE = new ScalarOperations();
-        LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (requires Java 22+ and the multi-release JAR)");
     }
 
     private VectorSupport() {

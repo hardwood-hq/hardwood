@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.PageType;
@@ -25,7 +26,7 @@ import dev.hardwood.metadata.PageType;
 /// the field entirely.
 class PageEncodingStatsReader {
 
-    private static final System.Logger LOG = System.getLogger(PageEncodingStatsReader.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(PageEncodingStatsReader.class.getName()));
 
     /// Reads an encoding stats list from the given reader, which must be positioned right after
     /// the list field header has been consumed (i.e. ready to read the list header).
@@ -46,7 +47,7 @@ class PageEncodingStatsReader {
             }
         }
         if (result.size() != ThriftCompactReader.listSize(listHeader)) {
-            LOG.log(System.Logger.Level.WARNING, () -> "Ignoring " + reader.fieldHere() + ": "
+            LOG.get().log(System.Logger.Level.WARNING, () -> "Ignoring " + reader.fieldHere() + ": "
                     + (ThriftCompactReader.listSize(listHeader) - result.size()) + " of "
                     + ThriftCompactReader.listSize(listHeader)
                     + " entries are missing a required field");

@@ -7,9 +7,6 @@
  */
 package dev.hardwood.internal.compression;
 
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
-
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 import dev.hardwood.internal.compression.lz4.Lz4Decompressor;
@@ -18,10 +15,6 @@ import dev.hardwood.metadata.CompressionCodec;
 
 /// Factory for creating decompressor instances based on compression codec.
 public class DecompressorFactory {
-
-    private static final Logger LOG = System.getLogger(DecompressorFactory.class.getName());
-
-    private static volatile boolean gzipLogged = false;
 
     private final LibdeflatePool libdeflatePool;
 
@@ -42,10 +35,8 @@ public class DecompressorFactory {
             case UNCOMPRESSED -> new UncompressedDecompressor();
             case GZIP -> {
                 if (libdeflatePool != null) {
-                    logGzipDecompressor("libdeflate (FFM)");
                     yield new LibdeflateDecompressor(libdeflatePool);
                 }
-                logGzipDecompressor("Java Inflater");
                 yield new GzipDecompressor();
             }
             case SNAPPY -> {
@@ -80,12 +71,5 @@ public class DecompressorFactory {
             }
             case LZO -> throw new UnsupportedOperationException("LZO compression is not supported");
         };
-    }
-
-    private static void logGzipDecompressor(String name) {
-        if (!gzipLogged) {
-            gzipLogged = true;
-            LOG.log(Level.DEBUG, "Using GZIP decompressor: {0}", name);
-        }
     }
 }

@@ -15,13 +15,12 @@ import jdk.incubator.vector.VectorSpecies;
 /// This is the multi-release JAR overlay that provides actual Vector API
 /// detection and SIMD operations when running on Java 22+.
 ///
-/// SIMD engages only when the incubating Vector API module is on the module
-/// path (`--add-modules jdk.incubator.vector`); without it, the Vector API
-/// reference fails to link and detection falls back to scalar operations. That
-/// launch flag is therefore the opt-out — omit it to run scalar.
+/// SIMD engages only when the incubating Vector API module is resolved
+/// (`--add-modules jdk.incubator.vector`). Detection checks for the module before it
+/// touches the Vector API, and selects the scalar operations when the module is absent
+/// or the API fails to link. That launch flag is therefore the opt-out: omit it to run
+/// scalar.
 public final class VectorSupport {
-
-    private static final System.Logger LOG = System.getLogger(VectorSupport.class.getName());
 
     private static final boolean AVAILABLE;
     private static final SimdOperations INSTANCE;
@@ -32,24 +31,24 @@ public final class VectorSupport {
         SimdOperations ops = new ScalarOperations();
         String implName = "scalar";
 
-        try {
-            // Verify Vector API is working
-            VectorSpecies<Integer> species = IntVector.SPECIES_PREFERRED;
-            int vectorLength = species.length();
+        // Without the module, resolving IntVector makes the class loader search every jar on
+        // the class path before it fails, which on a large class path costs tens of milliseconds.
+        if (vectorModulePresent()) {
+            try {
+                // Verify Vector API is working
+                VectorSpecies<Integer> species = IntVector.SPECIES_PREFERRED;
+                int vectorLength = species.length();
 
-            if (vectorLength >= 4) {
-                // Vector API is available and has reasonable vector width
-                ops = new VectorOperations();
-                available = true;
-                implName = "simd-" + species.vectorBitSize() + "bit";
-                LOG.log(System.Logger.Level.DEBUG, "SIMD support: enabled ({0}-bit vectors)", species.vectorBitSize());
+                if (vectorLength >= 4) {
+                    // Vector API is available and has reasonable vector width
+                    ops = new VectorOperations();
+                    available = true;
+                    implName = "simd-" + species.vectorBitSize() + "bit";
+                }
             }
-            else {
-                LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (vector length {0} too small)", vectorLength);
+            catch (Throwable t) {
+                // The Vector API fails to link: scalar operations stay in place.
             }
-        }
-        catch (Throwable t) {
-            LOG.log(System.Logger.Level.DEBUG, "SIMD support: disabled (Vector API not available: {0})", t.getMessage());
         }
 
         AVAILABLE = available;
@@ -58,6 +57,11 @@ public final class VectorSupport {
     }
 
     private VectorSupport() {
+    }
+
+    private static boolean vectorModulePresent() {
+        ModuleLayer layer = VectorSupport.class.getModule().getLayer();
+        return (layer != null ? layer : ModuleLayer.boot()).findModule("jdk.incubator.vector").isPresent();
     }
 
     /// Returns true if SIMD/Vector API operations are available and enabled.

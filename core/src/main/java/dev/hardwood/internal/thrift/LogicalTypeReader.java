@@ -9,6 +9,7 @@ package dev.hardwood.internal.thrift;
 
 import dev.hardwood.internal.schema.AnnotationKind;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
@@ -18,8 +19,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// LogicalType is a union with different variants for each type.
 public class LogicalTypeReader {
 
-    private static final System.Logger LOG =
-            System.getLogger(LogicalTypeReader.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(LogicalTypeReader.class.getName()));
 
     /// The required fields of the member structs that have any — `DecimalType`, `TimeType`,
     /// `TimestampType` and `IntType` — which are fields 1 and 2 of each.
@@ -54,7 +54,7 @@ public class LogicalTypeReader {
                     // An arm this version does not know. The format treats a new logical
                     // type as forward-compatible: read the physical values and lose the
                     // semantics, rather than refuse a file a newer writer produced.
-                    LOG.log(System.Logger.Level.WARNING,
+                    LOG.get().log(System.Logger.Level.WARNING,
                             "Ignoring unrecognized LogicalType union field {0};"
                             + " the column will be read as its physical type."
                             + " The file may have been written against a newer"
@@ -355,7 +355,7 @@ public class LogicalTypeReader {
             case 2 -> TimeUnit.MICROS;
             case 3 -> TimeUnit.NANOS;
             default -> {
-                LOG.log(System.Logger.Level.WARNING,
+                LOG.get().log(System.Logger.Level.WARNING,
                         "Ignoring a time annotation in unrecognized TimeUnit field {0};"
                         + " the column will be read as its physical type."
                         + " The file may have been written against a newer"

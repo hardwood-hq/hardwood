@@ -26,6 +26,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.thrift.ThriftTruncatedException;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -61,8 +62,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#prefetch] fetches the bytes a [#pages] walk then reads.
 public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
-    private static final System.Logger LOG =
-            System.getLogger(SequentialFetchPlan.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(SequentialFetchPlan.class.getName()));
 
     /// Minimum chunk size when `maxRows` is active (1 MB).
     /// Sized to roughly one Parquet data page so header scanning does not
@@ -208,7 +208,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             // failure to a caller that is waiting for it. DEBUG rather than WARN so a
             // sustained backend outage does not emit one line per chunk for failures
             // that are about to be reported properly.
-            LOG.log(System.Logger.Level.DEBUG,
+            LOG.get().log(System.Logger.Level.DEBUG,
                     "Prefetch failed for the first chunk of column {0} in row group {1} of {2}",
                     columnSchema.name(), rowGroupIndex, fileName, e);
         }

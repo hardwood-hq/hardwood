@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.reader.ReadRanges;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.s3.internal.S3Api;
 
 /// The network path behind [S3InputFile]: every non-empty [#readRange] call issues
@@ -37,7 +38,7 @@ import dev.hardwood.s3.internal.S3Api;
 /// Thread-safe once [#open()] has been called.
 final class S3Fetcher implements InputFile {
 
-    private static final System.Logger LOG = System.getLogger(S3Fetcher.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(S3Fetcher.class.getName()));
 
     /// Number of bytes to fetch from the tail of the file during [#open()].
     /// Sized so that the round-trip discovering the file length usually
@@ -113,7 +114,7 @@ final class S3Fetcher implements InputFile {
         if (tailCache != null && offset >= tailCacheOffset
                 && offset + length <= tailCacheOffset + tailCache.capacity()) {
             int relOffset = Math.toIntExact(offset - tailCacheOffset);
-            LOG.log(System.Logger.Level.DEBUG,
+            LOG.get().log(System.Logger.Level.DEBUG,
                     "[{0}] readRange offset={1} length={2} reason={3} (tail cache hit)",
                     name(), offset, length, FetchReason.current());
             return tailCache.slice(relOffset, length);
@@ -213,7 +214,7 @@ final class S3Fetcher implements InputFile {
     /// JUL handler at `Level.FINE`, so a refactor that lowers the level
     /// here would silently drop dive's `--log-file` output.
     private void logFetch(String reason, long offset, int length, long requestNo, long totalBytes) {
-        LOG.log(System.Logger.Level.DEBUG,
+        LOG.get().log(System.Logger.Level.DEBUG,
                 "[{0}] fetch #{1} reason={2} offset={3} length={4} range=[{3},{5}) totalBytes={6}",
                 name(), requestNo, reason, offset, length, offset + length, totalBytes);
     }

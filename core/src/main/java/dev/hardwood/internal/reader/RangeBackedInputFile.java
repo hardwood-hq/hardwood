@@ -17,6 +17,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Optional;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.util.Lazy;
 
 /// An [InputFile] decorator that caches fetched byte ranges in a
 /// sparse temp file mmapped into the process. See #373 and
@@ -47,7 +48,7 @@ import dev.hardwood.InputFile;
 /// the standard delegation.
 public final class RangeBackedInputFile implements InputFile {
 
-    private static final System.Logger LOG = System.getLogger(RangeBackedInputFile.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RangeBackedInputFile.class.getName()));
 
     private final InputFile delegate;
     private final Path tempDir;
@@ -194,7 +195,7 @@ public final class RangeBackedInputFile implements InputFile {
         }
         catch (IOException e) {
             tempFile.toFile().deleteOnExit();
-            LOG.log(System.Logger.Level.WARNING,
+            LOG.get().log(System.Logger.Level.WARNING,
                     "Could not delete range-cache file {0} ({1}); deferred to JVM exit",
                     tempFile, e);
         }

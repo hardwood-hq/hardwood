@@ -11,6 +11,7 @@ import java.util.Comparator;
 
 import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.Statistics;
 
@@ -30,7 +31,7 @@ import dev.hardwood.metadata.Statistics;
 /// keeps a comparator added later from having to remember it.
 sealed interface MinMaxStats {
 
-    System.Logger LOG = System.getLogger(MinMaxStats.class.getName());
+    Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(MinMaxStats.class.getName()));
 
     /// Read from the deprecated `min`/`max` Thrift fields, which compare signed whatever the
     /// column's type is, so they carry the wrong order for every unsigned integer and byte string.
@@ -102,14 +103,14 @@ sealed interface MinMaxStats {
         }
         if (discardReason.equals(UNKNOWN_SORT_ORDER)) {
             if (readability.claimReport(columnIndex)) {
-                LOG.log(System.Logger.Level.WARNING,
+                LOG.get().log(System.Logger.Level.WARNING,
                         "{0}Ignoring the min/max statistics of every row group and page for pruning: {1}. "
                                 + "Rows they could have skipped are read and filtered instead.",
                         logContext.throughoutFile().prefix(), discardReason);
             }
             return;
         }
-        LOG.log(System.Logger.Level.WARNING,
+        LOG.get().log(System.Logger.Level.WARNING,
                 "{0}Ignoring the min/max statistics for pruning: {1}. "
                         + "Rows they could have skipped are read and filtered instead.",
                 logContext.prefix(), discardReason);

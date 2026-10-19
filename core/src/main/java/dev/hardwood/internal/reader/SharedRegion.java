@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.util.Lazy;
 
 /// A contiguous, multi-column byte range fetched in a single
 /// `readRange` call. Exists to coalesce the per-column reads of a row
@@ -31,7 +32,7 @@ import dev.hardwood.internal.FetchReason;
 /// underlying `ByteBuffer` is reclaimed.
 public final class SharedRegion {
 
-    private static final System.Logger LOG = System.getLogger(SharedRegion.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(SharedRegion.class.getName()));
 
     private final InputFile inputFile;
     private final long fileOffset;
@@ -114,7 +115,7 @@ public final class SharedRegion {
                     // Speculative: nothing is waiting on this, and a failed prefetch
                     // leaves the region unfetched, so the demand path fetches it again
                     // and reports the failure to a caller that is waiting for it.
-                    LOG.log(System.Logger.Level.DEBUG,
+                    LOG.get().log(System.Logger.Level.DEBUG,
                             "Prefetch failed for region at offset {0} (length {1}) in {2}",
                             next.fileOffset, next.length, next.inputFile.name(), e);
                 }

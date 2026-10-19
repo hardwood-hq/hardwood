@@ -18,6 +18,7 @@ import dev.hardwood.internal.schema.FileReferences;
 import dev.hardwood.internal.schema.LeafAnnotation;
 import dev.hardwood.internal.schema.LogicalTypeAnnotations;
 import dev.hardwood.internal.schema.LogicalTypeValidator;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.FieldPath;
@@ -33,8 +34,7 @@ import dev.hardwood.metadata.SchemaElement;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public class FileSchema {
 
-    private static final System.Logger LOG =
-            System.getLogger(FileSchema.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(FileSchema.class.getName()));
 
     /// Marks a dot-separated path in `columnPathToIndex` that more than one column joins to.
     private static final int AMBIGUOUS_PATH = -2;
@@ -243,7 +243,7 @@ public class FileSchema {
         List<String> dropped = new ArrayList<>();
         List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex, dropped);
         if (!dropped.isEmpty()) {
-            LOG.log(System.Logger.Level.WARNING,
+            LOG.get().log(System.Logger.Level.WARNING,
                     "Ignoring {0} annotation(s) their field cannot carry; each such field is read"
                     + " as though unannotated: {1}",
                     dropped.size(), String.join("; ", dropped));

@@ -42,6 +42,7 @@ import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.schema.ReadProjection;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.PageFilterEvent;
 import dev.hardwood.jfr.RowGroupBloomFilterEvent;
 import dev.hardwood.jfr.RowGroupDictionaryFilterEvent;
@@ -71,7 +72,7 @@ import dev.hardwood.schema.FileSchema;
 /// is cached for the current file and reused across columns.
 public class RowGroupIterator implements Closeable {
 
-    private static final System.Logger LOG = System.getLogger(RowGroupIterator.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RowGroupIterator.class.getName()));
 
     private static final Consumer<RowGroupIterator> NO_CLOSE_LISTENER = iterator -> {
     };
@@ -949,7 +950,7 @@ public class RowGroupIterator implements Closeable {
                                 // null leaves the entry uncached, so the demand path
                                 // plans the row group again and reports the failure
                                 // to a caller that is waiting for it.
-                                LOG.log(System.Logger.Level.DEBUG,
+                                LOG.get().log(System.Logger.Level.DEBUG,
                                         "Prefetch failed for row group {0}",
                                         nextWorkItem.rowGroupIndex(), e);
                                 return null;
@@ -1704,10 +1705,6 @@ public class RowGroupIterator implements Closeable {
 
         // Trigger prefetch of next file
         triggerPrefetch(fileIndex + 1);
-
-        LOG.log(System.Logger.Level.DEBUG,
-                "Planned file {0}: {1} row groups in the work list so far",
-                fileIndex, workItems.size());
         return true;
     }
 

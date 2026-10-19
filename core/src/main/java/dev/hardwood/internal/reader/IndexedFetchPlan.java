@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.PageLocation;
@@ -25,8 +26,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// until the iterator is first advanced — no I/O happens at plan time.
 final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
-    private static final System.Logger LOG =
-            System.getLogger(IndexedFetchPlan.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(IndexedFetchPlan.class.getName()));
 
     private final List<RowGroupIterator.NeededPage> neededPages;
     private final List<RowGroupIterator.PageGroup> pageGroups;
@@ -93,7 +93,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 // DEBUG rather than WARN so a sustained backend outage does not
                 // emit one line per chunk for failures that are about to be
                 // reported properly.
-                LOG.log(System.Logger.Level.DEBUG,
+                LOG.get().log(System.Logger.Level.DEBUG,
                         "Prefetch failed for the first chunk of column {0} in row group {1}"
                                 + " of {2}",
                         columnSchema.name(), rowGroupIndex, fileName, e);

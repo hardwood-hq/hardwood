@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.List;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Reader for Thrift Compact Protocol using direct ByteBuffer access.
@@ -37,7 +38,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// alike: `wrong Thrift wire type 0x1 (expected 0x5)`.
 public class ThriftCompactReader {
 
-    private static final System.Logger LOG = System.getLogger(ThriftCompactReader.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(ThriftCompactReader.class.getName()));
 
     // The reader dispatches on the raw wire byte in a switch, whose case labels must
     // be compile-time constants, so it references the shared byte codes in
@@ -381,7 +382,7 @@ public class ThriftCompactReader {
         }
         String field = fieldHere();
         skipField(type);
-        LOG.log(System.Logger.Level.WARNING,
+        LOG.get().log(System.Logger.Level.WARNING,
                 () -> "Ignoring " + field + ": " + wrongType("wire", type, expectedType));
         return false;
     }
@@ -581,7 +582,7 @@ public class ThriftCompactReader {
             byte actual = elementType(header);
             String field = fieldHere();
             skipElements(header);
-            LOG.log(System.Logger.Level.WARNING,
+            LOG.get().log(System.Logger.Level.WARNING,
                     () -> "Ignoring " + field + ": " + wrongType("element", actual, expectedElementType));
             return ABSENT_LIST;
         }

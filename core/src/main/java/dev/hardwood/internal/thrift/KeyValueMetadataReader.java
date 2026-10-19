@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+import dev.hardwood.internal.util.Lazy;
 
 /// Reads a Thrift-encoded `list<KeyValue>` into an unmodifiable `Map<String, String>`.
 ///
@@ -20,7 +21,7 @@ import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 /// Thrift, such as an invalid wire type or a list running past the buffer, still fail the read.
 class KeyValueMetadataReader {
 
-    private static final System.Logger LOG = System.getLogger(KeyValueMetadataReader.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(KeyValueMetadataReader.class.getName()));
 
     /// Reads a key-value metadata list from the given reader, which must be positioned
     /// right after the list field header has been consumed (i.e. ready to read the list header).
@@ -43,7 +44,7 @@ class KeyValueMetadataReader {
         }
         if (malformed > 0) {
             int dropped = malformed;
-            LOG.log(System.Logger.Level.WARNING, () -> "Ignoring " + reader.fieldHere() + ": "
+            LOG.get().log(System.Logger.Level.WARNING, () -> "Ignoring " + reader.fieldHere() + ": "
                     + dropped + " of " + size + " entries are missing a required field");
             return Map.of();
         }

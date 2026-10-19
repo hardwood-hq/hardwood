@@ -28,8 +28,6 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
 
-    private static final System.Logger LOG = System.getLogger(HardwoodContextImpl.class.getName());
-
     private final ExecutorService executor;
     private final int threads;
     private final LibdeflatePool libdeflatePool;
@@ -82,17 +80,9 @@ public class HardwoodContextImpl implements HardwoodContext {
         boolean useLibdeflate = !"false".equalsIgnoreCase(
                 System.getProperty(USE_LIBDEFLATE_PROPERTY));
 
-        if (!useLibdeflate) {
-            LOG.log(System.Logger.Level.DEBUG, "Libdeflate disabled via system property");
+        if (!useLibdeflate || !LibdeflateLoader.isAvailable()) {
             return null;
         }
-
-        if (!LibdeflateLoader.isAvailable()) {
-            LOG.log(System.Logger.Level.DEBUG, "Libdeflate not available (requires Java 22+ and native library)");
-            return null;
-        }
-
-        LOG.log(System.Logger.Level.DEBUG, "Libdeflate enabled");
         return new LibdeflatePool();
     }
 

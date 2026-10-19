@@ -1,6 +1,6 @@
 # CLI logging
 
-Describes where the `hardwood` CLI and the `dive` TUI send what they print: a command's result, the CLI's own messages, and the log records of Hardwood and the libraries the CLI runs; the format and threshold of those records; and how the same configuration reaches the JVM and the native binary.
+Describes where the `hardwood` CLI and the `dive` TUI send what they print: a command's result, the CLI's own messages, and the log records of Hardwood and the libraries the CLI runs; the format and threshold of those records; how Hardwood obtains its loggers; and how the same configuration reaches the JVM and the native binary.
 
 Related documents:
 
@@ -40,8 +40,14 @@ The configuration is code rather than a `logging.properties` resource, so it nee
 
 The TUI owns the terminal, so no record reaches stderr while it runs. `CliLogging.forTui` removes the root logger's handlers for the session and restores them when `dive` exits. With `--log-file`, one file handler on the root logger receives the session's records in a timestamped one-line format: Hardwood's from `FINE`, which includes every S3 fetch, and every other source's from `WARNING`. Without it, the session's records are discarded.
 
+## Obtaining loggers
+
+A read that logs nothing obtains no logger. The first `System.getLogger` in a process makes the JDK look up a `System.LoggerFinder` through `ServiceLoader`, which opens every jar on the class path, tens of milliseconds on a large one. Each Hardwood class therefore holds its `System.Logger` in a `Lazy` constant, obtained on the first log statement. Deciding whether a message is enabled needs the backend too, so no log call, `isLoggable` included, runs on a read path regardless of outcome, at any level. `S3Fetcher` logs every fetch at `DEBUG`, so an S3 read obtains a logger on its first fetch.
+
+Test: `dev.hardwood.LoggerLookupTest`.
+
 ## Levels in Hardwood
 
-Hardwood logs at `WARNING` what a reader of the file should know: statistics discarded for pruning, annotations dropped, an unrecognised reader option. What describes the environment rather than the file, such as whether SIMD decoding is available or which GZIP decompressor is in use, and the internals of a read are logged at `DEBUG` or below, so neither the CLI nor an application embedding the library shows them by default.
+Hardwood logs at `WARNING` what a reader of the file should know: statistics discarded for pruning, annotations dropped, an unrecognised reader option. The internals of a read, such as a failed speculative prefetch, are logged at `DEBUG` or below, so neither the CLI nor an application embedding the library shows them by default.
 
 Tests: `dev.hardwood.cli.internal.CliLoggingTest`, `dev.hardwood.cli.command.CliLoggingTest`, `DiveCommandTest`, `NativeBinarySmokeIT`.

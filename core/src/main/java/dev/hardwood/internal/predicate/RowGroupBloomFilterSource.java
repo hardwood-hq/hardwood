@@ -17,6 +17,7 @@ import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -31,7 +32,7 @@ import dev.hardwood.metadata.RowGroup;
 /// synchronization.
 public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
-    private static final System.Logger LOG = System.getLogger(RowGroupBloomFilterSource.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(RowGroupBloomFilterSource.class.getName()));
 
     /// Bytes read to parse the header when `bloom_filter_length` is absent. The header is a tiny
     /// Thrift struct (an i32 plus three single-variant unions), comfortably under this bound.
@@ -109,7 +110,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             // name a real filter. Treat it as corruption but stay conservative — decline to prune
             // rather than throw, keeping the row group (statistics still apply) — and warn so the
             // malformed footer is visible instead of silently reducing pruning.
-            LOG.log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
+            LOG.get().log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
                     + "Ignoring invalid bloom_filter_offset " + offset
                     + "; keeping the row group (statistics still apply)");
             return null;
@@ -129,7 +130,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             // Reading a filter raises this for no other reason, so the catch is as narrow as the
             // condition. Anything unsupported added under here later would be swallowed by it:
             // raise that from the frame that knows what to do with it instead.
-            LOG.log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
+            LOG.get().log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
                     + "Cannot evaluate the bloom filter: " + e.getMessage()
                     + "; keeping the row group (statistics still apply)");
             return null;

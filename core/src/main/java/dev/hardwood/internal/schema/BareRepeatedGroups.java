@@ -14,6 +14,7 @@ import java.util.Deque;
 import java.util.List;
 
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.util.Lazy;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -48,7 +49,7 @@ import dev.hardwood.schema.SchemaNode;
 /// never reaches this class, and `WriterSchemaShape` refuses these groups there.
 public final class BareRepeatedGroups {
 
-    private static final System.Logger LOG = System.getLogger(BareRepeatedGroups.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(BareRepeatedGroups.class.getName()));
 
     private BareRepeatedGroups() {
     }
@@ -69,7 +70,7 @@ public final class BareRepeatedGroups {
         if (dropped.isEmpty()) {
             return elements;
         }
-        LOG.log(System.Logger.Level.WARNING,
+        LOG.get().log(System.Logger.Level.WARNING,
                 "Ignoring {0} annotation(s) on repeated groups outside a LIST or MAP group; those groups"
                 + " are read as though unannotated: {1}",
                 dropped.size(), String.join("; ", dropped));

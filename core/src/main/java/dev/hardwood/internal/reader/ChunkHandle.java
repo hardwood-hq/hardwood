@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.util.Lazy;
 
 /// Lazy fetch handle for a contiguous byte range in a Parquet file.
 ///
@@ -27,7 +28,7 @@ import dev.hardwood.internal.FetchReason;
 /// zero-copy slice — the fetch is instant and pre-fetch is effectively a no-op.
 public class ChunkHandle {
 
-    private static final System.Logger LOG = System.getLogger(ChunkHandle.class.getName());
+    private static final Lazy<System.Logger> LOG = Lazy.of(() -> System.getLogger(ChunkHandle.class.getName()));
 
     private final InputFile inputFile;
     private final long fileOffset;
@@ -145,7 +146,7 @@ public class ChunkHandle {
                 // DEBUG rather than WARN so a sustained backend outage does not
                 // emit one line per chunk for failures that are about to be
                 // reported properly.
-                LOG.log(System.Logger.Level.DEBUG,
+                LOG.get().log(System.Logger.Level.DEBUG,
                         "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
                         next.fileOffset, next.length, next.inputFile.name(), e);
             }
