@@ -30,11 +30,16 @@ import dev.hardwood.schema.ColumnSchema;
 ///   ([PageMeasure]) and places every measured page at the head of the unplaced pages into the
 ///   [NestedCell]s of the read's batch plan ([Placer]), in page order. A page borrows its scratch
 ///   from the column's pool and returns it once every cell it is placed into is filled.
-/// - A cell placement seals is filled once the placing thread has released the lock, by that
-///   thread or another that finds it first among the sealed cells: every page placed into a sealed
-///   cell is measured, so the cell's arrays are allocated at their final size and every segment is
-///   written from its page ([NestedFill]). That thread completes the cell and publishes what can
-///   be published. The arrays are new for every batch: values a reader returned refer to them.
+/// - A cell placement seals is filled on the decode pool once the placing task has released the
+///   lock, by that task or another that finds it first among the sealed cells: every page placed
+///   into a sealed cell is measured, so the cell's arrays are allocated at their final size and
+///   every segment is written from its page ([NestedFill]). That task completes the cell and
+///   publishes what can be published. The arrays are new for every batch: values a reader
+///   returned refer to them.
+/// - The fetcher places too: a row group the column is not read in, the end of the stream and its
+///   own failure, once every page before them is placed. It fills nothing. A cell its placement
+///   seals is filled by a [SealedFillTask], which it queues ahead of its queued pages, so a cell
+///   is filled on the pool even where no page task is left to fill it.
 public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
 
     /// Pages the column keeps queued or decoding and not yet placed.
@@ -43,6 +48,16 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     /// Scratch of pages whose cells are all filled, for the column's next pages.
     private final ArrayBlockingQueue<PageDecoder.LevelScratch> scratchPool =
             new ArrayBlockingQueue<>(4 * MAX_UNPLACED);
+
+    /// Told of every cell as it is filled, on the filling thread; for tests of where cells are
+    /// filled. `null` for none.
+    static volatile FillObserver fillObserver;
+
+    /// Sees each cell the column fills, before its fill.
+    interface FillObserver {
+
+        void filling(ScheduledNestedColumn column, NestedCell cell);
+    }
 
     /// The fetcher's failure, behind the pages it queued before it.
     private record FetchFailure(Exception failure, boolean betweenWorkItems) {
@@ -61,8 +76,8 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     private final Placer<NestedCell> placer;
     /// Pages in page order not yet placed, then [#END] or the [FetchFailure] ending the stream.
     private final ArrayDeque<Object> unplaced = new ArrayDeque<>();
-    /// Cells sealed and not yet filled, which the thread that sealed them fills once it has
-    /// released the lock.
+    /// Cells sealed and not yet filled, which the page task that sealed them fills once it has
+    /// released the lock, or a [SealedFillTask] where the fetcher sealed them.
     private final ArrayDeque<NestedCell> sealed = new ArrayDeque<>();
     /// Set once the placer placed its last page: the read ended or failed.
     private volatile boolean placementEnded;
@@ -134,12 +149,11 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             if (rowInRowGroup >= 0) {
                 nextRow = Math.max(nextRow, batches.readRowsBefore() + rowInRowGroup);
             }
-            placeMeasured();
+            placeAndQueueSealedFill();
         }
         finally {
             lock.unlock();
         }
-        fillSealed();
         return !placementEnded;
     }
 
@@ -185,16 +199,30 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     }
 
     /// Ends the unplaced pages with `end`, which the placement reaches once it has placed them.
+    /// The fetcher submits the queue's change as it exits.
     private void endUnplaced(Object end) {
         lock.lock();
         try {
             unplaced.addLast(end);
-            placeMeasured();
+            placeAndQueueSealedFill();
         }
         finally {
             lock.unlock();
         }
-        fillSealed();
+    }
+
+    /// Places the measured pages on the fetcher (lock held) and, if that sealed a cell, queues a
+    /// [SealedFillTask] ahead of the queued pages for the sealed cells not yet filled, unless one
+    /// is queued already. Every queued page starts at or after the cells placed so far, so the
+    /// queue stays in row order. A cell a page task seals needs no such task: the page task fills
+    /// the sealed cells once it has placed.
+    private void placeAndQueueSealedFill() {
+        int sealedBefore = sealed.size();
+        placeMeasured();
+        NestedCell first = sealed.peekFirst();
+        if (sealed.size() > sealedBefore && !done && !(ready.peekFirst() instanceof SealedFillTask)) {
+            ready.addFirst(new SealedFillTask(first.firstRow()));
+        }
     }
 
     // ==================== Placement (column lock) ====================
@@ -309,36 +337,20 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     // ==================== Page task ====================
 
     /// Decodes and measures a page, places what the measure lets the column place, and fills the
-    /// cells that placement sealed.
+    /// cells sealed so far; a [SealedFillTask] only fills them.
     @Override
     void runPage(PageTask task) {
-        NestedPageTask page = (NestedPageTask) task;
         try {
             if (done) {
                 return;
             }
-            PageInfo info = page.info;
-            PageRowMask mask = info.mask();
-            PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
-                    ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch)
-                    : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch);
-            if (!mask.isAll()) {
-                inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
-            }
-            page.inPlace = inPlace;
-            page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
-            lock.lock();
-            try {
-                page.measured = true;
-                placeMeasured();
-            }
-            finally {
-                lock.unlock();
+            if (task instanceof NestedPageTask page) {
+                measureAndPlace(page);
             }
             fillSealed();
         }
         catch (Exception e) {
-            pageFailed(e, page);
+            pageFailed(e, task);
         }
         catch (Error err) {
             signalError(err);
@@ -346,6 +358,27 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
         finally {
             taskEnded();
+        }
+    }
+
+    private void measureAndPlace(NestedPageTask page) {
+        PageInfo info = page.info;
+        PageRowMask mask = info.mask();
+        PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch)
+                : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch);
+        if (!mask.isAll()) {
+            inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
+        }
+        page.inPlace = inPlace;
+        page.measure = PageMeasure.of(inPlace, info.records(), page.scratch);
+        lock.lock();
+        try {
+            page.measured = true;
+            placeMeasured();
+        }
+        finally {
+            lock.unlock();
         }
     }
 
@@ -369,6 +402,10 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             }
             if (cell == null) {
                 return;
+            }
+            FillObserver observer = fillObserver;
+            if (observer != null) {
+                observer.filling(this, cell);
             }
             try {
                 cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand));

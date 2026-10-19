@@ -64,7 +64,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     // === Guarded by `lock` ===
     final ReentrantLock lock = new ReentrantLock();
-    /// Pages queued and not yet submitted, in page order.
+    /// Pages queued and not yet submitted, in page order. A nested column also queues a
+    /// [SealedFillTask] here, which stands for no page and reports as a boundary marker.
     final ArrayDeque<PageTask> ready = new ArrayDeque<>();
     /// Cells in plan order, then [#END] or the failure that ends the read.
     final ArrayDeque<Object> publishOrder = new ArrayDeque<>();
@@ -265,7 +266,7 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         lock.lock();
         try {
             page = done ? null : ready.pollFirst();
-            if (page != null) {
+            if (page != null && page.holdsRows()) {
                 submittedPages.addLast(page.endRow);
                 submittedPageCount = submittedPages.size();
             }

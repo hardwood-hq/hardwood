@@ -13,7 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /// One page of a scheduled column on its way into batches: the page, where it came from, its
 /// place in the read's row order, the decoder its task decodes it with, and the [Segment]s the
-/// column's fetcher placed it as.
+/// column's fetcher placed it as. Its subclass [SealedFillTask] stands for no page: it carries
+/// [PageInfo#BOUNDARY_MARKER], so it reports as a boundary marker.
 ///
 /// The fetcher creates and places it, and the read's scheduler hands it to its task through the
 /// executor, which orders the fetcher's writes before the task's reads.
@@ -57,6 +58,12 @@ class PageTask {
         this.firstRow = firstRow;
         int records = info.records();
         this.endRow[0] = records == PageInfo.UNKNOWN_RECORDS ? Long.MAX_VALUE : firstRow + records;
+    }
+
+    /// Whether the task decodes a page whose rows the column's read-ahead holds until they are
+    /// published; a [SealedFillTask] does not.
+    boolean holdsRows() {
+        return true;
     }
 
     /// Whether the page stands for a row group the column is not read in.

@@ -1,0 +1,28 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package dev.hardwood.internal.reader;
+
+import dev.hardwood.internal.ExceptionContext;
+
+/// A task of a [ScheduledNestedColumn] that decodes no page: it fills the cells the column's
+/// fetcher sealed, which no page task may be left to fill. The column queues it ahead of its
+/// queued pages at the first row of the first such cell, so the scheduler submits it in row order
+/// with every other task of the read. It stands for no page and holds no rows of the column's
+/// read-ahead.
+final class SealedFillTask extends PageTask {
+
+    SealedFillTask(long firstRow) {
+        super(PageInfo.BOUNDARY_MARKER, null, ExceptionContext.UNKNOWN_ROW_GROUP,
+                ExceptionContext.UNKNOWN_PAGE, null, null, firstRow);
+    }
+
+    @Override
+    boolean holdsRows() {
+        return false;
+    }
+}

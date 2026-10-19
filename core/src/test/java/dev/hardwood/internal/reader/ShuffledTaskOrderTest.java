@@ -55,7 +55,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///   parked segment's hold keeps its page's scratch;
 /// - a page of a column decoded through levels measured before the page ahead of it waits, and
 ///   the task of the page ahead places both ([ScheduledNestedColumn]), including pages that begin
-///   inside a record, whose leading values go into the cell of the record before.
+///   inside a record, whose leading values go into the cell of the record before; every cell of
+///   such a column is filled inside a task, none on its fetcher.
 ///
 /// A failure names the seed; the order a seed gives also depends on when the fetchers queue
 /// their pages, so a seed reproduces an order only most of the time.
@@ -95,6 +96,7 @@ class ShuffledTaskOrderTest {
     @AfterEach
     void uninstall() {
         TaskOrderExecutor.uninstall();
+        ScheduledNestedColumn.fillObserver = null;
     }
 
     @Test
@@ -119,6 +121,7 @@ class ShuffledTaskOrderTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void nestedPagesArePlacedInPageOrderInEveryTaskOrder() throws Exception {
         List<String> longRecords = readList(HardwoodContextImpl.create(THREADS), Path.of(LONG_RECORDS), 3);
+        ScheduledNestedColumn.fillObserver = (column, cell) -> counts.filled();
         for (long seed = 0; seed < SEEDS; seed++) {
             for (int batchSize : new int[]{ 3, 11 }) {
                 assertThat(readList(seed, lists, batchSize))
@@ -129,6 +132,8 @@ class ShuffledTaskOrderTest {
         }
         assertThat(counts.outOfOrder).as("pages measured ahead of an earlier page of their column").isPositive();
         assertThat(counts.outOfOrderInsideRecord).as("of them, pages beginning inside a record").isPositive();
+        assertThat(counts.fills).as("cells filled").isPositive();
+        assertThat(counts.fillsOutsideTasks).as("cells filled outside a task").isZero();
     }
 
     // ==================== Reads ====================
@@ -193,6 +198,18 @@ class ShuffledTaskOrderTest {
         private int multiUnpark;
         private int outOfOrderInsideRecord;
         private final Set<PageTask> ranAhead = Collections.newSetFromMap(new IdentityHashMap<>());
+        /// The thread running a task, `null` between tasks.
+        private Thread running;
+        private int fills;
+        private int fillsOutsideTasks;
+
+        /// On the thread filling a cell.
+        synchronized void filled() {
+            fills++;
+            if (Thread.currentThread() != running) {
+                fillsOutsideTasks++;
+            }
+        }
 
         @Override
         public synchronized void submitted(ScheduledColumn<?> column, PageTask page) {
@@ -201,6 +218,7 @@ class ShuffledTaskOrderTest {
 
         @Override
         public synchronized void beforeRun(ScheduledColumn<?> column, PageTask page) {
+            running = Thread.currentThread();
             for (PageTask earlier : submitted.get(column)) {
                 if (earlier == page) {
                     break;
@@ -215,6 +233,7 @@ class ShuffledTaskOrderTest {
 
         @Override
         public synchronized void afterRun(ScheduledColumn<?> column, PageTask page) {
+            running = null;
             ran.add(page);
             // A page measured ahead of the page before it waits for it, unplaced, with its measure
             if (ranAhead.remove(page) && page instanceof NestedPageTask nested && nested.measure != null
