@@ -21,12 +21,13 @@ import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
-import dev.hardwood.s3.S3OutputFile;
-
 /// The XML bodies of the S3 multipart-upload requests and responses: the completion request,
 /// the upload ID and completion results, and error documents. Responses are parsed with DTDs
 /// and external entities disabled, reading only the root element's direct children.
 public final class S3Xml {
+
+    /// The most parts one multipart upload may have.
+    public static final int MAX_PARTS = 10_000;
 
     /// The key [#rootFields] files the root element's name under; no child has an empty name.
     private static final String ROOT = "";
@@ -38,8 +39,8 @@ public final class S3Xml {
     public record Part(int partNumber, String etag) {
 
         public Part {
-            if (partNumber < 1 || partNumber > S3OutputFile.MAX_PARTS) {
-                throw new IllegalArgumentException("Part number must be between 1 and " + S3OutputFile.MAX_PARTS + ": " + partNumber);
+            if (partNumber < 1 || partNumber > MAX_PARTS) {
+                throw new IllegalArgumentException("Part number must be between 1 and " + MAX_PARTS + ": " + partNumber);
             }
             Objects.requireNonNull(etag, "etag");
         }

@@ -17,13 +17,13 @@ Related documents:
 | Module | Depends on | Role |
 |---|---|---|
 | `hardwood-core` | nothing S3-specific | `InputFile`, the read pipeline, `RangeBackedInputFile` and `RangeSet` (internal) |
-| `hardwood-s3` | `hardwood-core` | `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking`; internal `S3Api`, `Aws4Signer`, `S3OutputFile`, `S3Xml`; package-private `S3Fetcher` |
+| `hardwood-s3` | `hardwood-core` | `S3Source`, `S3InputFile`, `S3OutputFile`, `S3Credentials`, `S3CredentialsProvider`, `RangeBacking`; internal `S3Api`, `Aws4Signer`, `S3Xml`; package-private `S3Fetcher` |
 | `hardwood-aws-auth` (optional) | `hardwood-s3`, `software.amazon.awssdk:auth` | `SdkCredentialsProviders`: the AWS credential chain as an `S3CredentialsProvider` |
 | `hardwood-cli` | `hardwood-s3`, `hardwood-aws-auth` | `s3://` URIs on every file-taking command |
 
 `hardwood-aws-auth` pulls in `software.amazon.awssdk:auth` with the signing, checksum, eventstream, endpoint, metrics and retry modules excluded. `http-client-spi` stays on the classpath because the container-credentials provider references it during GraalVM native-image analysis. The exclusions are signing and transport infrastructure, not credential sources, so the chain resolves the same sources as an unexcluded `auth` module.
 
-Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): credential lookup, signing, URI construction and dispatch. `S3Api` also exposes `putObject` and `createBucket`, which exist for test fixtures; no production code path writes to S3.
+Every protocol request goes through `S3Api` (`dev.hardwood.s3.internal`): credential lookup, signing, URI construction and dispatch. `S3Api` also exposes `createBucket` and a whole-array `putObject`, which exist for test fixtures; production writes go through `S3OutputFile` only.
 
 ## S3Source and configuration
 
@@ -118,7 +118,7 @@ Tests: `S3InputFileIT` (s3), `S3InputFileLargeFileIT` (s3), `S3MultiFileIT` (s3)
 
 ## S3OutputFile
 
-`S3Source.outputFile(...)` returns an `S3OutputFile` (internal) typed as `OutputFile`, so the writer sees only the [output contract](WRITER.md#outputfile). It fills buffers of the source's `uploadPartSize` (default 8 MiB, at least the 5 MiB S3 requires of every part but the last), the first allocated on `create()`, and uploads up to four parts at once, each on a virtual thread of its own.
+`S3Source.outputFile(...)` returns an `S3OutputFile`, which implements the [output contract](WRITER.md#outputfile). It fills buffers of the source's `uploadPartSize` (default 8 MiB, at least the 5 MiB S3 requires of every part but the last), the first allocated on `create()`, and uploads up to four parts at once, each on a virtual thread of its own.
 
 | Event | Requests |
 |---|---|

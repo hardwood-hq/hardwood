@@ -22,29 +22,18 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.s3.internal.S3Api;
 import dev.hardwood.s3.internal.S3Xml;
 
-/// An [OutputFile] that writes one S3 object as a multipart upload, with up to
-/// [#MAX_UPLOADS_IN_FLIGHT] parts uploading while the writer goes on filling the next.
+/// An [OutputFile] that writes one S3 object, created by [S3Source#outputFile(String, String)].
 ///
-/// Bytes collect in a buffer of one part; each time it fills, it is handed to a virtual thread
-/// that uploads it as the next part, and writing continues into another buffer. The first full
-/// part starts the upload. When every upload slot is taken, a write waits for the oldest part to
-/// finish. [#close()] uploads the remainder, waits for every part and completes the upload, or,
-/// for an output that never filled a part, sends the whole object in one `PUT`. Until then
-/// nothing is visible at the key. [#discard()] waits for the uploads in flight to end and aborts
-/// the upload, releasing the parts already sent.
-///
-/// An output holds at most [#MAX_UPLOADS_IN_FLIGHT] + 1 buffers of one part each, allocated as
-/// the upload needs them.
+/// The object is sent as a multipart upload, or in a single `PUT` when it is smaller than one
+/// part, and appears at its key only once [#close()] succeeds. [#discard()] aborts the upload.
+/// See [S3Source#outputFile(String, String)] for buffering, size limits and failure handling.
 public final class S3OutputFile implements OutputFile {
 
     /// The smallest part S3 accepts, except for the last.
-    public static final int MIN_PART_SIZE = 5 * 1024 * 1024;
+    static final int MIN_PART_SIZE = 5 * 1024 * 1024;
 
     /// The largest buffer a Java array can hold.
-    public static final int MAX_PART_SIZE = Integer.MAX_VALUE - 8;
-
-    /// The most parts one multipart upload may have.
-    public static final int MAX_PARTS = 10_000;
+    static final int MAX_PART_SIZE = Integer.MAX_VALUE - 8;
 
     /// The most parts of one output uploading at once.
     static final int MAX_UPLOADS_IN_FLIGHT = 4;
@@ -76,7 +65,7 @@ public final class S3OutputFile implements OutputFile {
     }
 
     /// Rejects a part size outside [#MIN_PART_SIZE] to [#MAX_PART_SIZE].
-    public static void validatePartSize(int partSize) {
+    static void validatePartSize(int partSize) {
         if (partSize < MIN_PART_SIZE || partSize > MAX_PART_SIZE) {
             throw new IllegalArgumentException("Upload part size must be between " + MIN_PART_SIZE + " and "
                     + MAX_PART_SIZE + " bytes: " + partSize);
@@ -174,13 +163,13 @@ public final class S3OutputFile implements OutputFile {
         }
     }
 
-    /// Rejects a write of `length` bytes at `position` that would need more than [#MAX_PARTS]
+    /// Rejects a write of `length` bytes at `position` that would need more than [S3Xml#MAX_PARTS]
     /// parts, before any of it is buffered.
     static void requireCapacity(String target, long position, int length, int partSize) throws IOException {
-        long maximum = (long) partSize * MAX_PARTS;
+        long maximum = (long) partSize * S3Xml.MAX_PARTS;
         if (length > maximum - position) {
             throw new IOException("Output for " + target + " cannot exceed " + maximum + " bytes ("
-                    + MAX_PARTS + " parts of " + partSize + " bytes)");
+                    + S3Xml.MAX_PARTS + " parts of " + partSize + " bytes)");
         }
     }
 
