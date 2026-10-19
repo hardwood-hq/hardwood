@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import dev.hardwood.internal.encoding.AlpDecoder;
@@ -310,36 +311,17 @@ final class FlatPageValues {
             return;
         }
         switch (type) {
-            case INT32 -> {
-                int[] dest = (int[]) out;
-                int at = plainOffset + src * 4;
-                for (int i = 0; i < length; i++) {
-                    dest[destPos + i] = (int) INT.get(plain, at + i * 4);
-                }
-            }
-            case INT64 -> {
-                long[] dest = (long[]) out;
-                int at = plainOffset + src * 8;
-                for (int i = 0; i < length; i++) {
-                    dest[destPos + i] = (long) LONG.get(plain, at + i * 8);
-                }
-            }
-            case FLOAT -> {
-                float[] dest = (float[]) out;
-                int at = plainOffset + src * 4;
-                for (int i = 0; i < length; i++) {
-                    dest[destPos + i] = (float) FLOAT.get(plain, at + i * 4);
-                }
-            }
-            case DOUBLE -> {
-                double[] dest = (double[]) out;
-                int at = plainOffset + src * 8;
-                for (int i = 0; i < length; i++) {
-                    dest[destPos + i] = (double) DOUBLE.get(plain, at + i * 8);
-                }
-            }
+            case INT32 -> plainBytes(src * 4, length * 4).asIntBuffer().get((int[]) out, destPos, length);
+            case INT64 -> plainBytes(src * 8, length * 8).asLongBuffer().get((long[]) out, destPos, length);
+            case FLOAT -> plainBytes(src * 4, length * 4).asFloatBuffer().get((float[]) out, destPos, length);
+            case DOUBLE -> plainBytes(src * 8, length * 8).asDoubleBuffer().get((double[]) out, destPos, length);
             default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
         }
+    }
+
+    /// The `length` bytes of the `PLAIN` values from byte `offset`, little-endian, for a bulk copy.
+    private ByteBuffer plainBytes(int offset, int length) {
+        return ByteBuffer.wrap(plain, plainOffset + offset, length).order(ByteOrder.LITTLE_ENDIAN);
     }
 
     /// This view's delta decoder, positioned at non-null value `src`.
