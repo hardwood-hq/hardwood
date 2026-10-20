@@ -231,7 +231,7 @@ public final class FlatRowReader implements FileAwareRowReader {
     ///                row group they do not.
     /// @param batchSize the read's batch capacity
     /// @param budgetRows the rows of the read's batch byte budget, which bound its scheduler's
-    ///                   read-ahead ([BatchSizing#budgetRows])
+    ///                   read-ahead ([BatchSizing#readAheadBudgetRows])
     /// @return a [FlatRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                                    FileSchema schema,

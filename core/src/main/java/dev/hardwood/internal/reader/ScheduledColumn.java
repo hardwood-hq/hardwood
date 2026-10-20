@@ -76,11 +76,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     /// The read's row of the column's first record not yet published: the first row of the cell
     /// at the head of the publish order, or [#nextRow] when every cell placed is published.
     private volatile long publishedRow;
-    /// The end rows ([PageTask#endRow]) of the pages submitted whose rows are not all published,
-    /// in page order.
-    private final ArrayDeque<long[]> submittedPages = new ArrayDeque<>();
-    /// The size of [#submittedPages] when it last changed, read without the lock.
-    private volatile int submittedPageCount;
     /// Set once the fetcher queues no more pages.
     volatile boolean fetchEnded;
 
@@ -238,22 +233,9 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         return publishedRow;
     }
 
-    /// The column's pages submitted whose rows are not all published: the pages its read-ahead
-    /// holds.
-    int pagesAhead() {
-        lock.lock();
-        try {
-            dropPublishedPages();
-            return submittedPages.size();
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-    /// [#pagesAhead()] as of the last page submitted or rows published, without taking the lock.
-    int lastPagesAhead() {
-        return submittedPageCount;
+    /// The column's page tasks submitted and not finished.
+    int tasksInFlight() {
+        return tasks.get();
     }
 
     /// Takes the column's next queued page off the queue and counts it as a task. The task is
@@ -266,10 +248,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         lock.lock();
         try {
             page = done ? null : ready.pollFirst();
-            if (page != null && page.holdsRows()) {
-                submittedPages.addLast(page.endRow);
-                submittedPageCount = submittedPages.size();
-            }
         }
         finally {
             lock.unlock();
@@ -481,15 +459,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         }
     }
 
-    /// Drops the submitted pages whose rows are all published (lock held).
-    private void dropPublishedPages() {
-        long published = publishedRow;
-        while (!submittedPages.isEmpty() && submittedPages.peekFirst()[0] <= published) {
-            submittedPages.pollFirst();
-        }
-        submittedPageCount = submittedPages.size();
-    }
-
     /// Recomputes [#publishedRow] after the publish order or [#nextRow] changed (lock held).
     void updatePublishedRow() {
         Object head = publishOrder.peekFirst();
@@ -499,7 +468,6 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
         else {
             publishedRow = Math.min(nextRow, unplacedRow());
         }
-        dropPublishedPages();
     }
 
     /// The first row of the column's first page queued and not yet placed into a cell,

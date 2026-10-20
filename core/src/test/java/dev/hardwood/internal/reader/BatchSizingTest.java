@@ -7,19 +7,31 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InMemoryFiles;
+import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ColumnEncoding;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.withinPercentage;
 
 /// Verifies the byte-budgeted batch sizing the column- and row-reader paths
 /// share: the size depends on the projected columns' physical widths scaled by
@@ -43,8 +55,7 @@ class BatchSizingTest {
         }
     }
 
-    /// The rows of the byte budget are not cut by the clamp: the read's scheduler bounds its
-    /// read-ahead in them, so that a narrow read reads ahead as many bytes as a wide one.
+    /// The rows of the byte budget are the budget over the bytes a row costs, not cut by the clamp.
     @Test
     void budgetRowsAreTheByteBudgetBeforeTheClamp() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
@@ -57,6 +68,33 @@ class BatchSizingTest {
             assertThat(BatchSizing.computeOptimalBatchSize(narrow, null, BatchSizing.ROWS_UNKNOWN))
                     .isEqualTo(BatchSizing.MAX_BATCH);
             assertThat(BatchSizing.budgetRows(wide, new double[] { 4.0, 4.0, 4.0, 4.0 })).isEqualTo(TARGET_BYTES / 96);
+        }
+    }
+
+    /// The read-ahead budget measures a `BYTE_ARRAY` column from its chunks. A PLAIN column of
+    /// 100-byte values costs its decompressed bytes per value, each value with its four-byte
+    /// length, plus a start and an end offset: about 112 bytes. The same values from ten distinct
+    /// ones, dictionary-encoded, cost their indices and offsets, below the 16 bytes
+    /// [BatchSizing#budgetRows] assumes. A fixed-width column costs its width either way.
+    @Test
+    void theReadAheadBudgetMeasuresABinaryColumnFromItsChunks() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(
+                writeStrings(ColumnEncoding.PLAIN))))) {
+            ProjectedSchema strings = ProjectedSchema.create(reader.getFileSchema(), ColumnProjection.all());
+            assertThat(BatchSizing.readAheadBudgetRows(strings, reader.getFileMetaData().rowGroups()))
+                    .isCloseTo(TARGET_BYTES / 112, withinPercentage(1));
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(
+                writeStrings(ColumnEncoding.AUTO))))) {
+            ProjectedSchema strings = ProjectedSchema.create(reader.getFileSchema(), ColumnProjection.all());
+            assertThat(BatchSizing.readAheadBudgetRows(strings, reader.getFileMetaData().rowGroups()))
+                    .isGreaterThan(BatchSizing.budgetRows(strings, null));
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
+            ProjectedSchema longs = ProjectedSchema.create(reader.getFileSchema(),
+                    ColumnProjection.columns("long_col"));
+            assertThat(BatchSizing.readAheadBudgetRows(longs, reader.getFileMetaData().rowGroups()))
+                    .isEqualTo(BatchSizing.budgetRows(longs, null));
         }
     }
 
@@ -178,5 +216,26 @@ class BatchSizingTest {
         FileSchema schema = reader.getFileSchema();
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.columns(columns));
         return BatchSizing.computeOptimalBatchSize(projected, null, BatchSizing.ROWS_UNKNOWN);
+    }
+
+    /// A required `BYTE_ARRAY` column `s` of 10,000 values of 100 bytes, ten distinct ones,
+    /// uncompressed, in the given encoding.
+    private static byte[] writeStrings(ColumnEncoding encoding) throws Exception {
+        FileSchema schema = FileSchema.builder("strings")
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
+                .build();
+        byte[][] values = new byte[10_000][];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = String.valueOf((char) ('a' + i % 10)).repeat(100).getBytes(StandardCharsets.UTF_8);
+        }
+        WriterConfig config = WriterConfig.builder()
+                .encoding(encoding)
+                .codec(CompressionCodec.UNCOMPRESSED)
+                .build();
+        InMemoryOutputFile out = OutputFile.inMemory();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.columnWriter().writeBatch(batch -> batch.bytes("s", values));
+        }
+        return InMemoryFiles.toByteArray(out);
     }
 }

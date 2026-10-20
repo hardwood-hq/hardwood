@@ -618,9 +618,9 @@ public class ParquetFileReader implements Closeable {
         int batchSize = resolveBatchSize(AUTO_BATCH_SIZE, projection.decoded(), rowGroups);
         RowReader reader = schema.isFlatSchema()
                 ? FlatRowReader.create(rowGroupIterator, schema, projection, context, filter, maxRows, batchSize,
-                        budgetRows(projection.decoded(), rowGroups))
+                        readAheadBudgetRows(projection.decoded(), rowGroups))
                 : NestedRowReader.create(rowGroupIterator, schema, projection, context, fixedListFastPathEnabled,
-                        filter, maxRows, batchSize, budgetRows(projection.decoded(), rowGroups));
+                        filter, maxRows, batchSize, readAheadBudgetRows(projection.decoded(), rowGroups));
         return trackedChild(rowGroupIterator, reader);
     }
 
@@ -705,7 +705,7 @@ public class ParquetFileReader implements Closeable {
             }
             ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
                     schema, layers, ReadProjection.of(projected), null,
-                    resolveBatchSize(batchSize, projected, rowGroups), budgetRows(projected, rowGroups)));
+                    resolveBatchSize(batchSize, projected, rowGroups), readAheadBudgetRows(projected, rowGroups)));
             return new ColumnRead(scan, projected, layers);
         }
 
@@ -735,7 +735,7 @@ public class ParquetFileReader implements Closeable {
         // per-batch arrays too, so they count toward the byte budget.
         ColumnScan scan = trackedChild(iterator, ColumnScan.open(context, fixedListFastPathEnabled, iterator,
                 schema, layers, readProjection, resolved, resolveBatchSize(batchSize, decoded, rowGroups),
-                budgetRows(decoded, rowGroups)));
+                readAheadBudgetRows(decoded, rowGroups)));
         return new ColumnRead(scan, readProjection.payload(), layers);
     }
 
@@ -827,9 +827,10 @@ public class ParquetFileReader implements Closeable {
     }
 
     /// The rows of the read's batch byte budget, which bound its scheduler's read-ahead
-    /// ([BatchSizing#budgetRows]), from the same metadata [#resolveBatchSize] sizes batches by.
-    private static long budgetRows(ProjectedSchema projected, List<RowGroup> rowGroups) {
-        return BatchSizing.budgetRows(projected, BatchSizing.valuesPerRow(projected, rowGroups));
+    /// ([BatchSizing#readAheadBudgetRows]), from the same metadata [#resolveBatchSize] sizes
+    /// batches by.
+    private static long readAheadBudgetRows(ProjectedSchema projected, List<RowGroup> rowGroups) {
+        return BatchSizing.readAheadBudgetRows(projected, rowGroups);
     }
 
     /// Parses the value of [#BATCH_SIZE_OVERRIDE_PROPERTY], rejecting one that is not a

@@ -171,8 +171,8 @@ class ScheduledColumnCloseTest {
     /// ends the fetcher. The lock acquire parks, and the stop's unpark wakes that park rather than
     /// the fetcher's own wait, so the fetcher has to read the stop after the lock, not before.
     ///
-    /// The single decode thread is held, so the column's first page task never runs, the
-    /// read-ahead depth submits no other page, and the fetcher fills its queue and waits for room.
+    /// The single decode thread is held, so the column's page tasks never run, the pages in flight
+    /// per thread admit no more than two, and the fetcher fills its queue and waits for room.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void stopReachesAFetcherTakingTheColumnLock() throws Exception {
@@ -237,7 +237,7 @@ class ScheduledColumnCloseTest {
                 Thread first;
                 Thread second;
                 try {
-                    awaitTrue(() -> scheduled.pagesAhead() > 0, "a page task is submitted");
+                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a page task is submitted");
                     first = Thread.ofPlatform().start(scheduled::close);
                     awaitTrue(() -> LockSupport.getBlocker(first) == scheduled,
                             "the first close claimed the column and waits for its page task");
@@ -270,7 +270,7 @@ class ScheduledColumnCloseTest {
                 AtomicBoolean interruptedOnReturn = new AtomicBoolean();
                 Thread closer;
                 try {
-                    awaitTrue(() -> scheduled.pagesAhead() > 0, "a page task is submitted");
+                    awaitTrue(() -> scheduled.tasksInFlight() > 0, "a page task is submitted");
                     closer = Thread.ofPlatform().start(() -> {
                         scheduled.close();
                         interruptedOnReturn.set(Thread.currentThread().isInterrupted());

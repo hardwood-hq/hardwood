@@ -280,7 +280,6 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
             if (!goesOn) {
                 placementEnded = true;
             }
-            page.endRow[0] = placer.nextRow();
             lastPlaced = page;
         }
         catch (RuntimeException e) {

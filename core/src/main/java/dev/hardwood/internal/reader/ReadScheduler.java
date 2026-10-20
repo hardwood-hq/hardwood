@@ -22,12 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /// The pool runs tasks in the order they arrive. The scheduler submits the queued page that
 /// starts at the lowest row of the read, so the tasks of the batch the consumer waits for are
 /// ahead of every read-ahead task in the pool's queue, whatever the number of columns and their
-/// page sizes. While that page is past its column's read-ahead depth, every page below it is
-/// submitted; if fewer of the read's pages are in flight than the pool has threads, the scheduler
-/// then submits the next page of the first column past it that has fewer pages ahead than the
-/// pool has threads and whose page is within its depth. A column of pages spanning many
-/// batches so decodes ahead beside a column of small pages, whose depth ends a few batches past
-/// the read's first unpublished row.
+/// page sizes. While that page is past the cap, every page below it is submitted; if fewer of
+/// the read's pages are in flight than the pool has threads, the scheduler then submits the next
+/// page of the first column past it whose page holds rows of the batch that column publishes
+/// next, such as a filter-only column that has published far ahead of the read.
 ///
 /// The scheduler has no thread of its own and does no I/O and no decoding: it runs on whichever
 /// thread changes what may be submitted (a fetcher queuing a page, a page task ending, a column
@@ -40,28 +38,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 ///   queued it, so that no page is submitted ahead of an earlier one not yet queued;
 /// - fewer than [#PAGES_PER_THREAD] pages per decode thread are submitted and not finished,
 ///   across the read;
-/// - it holds rows of the batch its column publishes next, or it is within the column's
-///   read-ahead depth: among the column's pages submitted and not published fewer than the pool
-///   has threads, or starting fewer batches past that batch than the pool has threads, and in
-///   either case within [#CAP_BUDGETS] batch byte budgets ([BatchSizing#budgetRows]) of it.
+/// - it holds rows of the batch its column publishes next, or it starts within the cap: fewer
+///   than [#CAP_BUDGETS] batch byte budgets ([BatchSizing#readAheadBudgetRows]) past the read's
+///   first unpublished row, the slowest column's.
 ///
 /// The scheduler keeps the columns ordered by the keys these conditions compare (the first row of
 /// a column's next queued page, the next row of a column with nothing queued, the first row a
 /// column has not published), and re-reads a column's keys only when the column reports a
 /// change. Finding the page to submit costs a logarithm of the column count, not a pass over the
-/// columns, so a read of thousands of columns is not quadratic in them; past a page beyond its
-/// depth, the scheduler looks at no more columns than the pool has threads.
+/// columns, so a read of thousands of columns is not quadratic in them; past a page beyond the
+/// cap, the scheduler looks at no more columns than the pool has threads.
 ///
-/// The depth gives every decode thread work on the column alone, in whichever unit runs out
-/// first: a page, where pages are large against batches, or a batch, where many small pages
-/// make up one and none of them stops counting until its whole batch is published. Beyond that
-/// it decodes no further ahead than its threads need. The budgets cap the bytes a column
-/// decodes ahead where its pages are large against the budget.
+/// The cap bounds the bytes a read decodes ahead of its consumer, and is counted from the
+/// slowest column, so every column reads ahead to the same row and a fast one does not spend it
+/// running ahead of a slow one. The pages it admits keep the pool busy and give each column its
+/// next page while the consumer reads the current one; the pages in flight per thread bound how
+/// many of them decode at once.
 public final class ReadScheduler {
 
     /// Pages in flight per decode thread, across the read.
     private static final int PAGES_PER_THREAD = atLeastOne("hardwood.internal.pagesPerThread", 2);
-    /// Batch byte budgets a column decodes at most ahead of the batch it publishes next.
+    /// Batch byte budgets a read decodes at most ahead of its first unpublished row.
     private static final int CAP_BUDGETS = 8;
 
     /// Told of every page as it is submitted; for tests of the submission order and the
@@ -112,12 +109,12 @@ public final class ReadScheduler {
 
     /// @param context the context whose decode pool runs the page tasks
     /// @param batchCapacity the read's batch capacity
-    /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#budgetRows])
+    /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#readAheadBudgetRows])
     public ReadScheduler(HardwoodContextImpl context, int batchCapacity, long budgetRows) {
         this.context = context;
         this.pagesInFlight = PAGES_PER_THREAD * context.threads();
         this.batchCapacity = batchCapacity;
-        this.capRows = CAP_BUDGETS * Math.max(batchCapacity, budgetRows);
+        this.capRows = CAP_BUDGETS * budgetRows;
     }
 
     private static int atLeastOne(String property, int defaultValue) {
@@ -251,21 +248,16 @@ public final class ReadScheduler {
         }
         chosenLowestRow = bestRow;
         chosenReadPublished = readPublished;
-        if (withinDepth(best, bestRow, readPublished)) {
+        if (admitted(best, bestRow, readPublished)) {
             return best;
         }
-        // The page at the lowest row is past its depth, so every page below it is submitted and
-        // any page submitted now is read-ahead, which is worth submitting only to a thread the
-        // read leaves idle. A column with fewer pages ahead than the pool has threads may still
-        // be within its own depth; the first such column whose page is within it is taken. A
-        // column whose page is not within its depth does not decide for a later one: a page
-        // within one batch capacity of its own column's first unpublished row is within depth
-        // past the cap. A column with at least as many pages ahead as the pool has threads is
-        // passed without a depth check, so only the waiting page is known to be past its depth;
-        // the pages passed start above it, and the consumer reaches the waiting page first. The
-        // search stops at a page a column with nothing queued may yet start below, and passes at
-        // most as many columns as the pool has threads, so that it does not grow with the column
-        // count.
+        // The page at the lowest row is past the cap, so every page below it is submitted and
+        // every later page is past the cap too. A later page is still admitted where it holds
+        // rows of the batch its own column publishes next, as a column that has published far
+        // ahead of the read does; such a page is worth submitting only to a thread the read
+        // leaves idle. The search stops at a page a column with nothing queued may yet start
+        // below, and passes at most as many columns as the pool has threads, so that it does not
+        // grow with the column count.
         int threads = context.threads();
         if (submitted.get() >= threads) {
             return null;
@@ -275,8 +267,7 @@ public final class ReadScheduler {
             if (candidate.indexedHeadRow > pendingRow || passed++ == threads) {
                 return null;
             }
-            if (candidate.lastPagesAhead() < threads
-                    && withinDepth(candidate, candidate.indexedHeadRow, readPublished)) {
+            if (admitted(candidate, candidate.indexedHeadRow, readPublished)) {
                 return candidate;
             }
         }
@@ -317,15 +308,11 @@ public final class ReadScheduler {
         }
     }
 
-    /// Whether a page of `column` starting at the read's row `row` is within the read-ahead depth.
-    /// A page starting at most one batch capacity past the column's first unpublished row always is:
-    /// a column with repetition seals its open cell only on the page holding the next record start.
-    private boolean withinDepth(ScheduledColumn<?> column, long row, long readPublished) {
-        if (row - column.publishedRow() <= batchCapacity) {
-            return true;
-        }
-        long ahead = row - readPublished;
-        int threads = context.threads();
-        return ahead < capRows && (column.pagesAhead() < threads || ahead < (long) threads * batchCapacity);
+    /// Whether a page of `column` starting at the read's row `row` may be submitted: it starts within
+    /// the cap past the read's first unpublished row `readPublished`, or at most one batch capacity
+    /// past its own column's first unpublished row. The latter keeps the read live: a column with
+    /// repetition seals its open cell only on the page holding the next record start.
+    private boolean admitted(ScheduledColumn<?> column, long row, long readPublished) {
+        return row - column.publishedRow() <= batchCapacity || row - readPublished < capRows;
     }
 }

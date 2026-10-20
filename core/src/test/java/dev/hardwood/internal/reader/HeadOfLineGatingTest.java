@@ -43,27 +43,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
 /// [ReadScheduler] submits the queued page with the lowest row of the read, once no column with
-/// nothing queued may yet queue a page below it; while that page is past its column's read-ahead
-/// depth and the read leaves a decode thread idle, it submits a page of another column that is
-/// within its own depth, which every page below the waiting one being submitted makes read-ahead.
+/// nothing queued may yet queue a page below it; while that page is past the read-ahead cap and
+/// the read leaves a decode thread idle, it submits a page of another column that holds rows of
+/// the batch that column publishes next, which every page below the waiting one being submitted
+/// makes read-ahead.
 ///
 /// The reads have flat columns: `small`, an `INT64` column cut into pages of 16 rows, and
 /// `large`, a `BOOLEAN` column cut into pages of 200 or 600 rows. The consumer takes nothing from
 /// them until the read reaches the state the test expects, so each column publishes the two
-/// batches its exchange holds and the read's first unpublished row stops at 128. On a pool of
-/// four threads:
+/// batches its exchange holds and the read's first unpublished row stops at 128. The cap is eight
+/// batches past that row, on a pool of four threads:
 ///
-/// - `small` is admitted up to fewer than four batches past that row: its last page submitted
-///   starts at 368, and its page at 384 waits.
-/// - `large`'s pages of 200 rows at 400 and 600 start past `small`'s waiting page and are
-///   submitted, being fewer pages ahead than the pool has threads and within the eight batches of
-///   the cap; its page at 800 is past the cap and waits.
-/// - `large`'s page of 600 rows at 1200 is past the cap and waits, and the pages of a third column,
-///   `ahead`, whose consumer takes every batch, are submitted past it.
+/// - `small`'s last page submitted starts at 624, and its page at 640 waits.
+/// - `large`'s page of 600 rows at 600 is within the cap and submitted; its page at 1200 waits,
+///   and the pages of a third column, `ahead`, whose consumer takes every batch, are submitted
+///   past it.
 ///
-/// Every page submitted past a lower waiting page is checked to start at least four batches past
-/// the read's first unpublished row the choice was made against. Each read then takes every batch,
-/// which a read that is not live never ends.
+/// Every page submitted past a lower waiting page is checked to be submitted while that page is
+/// past the cap the choice was made against. Each read then takes every batch, which a read that
+/// is not live never ends.
 class HeadOfLineGatingTest {
 
     private static final int THREADS = 4;
@@ -71,8 +69,10 @@ class HeadOfLineGatingTest {
     private static final int ROWS = 40 * BATCH;
     private static final int SMALL_PAGE = 16;
     private static final int LARGE_PAGE = 200;
-    /// The batch byte budget the scheduler is given, in rows: the cap is eight batches.
+    /// The batch byte budget the scheduler is given, in rows.
     private static final long BUDGET_ROWS = BATCH;
+    /// The cap: eight batch byte budgets.
+    private static final long CAP_ROWS = 8 * BUDGET_ROWS;
     /// How long the read may take to reach the state the test expects.
     private static final long STATE_NANOS = TimeUnit.SECONDS.toNanos(30);
     /// How long no page may be submitted, once the read is in that state, for it to count as
@@ -84,60 +84,13 @@ class HeadOfLineGatingTest {
         ReadScheduler.submissionObserver = null;
     }
 
+    /// A column whose page is past the cap does not hold back a later column whose page holds rows
+    /// of the batch it publishes next: `ahead`, its batches taken as they are published, has
+    /// published far past the read's first unpublished row, and each of its pages starts within a
+    /// batch of its own first unpublished row.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    void aPageWithinItsDepthIsSubmittedPastALowerPageBeyondItsDepth() throws Exception {
-        byte[] file = write(LARGE_PAGE, false);
-        List<String> violations = Collections.synchronizedList(new ArrayList<>());
-        AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
-        AtomicLong lastSmall = new AtomicLong(-1);
-        AtomicLong lastLarge = new AtomicLong(-1);
-        observe(LARGE_PAGE, violations, lastSubmission, lastSmall, lastLarge);
-
-        long longSum = 0;
-        long misplaced = 0;
-        long records = 0;
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(THREADS);
-             RowGroupIterator iterator = iterator(context, file)) {
-            iterator.planBatches(BATCH, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
-            BatchExchange<BatchExchange.Batch> smallExchange = BatchExchange.detachingFlat("small", BATCH);
-            BatchExchange<BatchExchange.Batch> largeExchange = BatchExchange.detachingFlat("large", BATCH);
-            try (ScheduledFlatColumn small = column(scheduler, iterator, 0, context, smallExchange);
-                 ScheduledFlatColumn large = column(scheduler, iterator, 1, context, largeExchange)) {
-                scheduler.start();
-                awaitState(() -> lastSmall.get() == 368 && lastLarge.get() == 3 * LARGE_PAGE
-                        && small.publishedRow() == 2 * BATCH && large.publishedRow() == 2 * BATCH
-                        && queuedAt(small, 384) && queuedAt(large, 4 * LARGE_PAGE) && large.pagesAhead() == 4,
-                        () -> observed(lastSmall, lastLarge, small, large), lastSubmission);
-
-                assertThat(Math.min(small.publishedRow(), large.publishedRow()))
-                        .as("the read's first unpublished row").isEqualTo(2 * BATCH);
-                assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(368);
-                assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(384);
-                assertThat(lastLarge.get()).as("last page of large submitted").isEqualTo(3 * LARGE_PAGE);
-                assertThat(large.peekReady().firstRow).as("large's waiting page").isEqualTo(4 * LARGE_PAGE);
-                assertThat(large.pagesAhead()).as("large's pages ahead").isEqualTo(4);
-
-                long[] read = takeAll(smallExchange, largeExchange);
-                records = read[0];
-                longSum = read[1];
-                misplaced = read[2];
-            }
-        }
-        assertThat(records).isEqualTo(ROWS);
-        assertThat(longSum).as("values off their row").isZero();
-        assertThat(misplaced).as("booleans off their row").isZero();
-        assertThat(violations).isEmpty();
-    }
-
-    /// A column whose page is past the cap does not keep the walk past a waiting page from a later
-    /// column whose page is within its depth: `ahead`, its batches taken as they are published,
-    /// has published far past the read's first unpublished row, and each of its pages starts
-    /// within a batch of its own first unpublished row.
-    @Test
-    @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    void aColumnPastTheCapHoldsBackNoLaterColumnWithinItsDepth() throws Exception {
+    void aPagePastTheCapHoldsBackNoLaterColumnsNextBatch() throws Exception {
         int largePage = 3 * LARGE_PAGE;
         byte[] file = write(largePage, true);
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
@@ -161,15 +114,15 @@ class HeadOfLineGatingTest {
                  ScheduledFlatColumn ahead = column(scheduler, iterator, 2, context, aheadExchange)) {
                 Thread.ofVirtual().start(takeAhead);
                 scheduler.start();
-                awaitState(() -> takeAhead.isDone() && lastSmall.get() == 368 && lastLarge.get() == largePage
+                awaitState(() -> takeAhead.isDone() && lastSmall.get() == 624 && lastLarge.get() == largePage
                         && small.publishedRow() == 2 * BATCH && large.publishedRow() == 2 * BATCH
-                        && queuedAt(small, 384) && queuedAt(large, 2 * largePage),
+                        && queuedAt(small, 640) && queuedAt(large, 2 * largePage),
                         () -> observed(lastSmall, lastLarge, small, large) + "; " + observed("ahead", ahead)
                                 + ", taken: " + takeAhead.isDone(),
                         lastSubmission);
 
-                assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(368);
-                assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(384);
+                assertThat(lastSmall.get()).as("last page of small submitted").isEqualTo(624);
+                assertThat(small.peekReady().firstRow).as("small's waiting page").isEqualTo(640);
                 assertThat(lastLarge.get()).as("last page of large submitted").isEqualTo(largePage);
                 assertThat(large.peekReady().firstRow).as("large's waiting page").isEqualTo(2 * largePage);
                 aheadRead = takeAhead.get();
@@ -266,12 +219,12 @@ class HeadOfLineGatingTest {
     }
 
     /// Checks each page submitted and records the last page of `small` and of `large` submitted:
-    /// a page past a lower queued page starts at least four batches past the read's first
-    /// unpublished row, and each page holds the rows its column's pages are cut into.
+    /// a page is submitted past a lower queued page only while that page is past the cap, and
+    /// each page holds the rows its column's pages are cut into.
     private static void observe(int largePage, List<String> violations, AtomicLong lastSubmission,
                                 AtomicLong lastSmall, AtomicLong lastLarge) {
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
-            if (page.firstRow != lowestRow && lowestRow - readPublishedRow < (long) THREADS * BATCH) {
+            if (page.firstRow != lowestRow && lowestRow - readPublishedRow < CAP_ROWS) {
                 violations.add("page at row " + page.firstRow + " past one at row " + lowestRow
                         + " with the read published to row " + readPublishedRow);
             }
@@ -359,7 +312,7 @@ class HeadOfLineGatingTest {
     }
 
     /// The rows the tests' expected states compare: the last pages submitted, and each column's
-    /// first unpublished row, waiting page and pages ahead.
+    /// first unpublished row and waiting page.
     private static String observed(AtomicLong lastSmall, AtomicLong lastLarge, ScheduledFlatColumn small,
                                    ScheduledFlatColumn large) {
         return "last page submitted: small " + lastSmall.get() + ", large " + lastLarge.get()
@@ -369,8 +322,7 @@ class HeadOfLineGatingTest {
     private static String observed(String name, ScheduledColumn<?> column) {
         PageTask head = column.peekReady();
         return name + ": published to " + column.publishedRow() + ", waiting page "
-                + (head == null ? "none" : String.valueOf(head.firstRow)) + ", " + column.pagesAhead()
-                + " pages ahead";
+                + (head == null ? "none" : String.valueOf(head.firstRow));
     }
 
     /// Waits until `reached` holds, then until no page was submitted for [#QUIET_NANOS]; fails with

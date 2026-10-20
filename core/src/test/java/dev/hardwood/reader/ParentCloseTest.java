@@ -188,9 +188,10 @@ class ParentCloseTest {
         columns.close();
     }
 
-    /// Nothing consumes, so the column's fetcher stays in the first row group; the read
-    /// held is one a speculative task on the common pool started, planning or prefetching
-    /// the second row group.
+    /// The read held is one a speculative task on the common pool started, planning or
+    /// prefetching the second row group. Nothing consumes, but the whole file is within the
+    /// read-ahead cap, so the column's fetcher may reach the second row group and wait on that
+    /// planning; the close then waits for the column before it waits for the prefetches.
     @Test
     void closeWaitsForAStartedPrefetchBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
@@ -202,7 +203,7 @@ class ParentCloseTest {
                 .build();
         file.awaitHeldRead();
 
-        closeWhileHeld(reader, file, AWAIT_PREFETCHES);
+        closeWhileHeld(reader, file, SCHEDULED_CLOSE, AWAIT_PREFETCHES);
 
         assertThat(file.violations).isEmpty();
         columns.close();

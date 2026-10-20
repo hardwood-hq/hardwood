@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///
 /// When close() arrives mid-file, each column's ready queue is at its limit, so its completed
 /// cells wait for the consumer to publish them, the scheduler submits none of its pages past the
-/// read-ahead depth, and its fetcher is parked on room in the column's page queue. The close has
+/// read-ahead cap, and its fetcher is parked on room in the column's page queue. The close has
 /// to unpark that fetcher, and its wait for the page tasks has to end as the last task finishes.
 /// The cases differ in where the pipeline comes to rest: [ColumnReaders] uses the detaching
 /// `BatchExchange` mode, whose ready queue is limited in rows, and [RowReader] the recycling mode,

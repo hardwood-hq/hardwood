@@ -13,6 +13,7 @@ import dev.hardwood.internal.conversion.FixedWidths;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -69,20 +70,50 @@ public final class BatchSizing {
 
     /// The rows whose value arrays fill one batch's byte budget (6 MB), before the batch size is
     /// bounded by [#MAX_BATCH] and by the rows a read can produce: what a batch of the read holds
-    /// in bytes, counted in rows. The read's scheduler bounds its read-ahead in these rows, so
-    /// that a read whose batches the bound cuts short reads ahead as many bytes as any other.
+    /// in bytes, counted in rows.
     ///
     /// @param projectedSchema the columns the read decodes
     /// @param valuesPerRow each projected column's list fan-out, or `null` for one value per row
     /// @return the rows, at least 1
     public static long budgetRows(ProjectedSchema projectedSchema, double[] valuesPerRow) {
+        return rowsWithinBudget(projectedSchema, valuesPerRow, null);
+    }
+
+    /// The rows whose decoded values fill one batch byte budget, which bound a read's read-ahead
+    /// ([ReadScheduler]) in bytes. As [#budgetRows], except that a `BYTE_ARRAY` column costs what
+    /// its chunks over `rowGroups` hold per value once decompressed, plus the start and end offset
+    /// a batch keeps per value, where [#budgetRows] assumes 16 bytes. A batch of a PLAIN-encoded
+    /// column copies its values' bytes, which its decompressed pages hold with a length each; a
+    /// batch of a dictionary-encoded one refers to its dictionary, and its decompressed pages hold
+    /// mostly indices; so the measure follows what the column's batches hold either way.
+    ///
+    /// @param projectedSchema the columns the read decodes
+    /// @param rowGroups the row groups the read's metadata is measured over
+    /// @return the rows, at least 1
+    public static long readAheadBudgetRows(ProjectedSchema projectedSchema, List<RowGroup> rowGroups) {
+        int columnCount = projectedSchema.getProjectedColumnCount();
+        double[] binaryWidths = new double[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            binaryWidths[i] = measuredBinaryWidth(projectedSchema.getProjectedColumn(i), rowGroups);
+        }
+        return rowsWithinBudget(projectedSchema, valuesPerRow(projectedSchema, rowGroups), binaryWidths);
+    }
+
+    /// The rows whose values fill one batch byte budget, each column costing its value width
+    /// times its fan-out plus its levels; a column's width is `measuredWidths[i]` where that is
+    /// present and not negative, and [#columnByteWidth] otherwise.
+    private static long rowsWithinBudget(ProjectedSchema projectedSchema, double[] valuesPerRow,
+                                         double[] measuredWidths) {
         // Target 6 MB of value memory per batch, enough rows to amortise the per-batch overhead.
         long targetBytes = 6L * 1024 * 1024;
 
         double bytesPerRow = 0;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
             ColumnSchema column = projectedSchema.getProjectedColumn(i);
-            bytesPerRow += fanout(valuesPerRow, i) * (columnByteWidth(column) + levelBytesPerValue(column));
+            double width = measuredWidths != null && measuredWidths[i] >= 0
+                    ? measuredWidths[i]
+                    : columnByteWidth(column);
+            bytesPerRow += fanout(valuesPerRow, i) * (width + levelBytesPerValue(column));
         }
 
         if (bytesPerRow <= 0) {
@@ -90,6 +121,25 @@ public final class BatchSizing {
         }
 
         return Math.max(1, (long) (targetBytes / bytesPerRow));
+    }
+
+    /// The bytes a decoded batch of a `BYTE_ARRAY` column holds per value, measured from its
+    /// chunks over `rowGroups`: their decompressed bytes per value plus a start and an end offset.
+    /// `-1` for a column of another type, or one whose chunks hold no value.
+    private static double measuredBinaryWidth(ColumnSchema column, List<RowGroup> rowGroups) {
+        if (column.type() != PhysicalType.BYTE_ARRAY) {
+            return -1;
+        }
+        long bytes = 0;
+        long values = 0;
+        for (RowGroup rowGroup : rowGroups) {
+            ColumnChunk chunk = chunkOf(rowGroup, column.columnIndex(), column.fieldPath());
+            if (chunk != null) {
+                bytes += chunk.metaData().totalUncompressedSize();
+                values += chunk.metaData().numValues();
+            }
+        }
+        return values == 0 ? -1 : (double) bytes / values + 2 * Integer.BYTES;
     }
 
     /// Returns the most rows whose values fit in [#MAX_BATCH] for every projected binary column,

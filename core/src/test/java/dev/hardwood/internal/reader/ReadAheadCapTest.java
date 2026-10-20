@@ -40,23 +40,22 @@ import dev.hardwood.writer.WriterConfig;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
-/// The read-ahead depth of [ReadScheduler]: how far past its first unpublished row a column's
-/// pages are submitted while the consumer takes nothing, on pools of one, two and twelve threads,
-/// for a flat column and a column with repetition whose pages start on batch boundaries.
+/// The read-ahead cap of [ReadScheduler]: how far past its first unpublished row a column's pages
+/// are submitted while the consumer takes nothing, on pools of one, two and twelve threads, for a
+/// flat column and a column with repetition whose pages start on batch boundaries. The cap does
+/// not depend on the pool's threads.
 ///
 /// The read has one column, so the column's first unpublished row is the read's. The scheduler
-/// is given a batch byte budget of one batch, which puts the cap at eight batches. Each read first
+/// is given a batch byte budget of one batch, which puts the cap at eight batches, or of a
+/// sixteenth of one, which puts it below one batch and leaves the column only its next batch,
+/// through the pages always admitted. Each read first
 /// runs until the column has published the two batches its exchange holds and, for the flat
 /// column, has submitted its pages up to the expected lead, and then until no page is submitted
 /// for a moment; it then takes every batch, which a read that is not live never ends.
-class ReadAheadDepthTest {
+class ReadAheadCapTest {
 
     private static final int BATCH = 64;
     private static final int ROWS = 40 * BATCH;
-    /// The batch byte budget the scheduler is given, in rows.
-    private static final long BUDGET_ROWS = BATCH;
-    /// The cap: eight batch byte budgets.
-    private static final long CAP_ROWS = 8 * BUDGET_ROWS;
     /// Elements per record of the column with repetition.
     private static final int K = 3;
     /// The column's first unpublished row once its exchange is full.
@@ -79,47 +78,40 @@ class ReadAheadDepthTest {
         int smallPage = BATCH / 2;
         int largePage = 2 * BATCH;
         return Stream.of(
-                // The always-admitted pages: those starting at most one batch past the first
+                // Up to the cap: the last page starting fewer than eight batches past the first
                 // unpublished row
-                Arguments.of(1, false, smallPage, BATCH),
-                // Fewer batches past it than the pool has threads
-                Arguments.of(2, false, smallPage, 3 * smallPage),
-                // Up to the cap, short of the twelve batches the threads would admit
-                Arguments.of(12, false, smallPage, 15 * smallPage),
-                // A page spanning two batches: nothing but the page holding the first
+                Arguments.of(1, false, smallPage, BATCH, 15 * smallPage),
+                Arguments.of(2, false, smallPage, BATCH, 15 * smallPage),
+                Arguments.of(12, false, smallPage, BATCH, 15 * smallPage),
+                // Pages spanning two batches, up to the cap alike
+                Arguments.of(1, false, largePage, BATCH, 3 * largePage),
+                Arguments.of(2, false, largePage, BATCH, 3 * largePage),
+                Arguments.of(12, false, largePage, BATCH, 3 * largePage),
+                // A cap below one batch: the pages starting at most one batch past the first
                 // unpublished row
-                Arguments.of(1, false, largePage, 0),
-                // Fewer pages ahead than the pool has threads
-                Arguments.of(2, false, largePage, largePage),
-                // Up to the cap, short of the eleven pages the threads would admit
-                Arguments.of(12, false, largePage, 3 * largePage),
-                Arguments.of(1, true, smallPage, -1),
-                Arguments.of(2, true, smallPage, -1),
-                Arguments.of(12, true, smallPage, -1),
-                Arguments.of(1, true, BATCH, -1),
-                Arguments.of(2, true, BATCH, -1),
-                Arguments.of(12, true, BATCH, -1));
+                Arguments.of(12, false, smallPage, BATCH / 16, BATCH),
+                Arguments.of(1, true, smallPage, BATCH, -1),
+                Arguments.of(2, true, smallPage, BATCH, -1),
+                Arguments.of(12, true, smallPage, BATCH, -1),
+                Arguments.of(1, true, BATCH, BATCH, -1),
+                Arguments.of(2, true, BATCH, BATCH, -1),
+                Arguments.of(12, true, BATCH, BATCH, -1));
     }
 
-    @ParameterizedTest(name = "{0} threads, repeated {1}, pages of {2} rows")
+    @ParameterizedTest(name = "{0} threads, repeated {1}, pages of {2} rows, budget of {3} rows")
     @MethodSource("reads")
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    void pagesAreSubmittedWithinTheDepth(int threads, boolean repeated, int pageRows, long expectedLead)
-            throws Exception {
+    void pagesAreSubmittedWithinTheCap(int threads, boolean repeated, int pageRows, long budgetRows,
+                                       long expectedLead) throws Exception {
+        long capRows = 8 * budgetRows;
         byte[] file = write(repeated, pageRows);
         List<String> violations = Collections.synchronizedList(new ArrayList<>());
         AtomicLong lastSubmission = new AtomicLong(System.nanoTime());
         AtomicLong maxFirstRow = new AtomicLong(-1);
         ReadScheduler.submissionObserver = (column, page, inFlight, lowestRow, readPublishedRow) -> {
-            // Both only grow past the scheduler's decision: the published row as cells publish,
-            // and the pages ahead by the page just taken alone
-            long ahead = page.firstRow - column.publishedRow();
-            int pagesBefore = column.pagesAhead() - 1;
-            boolean admitted = ahead <= BATCH
-                    || ahead < CAP_ROWS && (pagesBefore < threads || ahead < (long) threads * BATCH);
-            if (!admitted) {
-                violations.add("page at row " + page.firstRow + ", " + ahead + " rows and " + pagesBefore
-                        + " pages ahead");
+            long ahead = page.firstRow - readPublishedRow;
+            if (ahead > BATCH && ahead >= capRows) {
+                violations.add("page at row " + page.firstRow + ", " + ahead + " rows ahead");
             }
             if (inFlight > 2 * threads) {
                 violations.add("page at row " + page.firstRow + " with " + inFlight + " pages in flight");
@@ -136,7 +128,7 @@ class ReadAheadDepthTest {
             iterator.planBatches(BATCH, 0);
             ColumnSchema column = iterator.referenceSchema().getColumn(0);
             PageSource source = new PageSource(iterator, 0);
-            ReadScheduler scheduler = new ReadScheduler(context, BATCH, BUDGET_ROWS);
+            ReadScheduler scheduler = new ReadScheduler(context, BATCH, budgetRows);
             if (repeated) {
                 BatchExchange<NestedBatch> exchange = BatchExchange.detachingNested(column.name(), BATCH);
                 try (ScheduledNestedColumn scheduled = new ScheduledNestedColumn(scheduler, source, exchange,

@@ -146,7 +146,7 @@ public final class NestedRowReader implements FileAwareRowReader {
     ///                prove match in full, and the reader counts matches from the first
     ///                row group they do not.
     /// @param batchSize records per batch, already resolved by the caller
-    /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#budgetRows])
+    /// @param budgetRows the rows of the read's batch byte budget ([BatchSizing#readAheadBudgetRows])
     /// @return a [NestedRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
