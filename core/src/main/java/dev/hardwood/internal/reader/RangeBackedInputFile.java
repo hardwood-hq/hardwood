@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.util.Lazy;
@@ -58,6 +59,10 @@ public final class RangeBackedInputFile implements InputFile {
     private FileChannel channel;
     private MappedByteBuffer mapping;
     private RangeSet populated;
+    /// Guards the mapping and its population; a lock rather than a monitor, so that a virtual
+    /// thread fetching a gap from the delegate, or waiting for another's, does not hold its
+    /// carrier on JDK 21.
+    private final ReentrantLock lock = new ReentrantLock();
 
     /// Creates a decorator that caches ranges fetched from `delegate`
     /// into a sparse temp file under `tempDir`.
@@ -71,63 +76,75 @@ public final class RangeBackedInputFile implements InputFile {
     }
 
     @Override
-    public synchronized void open() throws IOException {
-        if (mapping != null) {
-            return;
-        }
-        delegate.open();
-        long length = delegate.length();
-        if (length > Integer.MAX_VALUE) {
-            // The file is correct and readable; this cache is what cannot address it,
-            // and the message names the option that reads it anyway.
-            throw new UnsupportedOperationException("File too large for range backing: "
-                    + delegate.name() + " is " + length
-                    + " bytes; the mmap-backed cache supports up to "
-                    + Integer.MAX_VALUE + " bytes. Open with "
-                    + "RangeBacking.NONE for files > 2 GB.");
-        }
-        this.fileLength = length;
-        this.tempFile = Files.createTempFile(tempDir, "hardwood-range-", ".cache");
+    public void open() throws IOException {
+        lock.lock();
         try {
-            this.channel = FileChannel.open(tempFile,
-                    StandardOpenOption.READ, StandardOpenOption.WRITE);
-            channel.truncate(length);
-            this.mapping = channel.map(FileChannel.MapMode.READ_WRITE, 0, length);
-            this.populated = new RangeSet();
+            if (mapping != null) {
+                return;
+            }
+            delegate.open();
+            long length = delegate.length();
+            if (length > Integer.MAX_VALUE) {
+                // The file is correct and readable; this cache is what cannot address it,
+                // and the message names the option that reads it anyway.
+                throw new UnsupportedOperationException("File too large for range backing: "
+                        + delegate.name() + " is " + length
+                        + " bytes; the mmap-backed cache supports up to "
+                        + Integer.MAX_VALUE + " bytes. Open with "
+                        + "RangeBacking.NONE for files > 2 GB.");
+            }
+            this.fileLength = length;
+            this.tempFile = Files.createTempFile(tempDir, "hardwood-range-", ".cache");
+            try {
+                this.channel = FileChannel.open(tempFile,
+                        StandardOpenOption.READ, StandardOpenOption.WRITE);
+                channel.truncate(length);
+                this.mapping = channel.map(FileChannel.MapMode.READ_WRITE, 0, length);
+                this.populated = new RangeSet();
+            }
+            catch (IOException | RuntimeException e) {
+                // Allocation failed mid-setup; clean up the temp file we
+                // already created so it doesn't leak.
+                cleanupTempFile();
+                throw e;
+            }
         }
-        catch (IOException | RuntimeException e) {
-            // Allocation failed mid-setup; clean up the temp file we
-            // already created so it doesn't leak.
-            cleanupTempFile();
-            throw e;
+        finally {
+            lock.unlock();
         }
     }
 
     @Override
-    public synchronized ByteBuffer readRange(long offset, int length) throws IOException {
-        if (mapping == null) {
-            throw new IllegalStateException("File not opened: " + name());
-        }
-        ReadRanges.checkBounds(name(), offset, length, fileLength);
-        long end = offset + length;
-        if (!populated.contains(offset, end)) {
-            // Fetch every gap in `[offset, end)` from the delegate and
-            // write it into the mapping. We hold this object's monitor
-            // throughout so concurrent readers either see the fully
-            // populated range or wait — no torn reads from a partial
-            // refill.
-            for (long[] gap : populated.missing(offset, end)) {
-                long gapStart = gap[0];
-                long gapEnd = gap[1];
-                int gapLen = Math.toIntExact(gapEnd - gapStart);
-                ByteBuffer fetched = delegate.readRange(gapStart, gapLen);
-                MappedByteBuffer slot = mapping;
-                slot.position(Math.toIntExact(gapStart));
-                slot.put(fetched);
-                populated.add(gapStart, gapEnd);
+    public ByteBuffer readRange(long offset, int length) throws IOException {
+        lock.lock();
+        try {
+            if (mapping == null) {
+                throw new IllegalStateException("File not opened: " + name());
             }
+            ReadRanges.checkBounds(name(), offset, length, fileLength);
+            long end = offset + length;
+            if (!populated.contains(offset, end)) {
+                // Fetch every gap in `[offset, end)` from the delegate and
+                // write it into the mapping. We hold the lock
+                // throughout so concurrent readers either see the fully
+                // populated range or wait — no torn reads from a partial
+                // refill.
+                for (long[] gap : populated.missing(offset, end)) {
+                    long gapStart = gap[0];
+                    long gapEnd = gap[1];
+                    int gapLen = Math.toIntExact(gapEnd - gapStart);
+                    ByteBuffer fetched = delegate.readRange(gapStart, gapLen);
+                    MappedByteBuffer slot = mapping;
+                    slot.position(Math.toIntExact(gapStart));
+                    slot.put(fetched);
+                    populated.add(gapStart, gapEnd);
+                }
+            }
+            return mapping.slice(Math.toIntExact(offset), length);
         }
-        return mapping.slice(Math.toIntExact(offset), length);
+        finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -149,34 +166,40 @@ public final class RangeBackedInputFile implements InputFile {
     }
 
     @Override
-    public synchronized void close() throws IOException {
-        IOException firstFailure = null;
-        // Drop the mapping reference; the actual unmap happens when the
-        // GC runs the cleaner. We don't have a portable way to force it.
-        mapping = null;
-        if (channel != null) {
+    public void close() throws IOException {
+        lock.lock();
+        try {
+            IOException firstFailure = null;
+            // Drop the mapping reference; the actual unmap happens when the
+            // GC runs the cleaner. We don't have a portable way to force it.
+            mapping = null;
+            if (channel != null) {
+                try {
+                    channel.close();
+                }
+                catch (IOException e) {
+                    firstFailure = e;
+                }
+                channel = null;
+            }
+            cleanupTempFile();
             try {
-                channel.close();
+                delegate.close();
             }
             catch (IOException e) {
-                firstFailure = e;
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
+                else {
+                    firstFailure.addSuppressed(e);
+                }
             }
-            channel = null;
-        }
-        cleanupTempFile();
-        try {
-            delegate.close();
-        }
-        catch (IOException e) {
-            if (firstFailure == null) {
-                firstFailure = e;
-            }
-            else {
-                firstFailure.addSuppressed(e);
+            if (firstFailure != null) {
+                throw firstFailure;
             }
         }
-        if (firstFailure != null) {
-            throw firstFailure;
+        finally {
+            lock.unlock();
         }
     }
 

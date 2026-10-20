@@ -87,12 +87,10 @@ A schema of many columns spreads both the copying and the flush across all the t
   shared caches and memory bandwidth, so such a read can finish sooner, and with less CPU, on 2 to 4
   threads than on the default. Measure the read at a few values of `n` to find its best. Every page a read
   decodes, dictionary pages included, is decoded on these `n` threads. Fetching page bytes on
-  demand, a lighter stage, runs on the JVM's virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
-  next row group's fetch plans and first chunk, the chunk after the one being read) run on the
-  common `ForkJoinPool`. `n` bounds neither. For strict CPU isolation on a shared machine, also cap
-  the carriers with `-Djdk.virtualThreadScheduler.parallelism` and the common pool with
-  `-Djava.util.concurrent.ForkJoinPool.common.parallelism` at a value of 2 or more. Below 2, each
-  speculative fetch runs on a new thread of its own.
+  demand, a lighter stage, runs on the JVM's virtual-thread carriers rather than this pool, and so
+  do speculative fetches (the next file's footer, the next row group's fetch plans and first chunk,
+  the chunk after the one being read). `n` does not bound them. For strict CPU isolation on a
+  shared machine, also cap the carriers with `-Djdk.virtualThreadScheduler.parallelism`.
 
 ## Further reading
 

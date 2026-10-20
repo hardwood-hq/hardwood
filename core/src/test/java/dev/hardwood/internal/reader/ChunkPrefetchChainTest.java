@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.LongStream;
 
@@ -33,7 +32,8 @@ class ChunkPrefetchChainTest {
     void everyChunkHandlePrefetchesItsSuccessor() throws Exception {
         ReadSignals signals = new ReadSignals();
         CountingInputFile file = new CountingInputFile(signals);
-        PrefetchTasks prefetchTasks = new PrefetchTasks();
+        // Inline, so that each prefetch has run when the access that started it returns.
+        PrefetchTasks prefetchTasks = new PrefetchTasks(Runnable::run);
         ChunkHandle[] handles = new ChunkHandle[CHUNKS];
         for (int i = 0; i < CHUNKS; i++) {
             handles[i] = new ChunkHandle(file, (long) i * CHUNK, CHUNK, "chunk " + i, prefetchTasks);
@@ -61,7 +61,8 @@ class ChunkPrefetchChainTest {
     void everySharedRegionPrefetchesItsSuccessor() throws Exception {
         ReadSignals signals = new ReadSignals();
         CountingInputFile file = new CountingInputFile(signals);
-        PrefetchTasks prefetchTasks = new PrefetchTasks();
+        // Inline, so that each prefetch has run when the access that started it returns.
+        PrefetchTasks prefetchTasks = new PrefetchTasks(Runnable::run);
         SharedRegion[] regions = new SharedRegion[CHUNKS];
         for (int i = 0; i < CHUNKS; i++) {
             regions[i] = new SharedRegion(file, (long) i * CHUNK, CHUNK, "region " + i, prefetchTasks);
@@ -84,10 +85,9 @@ class ChunkPrefetchChainTest {
                 .containsExactly(0L, 100L, 200L, 300L);
     }
 
-    /// Asserts, once the prefetch tasks have run, that links `0..last` and none past them have
-    /// been read: a prefetch fetches only its own link and does not cascade along the chain.
+    /// Asserts that links `0..last` and none past them have been read: a prefetch fetches only
+    /// its own link and does not cascade along the chain.
     private static void assertReadUpTo(CountingInputFile file, int last) {
-        assertThat(ForkJoinPool.commonPool().awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
         assertThat(file.reads())
                 .extracting(CountingInputFile.Read::offset)
                 .as("reads once link %d is prefetched", last)

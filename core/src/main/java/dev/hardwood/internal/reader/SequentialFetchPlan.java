@@ -323,7 +323,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       RowRanges matchingRows, long rowGroupRowCount) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
                 maxRows, dropLeaves, BoundsReadability.ALL, matchingRows, rowGroupRowCount, null, 0,
-                new PrefetchTasks());
+                new PrefetchTasks(context.ioExecutor()));
     }
 
     /// @param dropReadability the readability `dropLeaves` decide inline page statistics under

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -45,6 +46,9 @@ public final class SharedRegion {
     /// starts that region's pre-fetch. A region a pre-fetch fetched still pre-fetches
     /// its successor when the read reaches it, so pre-fetch stays one region ahead.
     private final AtomicBoolean nextRegionPrefetched = new AtomicBoolean();
+    /// Guards the fetch; a lock rather than a monitor, so that a virtual thread waiting for
+    /// another's fetch, or fetching itself, does not hold its carrier on JDK 21.
+    private final ReentrantLock fetchLock = new ReentrantLock();
 
     /// @param prefetchTasks where the pre-fetch of the next region runs, so the read's
     ///        owner can wait for it before closing the file
@@ -128,7 +132,8 @@ public final class SharedRegion {
         if (data != null) {
             return;
         }
-        synchronized (this) {
+        fetchLock.lock();
+        try {
             if (data != null) {
                 return;
             }
@@ -143,6 +148,9 @@ public final class SharedRegion {
                         + "Failed to fetch region at offset " + fileOffset
                         + " (length " + length + ")", e);
             }
+        }
+        finally {
+            fetchLock.unlock();
         }
     }
 }

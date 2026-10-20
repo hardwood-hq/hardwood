@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A read decodes on its context's pool only. Dictionary pages are handed to the pool by whichever
 /// thread needs them: the calling thread probing them for a filter, a fetcher starting a column
-/// chunk, and a planning read on the common pool. A flat column's cell its fetcher seals after its
+/// chunk, and a planning read on the context's I/O executor. A flat column's cell its fetcher seals after its
 /// last fill is completed by a [SealedFillTask], which the scheduler submits like a page: a
 /// completion takes the buffers only a task of the pool holds ([ScheduledColumn#completed]).
 /// These tests run the read's tasks on [TaskOrderExecutor#inline()], so that every page is filled
@@ -136,7 +135,7 @@ class DecodeThreadTest {
     }
 
     /// Each column's fetcher parses the dictionary of every chunk it reads, and under a filter the
-    /// next row group's planning reads parse its dictionaries on the common pool: every one is
+    /// next row group's planning reads parse its dictionaries on the I/O executor: every one is
     /// decoded on the context's pool.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -157,10 +156,10 @@ class DecodeThreadTest {
         assertThat(offPool).isEmpty();
     }
 
-    /// The next row group's planning reads run on the common pool, its dictionaries under a filter
-    /// among them.
+    /// The next row group's planning reads run on the context's I/O executor, its dictionaries
+    /// under a filter among them.
     @Test
-    void aDictionaryParsedOnTheCommonPoolDecodesOnThePool() throws Exception {
+    void aDictionaryParsedOnTheIoExecutorDecodesOnThePool() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1);
              ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
              InputFile input = InputFile.of(file)) {
@@ -172,7 +171,7 @@ class DecodeThreadTest {
             Thread planner = CompletableFuture.supplyAsync(() -> {
                 assertThat(DictionaryParser.parse(page, bucket, chunk.metaData(), context)).isNotNull();
                 return Thread.currentThread();
-            }, ForkJoinPool.commonPool()).join();
+            }, context.ioExecutor()).join();
 
             assertThat(offPool).isEmpty();
             assertThat(callers).containsExactly(planner);

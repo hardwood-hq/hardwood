@@ -12,7 +12,6 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
@@ -48,7 +47,8 @@ class NextRowGroupPrefetchTest {
         PrefetchSignals signals = new PrefetchSignals(InputFile.of(FILE));
         CountingInputFile file = new CountingInputFile(signals);
         file.open();
-        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+        QuiescentExecutor speculative = new QuiescentExecutor();
+        try (HardwoodContextImpl context = HardwoodContextImpl.withIoExecutor(Runtime.getRuntime().availableProcessors(), speculative)) {
             RowGroupIterator iterator = new RowGroupIterator(List.of(file), context, 0);
             try {
                 iterator.setFirstFile(schema, metaData.rowGroups());
@@ -62,7 +62,7 @@ class NextRowGroupPrefetchTest {
                     assertThat(signals.awaitPrefetch(rg + 1))
                             .as("prefetch of row group %d after the demand access to row group %d", rg + 1, rg)
                             .isTrue();
-                    assertNoDataReadPast(file, rg + 1);
+                    assertNoDataReadPast(file, speculative, rg + 1);
                 }
             }
             finally {
@@ -80,8 +80,9 @@ class NextRowGroupPrefetchTest {
 
     /// Asserts, once the prefetch tasks have run, that no row group past `rowGroup` has had a
     /// data read: the prefetch of a row group does not cascade into the one after it.
-    private static void assertNoDataReadPast(CountingInputFile file, int rowGroup) {
-        assertThat(ForkJoinPool.commonPool().awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
+    private static void assertNoDataReadPast(CountingInputFile file, QuiescentExecutor speculative, int rowGroup)
+            throws InterruptedException {
+        assertThat(speculative.awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
         for (int later = rowGroup + 1; later < ROW_GROUPS; later++) {
             int laterRowGroup = later;
             assertThat(file.reads())

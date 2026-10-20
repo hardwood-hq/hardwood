@@ -9,8 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 
@@ -167,7 +165,8 @@ class DictionaryPushDownIoTest {
                     rows++;
                 }
             }
-            assertThat(ForkJoinPool.commonPool().awaitQuiescence(10, TimeUnit.SECONDS)).isTrue();
+            // The reader's close has waited for every prefetch task it admitted; one that had
+            // not started by then has returned without reading.
 
             assertThat(rows).isZero();
             assertThat(file.reads())

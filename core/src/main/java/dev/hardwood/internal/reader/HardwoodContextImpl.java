@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
@@ -29,11 +30,15 @@ import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 
 /// Internal implementation of [HardwoodContext].
 ///
-/// Holds the thread pool every decode of a read runs on ([DecodeExecutor]), the libdeflate
-/// decompressor pool for native GZIP decompression, and the decompressor factory.
+/// Holds the thread pool every decode of a read runs on ([DecodeExecutor]), the executor its
+/// speculative reads run on ([#ioExecutor()]), the libdeflate decompressor pool for native GZIP
+/// decompression, and the decompressor factory.
 public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
+
+    /// Starts each task on a virtual thread of its own.
+    private static final Executor IO_EXECUTOR = task -> Thread.ofVirtual().name("hardwood-io").start(task);
 
     /// Told of every decode [#decode] runs, on the thread running it; for tests of where decode
     /// work runs. `null` for none.
@@ -47,6 +52,7 @@ public class HardwoodContextImpl implements HardwoodContext {
     }
 
     private final ExecutorService executor;
+    private final Executor ioExecutor;
     private final DecodeExecutor decodeExecutor;
     private final int threads;
     /// The pool's threads, which a read must not run on: it waits for work only they can run.
@@ -56,8 +62,9 @@ public class HardwoodContextImpl implements HardwoodContext {
     private final MetadataSource metadataSource;
 
     private HardwoodContextImpl(ExecutorService executor, int threads, Set<Thread> poolThreads,
-                                LibdeflatePool libdeflatePool, MetadataSource metadataSource) {
+                                Executor ioExecutor, LibdeflatePool libdeflatePool, MetadataSource metadataSource) {
         this.executor = executor;
+        this.ioExecutor = ioExecutor;
         this.decodeExecutor = new DecodeExecutor(executor, threads);
         this.threads = threads;
         this.poolThreads = poolThreads;
@@ -73,18 +80,24 @@ public class HardwoodContextImpl implements HardwoodContext {
 
     /// Create a new context with a thread pool of the specified size.
     public static HardwoodContextImpl create(int threads) {
-        return create(threads, ParquetMetadataReader.FROM_FILE);
+        return create(threads, ParquetMetadataReader.FROM_FILE, IO_EXECUTOR);
     }
 
     /// Create a context whose page tasks run on `executor`, which the context takes as having
     /// `threads` threads and shuts down when it closes; for tests that decide the order a read's
     /// tasks run in.
     static HardwoodContextImpl create(ExecutorService executor, int threads) {
-        return new HardwoodContextImpl(executor, threads, Set.of(), createLibdeflatePoolIfAvailable(),
+        return new HardwoodContextImpl(executor, threads, Set.of(), IO_EXECUTOR, createLibdeflatePoolIfAvailable(),
                 ParquetMetadataReader.FROM_FILE);
     }
 
-    private static HardwoodContextImpl create(int threads, MetadataSource metadataSource) {
+    /// Create a context with a pool of `threads` threads whose speculative work runs on
+    /// `ioExecutor`; for tests that wait for that work.
+    static HardwoodContextImpl withIoExecutor(int threads, Executor ioExecutor) {
+        return create(threads, ParquetMetadataReader.FROM_FILE, ioExecutor);
+    }
+
+    private static HardwoodContextImpl create(int threads, MetadataSource metadataSource, Executor ioExecutor) {
         AtomicInteger threadCounter = new AtomicInteger(0);
         Set<Thread> poolThreads = ConcurrentHashMap.newKeySet();
         ThreadFactory threadFactory = r -> {
@@ -99,7 +112,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         // wait for the pool's first thread to start; it starts here, while the footer is read
         executor.prestartCoreThread();
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, threads, poolThreads, libdeflatePool, metadataSource);
+        return new HardwoodContextImpl(executor, threads, poolThreads, ioExecutor, libdeflatePool, metadataSource);
     }
 
     /// Start building a context.
@@ -126,6 +139,14 @@ public class HardwoodContextImpl implements HardwoodContext {
     @Override
     public ExecutorService executor() {
         return executor;
+    }
+
+    /// The executor a read's speculative work runs on: prefetches and footer loads, which spend
+    /// their time waiting for I/O. Each task gets a virtual thread of its own, so none holds a
+    /// thread of the decode pool or of the JVM's common pool while it waits; decode work such a
+    /// task needs goes to the pool through [#decode].
+    public Executor ioExecutor() {
+        return ioExecutor;
     }
 
     /// Runs `task` on the context's pool, with a set of its decode buffers.
@@ -218,7 +239,7 @@ public class HardwoodContextImpl implements HardwoodContext {
 
         @Override
         public HardwoodContext build() {
-            return create(threads, metadataSource);
+            return create(threads, metadataSource, IO_EXECUTOR);
         }
     }
 }

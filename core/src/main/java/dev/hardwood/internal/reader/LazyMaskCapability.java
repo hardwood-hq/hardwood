@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.util.concurrent.locks.ReentrantLock;
 
 /// A row group's [MaskCapability], determined on first request and cached.
 ///
@@ -27,6 +28,9 @@ public final class LazyMaskCapability {
 
     private final Probe probe;
     private volatile MaskCapability value;
+    /// Guards the probe, which reads page headers; a lock rather than a monitor, so that a virtual
+    /// thread waiting for another's probe does not hold its carrier on JDK 21.
+    private final ReentrantLock lock = new ReentrantLock();
 
     LazyMaskCapability(Probe probe) {
         this.probe = probe;
@@ -45,13 +49,17 @@ public final class LazyMaskCapability {
         if (result != null) {
             return result;
         }
-        synchronized (this) {
+        lock.lock();
+        try {
             result = value;
             if (result == null) {
                 result = probe.run();
                 value = result;
             }
             return result;
+        }
+        finally {
+            lock.unlock();
         }
     }
 }

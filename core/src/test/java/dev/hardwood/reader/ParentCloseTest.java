@@ -168,16 +168,21 @@ class ParentCloseTest {
         rows.close();
     }
 
+    /// The gate is armed before the readers are built: their fetchers start reading as they are
+    /// built, and armed afterwards, the gate could miss every read the read makes. Building
+    /// column readers waits for none of those reads, so the held one does not hold the build.
     @Test
     void closeStopsUnclosedColumnReadersBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
         ParquetFileReader reader = ParquetFileReader.open(file);
+        AtomicReference<ColumnReaders> built = new AtomicReference<>();
+        Thread testThread = Thread.currentThread();
+        Thread consumer = Thread.ofPlatform().unstarted(() -> drain(built.get()));
+        file.arm(t -> t != testThread && t != consumer);
         ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
                 .batchSize(INDEXED_BATCH_SIZE)
                 .build();
-        Thread testThread = Thread.currentThread();
-        Thread consumer = Thread.ofPlatform().unstarted(() -> drain(columns));
-        file.arm(t -> t != testThread && t != consumer);
+        built.set(columns);
         consumer.start();
         file.awaitHeldRead();
 
@@ -188,7 +193,7 @@ class ParentCloseTest {
         columns.close();
     }
 
-    /// The read held is one a speculative task on the common pool started, planning or
+    /// The read held is one a speculative task on the context's I/O executor started, planning or
     /// prefetching the second row group. Nothing consumes, but the whole file is within the
     /// read-ahead cap, so the column's fetcher may reach the second row group and wait on that
     /// planning; the close then waits for the column before it waits for the prefetches.
@@ -196,8 +201,7 @@ class ParentCloseTest {
     void closeWaitsForAStartedPrefetchBeforeClosingTheFile() throws Exception {
         GatedInputFile file = new GatedInputFile(Files.readAllBytes(INDEXED_FILE));
         ParquetFileReader reader = ParquetFileReader.open(file);
-        Thread testThread = Thread.currentThread();
-        file.arm(t -> !t.isVirtual() && t != testThread);
+        file.arm(t -> t.getName().equals("hardwood-io"));
         ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.all())
                 .batchSize(INDEXED_BATCH_SIZE)
                 .build();
@@ -283,6 +287,38 @@ class ParentCloseTest {
         assertThatThrownBy(reader::close)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("child close failed");
+
+        assertThat(closedCleanly).hasValue(1);
+        assertThat(file.closed).isTrue();
+        assertThat(file.violations).isEmpty();
+        first.close();
+        second.close();
+    }
+
+    /// A child whose close throws an `Error`, as one whose speculative work raised it does, stops
+    /// neither the other children nor the files from closing, and the parent's close throws it.
+    @Test
+    void closeFinishesTeardownWhenAChildsCloseThrowsAnError() throws Exception {
+        GatedInputFile file = new GatedInputFile(fixedWidthFile());
+        ParquetFileReader reader = ParquetFileReader.open(file);
+        RowReader first = reader.rowReader();
+        RowReader second = reader.rowReader();
+        AtomicInteger failing = new AtomicInteger();
+        AtomicInteger closedCleanly = new AtomicInteger();
+        AssertionError error = new AssertionError("prefetch failed");
+        reader.wrapTrackedChildren(child -> failing.getAndIncrement() == 0
+                ? () -> {
+                    child.close();
+                    throw error;
+                }
+                : () -> {
+                    child.close();
+                    closedCleanly.incrementAndGet();
+                });
+
+        assertThatThrownBy(reader::close)
+                .isSameAs(error)
+                .hasMessage("prefetch failed");
 
         assertThat(closedCleanly).hasValue(1);
         assertThat(file.closed).isTrue();

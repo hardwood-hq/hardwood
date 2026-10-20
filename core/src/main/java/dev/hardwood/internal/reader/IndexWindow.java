@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
@@ -39,6 +40,9 @@ final class IndexWindow {
     private final BitSet[] columnIndexColumns;
     private final BitSet[] bloomFilterColumns;
     private final String rowGroupLabel;
+    /// Guards the state below and the fetches; a lock rather than a monitor, so that a virtual
+    /// thread waiting for another's fetch, or fetching itself, does not hold its carrier on JDK 21.
+    private final ReentrantLock lock = new ReentrantLock();
     private final boolean[] released;
     private int unreleased;
     private CoalescedRanges offsetIndexes;
@@ -182,16 +186,22 @@ final class IndexWindow {
     /// first call. A failed fetch stores nothing, so the next call fetches again.
     ///
     /// @throws IllegalStateException if the work item is not a member, or was released
-    synchronized RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
-        int member = member(workItemIndex);
-        if (released[member]) {
-            throw new IllegalStateException("Page index of work item " + workItemIndex
-                    + " requested after its release");
+    RowGroupIndexBuffers buffersFor(int workItemIndex) throws IOException {
+        lock.lock();
+        try {
+            int member = member(workItemIndex);
+            if (released[member]) {
+                throw new IllegalStateException("Page index of work item " + workItemIndex
+                        + " requested after its release");
+            }
+            if (buffers == null) {
+                fetch();
+            }
+            return buffers[member];
         }
-        if (buffers == null) {
-            fetch();
+        finally {
+            lock.unlock();
         }
-        return buffers[member];
     }
 
     /// The bloom-filter bytes of the work item at `workItemIndex`, one entry per column of its row
@@ -200,47 +210,65 @@ final class IndexWindow {
     /// nothing, so the next call fetches again.
     ///
     /// @throws IllegalStateException if the work item is not a member, or was released
-    synchronized ByteBuffer[] bloomFiltersFor(int workItemIndex) throws IOException {
-        int member = member(workItemIndex);
-        if (released[member]) {
-            throw new IllegalStateException("Bloom filters of work item " + workItemIndex
-                    + " requested after their release");
-        }
-        List<ColumnChunk> chunks = rowGroups[member].columns();
-        ByteBuffer[] result = new ByteBuffer[chunks.size()];
-        BitSet columns = bloomFilterColumns[member];
-        for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
-            ColumnMetaData metaData = chunks.get(c).metaData();
-            if (RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
-                if (!bloomFilters.isFetched()) {
-                    try (FetchReason.Scope ignored = FetchReason.set(rowGroupLabel + " pruning")) {
-                        bloomFilters.fetch(inputFile);
-                    }
-                }
-                result[c] = bloomFilters.slice(metaData.bloomFilterOffset(), metaData.bloomFilterLength());
+    ByteBuffer[] bloomFiltersFor(int workItemIndex) throws IOException {
+        lock.lock();
+        try {
+            int member = member(workItemIndex);
+            if (released[member]) {
+                throw new IllegalStateException("Bloom filters of work item " + workItemIndex
+                        + " requested after their release");
             }
+            List<ColumnChunk> chunks = rowGroups[member].columns();
+            ByteBuffer[] result = new ByteBuffer[chunks.size()];
+            BitSet columns = bloomFilterColumns[member];
+            for (int c = columns.nextSetBit(0); c >= 0; c = columns.nextSetBit(c + 1)) {
+                ColumnMetaData metaData = chunks.get(c).metaData();
+                if (RowGroupBloomFilterSource.hasKnownExtent(metaData)) {
+                    if (!bloomFilters.isFetched()) {
+                        try (FetchReason.Scope ignored = FetchReason.set(rowGroupLabel + " pruning")) {
+                            bloomFilters.fetch(inputFile);
+                        }
+                    }
+                    result[c] = bloomFilters.slice(metaData.bloomFilterOffset(), metaData.bloomFilterLength());
+                }
+            }
+            return result;
         }
-        return result;
+        finally {
+            lock.unlock();
+        }
     }
 
     /// Releases the work item at `workItemIndex`, dropping the window's bytes once every member is
     /// released. Releasing a member twice has no further effect.
-    synchronized void release(int workItemIndex) {
-        int member = member(workItemIndex);
-        if (!released[member]) {
-            released[member] = true;
-            unreleased--;
-            if (unreleased == 0) {
-                drop();
+    void release(int workItemIndex) {
+        lock.lock();
+        try {
+            int member = member(workItemIndex);
+            if (!released[member]) {
+                released[member] = true;
+                unreleased--;
+                if (unreleased == 0) {
+                    drop();
+                }
             }
+        }
+        finally {
+            lock.unlock();
         }
     }
 
     /// Releases every member, as the read closes.
-    synchronized void releaseAll() {
-        Arrays.fill(released, true);
-        unreleased = 0;
-        drop();
+    void releaseAll() {
+        lock.lock();
+        try {
+            Arrays.fill(released, true);
+            unreleased = 0;
+            drop();
+        }
+        finally {
+            lock.unlock();
+        }
     }
 
     private void fetch() throws IOException {

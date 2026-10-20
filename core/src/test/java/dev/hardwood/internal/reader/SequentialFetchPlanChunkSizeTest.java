@@ -148,12 +148,14 @@ class SequentialFetchPlanChunkSizeTest {
                 RepetitionType.REQUIRED, null, 0, 0, 0, null);
         ColumnChunk columnChunk = new ColumnChunk(fakeMetaData(columnLength, 100), null, null, null, null, null);
 
-        assertThatThrownBy(() -> SequentialFetchPlan.build(null, columnSchema, columnChunk, null,
-                3, "f.parquet", 0))
-                .isExactlyInstanceOf(UnsupportedOperationException.class)
-                .hasMessage("[f.parquet: row group 3, column 'col'] Column chunk too large ("
-                        + columnLength + " bytes); the reader supports column chunks of up to "
-                        + Integer.MAX_VALUE + " bytes");
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
+            assertThatThrownBy(() -> SequentialFetchPlan.build(null, columnSchema, columnChunk, context,
+                    3, "f.parquet", 0))
+                    .isExactlyInstanceOf(UnsupportedOperationException.class)
+                    .hasMessage("[f.parquet: row group 3, column 'col'] Column chunk too large ("
+                            + columnLength + " bytes); the reader supports column chunks of up to "
+                            + Integer.MAX_VALUE + " bytes");
+        }
     }
 
     private static int chunkSizeWithoutRowLimit() {

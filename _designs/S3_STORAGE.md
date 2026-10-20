@@ -156,7 +156,7 @@ The mode is set on `S3Source`, not per file, because it follows the workload: in
 - `readRange()` asks a `RangeSet` (a sorted map of disjoint, non-touching intervals, merged on insert) for the gaps in the requested range, fetches each gap from the delegate, writes it at its absolute offset, marks it populated, and returns a slice of the mapping. A read spanning a hole fetches only the hole. Reads outside `[0, length)` are rejected.
 - `close()` drops the mapping, closes the channel, deletes the temp file and closes the delegate. The unmap is left to the garbage collector, which offers the only portable release, so the address space outlives `close()`. Where the platform refuses to delete a mapped file (Windows), the delete is deferred to JVM exit and logged rather than failing the close.
 
-`open`, `readRange` and `close` hold the instance monitor, across the refill included. A reader therefore never sees a range that is marked populated but only partly written, and two threads missing the same range serialize so that the second finds it populated and issues no request. The price is that one miss blocks every other read of the file, cache hits included, for the duration of the delegate fetch.
+`open`, `readRange` and `close` hold the instance's lock, across the refill included. A reader therefore never sees a range that is marked populated but only partly written, and two threads missing the same range serialize so that the second finds it populated and issues no request. The price is that one miss blocks every other read of the file, cache hits included, for the duration of the delegate fetch.
 
 Composition with the layers around it:
 

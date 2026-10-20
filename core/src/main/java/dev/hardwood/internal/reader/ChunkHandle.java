@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -49,6 +50,9 @@ public class ChunkHandle {
     /// starts that chunk's pre-fetch. A handle a pre-fetch fetched still pre-fetches
     /// its successor when the read reaches it, so pre-fetch stays one chunk ahead.
     private final AtomicBoolean nextChunkPrefetched = new AtomicBoolean();
+    /// Guards the fetch; a lock rather than a monitor, so that a virtual thread waiting for
+    /// another's fetch, or fetching itself, does not hold its carrier on JDK 21.
+    private final ReentrantLock fetchLock = new ReentrantLock();
 
     /// Creates a chunk handle for a byte range in the given file.
     ///
@@ -163,7 +167,8 @@ public class ChunkHandle {
         if (data != null) {
             return;
         }
-        synchronized (this) {
+        fetchLock.lock();
+        try {
             if (data != null) {
                 return;
             }
@@ -184,6 +189,9 @@ public class ChunkHandle {
                         + "Failed to fetch chunk at offset " + fileOffset
                         + " (length " + length + ")", e);
             }
+        }
+        finally {
+            fetchLock.unlock();
         }
     }
 

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -42,7 +43,7 @@ class FileMetadataCacheTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void concurrentCheckedAndDataLookupsJoinOneInProgressLoad() throws Exception {
         LatchInputFile inputFile = LatchInputFile.blocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE);
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE, Runnable::run);
 
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<FileMetaData> firstChecked = executor.submit(() -> cache.getFileMetaData(0));
@@ -81,9 +82,51 @@ class FileMetadataCacheTest {
     }
 
     @Test
+    void footerWithoutAPrefetchIsLoadedOnTheCallingThread() throws Exception {
+        LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE,
+                task -> {
+                    throw new AssertionError("a footer the caller waits for runs on the caller's thread");
+                });
+
+        try {
+            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            assertThat(inputFile.openCount()).isEqualTo(1);
+        }
+        finally {
+            cache.close();
+            inputFile.close();
+        }
+    }
+
+    @Test
+    void prefetchLoadsOnTheExecutorAndALaterLookupJoinsIt() throws Exception {
+        LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
+        List<Runnable> queued = new ArrayList<>();
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE,
+                queued::add);
+
+        try {
+            cache.prefetch(0);
+            cache.prefetch(0);
+            assertThat(queued).hasSize(1);
+            assertThat(inputFile.openCount()).isZero();
+
+            queued.getFirst().run();
+            assertThat(inputFile.openCount()).isEqualTo(1);
+            assertThat(cache.getFileMetaData(0).numRows()).isEqualTo(100);
+            assertThat(inputFile.openCount()).isEqualTo(1);
+        }
+        finally {
+            cache.close();
+            inputFile.close();
+        }
+    }
+
+    @Test
     void closePreventsLaterLoadsWithoutClosingInputs() throws Exception {
         LatchInputFile inputFile = LatchInputFile.unblocked(LATER_FILE);
-        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE);
+        FileMetadataCache cache = new FileMetadataCache(List.of(inputFile), ParquetMetadataReader.FROM_FILE, Runnable::run);
 
         cache.close();
         cache.prefetch(0);

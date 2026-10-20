@@ -10,11 +10,14 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.MetadataSource;
@@ -28,31 +31,43 @@ import dev.hardwood.schema.FileSchema;
 
 /// Lazily opens input files and caches each parsed footer for one
 /// [dev.hardwood.reader.ParquetFileReader].
+///
+/// A footer a caller asks for is loaded on the caller's thread; one [#prefetch] asks for ahead of
+/// the read is loaded on the context's I/O executor. Either way the load registers first, so a
+/// later request for the same file joins it and [#close()] waits for it. A prefetched load that
+/// failed and that no caller asked for is reported by [#close()], as [PrefetchTasks] reports a
+/// failed task.
 public final class FileMetadataCache {
 
     private final List<InputFile> inputFiles;
     private final MetadataSource metadataSource;
+    private final Executor prefetchExecutor;
     private final Object lifecycleLock = new Object();
     private final Map<Integer, CompletableFuture<PreparedFile>> fileFutures = new HashMap<>();
+    /// Prefetched loads no caller has asked for, whose failure [#close()] reports. Guarded by
+    /// `lifecycleLock`.
+    private final Set<CompletableFuture<PreparedFile>> unasked = new HashSet<>();
     private final CompletableFuture<Void> closeCompletion = new CompletableFuture<>();
     private boolean closeStarted;
 
     /// @param metadataSource the context's source of footers, [ParquetMetadataReader#FROM_FILE]
     ///        to read each footer from its file
-    FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource) {
+    /// @param prefetchExecutor where the loads [#prefetch] starts run
+    FileMetadataCache(List<InputFile> inputFiles, MetadataSource metadataSource, Executor prefetchExecutor) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         this.inputFiles = List.copyOf(inputFiles);
         this.metadataSource = metadataSource;
+        this.prefetchExecutor = prefetchExecutor;
     }
 
     /// Seeds the first file's footer, already loaded by the owning
     /// [dev.hardwood.reader.ParquetFileReader], so that opening the reader and
     /// inspecting index `0` never load it twice.
     public FileMetadataCache(List<InputFile> inputFiles, FileFooter firstFileFooter,
-                             MetadataSource metadataSource) {
-        this(inputFiles, metadataSource);
+                             MetadataSource metadataSource, Executor prefetchExecutor) {
+        this(inputFiles, metadataSource, prefetchExecutor);
         fileFutures.put(0, CompletableFuture.completedFuture(
                 PreparedFile.of(this.inputFiles.getFirst(), firstFileFooter)));
     }
@@ -72,15 +87,20 @@ public final class FileMetadataCache {
         return getFile(fileIndex).metaData();
     }
 
-    /// Gets or loads a prepared file, blocking if necessary.
+    /// Gets a prepared file, loading it on the calling thread unless a load is registered, which
+    /// it waits for.
     ///
-    /// A failed load arrives twice-wrapped and leaves as neither. The loader runs
-    /// in a [java.util.function.Supplier], which cannot declare `IOException`, so
-    /// it wraps; [CompletableFuture#join] then wraps whatever it finds in a
+    /// A failed load arrives twice-wrapped and leaves as neither. The loader cannot
+    /// declare `IOException`, since a prefetch runs it as a task, so it wraps;
+    /// [CompletableFuture#join] then wraps whatever it finds in a
     /// [CompletionException]. This is the frame that can say what went wrong, so
     /// both are undone here and the original failure is what a caller catches.
     PreparedFile getFile(int fileIndex) throws IOException {
-        CompletableFuture<PreparedFile> future = registerLoad(fileIndex, true);
+        Registration registration = registerLoad(fileIndex, true);
+        CompletableFuture<PreparedFile> future = registration.future();
+        if (registration.isNew()) {
+            load(fileIndex, future);
+        }
         try {
             return future.join();
         }
@@ -99,12 +119,36 @@ public final class FileMetadataCache {
         }
     }
 
+    /// Starts loading the footer of `fileIndex` on the I/O executor, unless a load is registered,
+    /// the index is past the last file, or the cache is closed.
     void prefetch(int fileIndex) {
-        registerLoad(fileIndex, false);
+        Registration registration = registerLoad(fileIndex, false);
+        if (registration == null || !registration.isNew()) {
+            return;
+        }
+        CompletableFuture<PreparedFile> future = registration.future();
+        try {
+            prefetchExecutor.execute(() -> load(fileIndex, future));
+        }
+        catch (RuntimeException | Error e) {
+            // A load that never starts must not leave its waiters, and close, waiting forever.
+            // The failure goes to this caller, so close does not report it again.
+            synchronized (lifecycleLock) {
+                unasked.remove(future);
+            }
+            future.completeExceptionally(e);
+            throw e;
+        }
     }
 
     /// Prevents new loads, waits for every admitted load, and releases cached
     /// results. Input-file ownership remains with the caller.
+    ///
+    /// A prefetched load no caller asked for that failed is reported as [PrefetchTasks] reports a
+    /// task's failure: a `RuntimeException` is logged, and an `Error` thrown once the cache is
+    /// released.
+    ///
+    /// @throws Error the `Error` of the first such load, the others suppressed beneath it
     public void close() {
         List<CompletableFuture<PreparedFile>> registeredLoads;
         synchronized (lifecycleLock) {
@@ -122,24 +166,43 @@ public final class FileMetadataCache {
             return;
         }
 
+        Error failure = null;
         try {
             for (CompletableFuture<PreparedFile> future : registeredLoads) {
                 try {
                     future.join();
                 }
-                catch (RuntimeException ignored) {
+                catch (CompletionException e) {
+                    // A load a caller asked for reported its failure to that caller.
+                    if (wasUnasked(future)) {
+                        failure = PrefetchTasks.report(e.getCause(), failure);
+                    }
                 }
             }
         }
         finally {
             synchronized (lifecycleLock) {
                 fileFutures.clear();
+                unasked.clear();
             }
             closeCompletion.complete(null);
         }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
-    private CompletableFuture<PreparedFile> registerLoad(int fileIndex, boolean required) {
+    private boolean wasUnasked(CompletableFuture<PreparedFile> future) {
+        synchronized (lifecycleLock) {
+            return unasked.contains(future);
+        }
+    }
+
+    /// Returns the load registered for `fileIndex`, registering a new one, which the caller
+    /// runs, if there is none; `null` when a load is not `required` and the cache is closed or
+    /// the index out of range. A load not `required` is a prefetch, which no caller has asked for
+    /// until a `required` registration finds it.
+    private Registration registerLoad(int fileIndex, boolean required) {
         synchronized (lifecycleLock) {
             if (closeStarted) {
                 if (required) {
@@ -153,12 +216,34 @@ public final class FileMetadataCache {
                 }
                 return null;
             }
-            return fileFutures.computeIfAbsent(fileIndex, this::loadFileAsync);
+            CompletableFuture<PreparedFile> registered = fileFutures.get(fileIndex);
+            if (registered != null) {
+                if (required) {
+                    unasked.remove(registered);
+                }
+                return new Registration(registered, false);
+            }
+            CompletableFuture<PreparedFile> future = new CompletableFuture<>();
+            fileFutures.put(fileIndex, future);
+            if (!required) {
+                unasked.add(future);
+            }
+            return new Registration(future, true);
         }
     }
 
-    private CompletableFuture<PreparedFile> loadFileAsync(int fileIndex) {
-        return CompletableFuture.supplyAsync(() -> loadFile(fileIndex));
+    /// Runs the load of `fileIndex` and completes `future` with its outcome.
+    private void load(int fileIndex, CompletableFuture<PreparedFile> future) {
+        try {
+            future.complete(loadFile(fileIndex));
+        }
+        catch (RuntimeException | Error e) {
+            future.completeExceptionally(e);
+        }
+    }
+
+    /// A file's registered load, and whether this registration created it.
+    private record Registration(CompletableFuture<PreparedFile> future, boolean isNew) {
     }
 
     private PreparedFile loadFile(int fileIndex) {

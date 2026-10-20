@@ -128,7 +128,8 @@ public class ParquetFileReader implements Closeable {
                               boolean metadataFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileFooter.metaData();
-        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context.metadataSource());
+        this.fileMetadataCache = new FileMetadataCache(inputFiles, firstFileFooter, context.metadataSource(),
+                context.ioExecutor());
         this.schema = firstFileFooter.schema();
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -475,11 +476,11 @@ public class ParquetFileReader implements Closeable {
             }
             return reader;
         }
-        catch (RuntimeException | IOException e) {
+        catch (RuntimeException | IOException | Error e) {
             try {
                 reader.close();
             }
-            catch (RuntimeException | IOException closeException) {
+            catch (RuntimeException | IOException | Error closeException) {
                 e.addSuppressed(closeException);
             }
             throw e;
@@ -798,7 +799,7 @@ public class ParquetFileReader implements Closeable {
             try {
                 child.close();
             }
-            catch (IOException | RuntimeException e) {
+            catch (IOException | RuntimeException | Error e) {
                 failure.addSuppressed(e);
             }
             throw failure;
@@ -1290,9 +1291,14 @@ public class ParquetFileReader implements Closeable {
     }
 
     private void closeOwned() throws IOException {
-        Exception failure = closeChildren();
+        Throwable failure = closeChildren();
 
-        fileMetadataCache.close();
+        try {
+            fileMetadataCache.close();
+        }
+        catch (Error e) {
+            failure = withSuppressed(failure, e);
+        }
 
         if (ownsContext) {
             context.close();
@@ -1301,32 +1307,20 @@ public class ParquetFileReader implements Closeable {
         if (ownsInputFiles) {
             failure = InputFileCloser.closeAll(inputFiles, failure);
         }
-        if (failure instanceof IOException e) {
-            throw e;
-        }
-        if (failure instanceof RuntimeException e) {
-            throw e;
-        }
+        InputFileCloser.rethrow(failure);
     }
 
-    /// Closes each child reader still open, returning the first failure, an
-    /// [IOException] or a [RuntimeException], with later ones suppressed beneath it.
-    private Exception closeChildren() {
-        Exception failure = null;
-        for (Closeable child : openChildren.values()) {
-            try {
-                child.close();
-            }
-            catch (IOException | RuntimeException e) {
-                failure = withSuppressed(failure, e);
-            }
-        }
+    /// Closes each child reader still open, returning the first failure, an [IOException], a
+    /// [RuntimeException] or an [Error] (one a child's speculative work raised), with later ones
+    /// suppressed beneath it.
+    private Throwable closeChildren() {
+        Throwable failure = InputFileCloser.closeAll(openChildren.values(), null);
         openChildren.clear();
         return failure;
     }
 
     /// Returns `first` with `next` suppressed beneath it, or `next` when there is no `first`.
-    private static Exception withSuppressed(Exception first, Exception next) {
+    private static Throwable withSuppressed(Throwable first, Throwable next) {
         if (first == null) {
             return next;
         }

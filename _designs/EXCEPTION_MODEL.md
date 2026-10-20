@@ -109,7 +109,7 @@ the message only; `ParquetReadException` carries no position fields.
 
 ## Crossing a thread boundary
 
-A checked exception cannot travel through a `Runnable`, a `Supplier`, or a mapping function
+A checked exception cannot travel through a `Runnable`, a `Supplier`, or a function
 passed to `computeIfAbsent`. Those are the only places an I/O failure is wrapped in an
 `UncheckedIOException`, and each wrap is undone by the method enclosing the lambda, so no
 caller sees one. **A boundary counts when the language forbids the declaration, not when an
@@ -126,11 +126,15 @@ this, also where a footer is loaded and in the byte-level reads outside the pipe
 and reaches the consumer as raised, but is recorded on the way past, or a consumer waiting on
 work that thread will never finish waits for ever.
 
-A prefetch is the exception: nothing waits on it, so a failure has nobody to report to and is
-logged at DEBUG and dropped. That is safe because the buffer field is assigned only on
-success, so nothing is cached and the demand path redoes the work with a caller waiting. The
-iterator's close waits for running prefetches (`PrefetchTasks`) before the file closes. A
-footer prefetch is different: `FileMetadataCache` keeps its failure and rethrows it on demand.
+A prefetch is the exception: nothing waits on it, so its failure does not fail the read. That
+is safe because the buffer field is assigned only on success, so nothing is cached and the
+demand path redoes the work with a caller waiting. A footer prefetch is different:
+`FileMetadataCache` keeps its failure and rethrows it on demand. A failure no caller receives is
+reported by `PrefetchTasks.report`: a failure of the file (an I/O failure, a malformed or
+unsupported file) at DEBUG, since the demand path reports it when it repeats the work, any other
+`RuntimeException` at WARNING, as a defect, and an `Error` is thrown by the close that waits for
+the work, the iterator's for a prefetch task and the `FileMetadataCache`'s for a footer load no
+read asked for, once the files are closed ([READ_PIPELINE.md](READ_PIPELINE.md#thread-inventory)).
 
 ## An annotation the reader cannot use is dropped, not raised
 

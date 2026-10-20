@@ -20,6 +20,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
@@ -88,7 +89,7 @@ public class RowGroupIterator implements Closeable {
     /// which [#close()] waits for after setting it, read it.
     private volatile boolean closed;
     /// The speculative tasks this iterator's read has started; [#close()] waits for them.
-    private final PrefetchTasks prefetchTasks = new PrefetchTasks();
+    private final PrefetchTasks prefetchTasks;
     private final HardwoodContextImpl context;
     private final long maxRows;
     private final long physicalSkip;
@@ -136,19 +137,25 @@ public class RowGroupIterator implements Closeable {
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
     private Map<Integer, List<ResolvedPredicate>> dropLeavesByColumn = Map.of();
 
-    // Work list: all (file, rowGroup) pairs to process, built during initialize()
+    /// Guards planning and the work list. A lock rather than a monitor: a column's fetcher, a
+    /// virtual thread, plans while holding it and waits for a footer load on another virtual
+    /// thread, and on JDK 21 a virtual thread blocked on a monitor, or holding one while it
+    /// waits, holds its carrier, so the waiting fetchers could take every carrier the load needs.
+    private final ReentrantLock planLock = new ReentrantLock();
+
+    // Work list: all (file, rowGroup) pairs to process, built during initialize(). Guarded by planLock.
     private final List<WorkItem> workItems = new ArrayList<>();
 
     // Per-row-group shared metadata cache (keyed by work item index)
-    private final ConcurrentHashMap<Integer, SharedRowGroupMetadata> metadataCache = new ConcurrentHashMap<>();
+    private final OnceCache<SharedRowGroupMetadata> metadataCache = new OnceCache<>();
 
     /// What each row group's bloom filters and dictionaries decided once the read reached it,
     /// keyed by work item index, so the decision [#hasLiveWorkItem] takes on the calling thread
     /// is the one [#getSharedMetadata] finds on a fetcher.
-    private final ConcurrentHashMap<Integer, Arrival> arrivalCache = new ConcurrentHashMap<>();
+    private final OnceCache<Arrival> arrivalCache = new OnceCache<>();
 
     // Per-row-group fetch plans cache (keyed by work item index).
-    private final ConcurrentHashMap<Integer, RowGroupPlans> fetchPlanCache = new ConcurrentHashMap<>();
+    private final OnceCache<RowGroupPlans> fetchPlanCache = new OnceCache<>();
 
     /// The read's batch boundaries, set by [#planBatches] before any fetch plan is computed;
     /// `null` for an iterator whose fetch plans no scheduled column drains.
@@ -283,7 +290,7 @@ public class RowGroupIterator implements Closeable {
     ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
-        this(new FileMetadataCache(inputFiles, context.metadataSource()), true, NO_CLOSE_LISTENER, context,
+        this(new FileMetadataCache(inputFiles, context.metadataSource(), context.ioExecutor()), true, NO_CLOSE_LISTENER, context,
                 maxRows, tailSkip, physicalSkip);
     }
 
@@ -320,6 +327,7 @@ public class RowGroupIterator implements Closeable {
         this.closeListener = closeListener;
         this.inputFiles = fileMetadataCache.inputFiles();
         this.context = context;
+        this.prefetchTasks = new PrefetchTasks(context.ioExecutor());
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
         this.physicalSkip = physicalSkip;
@@ -450,8 +458,12 @@ public class RowGroupIterator implements Closeable {
     /// Returns the ordered work list of (file, rowGroup) pairs.
     public List<WorkItem> getWorkItems() throws IOException {
         ensureFullyPlanned();
-        synchronized (this) {
+        planLock.lock();
+        try {
             return List.copyOf(workItems);
+        }
+        finally {
+            planLock.unlock();
         }
     }
 
@@ -500,8 +512,7 @@ public class RowGroupIterator implements Closeable {
                 }
                 RowGroupDictionaryFilterSource dictionaries = arrival.dictionaries();
                 // After the bloom filters and dictionaries: a row group they drop alone in its
-                // window costs no index read. The fetch runs under this entry's bin lock and takes
-                // no further lock but the window's own monitor.
+                // window costs no index read. The fetch takes no lock but the window's own.
                 RowGroupIndexBuffers indexBuffers = workItem.indexWindow().buffersFor(idx);
                 boolean pageFiltering = pageFiltering(workItem);
 
@@ -854,9 +865,9 @@ public class RowGroupIterator implements Closeable {
         // The first demand access prefetches the next row group, whether it planned this
         // one or found the plans the previous prefetch cached; the prefetch task does not
         // come through here, so prefetch stays one row group ahead. This runs outside the
-        // mapping function: prefetching plans the next file when this one is exhausted,
-        // which reads a footer and, under a filter, probes bloom filters, and a
-        // ConcurrentHashMap holds a bin lock for the whole of a mapping function.
+        // computation: prefetching plans the next file when this one is exhausted, which reads
+        // a footer and, under a filter, probes bloom filters, and every other column asking
+        // for this row group's plans waits for the whole of the computation.
         if (nextRowGroupPrefetched.add(workItemIndex)) {
             prefetchNextRowGroup(workItem);
         }
@@ -915,8 +926,8 @@ public class RowGroupIterator implements Closeable {
     /// the current row group, which is readable, and be reported as a failure in it.
     ///
     /// Called once per work item, by the first [#getColumnPlan] to reach it, after its
-    /// `computeIfAbsent` returns, never from inside it: this blocks, and a mapping function
-    /// holds a bin lock for its whole duration. The task below plans the next row group
+    /// `computeIfAbsent` returns, never from inside it: this blocks, and every other column
+    /// asking for the work item's plans waits for the whole computation. The task below plans the next row group
     /// without going through [#getColumnPlan], so it starts no further prefetch.
     private void prefetchNextRowGroup(WorkItem currentWorkItem) {
         WorkItem nextWorkItem;
@@ -1528,15 +1539,40 @@ public class RowGroupIterator implements Closeable {
     ///
     /// The caller closes the columns first, which joins their fetchers, so no fetcher starts a
     /// prefetch task while this waits.
+    ///
+    /// An `Error` speculative work raised is thrown once the iterator is closed, with a failure
+    /// to close the files suppressed beneath it.
     @Override
     public void close() throws IOException {
         if (closed) {
             return;
         }
         closed = true;
-        // Before the caches are cleared: a planning task holds its cache entry's lock
-        // for as long as it plans, and the files are closed only after this returns.
-        prefetchTasks.awaitAll();
+        Throwable failure = null;
+        try {
+            // Before the caches are cleared: a planning task fills its cache entry once it has
+            // planned, and the files are closed only after this returns.
+            prefetchTasks.awaitAll();
+        }
+        catch (Error e) {
+            failure = e;
+        }
+        try {
+            releaseResources();
+        }
+        catch (IOException | RuntimeException | Error e) {
+            if (failure == null) {
+                failure = e;
+            }
+            else {
+                failure.addSuppressed(e);
+            }
+        }
+        InputFileCloser.rethrow(failure);
+    }
+
+    /// Releases the caches and, for a standalone iterator, the metadata cache and the files.
+    private void releaseResources() throws IOException {
         metadataCache.clear();
         arrivalCache.clear();
         fetchPlanCache.clear();
@@ -1545,12 +1581,18 @@ public class RowGroupIterator implements Closeable {
 
         try {
             if (ownsFileMetadataCache) {
-                fileMetadataCache.close();
+                Throwable failure = null;
+                try {
+                    fileMetadataCache.close();
+                }
+                catch (Error e) {
+                    failure = e;
+                }
                 // Reported rather than logged: a close that fails has failed, and a
                 // warning nobody reads is a silent failure. Every file is attempted, one
                 // failure is raised and the rest suppressed beneath it, as
                 // ParquetFileReader.close does.
-                InputFileCloser.closeAll(inputFiles);
+                InputFileCloser.rethrow(InputFileCloser.closeAll(inputFiles, failure));
             }
         }
         finally {
@@ -1566,13 +1608,19 @@ public class RowGroupIterator implements Closeable {
 
     /// Drops the page-index bytes of every window, including those of work items a read that
     /// stopped early never released. The work list stays reachable from the readers.
-    private synchronized void releaseIndexWindows() {
-        IndexWindow previous = null;
-        for (WorkItem workItem : workItems) {
-            if (workItem.indexWindow() != previous) {
-                previous = workItem.indexWindow();
-                previous.releaseAll();
+    private void releaseIndexWindows() {
+        planLock.lock();
+        try {
+            IndexWindow previous = null;
+            for (WorkItem workItem : workItems) {
+                if (workItem.indexWindow() != previous) {
+                    previous = workItem.indexWindow();
+                    previous.releaseAll();
+                }
             }
+        }
+        finally {
+            planLock.unlock();
         }
     }
 
@@ -1590,16 +1638,22 @@ public class RowGroupIterator implements Closeable {
     /// to report it, so the read could end empty without an exception (#1278). Retrying the
     /// file is no option either: planning it has already advanced the shared planning state,
     /// the next file to plan, the row budget and the rows still to skip among them.
-    private synchronized boolean planNextFile() throws IOException {
-        rethrowPlanningFailure();
-        int plannedBefore = workItems.size();
+    private boolean planNextFile() throws IOException {
+        planLock.lock();
         try {
-            return planFile();
+            rethrowPlanningFailure();
+            int plannedBefore = workItems.size();
+            try {
+                return planFile();
+            }
+            catch (IOException | RuntimeException | Error e) {
+                planningFailure = e;
+                workItemsBeforeFailure = plannedBefore;
+                throw e;
+            }
         }
-        catch (IOException | RuntimeException | Error e) {
-            planningFailure = e;
-            workItemsBeforeFailure = plannedBefore;
-            throw e;
+        finally {
+            planLock.unlock();
         }
     }
 
@@ -1773,20 +1827,32 @@ public class RowGroupIterator implements Closeable {
     /// A work item of a file planned before the failed one is still handed out: the column
     /// whose prefetch planned the failed file can be ahead of the others, and a column
     /// failed short of it would return fewer rows of those files than the others.
-    public synchronized WorkItem workItemAt(int index) throws IOException {
-        if (planningFailure == null) {
-            ensurePlannedThrough(index);
+    public WorkItem workItemAt(int index) throws IOException {
+        planLock.lock();
+        try {
+            if (planningFailure == null) {
+                ensurePlannedThrough(index);
+            }
+            else if (index >= workItemsBeforeFailure) {
+                rethrowPlanningFailure();
+            }
+            return index < workItems.size() ? workItems.get(index) : null;
         }
-        else if (index >= workItemsBeforeFailure) {
-            rethrowPlanningFailure();
+        finally {
+            planLock.unlock();
         }
-        return index < workItems.size() ? workItems.get(index) : null;
     }
 
     /// Plans until `index` exists in the work list, or nothing is left to plan.
-    private synchronized void ensurePlannedThrough(int index) throws IOException {
-        while (workItems.size() <= index && planNextFile()) {
-            // planNextFile appends
+    private void ensurePlannedThrough(int index) throws IOException {
+        planLock.lock();
+        try {
+            while (workItems.size() <= index && planNextFile()) {
+                // planNextFile appends
+            }
+        }
+        finally {
+            planLock.unlock();
         }
     }
 
@@ -1794,9 +1860,15 @@ public class RowGroupIterator implements Closeable {
     /// whole read rather than the next row group — the full work list
     /// ([#getWorkItems]) and whether every row group supports per-page masking
     /// ([#canFastSkipAllRowGroups]).
-    private synchronized void ensureFullyPlanned() throws IOException {
-        while (planNextFile()) {
-            // planNextFile appends
+    private void ensureFullyPlanned() throws IOException {
+        planLock.lock();
+        try {
+            while (planNextFile()) {
+                // planNextFile appends
+            }
+        }
+        finally {
+            planLock.unlock();
         }
     }
 
