@@ -22,6 +22,7 @@ import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.reader.RowReader;
@@ -38,6 +39,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// is available. This is used in CI on Java 25 to ensure libdeflate is properly
 /// installed and working.
 class GzipDecompressionTest {
+
+    private static final HardwoodContextImpl CONTEXT = HardwoodContextImpl.create(1);
 
     private static final boolean LIBDEFLATE_REQUIRED =
             Boolean.getBoolean("libdeflate.required");
@@ -119,7 +122,7 @@ class GzipDecompressionTest {
                 int position = buffer.position();
                 for (int attempt = 0; attempt < 2; attempt++) {
                     byte[] dest = new byte[original.length];
-                    decompressor.decompress(buffer, original.length, dest);
+                    decompress(decompressor, buffer, original.length, dest);
 
                     assertThat(dest).as("%s, attempt %d", buffer, attempt).isEqualTo(original);
                     assertThat(buffer.position()).as("%s position", buffer).isEqualTo(position);
@@ -130,6 +133,12 @@ class GzipDecompressionTest {
         finally {
             pool.clear();
         }
+    }
+
+    /// Decompresses on a context's pool thread, which holds the buffers a decompressor takes.
+    private static byte[] decompress(Decompressor decompressor, ByteBuffer compressed, int uncompressedSize,
+                                     byte[] dest) {
+        return CONTEXT.decode(buffers -> decompressor.decompress(compressed, uncompressedSize, dest, buffers));
     }
 
     private static byte[] body(int length, int seed) {
@@ -173,17 +182,17 @@ class GzipDecompressionTest {
         try {
             Decompressor decompressor = new LibdeflateDecompressor(pool);
 
-            assertThat(decompressor.decompress(ByteBuffer.wrap(concat(member(body), garbage)), body.length,
+            assertThat(decompress(decompressor, ByteBuffer.wrap(concat(member(body), garbage)), body.length,
                     new byte[body.length])).as("bytes after a complete page").isEqualTo(body);
-            assertThat(decompressor.decompress(ByteBuffer.wrap(concat(member(body), member(second))),
+            assertThat(decompress(decompressor, ByteBuffer.wrap(concat(member(body), member(second))),
                     body.length, new byte[body.length])).as("a member after a complete page").isEqualTo(body);
-            assertThat(decompressor.decompress(ByteBuffer.wrap(twoMembers), 4_000, new byte[4_000]))
+            assertThat(decompress(decompressor, ByteBuffer.wrap(twoMembers), 4_000, new byte[4_000]))
                     .as("members until the declared size").isEqualTo(concat(first, second));
-            assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(twoMembers), 3_000,
+            assertThatThrownBy(() -> decompress(decompressor, ByteBuffer.wrap(twoMembers), 3_000,
                     new byte[3_000]))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("GZIP data decompresses to more than the expected 3000 bytes");
-            assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(member(body)), 5_000,
+            assertThatThrownBy(() -> decompress(decompressor, ByteBuffer.wrap(member(body)), 5_000,
                     new byte[5_000]))
                     .isInstanceOf(ParquetReadException.class)
                     .hasMessage("Decompressed size mismatch: expected 5000, got 4000");
@@ -191,7 +200,7 @@ class GzipDecompressionTest {
             for (int fromEnd : new int[]{ 8, 4 }) {
                 byte[] corrupt = member(body);
                 corrupt[corrupt.length - fromEnd] ^= 0x01;
-                assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(corrupt), body.length,
+                assertThatThrownBy(() -> decompress(decompressor, ByteBuffer.wrap(corrupt), body.length,
                         new byte[body.length]))
                         .as("trailer byte %d from the end", fromEnd)
                         .isInstanceOf(ParquetReadException.class)

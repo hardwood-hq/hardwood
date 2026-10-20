@@ -8,36 +8,59 @@
 package dev.hardwood.internal.reader;
 
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.MetadataSource;
+import dev.hardwood.internal.DecodeBuffers;
+import dev.hardwood.internal.DecodeExecutor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 
 /// Internal implementation of [HardwoodContext].
 ///
-/// Holds the thread pool for parallel page decoding, the libdeflate
+/// Holds the thread pool every decode of a read runs on ([DecodeExecutor]), the libdeflate
 /// decompressor pool for native GZIP decompression, and the decompressor factory.
 public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
 
+    /// Told of every decode [#decode] runs, on the thread running it; for tests of where decode
+    /// work runs. `null` for none.
+    static volatile DecodeObserver decodeObserver;
+
+    /// Sees each decode [#decode] runs.
+    interface DecodeObserver {
+
+        /// @param caller the thread that asked for the decode, which waits for it
+        void decoding(Thread caller);
+    }
+
     private final ExecutorService executor;
+    private final DecodeExecutor decodeExecutor;
     private final int threads;
+    /// The pool's threads, which a read must not run on: it waits for work only they can run.
+    private final Set<Thread> poolThreads;
     private final LibdeflatePool libdeflatePool;
     private final DecompressorFactory decompressorFactory;
     private final MetadataSource metadataSource;
 
-    private HardwoodContextImpl(ExecutorService executor, int threads, LibdeflatePool libdeflatePool,
-                                 MetadataSource metadataSource) {
+    private HardwoodContextImpl(ExecutorService executor, int threads, Set<Thread> poolThreads,
+                                LibdeflatePool libdeflatePool, MetadataSource metadataSource) {
         this.executor = executor;
+        this.decodeExecutor = new DecodeExecutor(executor, threads);
         this.threads = threads;
+        this.poolThreads = poolThreads;
         this.libdeflatePool = libdeflatePool;
         this.decompressorFactory = new DecompressorFactory(libdeflatePool);
         this.metadataSource = metadataSource;
@@ -57,20 +80,26 @@ public class HardwoodContextImpl implements HardwoodContext {
     /// `threads` threads and shuts down when it closes; for tests that decide the order a read's
     /// tasks run in.
     static HardwoodContextImpl create(ExecutorService executor, int threads) {
-        return new HardwoodContextImpl(executor, threads, createLibdeflatePoolIfAvailable(),
+        return new HardwoodContextImpl(executor, threads, Set.of(), createLibdeflatePoolIfAvailable(),
                 ParquetMetadataReader.FROM_FILE);
     }
 
     private static HardwoodContextImpl create(int threads, MetadataSource metadataSource) {
         AtomicInteger threadCounter = new AtomicInteger(0);
+        Set<Thread> poolThreads = ConcurrentHashMap.newKeySet();
         ThreadFactory threadFactory = r -> {
             Thread t = new Thread(r, "hardwood-" + threadCounter.getAndIncrement());
             t.setDaemon(true);
+            poolThreads.add(t);
             return t;
         };
-        ExecutorService executor = Executors.newFixedThreadPool(threads, threadFactory);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+                DecodeExecutor.newWorkQueue(), threadFactory);
+        // A read's first decode, often its dictionary probe on the calling thread, would otherwise
+        // wait for the pool's first thread to start; it starts here, while the footer is read
+        executor.prestartCoreThread();
         LibdeflatePool libdeflatePool = createLibdeflatePoolIfAvailable();
-        return new HardwoodContextImpl(executor, threads, libdeflatePool, metadataSource);
+        return new HardwoodContextImpl(executor, threads, poolThreads, libdeflatePool, metadataSource);
     }
 
     /// Start building a context.
@@ -97,6 +126,46 @@ public class HardwoodContextImpl implements HardwoodContext {
     @Override
     public ExecutorService executor() {
         return executor;
+    }
+
+    /// Runs `task` on the context's pool, with a set of its decode buffers.
+    ///
+    /// @throws RejectedExecutionException if the context is closed
+    public void execute(Consumer<DecodeBuffers> task) {
+        decodeExecutor.execute(task);
+    }
+
+    /// Runs `work` on the context's pool, with a set of its decode buffers, and waits for its
+    /// result. A failure of `work` is thrown as it was thrown.
+    ///
+    /// @throws IllegalStateException if the context is closed, or the calling thread is one of
+    ///         its pool's ([#requireOffPool()])
+    public <T> T decode(Function<DecodeBuffers, T> work) {
+        requireOffPool();
+        Thread caller = Thread.currentThread();
+        try {
+            return decodeExecutor.decode(buffers -> {
+                DecodeObserver observer = decodeObserver;
+                if (observer != null) {
+                    observer.decoding(caller);
+                }
+                return work.apply(buffers);
+            });
+        }
+        catch (RejectedExecutionException e) {
+            throw ScheduledColumn.contextClosed(e);
+        }
+    }
+
+    /// Checks that the calling thread is not one of the context's pool: a read, and a decode it
+    /// waits for, need a thread of the pool the caller would be holding.
+    ///
+    /// @throws IllegalStateException if it is
+    public void requireOffPool() {
+        if (poolThreads.contains(Thread.currentThread())) {
+            throw new IllegalStateException("A read cannot run on a thread of the HardwoodContext it reads with, "
+                    + "whose threads it waits for: run it on another thread, or read with another context");
+        }
     }
 
     /// The number of threads in [#executor()].

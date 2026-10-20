@@ -15,6 +15,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -108,7 +109,7 @@ class FixedSizeListEngagementTest {
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), false);
                     PageDecoder.InPlaceNestedPage page = decoder.decodeNestedInPlace(pageInfo.pageData(),
-                            pageInfo.dictionary(), scratch);
+                            pageInfo.dictionary(), scratch, TestDecodeBuffers.create());
 
                     assertThat(page.repetitionLevels()).isSameAs(scratch.repetitionLevels(page.size()));
                     if (page.definitionLevels() != null) {
@@ -154,7 +155,7 @@ class FixedSizeListEngagementTest {
                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                     context.decompressorFactory(), fastPath);
             return decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
-                    new PageDecoder.LevelScratch()).fixedListK();
+                    new PageDecoder.LevelScratch(), TestDecodeBuffers.create()).fixedListK();
         }
         finally {
             inputFile.close();
@@ -185,7 +186,7 @@ class FixedSizeListEngagementTest {
                             pageInfo.columnMetaData(), pageInfo.columnSchema(),
                             context.decompressorFactory(), true);
                     result.add(decoder.decodeNestedInPlace(pageInfo.pageData(), pageInfo.dictionary(),
-                            new PageDecoder.LevelScratch()).fixedListK());
+                            new PageDecoder.LevelScratch(), TestDecodeBuffers.create()).fixedListK());
                 }
             }
         }

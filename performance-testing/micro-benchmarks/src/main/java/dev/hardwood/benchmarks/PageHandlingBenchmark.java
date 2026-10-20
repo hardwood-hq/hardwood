@@ -29,6 +29,7 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -133,6 +134,14 @@ public class PageHandlingBenchmark {
 
     @Benchmark
     public void a_decompressPages(Blackhole blackhole) throws IOException {
+        // Decompression runs on a context's pool thread, which holds the buffers a codec takes
+        context.decode(buffers -> {
+            decompressPages(blackhole, buffers);
+            return null;
+        });
+    }
+
+    private void decompressPages(Blackhole blackhole, DecodeBuffers buffers) {
         for (PageInfo pageInfo : allPages) {
             ByteBuffer pageData = pageInfo.pageData();
 
@@ -149,17 +158,21 @@ public class PageHandlingBenchmark {
 
             // Decompress using the file's actual codec
             Decompressor decompressor = context.decompressorFactory().getDecompressor(pageInfo.columnMetaData().codec());
-            byte[] decompressed = decompressor.decompress(compressedData, uncompressedSize, new byte[uncompressedSize]);
+            byte[] decompressed = decompressor.decompress(compressedData, uncompressedSize, new byte[uncompressedSize],
+                    buffers);
             blackhole.consume(decompressed);
         }
     }
 
     @Benchmark
     public void b_decodePages(Blackhole blackhole) throws IOException {
-        for (PageInfo pageInfo : allPages) {
-            PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
-            blackhole.consume(reads.read(pageDecoder, pageInfo.columnSchema(), pageInfo.pageData(),
-                    pageInfo.dictionary()));
-        }
+        context.decode(buffers -> {
+            for (PageInfo pageInfo : allPages) {
+                PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
+                blackhole.consume(reads.read(pageDecoder, pageInfo.columnSchema(), pageInfo.pageData(),
+                        pageInfo.dictionary(), buffers));
+            }
+            return null;
+        });
     }
 }

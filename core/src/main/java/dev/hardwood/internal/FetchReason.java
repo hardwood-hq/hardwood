@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal;
 
+import com.google.errorprone.annotations.MustBeClosed;
+
 /// Per-thread purpose tag attached to `InputFile.readRange` calls so that
 /// fetch logs can attribute each network request to the caller (footer
 /// body, row-group index region, column data fetch, prefetch, etc.).
@@ -24,6 +26,10 @@ package dev.hardwood.internal;
 /// restores it on close.
 public final class FetchReason {
 
+    // A tag set and restored around a block on the thread running it, which leaves nothing
+    // behind: every scope is opened in a try-with-resources (MustBeClosedChecker). It is read
+    // deep in an InputFile that no parameter reaches.
+    @SuppressWarnings("NoThreadLocal")
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
 
     private FetchReason() {
@@ -38,6 +44,7 @@ public final class FetchReason {
 
     /// Sets the reason for the current thread until [Scope#close] is called.
     /// Pass the returned [Scope] to a try-with-resources statement.
+    @MustBeClosed
     public static Scope set(String reason) {
         String previous = CURRENT.get();
         CURRENT.set(reason);

@@ -69,6 +69,9 @@ A schema of many columns spreads both the copying and the flush across all the t
   the consumer moves on (see
   [Column-Oriented Reading](../how-to/column-reader.md#retaining-and-handing-off-batch-arrays)).
   A `ParquetFileWriter` and its views are likewise used from one thread at a time.
+- **Read on your own threads, never on the pool's.** A read waits for work only the pool's
+  threads run, so a reader built in a task submitted to its context's `executor()` would wait
+  for the thread it holds; building one there fails with an `IllegalStateException`.
 - **For your own parallelism, read in parallel at the file or row-group grain.** To use more
   than one consumer thread, give each its own reader over a different file, or partition one file
   across readers by byte range with
@@ -82,7 +85,8 @@ A schema of many columns spreads both the copying and the flush across all the t
   your read loop spends longer per batch than the pool takes to decode it: the read then goes at
   the pace of your loop, and the threads beyond what it can take in compete with it for cores,
   shared caches and memory bandwidth, so such a read can finish sooner, and with less CPU, on 2 to 4
-  threads than on the default. Measure the read at a few values of `n` to find its best. Fetching page bytes on
+  threads than on the default. Measure the read at a few values of `n` to find its best. Every page a read
+  decodes, dictionary pages included, is decoded on these `n` threads. Fetching page bytes on
   demand, a lighter stage, runs on the JVM's virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
   next row group's fetch plans and first chunk, the chunk after the one being read) run on the
   common `ForkJoinPool`. `n` bounds neither. For strict CPU isolation on a shared machine, also cap

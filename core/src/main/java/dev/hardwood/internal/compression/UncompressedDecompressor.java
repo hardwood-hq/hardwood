@@ -9,13 +9,14 @@ package dev.hardwood.internal.compression;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decompressor for uncompressed data (passthrough).
 public class UncompressedDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         int storedSize = compressed.remaining();
         requireStoredSize(storedSize, uncompressedSize);
         compressed.get(compressed.position(), dest, 0, storedSize);

@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.UncompressedDecompressor;
@@ -40,18 +41,18 @@ import dev.hardwood.schema.ColumnSchema;
 /// [DictionaryParser].
 public class PageDecoder {
 
-    /// The decoding thread's buffer for decompressed bytes that do not outlive the decode which
-    /// asks for them: a page whose values are read within its task, or a dictionary page, whose
-    /// entries [Dictionary#parse] copies out.
-    private static final ThreadLocal<byte[]> TRANSIENT_BYTES = new ThreadLocal<>();
+    /// A task's buffer for decompressed bytes that do not outlive the decode which asks
+    /// for them: a page whose values are read within its task, or a dictionary page, whose entries
+    /// [Dictionary#parse] copies out.
+    private static final DecodeBuffers.Slot<byte[]> TRANSIENT_BYTES = DecodeBuffers.slot();
 
-    /// The thread's [#TRANSIENT_BYTES] buffer, grown to at least `size` bytes. Its contents are
-    /// valid until the thread's next call.
-    static byte[] transientBytes(int size) {
-        byte[] bytes = TRANSIENT_BYTES.get();
+    /// The task's [#TRANSIENT_BYTES] buffer, grown to at least `size` bytes. Its contents are
+    /// valid until the next call with `buffers`.
+    static byte[] transientBytes(DecodeBuffers buffers, int size) {
+        byte[] bytes = buffers.get(TRANSIENT_BYTES);
         if (bytes == null || bytes.length < size) {
             bytes = new byte[size];
-            TRANSIENT_BYTES.set(bytes);
+            buffers.set(TRANSIENT_BYTES, bytes);
         }
         return bytes;
     }
@@ -233,14 +234,15 @@ public class PageDecoder {
     /// repetition whose values a fill reads in place, in any encoding the format defines for its
     /// type.
     ///
-    /// The returned values hold `scratch`'s definition levels and ids, and the thread's
+    /// The returned values hold `scratch`'s definition levels and ids, and the task's
     /// [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException if the page is malformed, or its encoding is not defined over
     ///         the column's type
-    FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
+    FlatPageValues decodeFlat(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                              DecodeBuffers buffers) {
         requireColumn(binaryWidth < 0 && column.maxRepetitionLevel() == 0, "decodeFlat");
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false);
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
         FlatPageValues values = numericValues(page, dictionary, scratch);
         page.commit(column);
         return values;
@@ -253,9 +255,10 @@ public class PageDecoder {
     /// in `scratch`'s own buffer, so that a segment parked on its cell reads them after the task.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
-    BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
+    BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                                      DecodeBuffers buffers) {
         requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true);
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
         BinaryPageValues values = binaryValues(page, dictionary, scratch);
         page.commit(column);
         return values;
@@ -268,8 +271,9 @@ public class PageDecoder {
     /// path takes keeps no levels and carries its `k`.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
-    InPlaceNestedPage decodeNestedInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) {
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true);
+    InPlaceNestedPage decodeNestedInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
+                                          DecodeBuffers buffers) {
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
         FlatPageValues flat = binaryWidth < 0 ? numericValues(page, dictionary, scratch) : null;
         BinaryPageValues binary = binaryWidth < 0 ? null : binaryValues(page, dictionary, scratch);
         page.commit(column);
@@ -393,9 +397,10 @@ public class PageDecoder {
     /// defined over the column's type ([#requireReader]), and decodes its levels.
     ///
     /// @param ownBytes whether the values must outlive the task: they are then decompressed or
-    ///        copied into `scratch`'s own buffer rather than the thread's [#transientBytes]
+    ///        copied into `scratch`'s own buffer rather than the task's [#transientBytes]
+    /// @param buffers the buffers of the task decoding the page
     private InPlacePage readInPlace(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
-                                    boolean ownBytes) {
+                                    boolean ownBytes, DecodeBuffers buffers) {
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
         if (pageHeader.type() == PageType.DATA_PAGE) {
@@ -421,13 +426,14 @@ public class PageDecoder {
         int uncompressedSize = pageHeader.uncompressedPageSize();
         return pageHeader.type() == PageType.DATA_PAGE
                 ? readV1InPlace(pageHeader.dataPageHeader(), pageData, uncompressedSize, compressedSize, event,
-                        scratch, ownBytes)
+                        scratch, ownBytes, buffers)
                 : readV2InPlace(pageHeader.dataPageHeaderV2(), pageData, uncompressedSize, compressedSize, event,
-                        scratch, ownBytes);
+                        scratch, ownBytes, buffers);
     }
 
     private InPlacePage readV1InPlace(DataPageHeader header, ByteBuffer pageData, int limit, int compressedSize,
-                                      PageDecodedEvent event, LevelScratch scratch, boolean ownBytes) {
+                                      PageDecodedEvent event, LevelScratch scratch, boolean ownBytes,
+                                      DecodeBuffers buffers) {
         boolean stored = columnMetaData.codec() == CompressionCodec.UNCOMPRESSED
                 && readsStoredValues(header.encoding(), pageData);
         byte[] data;
@@ -440,7 +446,7 @@ public class PageDecoder {
         else {
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
             data = decompressor.decompress(pageData, limit,
-                    ownBytes ? scratch.bytes(limit) : transientBytes(limit));
+                    ownBytes ? scratch.bytes(limit) : transientBytes(buffers, limit), buffers);
             body = ByteBuffer.wrap(data, 0, limit).order(ByteOrder.LITTLE_ENDIAN);
         }
         int numValues = header.numValues();
@@ -477,7 +483,7 @@ public class PageDecoder {
 
     private InPlacePage readV2InPlace(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
                                       int compressedSize, PageDecodedEvent event, LevelScratch scratch,
-                                      boolean ownBytes) {
+                                      boolean ownBytes, DecodeBuffers buffers) {
         int repLength = header.repetitionLevelsByteLength();
         int defLength = header.definitionLevelsByteLength();
         int valuesOffset = repLength + defLength;
@@ -509,7 +515,7 @@ public class PageDecoder {
             ByteBuffer compressedValues = pageData.slice(valuesOffset, storedValuesLength);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
             data = decompressor.decompress(compressedValues, valuesLength,
-                    ownBytes ? scratch.bytes(valuesLength) : transientBytes(valuesLength));
+                    ownBytes ? scratch.bytes(valuesLength) : transientBytes(buffers, valuesLength), buffers);
             offset = 0;
             limit = valuesLength;
         }

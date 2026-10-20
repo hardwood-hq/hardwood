@@ -12,17 +12,18 @@ import java.nio.ByteBuffer;
 
 import org.xerial.snappy.Snappy;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decompressor for Snappy compressed data.
 public class SnappyDecompressor implements Decompressor {
 
-    private static final ThreadLocal<ByteBuffer> DIRECT_OUTPUT_BUFFER = new ThreadLocal<>();
+    private static final DecodeBuffers.Slot<ByteBuffer> DIRECT_OUTPUT_BUFFER = DecodeBuffers.slot();
 
     /// Decompresses into `dest`: heap to heap where the compressed page is on the heap, otherwise
     /// through direct buffers for the native codec and copied into `dest` once.
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         int actualSize;
         try {
             // Declared by the codec, which uncompresses a buffer and reaches nothing.
@@ -39,7 +40,7 @@ public class SnappyDecompressor implements Decompressor {
                 actualSize = Snappy.uncompress(input, offset, length, dest, 0);
             }
             else {
-                ByteBuffer directOutput = borrowDirectBuffer(uncompressedSize);
+                ByteBuffer directOutput = borrowDirectBuffer(buffers, uncompressedSize);
                 actualSize = Snappy.uncompress(DirectBuffers.ensureDirect(compressed), directOutput);
                 if (actualSize == uncompressedSize) {
                     directOutput.rewind();
@@ -58,11 +59,11 @@ public class SnappyDecompressor implements Decompressor {
         return dest;
     }
 
-    private static ByteBuffer borrowDirectBuffer(int minSize) {
-        ByteBuffer buf = DIRECT_OUTPUT_BUFFER.get();
+    private static ByteBuffer borrowDirectBuffer(DecodeBuffers buffers, int minSize) {
+        ByteBuffer buf = buffers.get(DIRECT_OUTPUT_BUFFER);
         if (buf == null || buf.capacity() < minSize) {
             buf = ByteBuffer.allocateDirect(minSize);
-            DIRECT_OUTPUT_BUFFER.set(buf);
+            buffers.set(DIRECT_OUTPUT_BUFFER, buf);
         }
         buf.clear();
         return buf;

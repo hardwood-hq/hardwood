@@ -9,6 +9,7 @@ package dev.hardwood.internal.compression.libdeflate;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 
 /// Stub implementation for Java 21 (no FFM API).
@@ -20,7 +21,7 @@ public final class LibdeflateDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         throw new UnsupportedOperationException("libdeflate requires Java 22+");
     }
 

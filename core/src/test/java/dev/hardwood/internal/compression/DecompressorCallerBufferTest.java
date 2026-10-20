@@ -19,6 +19,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.xerial.snappy.Snappy;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -86,7 +87,7 @@ class DecompressorCallerBufferTest {
         byte[] dest = new byte[body.length];
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        assertThat(decompressor.decompress(compressed, body.length, dest)).isSameAs(dest).isEqualTo(body);
+        assertThat(decompressor.decompress(compressed, body.length, dest, TestDecodeBuffers.create())).isSameAs(dest).isEqualTo(body);
     }
 
     /// `LZ4` is read in its raw block form and, failing that, in Hadoop's framing; Hardwood writes
@@ -103,7 +104,7 @@ class DecompressorCallerBufferTest {
         assertDecompressesInto(CompressionCodec.LZ4, PageBuffer.DIRECT.wrap(hadoop), body);
         byte[] dest = new byte[body.length];
         assertThat(new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4)
-                .decompress(ByteBuffer.wrap(hadoop), body.length, dest)).isSameAs(dest).isEqualTo(body);
+                .decompress(ByteBuffer.wrap(hadoop), body.length, dest, TestDecodeBuffers.create())).isSameAs(dest).isEqualTo(body);
     }
 
     static Stream<Arguments> streamsOfAnotherLength() {
@@ -150,7 +151,7 @@ class DecompressorCallerBufferTest {
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(page), declared, dest))
+        assertThatThrownBy(() -> decompressor.decompress(ByteBuffer.wrap(page), declared, dest, TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage(message);
         assertThat(Arrays.copyOfRange(dest, declared, dest.length)).as("past the declared size")
@@ -168,7 +169,7 @@ class DecompressorCallerBufferTest {
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.SNAPPY);
 
-        assertThatThrownBy(() -> decompressor.decompress(compressed, 1_000, dest))
+        assertThatThrownBy(() -> decompressor.decompress(compressed, 1_000, dest, TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Snappy decompression size mismatch: expected 1000, got " + body.length);
         assertThat(dest).containsOnly(SENTINEL);
@@ -181,7 +182,7 @@ class DecompressorCallerBufferTest {
         byte[] dest = new byte[body.length + 64];
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.SNAPPY);
 
-        assertThatThrownBy(() -> decompressor.decompress(compressed, body.length + 10, dest))
+        assertThatThrownBy(() -> decompressor.decompress(compressed, body.length + 10, dest, TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Snappy decompression size mismatch: expected " + (body.length + 10) + ", got "
                         + body.length);
@@ -198,7 +199,7 @@ class DecompressorCallerBufferTest {
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.ZSTD);
 
-        assertThatThrownBy(() -> decompressor.decompress(compressed, 1_000, dest))
+        assertThatThrownBy(() -> decompressor.decompress(compressed, 1_000, dest, TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("ZSTD decompression failed: Destination buffer is too small");
         assertThat(Arrays.copyOfRange(dest, 1_000, dest.length)).containsOnly(SENTINEL);
@@ -209,7 +210,7 @@ class DecompressorCallerBufferTest {
         Arrays.fill(dest, SENTINEL);
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
-        byte[] result = decompressor.decompress(compressed, body.length, dest);
+        byte[] result = decompressor.decompress(compressed, body.length, dest, TestDecodeBuffers.create());
 
         assertThat(result).isSameAs(dest);
         assertThat(Arrays.copyOf(dest, body.length)).as("%s", codec).isEqualTo(body);

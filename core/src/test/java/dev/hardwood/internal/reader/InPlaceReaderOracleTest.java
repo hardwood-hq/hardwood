@@ -21,6 +21,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.encoding.AlpEncoder;
@@ -114,7 +115,7 @@ class InPlaceReaderOracleTest {
 
         assertThat(DataPages.read(decoder, column, page.duplicate(), dictionary)).isEqualTo(expected);
         PageDecoder.InPlaceNestedPage nested = decoder.decodeNestedInPlace(page.duplicate(), dictionary,
-                new PageDecoder.LevelScratch());
+                new PageDecoder.LevelScratch(), TestDecodeBuffers.create());
         int size = levels.size();
         for (int from = 0; from < size; from++) {
             Object view = nested.flat() != null

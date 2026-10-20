@@ -16,6 +16,7 @@ import java.util.zip.GZIPOutputStream;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,10 +59,10 @@ class GzipPageTailTest {
     }
 
     private static void assertDecodes(byte[] page, byte[] body) {
-        byte[] plain = DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, new byte[body.length]);
+        byte[] plain = DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, new byte[body.length], TestDecodeBuffers.create());
         assertThat(Arrays.copyOf(plain, body.length)).isEqualTo(body);
         byte[] dest = new byte[body.length];
-        assertThat(DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, dest)).isEqualTo(body);
+        assertThat(DECOMPRESSOR.decompress(ByteBuffer.wrap(page), body.length, dest, TestDecodeBuffers.create())).isEqualTo(body);
     }
 
     @Test
@@ -92,7 +93,7 @@ class GzipPageTailTest {
     void refusesAMemberInflatingPastTheDeclaredSize() {
         byte[] page = concat(member(body(2_000, 1)), member(body(2_000, 3)));
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 3_000, new byte[3_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 3_000, new byte[3_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("GZIP data decompresses to more than the expected 3000 bytes");
     }
@@ -101,7 +102,7 @@ class GzipPageTailTest {
     void refusesAPageShorterThanDeclared() {
         byte[] page = member(body(4_000, 1));
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 5_000, new byte[5_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 5_000, new byte[5_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Decompressed size mismatch: expected 5000, got 4000");
     }
@@ -118,7 +119,7 @@ class GzipPageTailTest {
     void refusesAMemberWhoseCrcDoesNotMatchItsData() {
         byte[] page = corruptTrailer(member(body(4_000, 1)), 8);
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("GZIP member's CRC32 does not match its data");
     }
@@ -127,7 +128,7 @@ class GzipPageTailTest {
     void refusesAMemberWhoseTrailerGivesAnotherLength() {
         byte[] page = corruptTrailer(member(body(4_000, 1)), 4);
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("GZIP member's trailer gives its length as 4001 bytes, but it inflated to 4000");
     }
@@ -139,7 +140,7 @@ class GzipPageTailTest {
         byte[] member = member(body(4_000, 1));
         byte[] page = Arrays.copyOf(member, member.length - 3);
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Truncated GZIP trailer");
     }
@@ -149,7 +150,7 @@ class GzipPageTailTest {
         byte[] member = member(body(4_000, 1));
         byte[] page = Arrays.copyOf(member, member.length / 2);
 
-        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000]))
+        assertThatThrownBy(() -> DECOMPRESSOR.decompress(ByteBuffer.wrap(page), 4_000, new byte[4_000], TestDecodeBuffers.create()))
                 .isInstanceOf(ParquetReadException.class)
                 .hasMessage("Truncated GZIP data");
     }

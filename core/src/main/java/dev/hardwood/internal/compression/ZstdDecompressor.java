@@ -11,13 +11,14 @@ import java.nio.ByteBuffer;
 
 import com.github.luben.zstd.Zstd;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decompressor for ZSTD compressed data.
 public class ZstdDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] output) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] output, DecodeBuffers buffers) {
         int actualSize;
         try {
             actualSize = compressed.hasArray()

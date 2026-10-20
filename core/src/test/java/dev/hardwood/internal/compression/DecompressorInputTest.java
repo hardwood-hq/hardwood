@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.CompressionCodec;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,7 +60,7 @@ class DecompressorInputTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(codec);
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length]);
+            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length], TestDecodeBuffers.create());
 
             assertThat(Arrays.copyOf(result, body.length)).as("%s %s, attempt %d", codec, buffer, attempt)
                     .isEqualTo(body);
@@ -80,7 +81,7 @@ class DecompressorInputTest {
         for (int attempt = 0; attempt < 2; attempt++) {
             byte[] dest = new byte[body.length];
 
-            decompressor.decompress(compressed, body.length, dest);
+            decompressor.decompress(compressed, body.length, dest, TestDecodeBuffers.create());
 
             assertThat(dest).as("%s %s, attempt %d", codec, buffer, attempt).isEqualTo(body);
             assertThat(compressed.position()).as("%s %s position", codec, buffer).isEqualTo(position);
@@ -99,11 +100,11 @@ class DecompressorInputTest {
         Decompressor decompressor = new DecompressorFactory(null).getDecompressor(CompressionCodec.LZ4);
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length]);
+            byte[] result = decompressor.decompress(compressed, body.length, new byte[body.length], TestDecodeBuffers.create());
             assertThat(Arrays.copyOf(result, body.length)).as("%s, attempt %d", buffer, attempt).isEqualTo(body);
 
             byte[] dest = new byte[body.length];
-            decompressor.decompress(compressed, body.length, dest);
+            decompressor.decompress(compressed, body.length, dest, TestDecodeBuffers.create());
             assertThat(dest).as("%s into the caller's buffer, attempt %d", buffer, attempt).isEqualTo(body);
 
             assertThat(compressed.position()).as("%s position", buffer).isEqualTo(position);

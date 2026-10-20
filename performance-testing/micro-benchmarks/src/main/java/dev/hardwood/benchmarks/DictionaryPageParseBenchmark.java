@@ -55,9 +55,11 @@ import dev.hardwood.writer.WriterConfig;
 /// take the first, callers holding only an offset take the second — and the gap between them is
 /// what a caller pays for handing over a region it has already been through.
 ///
-/// Single-threaded and allocation-light by construction: one page, no file, no reader pool. The
-/// end-to-end counterpart, [DictionaryPageSetupBenchmark], puts the same work inside a real scan,
-/// where a thread pool and several hundred thousand decoded values sit on top of it.
+/// Allocation-light by construction: one page, no file, no read. Each call hands the page to the
+/// context's pool and waits for it, as every dictionary parse does; every benchmark here pays that
+/// round trip alike, so the gaps between them are what the entry points cost. The end-to-end
+/// counterpart, [DictionaryPageSetupBenchmark], puts the same work inside a real scan, where
+/// several hundred thousand decoded values sit on top of it.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)

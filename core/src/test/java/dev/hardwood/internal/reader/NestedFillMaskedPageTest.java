@@ -15,6 +15,7 @@ import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -117,7 +118,7 @@ class NestedFillMaskedPageTest {
 
         NestedBatch fill(NestedCell cell) {
             return NestedFill.fill(cell, BatchExchange.detachingNested(schema.name(), 16), schema, layers,
-                    NestedIndexMode.ALL_ITEMS, new BinaryBatchValues.ViewDemand());
+                    NestedIndexMode.ALL_ITEMS, new BinaryBatchValues.ViewDemand(), TestDecodeBuffers.create());
         }
     }
 

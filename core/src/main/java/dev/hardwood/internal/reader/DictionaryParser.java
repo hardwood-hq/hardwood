@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -195,15 +196,21 @@ public final class DictionaryParser {
     }
 
     /// Parses a dictionary page from a byte region covering the dictionary area
-    /// of a column chunk (the bytes between the chunk start and the first data page).
+    /// of a column chunk (the bytes between the chunk start and the first data page), on the
+    /// context's pool, and waits for the dictionary.
     ///
     /// @param dictRegion buffer covering the dictionary region
     /// @param columnSchema the column schema (for type info)
     /// @param metaData the column metadata (for codec)
-    /// @param context the hardwood context (for decompressor)
+    /// @param context the hardwood context, whose pool parses the page
     /// @return the parsed dictionary, or `null` if no dictionary page is found
     public static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema,
                             ColumnMetaData metaData, HardwoodContextImpl context) {
+        return context.decode(buffers -> parse(dictRegion, columnSchema, metaData, context, buffers));
+    }
+
+    private static Dictionary parse(ByteBuffer dictRegion, ColumnSchema columnSchema, ColumnMetaData metaData,
+                                    HardwoodContextImpl context, DecodeBuffers buffers) {
         ThriftCompactReader probeReader = new ThriftCompactReader(dictRegion, 0);
         PageHeader header = PageHeaderReader.read(probeReader);
 
@@ -214,10 +221,11 @@ public final class DictionaryParser {
         int headerSize = probeReader.getBytesRead();
         ByteBuffer compressedData = dictRegion.slice(headerSize, header.compressedPageSize());
 
-        return parsePage(header, compressedData, columnSchema, metaData, context);
+        return parsePage(header, compressedData, columnSchema, metaData, context, buffers);
     }
 
-    /// Parses a dictionary page whose header the caller has already read.
+    /// Parses a dictionary page whose header the caller has already read. Like [#parse], it
+    /// parses on the context's pool and waits for the dictionary.
     ///
     /// A caller scanning a column chunk page by page parses the header anyway, to learn where
     /// the page ends. Handing it back here is what keeps the header from being parsed — and its
@@ -245,6 +253,13 @@ public final class DictionaryParser {
     public static Dictionary parsePage(PageHeader header, ByteBuffer compressedData,
                             ColumnSchema columnSchema, ColumnMetaData metaData,
                             HardwoodContextImpl context) {
+        return context.decode(buffers -> parsePage(header, compressedData, columnSchema, metaData, context,
+                buffers));
+    }
+
+    private static Dictionary parsePage(PageHeader header, ByteBuffer compressedData, ColumnSchema columnSchema,
+                                        ColumnMetaData metaData, HardwoodContextImpl context,
+                                        DecodeBuffers buffers) {
         // A read has checked this already; the metadata tools parse dictionaries without a read
         FixedWidthValidator.validate(null, columnSchema);
         if (header.type() != PageType.DICTIONARY_PAGE) {
@@ -275,7 +290,7 @@ public final class DictionaryParser {
         }
 
         return decompress(compressedData, numValues, header.uncompressedPageSize(),
-                columnSchema, metaData.codec(), context);
+                columnSchema, metaData.codec(), context, buffers);
     }
 
     /// Parses a dictionary from a buffer given the chunk layout. Locates the
@@ -303,7 +318,7 @@ public final class DictionaryParser {
     private static Dictionary decompress(ByteBuffer compressedData, int numValues,
                                           int uncompressedSize, ColumnSchema column,
                                           CompressionCodec codec,
-                                          HardwoodContextImpl context) {
+                                          HardwoodContextImpl context, DecodeBuffers buffers) {
         // An absent codec library leaves as it arrived. It names the dependency to
         // add, which is the only actionable thing about it, and it is not the file
         // being wrong — so it must not be caught and re-typed as one.
@@ -311,7 +326,7 @@ public final class DictionaryParser {
         int compressedSize = compressedData.remaining();
         try {
             byte[] data = decompressor.decompress(compressedData, uncompressedSize,
-                    PageDecoder.transientBytes(uncompressedSize));
+                    PageDecoder.transientBytes(buffers, uncompressedSize), buffers);
             return Dictionary.parse(data, uncompressedSize, numValues, column.type(), column.typeLength());
         }
         catch (UnsupportedOperationException e) {

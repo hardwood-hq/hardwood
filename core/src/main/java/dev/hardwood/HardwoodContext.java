@@ -30,6 +30,10 @@ import dev.hardwood.writer.ParquetFileWriter;
 public interface HardwoodContext extends AutoCloseable {
 
     /// Get the executor service for parallel operations.
+    ///
+    /// A read waits for work only this executor's threads run, so a reader built with this
+    /// context cannot be built in a task running on it: building one there fails with an
+    /// [IllegalStateException].
     ExecutorService executor();
 
     /// Closes the context. The pool accepts no new task, and the tasks already submitted to

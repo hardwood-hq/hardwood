@@ -9,6 +9,7 @@ package dev.hardwood.internal.compression;
 
 import java.nio.ByteBuffer;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Interface for decompressing compressed page data.
@@ -22,9 +23,10 @@ public interface Decompressor {
     /// belongs to the caller. A stream that decodes to `uncompressedSize` bytes writes nothing past
     /// them.
     ///
+    /// @param buffers the decoding task's buffers, which hold a codec's scratch
     /// @return `dest`
     /// @throws ParquetReadException if the bytes do not decode to exactly `uncompressedSize` bytes
-    byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest);
+    byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers);
 
     /// Get the name of this decompressor.
     String getName();

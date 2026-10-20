@@ -12,6 +12,7 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -23,10 +24,10 @@ import dev.hardwood.reader.ParquetReadException;
 /// Performance: libdeflate is typically 2-4x faster than zlib for decompression.
 public final class LibdeflateDecompressor implements Decompressor {
 
-    private static final ThreadLocal<MemorySegment> NATIVE_INPUT = new ThreadLocal<>();
-    private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();
-    private static final ThreadLocal<MemorySegment> IN_SIZE_PTR = new ThreadLocal<>();
-    private static final ThreadLocal<MemorySegment> OUT_SIZE_PTR = new ThreadLocal<>();
+    private static final DecodeBuffers.Slot<MemorySegment> NATIVE_INPUT = DecodeBuffers.slot();
+    private static final DecodeBuffers.Slot<MemorySegment> NATIVE_OUTPUT = DecodeBuffers.slot();
+    private static final DecodeBuffers.Slot<MemorySegment> IN_SIZE_PTR = DecodeBuffers.slot();
+    private static final DecodeBuffers.Slot<MemorySegment> OUT_SIZE_PTR = DecodeBuffers.slot();
 
     private final LibdeflatePool pool;
 
@@ -35,7 +36,7 @@ public final class LibdeflateDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();
@@ -49,13 +50,13 @@ public final class LibdeflateDecompressor implements Decompressor {
             // native scratch segment first.
             MemorySegment input = MemorySegment.ofBuffer(compressed);
             if (!compressed.isDirect()) {
-                MemorySegment scratch = borrowNative(NATIVE_INPUT, compressedSize);
+                MemorySegment scratch = borrowNative(buffers, NATIVE_INPUT, compressedSize);
                 MemorySegment.copy(input, 0, scratch, 0, compressedSize);
                 input = scratch;
             }
-            MemorySegment output = borrowNative(NATIVE_OUTPUT, uncompressedSize);
-            MemorySegment actualInSizePtr = borrowSizePtr(IN_SIZE_PTR);
-            MemorySegment actualOutSizePtr = borrowSizePtr(OUT_SIZE_PTR);
+            MemorySegment output = borrowNative(buffers, NATIVE_OUTPUT, uncompressedSize);
+            MemorySegment actualInSizePtr = borrowSizePtr(buffers, IN_SIZE_PTR);
+            MemorySegment actualOutSizePtr = borrowSizePtr(buffers, OUT_SIZE_PTR);
 
             long inputOffset = 0;
             long outputOffset = 0;
@@ -108,20 +109,21 @@ public final class LibdeflateDecompressor implements Decompressor {
         }
     }
 
-    private static MemorySegment borrowNative(ThreadLocal<MemorySegment> tl, int minSize) {
-        MemorySegment seg = tl.get();
+    private static MemorySegment borrowNative(DecodeBuffers buffers, DecodeBuffers.Slot<MemorySegment> slot,
+                                              int minSize) {
+        MemorySegment seg = buffers.get(slot);
         if (seg == null || seg.byteSize() < minSize) {
             seg = Arena.ofAuto().allocate(minSize);
-            tl.set(seg);
+            buffers.set(slot, seg);
         }
         return seg;
     }
 
-    private static MemorySegment borrowSizePtr(ThreadLocal<MemorySegment> tl) {
-        MemorySegment seg = tl.get();
+    private static MemorySegment borrowSizePtr(DecodeBuffers buffers, DecodeBuffers.Slot<MemorySegment> slot) {
+        MemorySegment seg = buffers.get(slot);
         if (seg == null) {
             seg = Arena.ofAuto().allocate(ValueLayout.JAVA_LONG);
-            tl.set(seg);
+            buffers.set(slot, seg);
         }
         return seg;
     }

@@ -9,10 +9,11 @@ package dev.hardwood.internal.reader;
 
 import dev.hardwood.internal.ExceptionContext;
 
-/// A task of a [ScheduledNestedColumn] that decodes no page: it fills the cells the column's
-/// fetcher sealed, which no page task may be left to fill. The column queues it ahead of its
-/// queued pages at the first row of the first such cell, so the scheduler submits it in row order
-/// with every other task of the read. It stands for no page.
+/// A task of a [ScheduledColumn] that decodes no page: it fills ([ScheduledNestedColumn]) or
+/// completes ([ScheduledFlatColumn]) the cells the column's fetcher sealed, which no page task may
+/// be left to fill or complete. The column queues it ahead of its queued pages at the first row of
+/// the first such cell, so the scheduler submits it in row order with every other task of the
+/// read. It stands for no page.
 final class SealedFillTask extends PageTask {
 
     SealedFillTask(long firstRow) {

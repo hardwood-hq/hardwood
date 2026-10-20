@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.schema.ColumnSchema;
@@ -64,8 +65,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     // === Guarded by `lock` ===
     final ReentrantLock lock = new ReentrantLock();
-    /// Pages queued and not yet submitted, in page order. A nested column also queues a
-    /// [SealedFillTask] here, which stands for no page and reports as a boundary marker.
+    /// Pages queued and not yet submitted, in page order. A column also queues a [SealedFillTask]
+    /// here, which stands for no page and reports as a boundary marker.
     final ArrayDeque<PageTask> ready = new ArrayDeque<>();
     /// Cells in plan order, then [#END] or the failure that ends the read.
     final ArrayDeque<Object> publishOrder = new ArrayDeque<>();
@@ -377,8 +378,8 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
 
     // ==================== Page task ====================
 
-    /// Decodes a page into the column's cells.
-    abstract void runPage(PageTask page);
+    /// Decodes a page into the column's cells, with the buffers of the pool task running it.
+    abstract void runPage(PageTask page, DecodeBuffers buffers);
 
     /// Ends the read with a failure met on `page`'s task, placed with the page; a segment's
     /// failure ([SegmentFillException]) is placed with the segment's own page.
@@ -397,7 +398,11 @@ public abstract class ScheduledColumn<B> implements ColumnPipeline {
     }
 
     /// Marks a cell completed and publishes what its completion lets the column publish.
-    void completed(ScheduledCell<B> cell) {
+    ///
+    /// @param task the buffers of the pool task completing the cell, which only a task of the
+    ///        context's pool holds: a cell completes on the pool, as its fill, its validity and
+    ///        its filter fragment run there
+    void completed(ScheduledCell<B> cell, DecodeBuffers task) {
         lock.lock();
         try {
             cell.markCompleted();

@@ -13,6 +13,7 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.metadata.CompressionCodec;
@@ -31,7 +32,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(original);
     }
@@ -49,7 +50,7 @@ class Lz4DecompressorIT {
         hadoop.put(compressedBlock);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), original.length, new byte[original.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), original.length, new byte[original.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(original);
     }
@@ -76,7 +77,7 @@ class Lz4DecompressorIT {
         System.arraycopy(part2, 0, expected, part1.length, part2.length);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), expected.length, new byte[expected.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), expected.length, new byte[expected.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(expected);
     }
@@ -88,7 +89,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(original);
     }
@@ -99,7 +100,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4_RAW);
-        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(original);
     }
@@ -111,7 +112,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4_RAW);
-        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length]);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length, new byte[original.length], TestDecodeBuffers.create());
 
         assertThat(result).isEqualTo(original);
     }

@@ -61,6 +61,14 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Compile time only: @MustBeClosed, which the MustBeClosedChecker reads -->
+    <dependency>
+      <groupId>com.google.errorprone</groupId>
+      <artifactId>error_prone_annotations</artifactId>
+      <version>${error-prone.version}</version>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>

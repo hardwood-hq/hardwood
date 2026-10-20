@@ -13,6 +13,7 @@ import java.util.zip.CRC32;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decompressor for GZIP-compressed data using Inflater directly for maximum performance.
@@ -29,7 +30,7 @@ public class GzipDecompressor implements Decompressor {
 
 
     @Override
-    public byte[] decompress(ByteBuffer page, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer page, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         // Members are consumed from a duplicate, so the caller's buffer is left as it was
         ByteBuffer compressed = page.duplicate().order(ByteOrder.LITTLE_ENDIAN);
         int totalDecompressed = 0;

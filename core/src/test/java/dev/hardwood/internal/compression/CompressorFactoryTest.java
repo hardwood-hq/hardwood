@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.metadata.CompressionCodec;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -149,7 +150,7 @@ class CompressorFactoryTest {
 
     private byte[] decompress(CompressionCodec codec, byte[] compressed, int uncompressedSize) throws IOException {
         byte[] decompressed = decompressors.getDecompressor(codec)
-                .decompress(ByteBuffer.wrap(compressed), uncompressedSize, new byte[uncompressedSize]);
+                .decompress(ByteBuffer.wrap(compressed), uncompressedSize, new byte[uncompressedSize], TestDecodeBuffers.create());
         // The decompressors hand back a reusable thread-local buffer that may be longer than the
         // body, so the comparison is over the body's own bytes.
         return Arrays.copyOf(decompressed, uncompressedSize);

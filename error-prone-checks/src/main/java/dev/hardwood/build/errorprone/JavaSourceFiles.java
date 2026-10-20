@@ -14,11 +14,20 @@ import com.google.errorprone.VisitorState;
 final class JavaSourceFiles {
 
     private static final Pattern CONVENTIONAL_SOURCE_ROOT = Pattern.compile("/src/(main|test)/java\\d*/");
+    private static final Pattern MAIN_SOURCE_ROOT = Pattern.compile("/src/main/java\\d*/");
 
     private JavaSourceFiles() {}
 
     static boolean isConventionalJavaSource(VisitorState state) {
-        String path = state.getPath().getCompilationUnit().getSourceFile().toUri().getPath().replace('\\', '/');
-        return CONVENTIONAL_SOURCE_ROOT.matcher(path).find();
+        return CONVENTIONAL_SOURCE_ROOT.matcher(path(state)).find();
+    }
+
+    /// Whether the file is under a main source root, `src/main/java` or a multi-release one.
+    static boolean isMainJavaSource(VisitorState state) {
+        return MAIN_SOURCE_ROOT.matcher(path(state)).find();
+    }
+
+    private static String path(VisitorState state) {
+        return state.getPath().getCompilationUnit().getSourceFile().toUri().getPath().replace('\\', '/');
     }
 }

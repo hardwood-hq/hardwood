@@ -16,10 +16,13 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import dev.hardwood.internal.DecodeExecutor;
+
 /// Submits the pages of a read's [ScheduledColumn]s to the decode pool, in row order across the
 /// columns.
 ///
-/// The pool runs tasks in the order they arrive. The scheduler submits the queued page that
+/// The pool runs page tasks in the order they arrive ([DecodeExecutor] puts only a decode a thread
+/// waits for ahead of them). The scheduler submits the queued page that
 /// starts at the lowest row of the read, so the tasks of the batch the consumer waits for are
 /// ahead of every read-ahead task in the pool's queue, whatever the number of columns and their
 /// page sizes. While that page is past the cap, every page below it is submitted; if fewer of
@@ -217,7 +220,7 @@ public final class ReadScheduler {
             }
             ScheduledColumn<?> column = next;
             try {
-                context.executor().execute(() -> column.runPage(page));
+                context.execute(buffers -> column.runPage(page, buffers));
             }
             catch (RejectedExecutionException e) {
                 column.rejected(e);

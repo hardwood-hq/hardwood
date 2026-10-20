@@ -303,6 +303,7 @@ public class RowGroupIterator implements Closeable {
                              Consumer<RowGroupIterator> closeListener,
                              HardwoodContextImpl context, long maxRows, long tailSkip,
                              long physicalSkip) {
+        context.requireOffPool();
         if (tailSkip < 0) {
             throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
         }

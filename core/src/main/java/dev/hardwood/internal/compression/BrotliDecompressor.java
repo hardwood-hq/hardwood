@@ -13,13 +13,14 @@ import java.nio.ByteBuffer;
 
 import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.reader.ParquetReadException;
 
 /// Decompressor for Brotli compressed data.
 public class BrotliDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest, DecodeBuffers buffers) {
         BrotliLoader.ensureLoaded();
 
         // BrotliInputStream decodes through DecoderJNI directly. The one-shot

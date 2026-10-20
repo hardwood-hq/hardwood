@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.Arrays;
 import java.util.List;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Fills a sealed [NestedCell]: allocates its batch's arrays at their final size from its
@@ -32,13 +33,12 @@ import dev.hardwood.schema.ColumnSchema;
 /// other `k - 1` elements.
 ///
 /// The batch keeps its levels unless its index mode drops them (`REAL_VIEW`), which builds the
-/// real-items view from levels written to the filling thread's scratch instead, and only the
+/// real-items view from levels written to the filling task's scratch instead, and only the
 /// levels the view reads: the repetition levels of a column with repetition, and the definition
 /// levels of a batch that is not all present.
 final class NestedFill {
 
-    private static final ThreadLocal<PageDecoder.LevelScratch> VIEW_LEVELS =
-            ThreadLocal.withInitial(PageDecoder.LevelScratch::new);
+    private static final DecodeBuffers.Slot<PageDecoder.LevelScratch> VIEW_LEVELS = DecodeBuffers.slot();
 
     private NestedFill() {
     }
@@ -49,7 +49,7 @@ final class NestedFill {
     ///         would exceed 2 GB
     static NestedBatch fill(NestedCell cell, BatchExchange<NestedBatch> exchange, ColumnSchema column,
                             NestedLevelComputer.Layers layers, NestedIndexMode mode,
-                            BinaryBatchValues.ViewDemand viewDemand) {
+                            BinaryBatchValues.ViewDemand viewDemand, DecodeBuffers buffers) {
         List<NestedSegment> segments = cell.segments();
         int values = cell.values();
         int records = cell.records();
@@ -71,7 +71,11 @@ final class NestedFill {
             repetitionLevels = new int[values];
         }
         else if (!fixedWidth) {
-            PageDecoder.LevelScratch scratch = VIEW_LEVELS.get();
+            PageDecoder.LevelScratch scratch = buffers.get(VIEW_LEVELS);
+            if (scratch == null) {
+                scratch = new PageDecoder.LevelScratch();
+                buffers.set(VIEW_LEVELS, scratch);
+            }
             definitionLevels = allPresent ? null : scratch.definitionLevels(values);
             repetitionLevels = column.maxRepetitionLevel() > 0 ? scratch.repetitionLevels(values) : null;
         }

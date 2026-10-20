@@ -15,11 +15,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
 import com.sun.management.ThreadMXBean;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.InPlacePageReads;
 import dev.hardwood.internal.reader.MappedInputFile;
@@ -54,8 +56,32 @@ public class PageDecodeAllocationProfileTest {
             "profiling_snappy_dict.parquet",
     };
 
+    /// The decode buffers of the profiling task, which runs on a context's pool.
+    private DecodeBuffers buffers;
+
+    /// Profiles as one task of a context's pool, the only place pages decode, on whose thread the
+    /// profile counts the allocations.
     @Test
-    void profilePageDecodeAllocations() throws Exception {
+    void profilePageDecodeAllocations() throws Throwable {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        try (HardwoodContextImpl profiling = HardwoodContextImpl.create(1)) {
+            profiling.decode(taskBuffers -> {
+                buffers = taskBuffers;
+                try {
+                    profile();
+                }
+                catch (Throwable t) {
+                    failure.set(t);
+                }
+                return null;
+            });
+        }
+        if (failure.get() != null) {
+            throw failure.get();
+        }
+    }
+
+    private void profile() throws Exception {
         ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
         long threadId = Thread.currentThread().threadId();
 
@@ -162,7 +188,8 @@ public class PageDecodeAllocationProfileTest {
                         PageDecoder warmupReader = new PageDecoder(
                                 pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                 context.decompressorFactory());
-                        reads.read(warmupReader, columnSchema, pageInfo.pageData(), pageInfo.dictionary());
+                        reads.read(warmupReader, columnSchema, pageInfo.pageData(), pageInfo.dictionary(),
+                                buffers);
 
                         // Measure: read multiple times and take the minimum
                         // to filter out JVM noise (JIT recompilation, TLAB refills, etc.)
@@ -176,7 +203,7 @@ public class PageDecodeAllocationProfileTest {
                                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                     context.decompressorFactory());
                             values = reads.read(pageDecoder, columnSchema, pageInfo.pageData(),
-                                    pageInfo.dictionary());
+                                    pageInfo.dictionary(), buffers);
 
                             long afterBytes = threadMXBean.getThreadAllocatedBytes(threadId);
                             long allocated = afterBytes - beforeBytes;

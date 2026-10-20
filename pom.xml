@@ -410,7 +410,7 @@
               <compilerArgs combine.children="append">
                 <arg>-XDcompilePolicy=simple</arg>
                 <arg>--should-stop=ifError=FLOW</arg>
-                <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
+                <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR -Xep:NoThreadLocal:ERROR -Xep:MustBeClosedChecker:ERROR</arg>
                 <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
               </compilerArgs>
               <annotationProcessorPaths combine.children="append">

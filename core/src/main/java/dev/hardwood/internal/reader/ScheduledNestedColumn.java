@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.ArrayDeque;
 import java.util.concurrent.ArrayBlockingQueue;
 
+import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -344,15 +345,15 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     /// Decodes and measures a page, places what the measure lets the column place, and fills the
     /// cells sealed so far; a [SealedFillTask] only fills them.
     @Override
-    void runPage(PageTask task) {
+    void runPage(PageTask task, DecodeBuffers buffers) {
         try {
             if (done) {
                 return;
             }
             if (task instanceof NestedPageTask page) {
-                measureAndPlace(page);
+                measureAndPlace(page, buffers);
             }
-            fillSealed();
+            fillSealed(buffers);
         }
         catch (Exception e) {
             pageFailed(e, task);
@@ -366,12 +367,12 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
     }
 
-    private void measureAndPlace(NestedPageTask page) {
+    private void measureAndPlace(NestedPageTask page, DecodeBuffers buffers) {
         PageInfo info = page.info;
         PageRowMask mask = info.mask();
         PageDecoder.InPlaceNestedPage inPlace = info.isNullPlaceholder()
                 ? page.decoder.nullsInPlace(info.placeholderNumValues(), page.scratch)
-                : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch);
+                : page.decoder.decodeNestedInPlace(info.pageData(), info.dictionary(), page.scratch, buffers);
         if (!mask.isAll()) {
             inPlace = PageTrimmer.trim(inPlace, mask, page.scratch);
         }
@@ -395,7 +396,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
     }
 
     /// Fills, completes and publishes the cells sealed so far, outside the lock.
-    private void fillSealed() {
+    private void fillSealed(DecodeBuffers buffers) {
         while (true) {
             NestedCell cell;
             lock.lock();
@@ -413,7 +414,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
                 observer.filling(this, cell);
             }
             try {
-                cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand));
+                cell.filled(NestedFill.fill(cell, exchange, column, layers, indexMode, viewDemand, buffers));
                 for (NestedSegment segment : cell.segments()) {
                     if (segment.page.unfilledSegments.decrementAndGet() == 0) {
                         releaseScratch(segment.page);
@@ -428,7 +429,7 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
                 pageFailed(e, cell.lastPage());
                 return;
             }
-            completed(cell);
+            completed(cell, buffers);
         }
     }
 }

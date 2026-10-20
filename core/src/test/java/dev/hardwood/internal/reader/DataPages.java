@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.encoding.RleBitPackingHybridEncoder;
@@ -204,16 +205,18 @@ final class DataPages {
     static Object read(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary) {
         PageDecoder.LevelScratch scratch = new PageDecoder.LevelScratch();
         if (column.maxRepetitionLevel() > 0) {
-            return values(decoder.decodeNestedInPlace(page, dictionary, scratch), column);
+            return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(page, dictionary, scratch, buffers),
+                    column));
         }
-        return isBinary(column.type())
-                ? values(decoder.decodeFlatBinary(page, dictionary, scratch), column.maxDefinitionLevel())
-                : values(decoder.decodeFlat(page, dictionary, scratch), column.type());
+        return TestDecodeBuffers.decode(buffers -> isBinary(column.type())
+                ? values(decoder.decodeFlatBinary(page, dictionary, scratch, buffers), column.maxDefinitionLevel())
+                : values(decoder.decodeFlat(page, dictionary, scratch, buffers), column.type()));
     }
 
     /// Reads `page` through [PageDecoder#decodeNestedInPlace], whatever the column.
     static Object readNested(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary) {
-        return values(decoder.decodeNestedInPlace(page, dictionary, new PageDecoder.LevelScratch()), column);
+        return TestDecodeBuffers.decode(buffers -> values(decoder.decodeNestedInPlace(page, dictionary,
+                new PageDecoder.LevelScratch(), buffers), column));
     }
 
     static Object values(PageDecoder.InPlaceNestedPage page, ColumnSchema column) {

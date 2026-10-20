@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
+import dev.hardwood.internal.TestDecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.encoding.AlpDecoder;
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
@@ -130,8 +131,9 @@ public final class ReferencePageDecoder {
     }
 
     private byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        return Arrays.copyOf(decompressorFactory.getDecompressor(codec).decompress(compressed, uncompressedSize, new byte[uncompressedSize]),
-                uncompressedSize);
+        byte[] decompressed = TestDecodeBuffers.decode(buffers -> decompressorFactory.getDecompressor(codec)
+                .decompress(compressed, uncompressedSize, new byte[uncompressedSize], buffers));
+        return Arrays.copyOf(decompressed, uncompressedSize);
     }
 
     private static int[] levels(byte[] data, int offset, int length, int numValues, int maxLevel) {
