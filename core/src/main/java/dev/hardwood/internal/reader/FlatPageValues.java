@@ -19,10 +19,12 @@ import dev.hardwood.internal.encoding.simd.VectorSupport;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
 
-/// The values of a decompressed data page of a fixed-width numeric or boolean column, read in place
-/// by its fills, and the page's definition levels. The values are the page's own bytes in any
-/// encoding but the ids ones (`PLAIN`, `BYTE_STREAM_SPLIT`, `ALP`, `DELTA_BINARY_PACKED`), or ids
-/// decoded into scratch (a dictionary's, or `RLE` booleans).
+/// The values of a data page of a fixed-width numeric or boolean column, read in place by its
+/// fills, and the page's definition levels. The values are the page's own bytes in any encoding
+/// but the ids ones (`PLAIN`, `BYTE_STREAM_SPLIT`, `ALP`, `DELTA_BINARY_PACKED`), or ids decoded
+/// into scratch (a dictionary's, or `RLE` booleans). `PLAIN` values stored uncompressed in a direct
+/// buffer (a slice of a file's mapping, a buffer from an S3 `GET`) are read from that buffer and
+/// never copied; any other values are read from an array.
 ///
 /// A fill writes its rows in page order, so the values are read with one forward cursor: [#copy]
 /// moves it to the run's first row, counting the non-null values it passes, then writes the run.
@@ -45,10 +47,14 @@ final class FlatPageValues {
     /// The page's definition levels, `null` when every value is present.
     private final int[] definitionLevels;
     private final int maxDefinitionLevel;
-    /// The value section's bytes and where it starts, for every encoding but the ids ones; `null`
-    /// for ids.
+    /// The value section's bytes and where it starts, for every encoding but the ids ones and
+    /// `PLAIN` values in a direct buffer; `null` for those.
     private final byte[] plain;
     private final int plainOffset;
+    /// `PLAIN` values in a direct buffer: the value section, little-endian, from index `0`; `null`
+    /// for values in an array. A heap buffer is read through its array, so that the reads here
+    /// see direct buffer classes only and stay inlined.
+    private final ByteBuffer plainValues;
     /// Dictionary ids of the non-null values, and the dictionary's values; `null` for `PLAIN`.
     private final int[] ids;
     private final Object dictionaryValues;
@@ -75,14 +81,15 @@ final class FlatPageValues {
     private int nonNull;
 
     private FlatPageValues(PhysicalType type, int numValues, int[] definitionLevels, int maxDefinitionLevel,
-                           byte[] plain, int plainOffset, int[] ids, Object dictionaryValues, int stride,
-                           int alpLimit, int alpValues, int deltaLimit) {
+                           byte[] plain, int plainOffset, ByteBuffer plainValues, int[] ids,
+                           Object dictionaryValues, int stride, int alpLimit, int alpValues, int deltaLimit) {
         this.type = type;
         this.numValues = numValues;
         this.definitionLevels = definitionLevels;
         this.maxDefinitionLevel = maxDefinitionLevel;
         this.plain = plain;
         this.plainOffset = plainOffset;
+        this.plainValues = plainValues;
         this.ids = ids;
         this.dictionaryValues = dictionaryValues;
         this.stride = stride;
@@ -91,21 +98,50 @@ final class FlatPageValues {
         this.deltaLimit = deltaLimit;
     }
 
-    /// `PLAIN` values of `type` from `offset` in `data`, which must hold every non-null value.
+    /// `PLAIN` values of `type` in `[offset, limit)` of `data`, which must hold every non-null value.
     ///
     /// @throws ParquetReadException if the value section does not end with the page's values
     static FlatPageValues plain(PhysicalType type, int[] definitionLevels, int maxDefinitionLevel, int numValues,
                                 byte[] data, int offset, int limit) {
+        checkPlainSize(type, definitionLevels, maxDefinitionLevel, numValues, limit - offset);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
+                null, 0, 0, 0, 0);
+    }
+
+    /// `PLAIN` values of `type` in `values` from its position to its limit, which must hold every
+    /// non-null value. The values are read from `values`'s bytes, which must not change while the
+    /// page's fills run.
+    ///
+    /// @throws ParquetReadException if the value section does not end with the page's values
+    /// @throws IllegalArgumentException if `values` is neither direct nor backed by an array
+    static FlatPageValues plain(PhysicalType type, int[] definitionLevels, int maxDefinitionLevel, int numValues,
+                                ByteBuffer values) {
+        if (values.hasArray()) {
+            int offset = values.arrayOffset() + values.position();
+            return plain(type, definitionLevels, maxDefinitionLevel, numValues, values.array(), offset,
+                    offset + values.remaining());
+        }
+        if (!values.isDirect()) {
+            throw new IllegalArgumentException("PLAIN values must be in a direct buffer or an array, not in "
+                    + values.getClass().getSimpleName());
+        }
+        checkPlainSize(type, definitionLevels, maxDefinitionLevel, numValues, values.remaining());
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0,
+                values.slice().order(ByteOrder.LITTLE_ENDIAN), null, null, 0, 0, 0, 0);
+    }
+
+    /// Checks that a `PLAIN` value section of `length` bytes holds exactly the page's values.
+    private static void checkPlainSize(PhysicalType type, int[] definitionLevels, int maxDefinitionLevel,
+                                       int numValues, int length) {
         int nonNull = countNonNull(definitionLevels, maxDefinitionLevel, numValues);
         long bytes = type == PhysicalType.BOOLEAN ? (nonNull + 7L) / 8 : (long) nonNull * width(type);
-        if (bytes > limit - offset) {
+        if (bytes > length) {
             throw new ParquetReadException("Unexpected EOF while reading " + type + " values");
         }
-        if (bytes != limit - offset) {
+        if (bytes != length) {
             throw new ParquetReadException("PLAIN value section does not end with its " + nonNull + " " + type
-                    + " values; leftover bytes: " + (limit - offset - bytes));
+                    + " values; leftover bytes: " + (length - bytes));
         }
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null, 0, 0, 0, 0);
     }
 
     /// `DELTA_BINARY_PACKED` values of `type` (`INT32` or `INT64`) from `offset` in `data`, ending
@@ -115,8 +151,8 @@ final class FlatPageValues {
                                 byte[] data, int offset, int limit) {
         // The stream header is read and checked here, so a malformed one fails with the page
         new DeltaBinaryPackedDecoder(data, offset, limit);
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null, 0,
-                0, 0, limit);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
+                null, 0, 0, 0, limit);
     }
 
     /// `ALP` values of `type` (`FLOAT` or `DOUBLE`) from `offset` in `data`, ending at `limit`. Every
@@ -127,8 +163,8 @@ final class FlatPageValues {
                               byte[] data, int offset, int limit) {
         int nonNull = countNonNull(definitionLevels, maxDefinitionLevel, numValues);
         new AlpDecoder(data, offset, limit, nonNull, type).validate();
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null, 0,
-                limit, nonNull, 0);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
+                null, 0, limit, nonNull, 0);
     }
 
     /// `BYTE_STREAM_SPLIT` values of `type` from `offset` in `data`: byte `b` of the `i`th non-null
@@ -144,7 +180,7 @@ final class FlatPageValues {
                     + " bytes, not the " + bytes + " of its " + nonNull + " " + type + " values");
         }
         return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, data, offset, null, null,
-                Math.max(1, nonNull), 0, 0, 0);
+                null, Math.max(1, nonNull), 0, 0, 0);
     }
 
     /// Dictionary ids already decoded into `ids`, one per non-null value, and the values of the
@@ -168,7 +204,8 @@ final class FlatPageValues {
                         + " out of bounds for a dictionary of " + size + " entries");
             }
         }
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, ids, values, 0, 0, 0, 0);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, null, 0, null, ids, values, 0,
+                0, 0, 0);
     }
 
     private static final boolean[] BOOLEAN_IDS = { false, true };
@@ -181,8 +218,8 @@ final class FlatPageValues {
                 throw new ParquetReadException("Invalid RLE boolean value: " + ids[i]);
             }
         }
-        return new FlatPageValues(PhysicalType.BOOLEAN, numValues, definitionLevels, maxDefinitionLevel, null, 0, ids,
-                BOOLEAN_IDS, 0, 0, 0, 0);
+        return new FlatPageValues(PhysicalType.BOOLEAN, numValues, definitionLevels, maxDefinitionLevel, null, 0, null,
+                ids, BOOLEAN_IDS, 0, 0, 0, 0);
     }
 
     /// The non-null values among a page's first `numValues`.
@@ -206,8 +243,8 @@ final class FlatPageValues {
     /// A reader of the same values with a cursor of its own at the page's first row, so that two
     /// fills can read one page at once.
     FlatPageValues view() {
-        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset, ids,
-                dictionaryValues, stride, alpLimit, alpValues, deltaLimit);
+        return new FlatPageValues(type, numValues, definitionLevels, maxDefinitionLevel, plain, plainOffset,
+                plainValues, ids, dictionaryValues, stride, alpLimit, alpValues, deltaLimit);
     }
 
     /// The page's values, nulls included.
@@ -321,7 +358,10 @@ final class FlatPageValues {
 
     /// The `length` bytes of the `PLAIN` values from byte `offset`, little-endian, for a bulk copy.
     private ByteBuffer plainBytes(int offset, int length) {
-        return ByteBuffer.wrap(plain, plainOffset + offset, length).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer bytes = plainValues != null
+                ? plainValues.slice(offset, length)
+                : ByteBuffer.wrap(plain, plainOffset + offset, length);
+        return bytes.order(ByteOrder.LITTLE_ENDIAN);
     }
 
     /// This view's delta decoder, positioned at non-null value `src`.
@@ -414,12 +454,28 @@ final class FlatPageValues {
             }
             return;
         }
+        if (plainValues != null) {
+            copyDirect(out, dest, src);
+            return;
+        }
         switch (type) {
             case BOOLEAN -> ((boolean[]) out)[dest] = ((plain[plainOffset + (src >>> 3)] >>> (src & 7)) & 1) != 0;
             case INT32 -> ((int[]) out)[dest] = (int) INT.get(plain, plainOffset + src * 4);
             case INT64 -> ((long[]) out)[dest] = (long) LONG.get(plain, plainOffset + src * 8);
             case FLOAT -> ((float[]) out)[dest] = (float) FLOAT.get(plain, plainOffset + src * 4);
             case DOUBLE -> ((double[]) out)[dest] = (double) DOUBLE.get(plain, plainOffset + src * 8);
+            default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
+        }
+    }
+
+    /// Writes the non-null `PLAIN` value `src` of a direct buffer to `out[dest]`.
+    private void copyDirect(Object out, int dest, int src) {
+        switch (type) {
+            case BOOLEAN -> ((boolean[]) out)[dest] = ((plainValues.get(src >>> 3) >>> (src & 7)) & 1) != 0;
+            case INT32 -> ((int[]) out)[dest] = plainValues.getInt(src * 4);
+            case INT64 -> ((long[]) out)[dest] = plainValues.getLong(src * 8);
+            case FLOAT -> ((float[]) out)[dest] = plainValues.getFloat(src * 4);
+            case DOUBLE -> ((double[]) out)[dest] = plainValues.getDouble(src * 8);
             default -> throw new IllegalStateException("Not a fixed-width numeric type: " + type);
         }
     }

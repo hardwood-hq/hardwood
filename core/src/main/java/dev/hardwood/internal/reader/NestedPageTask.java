@@ -9,9 +9,9 @@ package dev.hardwood.internal.reader;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-/// A page of a [ScheduledNestedColumn]: its task decompresses it into scratch of its own, decodes
-/// its levels and measures it, and the page keeps the scratch until every cell it is placed into
-/// is filled.
+/// A page of a [ScheduledNestedColumn]: its task decompresses it into scratch of its own (or leaves
+/// values stored uncompressed in the fetched page), decodes its levels and measures it, and the
+/// page keeps the scratch until every cell it is placed into is filled.
 final class NestedPageTask extends PageTask {
 
     /// The page's levels, record starts and byte prefix, which outlive its task.
@@ -20,7 +20,7 @@ final class NestedPageTask extends PageTask {
     /// to its column's pool once its placement has ended and the count is back at zero.
     final AtomicInteger unfilledSegments = new AtomicInteger();
     /// The page read in two passes: its levels, kept to its mask's records, and its values in
-    /// place in its own bytes; written by its task before it is measured.
+    /// place in its scratch's bytes or the fetched page; written by its task before it is measured.
     PageDecoder.InPlaceNestedPage inPlace;
     /// The page's measure; written by its task before [#measured] is set.
     PageMeasure measure;

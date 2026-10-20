@@ -42,8 +42,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The in-place readers against [ReferencePageDecoder], over every encoding each physical type
 /// takes, three column shapes (required, optional with nulls, a list's elements with null and
 /// empty lists and null elements) and four page forms: `V1` uncompressed and Snappy-compressed,
-/// `V2` with its values compressed and `V2` with its values stored under a codec, the last also
-/// from a direct buffer. Each page is read from its first entry and through views starting at
+/// `V2` with its values compressed and `V2` with its values stored under a codec. The uncompressed
+/// `V1` page and the stored `V2` page are also read from a direct buffer at an odd address, as a
+/// page whose values are read where they lie in a file's mapping, as is a `V2` page flagged
+/// compressed in a chunk with codec `UNCOMPRESSED`, as parquet-java writes one. Each page is read from its first entry and through views starting at
 /// every entry, as a fill that starts mid-page reads it, and a flat column also through the
 /// nested entry point, as a struct leaf is read.
 class InPlaceReaderOracleTest {
@@ -55,7 +57,7 @@ class InPlaceReaderOracleTest {
     }
 
     enum Form {
-        V1, V1_SNAPPY, V2_SNAPPY, V2_STORED, V2_STORED_DIRECT
+        V1, V1_DIRECT, V1_SNAPPY, V2_SNAPPY, V2_STORED, V2_STORED_DIRECT, V2_UNCOMPRESSED_DIRECT
     }
 
     static Stream<Arguments> cases() {
@@ -101,7 +103,9 @@ class InPlaceReaderOracleTest {
         int nonNull = levels.nonNull(column.maxDefinitionLevel());
         Dictionary dictionary = encoding == Encoding.RLE_DICTIONARY ? dictionary(type) : null;
         byte[] values = encode(type, encoding, nonNull);
-        CompressionCodec codec = form == Form.V1 ? CompressionCodec.UNCOMPRESSED : CompressionCodec.SNAPPY;
+        CompressionCodec codec = form == Form.V1 || form == Form.V1_DIRECT || form == Form.V2_UNCOMPRESSED_DIRECT
+                ? CompressionCodec.UNCOMPRESSED
+                : CompressionCodec.SNAPPY;
         ByteBuffer page = page(form, encoding, levels, column, values, codec);
 
         Object expected = new ReferencePageDecoder(column, codec, new DecompressorFactory(null))
@@ -351,12 +355,12 @@ class InPlaceReaderOracleTest {
                 ? DataPages.levels(column.maxDefinitionLevel(), levels.definition())
                 : new byte[0];
         return switch (form) {
-            case V1, V1_SNAPPY -> {
+            case V1, V1_DIRECT, V1_SNAPPY -> {
                 byte[] body = DataPages.concat(
                         levels.repetition() != null ? DataPages.levelSection(column.maxRepetitionLevel(), levels.repetition()) : new byte[0],
                         levels.definition() != null ? DataPages.levelSection(column.maxDefinitionLevel(), levels.definition()) : new byte[0],
                         values);
-                byte[] stored = form == Form.V1 ? body
+                byte[] stored = form != Form.V1_SNAPPY ? body
                         : new CompressorFactory().getCompressor(codec).compress(body, 0, body.length);
                 CRC32 crc = new CRC32();
                 crc.update(stored);
@@ -364,18 +368,26 @@ class InPlaceReaderOracleTest {
                 PageHeaderWriter.writeDataPageV1(header, size, body.length, stored.length, (int) crc.getValue(),
                         encoding);
                 byte[] headerBytes = header.toByteArray();
-                yield ByteBuffer.allocate(headerBytes.length + stored.length).put(headerBytes).put(stored).flip();
+                ByteBuffer heap = ByteBuffer.allocate(headerBytes.length + stored.length).put(headerBytes).put(stored)
+                        .flip();
+                yield form == Form.V1_DIRECT ? oddDirect(heap) : heap;
             }
             case V2_SNAPPY -> DataPages.pageV2(encoding, size, records(levels), repetition, definition, values, codec,
                     true);
             case V2_STORED -> DataPages.pageV2(encoding, size, records(levels), repetition, definition, values, codec,
                     false);
-            case V2_STORED_DIRECT -> {
-                ByteBuffer heap = DataPages.pageV2(encoding, size, records(levels), repetition, definition, values,
-                        codec, false);
-                yield ByteBuffer.allocateDirect(heap.remaining()).put(heap).flip();
-            }
+            case V2_STORED_DIRECT -> oddDirect(DataPages.pageV2(encoding, size, records(levels), repetition,
+                    definition, values, codec, false));
+            case V2_UNCOMPRESSED_DIRECT -> oddDirect(DataPages.pageV2(encoding, size, records(levels), repetition,
+                    definition, values, codec, true));
         };
+    }
+
+    /// A copy of `heap` in a direct buffer that starts one byte past an aligned address, so that no
+    /// value of the page is aligned to its width.
+    private static ByteBuffer oddDirect(ByteBuffer heap) {
+        ByteBuffer direct = ByteBuffer.allocateDirect(heap.remaining() + 1).position(1).slice();
+        return direct.put(heap).flip();
     }
 
     private static int records(Levels levels) {

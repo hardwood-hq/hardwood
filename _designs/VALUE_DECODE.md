@@ -14,7 +14,7 @@ Related documents:
 
 ## Page decode
 
-`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. It refuses a `FIXED_LEN_BYTE_ARRAY` column without a positive width (`FixedWidthValidator`, as the read does before it starts), so every page of the column, null placeholders included, is read at the column's width. Every data page is read in place: a page task reads the page's header and levels and locates its values, and the fills write each value once, from the decompressed page straight into the batch arrays, with no page-sized value array between.
+`PageDecoder` is built per column chunk from the column's `ColumnSchema`, its `ColumnMetaData` (for the codec) and the context's `DecompressorFactory`. It refuses a `FIXED_LEN_BYTE_ARRAY` column without a positive width (`FixedWidthValidator`, as the read does before it starts), so every page of the column, null placeholders included, is read at the column's width. Every data page is read in place: a page task reads the page's header and levels and locates its values, and the fills write each value once, from the page's value section straight into the batch arrays, with no page-sized value array between. The value section is the decompressed page, or the fetched page itself where its values are stored uncompressed and read where they lie ([Stored values](#page-decode)).
 
 The steps, in order (`PageDecoder.readInPlace`):
 
@@ -24,8 +24,8 @@ The steps, in order (`PageDecoder.readInPlace`):
 
 | Page type | Levels | Values |
 |---|---|---|
-| `DATA_PAGE` (v1) | inside the compressed body; the whole body is decompressed, then each level stream is read behind its 4-byte little-endian length | follow the levels in the decompressed body |
-| `DATA_PAGE_V2` | stored uncompressed ahead of the values, with lengths from the header | decompressed only when the header's `is_compressed` is set; stored values are read where they lie |
+| `DATA_PAGE` (v1) | inside the compressed body; the whole body is decompressed, then each level stream is read behind its 4-byte little-endian length | follow the levels in the decompressed body; in a chunk with codec `UNCOMPRESSED`, values read where they lie are not copied, and only the level sections are |
+| `DATA_PAGE_V2` | stored uncompressed ahead of the values, with lengths from the header | decompressed only when the header's `is_compressed` is set; stored values are read where they lie, and so are values read in place in a chunk with codec `UNCOMPRESSED`, whatever the flag |
 
 4. Decode repetition levels when `maxRepetitionLevel > 0` and definition levels when `maxDefinitionLevel > 0`, both with `RleBitPackingHybridDecoder` at the bit width of the maximum level, and the dictionary ids of a dictionary-encoded page, into scratch.
 5. Build the page's value reader for its encoding (next section).
@@ -36,14 +36,18 @@ The entry points differ in the column they serve and in where the values live:
 
 | Entry point | Column | Returns | Values in |
 |---|---|---|---|
-| `decodeFlat` | without repetition, fixed-width numeric or `BOOLEAN` | `FlatPageValues` | the thread's transient buffer, or the fetched page for stored `DATA_PAGE_V2` values, for the page's task |
+| `decodeFlat` | without repetition, fixed-width numeric or `BOOLEAN` | `FlatPageValues` | the fetched page for [stored values](#page-decode); otherwise the thread's transient buffer, or the fetched page for stored `DATA_PAGE_V2` values in a heap buffer, for the page's task |
 | `decodeFlatBinary` | without repetition, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` | `BinaryPageValues` | the page's own scratch, since a segment parked on its cell reads them after the task ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)) |
-| `decodeNestedInPlace` | decoded through levels | `InPlaceNestedPage`: levels, `fixedListK` and one of the two readers | the page's own scratch, until its cells are filled ([NESTED_DECODE.md](NESTED_DECODE.md#level-decode-and-scratch)) |
+| `decodeNestedInPlace` | decoded through levels | `InPlaceNestedPage`: levels, `fixedListK` and one of the two readers | the fetched page for [stored values](#page-decode); otherwise the page's own scratch, until its cells are filled ([NESTED_DECODE.md](NESTED_DECODE.md#level-decode-and-scratch)) |
 | `nullsInPlace` | a null placeholder ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) | all-zero definition and repetition levels and no value bytes, without reading the page; refuses a required column | none |
 
 **Decompression hand-off.** `DecompressorFactory.getDecompressor(codec)` returns a `Decompressor` per call; a codec whose library is absent, and `LZO`, raise `UnsupportedOperationException` naming the dependency, and that type is never re-typed as a read failure (see [docs/content/reference/error-handling.md](../docs/content/reference/error-handling.md)). `GZIP` goes through libdeflate over FFM when the context has a libdeflate pool (Java 22+) and through `java.util.zip.Inflater` otherwise; the user-facing switch is in [docs/content/reference/configuration.md](../docs/content/reference/configuration.md). Every decompressor, `UNCOMPRESSED` included, checks that it produced exactly the declared uncompressed size.
 
 A decompressor writes into a buffer its caller gives it: a page's own scratch when its values outlive its task, otherwise the decoding thread's reused transient buffer (`PageDecoder.transientBytes`). Either can be longer than the page's uncompressed size. Three rules follow. Readers bound their reads by the page's size, never by the array's length, so a page that declares more values than its body holds fails as malformed instead of reading bytes left by an earlier page. The converse holds for `PLAIN`, whose values have no framing of their own: a value section, or a dictionary page body, with bytes left over after its last value fails as malformed too, since values of a width other than the one the reader assumes (such as `FIXED_LEN_BYTE_ARRAY` values written with `BYTE_ARRAY` length prefixes) would otherwise decode at the wrong boundaries. A reader over the transient buffer is used only within the task that decompressed it, since the next page on that thread overwrites the buffer; a page whose values outlive its task is decompressed into its own scratch.
+
+**Stored values.** A page whose value section is stored uncompressed (a `V1` or `V2` page of a chunk with codec `UNCOMPRESSED`, a `V2` page with `is_compressed` unset, or a `V2` page with an empty value section) has its `PLAIN` values of a fixed-width numeric or `BOOLEAN` column read where they lie in the fetched page, with no copy (`PageDecoder.readsStoredValues`). `FlatPageValues` reads such values from a little-endian slice of the fetched page when the page is a direct buffer (a slice of a file's mapping, a buffer from an S3 `GET`), and through its array when it is a heap buffer; the buffer reads see direct buffer classes only, so they stay inlined. A read-only heap buffer, which has neither, is copied as before. A page in another encoding, or of a binary column, is read as the entry points above say. The fetched buffer stays reachable through the page's `PageInfo` until the page's last fill ([FETCH_PLANNING.md](FETCH_PLANNING.md#fetch-plans)), and its bytes do not change: an `InputFile` hands the reader buffers it owns, and Hardwood's own buffers (a slice of a file's mapping, a buffer from an S3 `GET`, a slice of the sparse temp file's mapping) are released by the garbage collector only. A reader's close waits for every page task of its columns, the fills among them, before its files are closed ([READ_PIPELINE.md](READ_PIPELINE.md#cancellation-and-close)).
+
+Tests: `StoredValuesInPlaceTest`, `InPlaceReaderOracleTest` (direct-buffer forms).
 
 **Page values.** The levels and values of a page read in place follow one model:
 

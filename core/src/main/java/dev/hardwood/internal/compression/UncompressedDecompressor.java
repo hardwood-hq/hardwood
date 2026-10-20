@@ -17,12 +17,19 @@ public class UncompressedDecompressor implements Decompressor {
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize, byte[] dest) {
         int storedSize = compressed.remaining();
+        requireStoredSize(storedSize, uncompressedSize);
+        compressed.get(compressed.position(), dest, 0, storedSize);
+        return dest;
+    }
+
+    /// Checks that an uncompressed page stores as many bytes as its header declares.
+    ///
+    /// @throws ParquetReadException if the sizes differ
+    public static void requireStoredSize(int storedSize, int uncompressedSize) {
         if (storedSize != uncompressedSize) {
             throw new ParquetReadException(
                     "Uncompressed page size mismatch: expected " + uncompressedSize + ", got " + storedSize);
         }
-        compressed.get(compressed.position(), dest, 0, storedSize);
-        return dest;
     }
 
     @Override
