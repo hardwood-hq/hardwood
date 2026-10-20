@@ -18,7 +18,7 @@ import dev.hardwood.reader.ParquetReadException;
 /// The values of a decoded flat binary page (`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`), as
 /// its fills read them, and its measure: the bytes of any range of its rows.
 ///
-/// A page holds either plain values, whose bytes a fill copies into its cell's byte buffer, or
+/// A page holds either plain values, whose bytes a fill copies into chunks of its cell's batch, or
 /// dictionary ids, which a fill writes as the batch's entry ids and which have no bytes of their
 /// own, both read in place:
 ///
@@ -208,7 +208,8 @@ final class BinaryPageValues {
             total += (long) prefixLengths[i] + suffixLengths[i];
         }
         if (total > Integer.MAX_VALUE) {
-            throw BinaryBatchValues.bufferOverflow(nonNull);
+            throw new ParquetReadException("DELTA_BYTE_ARRAY values of a page take " + total
+                    + " bytes, more than one array holds");
         }
         byte[] values = scratch.valueBytes((int) total);
         int pos = 0;
@@ -350,64 +351,82 @@ final class BinaryPageValues {
     }
 
     /// Writes the plain values of page rows `[pageRow, pageRow + length)` as values `[destPos,
-    /// destPos + length)`: each value's bytes to `dest` from `destByte` on, in row order, and its
-    /// view `[starts, ends)` into `dest`. A null gets an empty view. Rows must be asked for in
-    /// increasing order.
-    ///
-    /// @return the byte of `dest` after the last value written
-    int copyPlain(int pageRow, int length, int[] starts, int[] ends, int destPos, byte[] dest, int destByte) {
-        int pos = destByte;
+    /// destPos + length)`: each value's bytes to the chunks of `dest`, in row order, and its view
+    /// `[starts, ends)` into the chunk `bufferIds` names. A null gets an empty view into buffer `0`.
+    /// Rows must be asked for in increasing order.
+    void copyPlain(int pageRow, int length, int[] starts, int[] ends, int[] bufferIds, int destPos,
+                   PlainBytes dest) {
         skipTo(pageRow);
         if (stride > 0) {
             for (int i = 0; i < length; i++) {
                 int r = pageRow + i;
-                starts[destPos + i] = pos;
                 if (definitionLevels == null || definitionLevels[r] == maxDefinitionLevel) {
+                    byte[] chunk = dest.room(width);
+                    int pos = dest.position();
                     int at = plainOffset + nonNull++;
                     for (int b = 0; b < width; b++) {
-                        dest[pos + b] = data[at + b * stride];
+                        chunk[pos + b] = data[at + b * stride];
                     }
-                    pos += width;
+                    view(starts, ends, bufferIds, destPos + i, dest.id(), pos, width);
+                    dest.advance(width);
                 }
-                ends[destPos + i] = pos;
+                else {
+                    view(starts, ends, bufferIds, destPos + i, 0, 0, 0);
+                }
             }
             row = pageRow + length;
-            return pos;
+            return;
         }
         if (width > 0 && definitionLevels == null) {
-            int bytes = length * width;
-            System.arraycopy(data, dataPos, dest, pos, bytes);
-            for (int i = 0; i < length; i++) {
-                starts[destPos + i] = pos;
-                pos += width;
-                ends[destPos + i] = pos;
+            int i = 0;
+            while (i < length) {
+                byte[] chunk = dest.room(width);
+                int pos = dest.position();
+                int n = Math.min(length - i, dest.free() / width);
+                System.arraycopy(data, dataPos, chunk, pos, n * width);
+                int id = dest.id();
+                for (int v = 0; v < n; v++) {
+                    view(starts, ends, bufferIds, destPos + i + v, id, pos + v * width, width);
+                }
+                dest.advance(n * width);
+                dataPos += n * width;
+                i += n;
             }
-            dataPos += bytes;
             nonNull += length;
         }
         else {
             int prefixLength = width == 0 && prefixed ? 4 : 0;
             for (int i = 0; i < length; i++) {
                 int r = pageRow + i;
-                starts[destPos + i] = pos;
                 if (definitionLevels == null || definitionLevels[r] == maxDefinitionLevel) {
                     int valueLength = width == 0 ? bytePrefix[r + 1] - bytePrefix[r] : width;
-                    System.arraycopy(data, dataPos + prefixLength, dest, pos, valueLength);
+                    byte[] chunk = dest.room(valueLength);
+                    int pos = dest.position();
+                    System.arraycopy(data, dataPos + prefixLength, chunk, pos, valueLength);
+                    view(starts, ends, bufferIds, destPos + i, dest.id(), pos, valueLength);
+                    dest.advance(valueLength);
                     dataPos += prefixLength + valueLength;
-                    pos += valueLength;
                     nonNull++;
                 }
-                ends[destPos + i] = pos;
+                else {
+                    view(starts, ends, bufferIds, destPos + i, 0, 0, 0);
+                }
             }
         }
         row = pageRow + length;
-        return pos;
+    }
+
+    private static void view(int[] starts, int[] ends, int[] bufferIds, int value, int id, int start, int length) {
+        bufferIds[value] = id;
+        starts[value] = start;
+        ends[value] = start + length;
     }
 
     /// Writes the entry ids of page rows `[pageRow, pageRow + length)` as values `[destPos, destPos
-    /// + length)` of `dictIndices`; a null gets `-1` and an empty view in `starts` and `ends`,
+    /// + length)` of `dictIndices`; a null gets `-1` and an empty view in `starts`, `ends` and `bufferIds`,
     /// which are `null` only for a page with no null. Rows must be asked for in increasing order.
-    void copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int destPos) {
+    void copyIds(int pageRow, int length, int[] dictIndices, int[] starts, int[] ends, int[] bufferIds,
+                 int destPos) {
         skipTo(pageRow);
         if (definitionLevels == null) {
             System.arraycopy(ids, nonNull, dictIndices, destPos, length);
@@ -421,8 +440,7 @@ final class BinaryPageValues {
                 }
                 else {
                     dictIndices[dest] = -1;
-                    starts[dest] = 0;
-                    ends[dest] = 0;
+                    view(starts, ends, bufferIds, dest, 0, 0, 0);
                 }
             }
         }

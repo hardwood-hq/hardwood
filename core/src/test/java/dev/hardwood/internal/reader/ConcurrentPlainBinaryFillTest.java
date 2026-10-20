@@ -26,6 +26,7 @@ import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ColumnEncoding;
@@ -34,28 +35,26 @@ import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// A flat binary page keeps its pooled scratch ([ScheduledFlatColumn]'s `binaryScratch`) until
-/// its task and every segment of it that parked are done ([PageTask#holds]): a parked segment's
-/// values are written from the page's decompressed bytes once its cell is sized, after the page's
-/// task may have ended.
-///
-/// The column is `PLAIN`-encoded and compressed, so its values are read from the decompressed
-/// bytes in the scratch. Its pages are small against the batches, so a cell spans many pages,
-/// decoded on several threads, and a segment that reaches its cell before the cell's other pages
-/// are measured parks. A scratch returned to the pool while a segment still parks on it is taken
-/// by a later page, whose bytes the segment then writes in place of its own.
-class BinaryScratchHoldTest {
+/// The pages of a compressed `PLAIN` binary column, small against the batches, are decoded on
+/// several threads, so a cell spans many pages whose segments copy their values from the pages'
+/// decompressed bytes into chunks of their own at the same time ([BinaryFill]). Every value reads
+/// as written, through the column readers and through the row reader, on every pass of a reused
+/// context.
+class ConcurrentPlainBinaryFillTest {
 
     private static final int ROWS = 50_000;
     private static final int PAGE_ROWS = 10;
     private static final int BATCH_SIZE = 200;
     private static final int THREADS = 4;
     private static final int PASSES = 5;
+    /// Rows for the row reader, whose batches the reader sizes: enough for several of them.
+    private static final int ROW_READER_ROWS = 600_000;
+    private static final int ROW_READER_PAGE_ROWS = 1_000;
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void everyValueReadsAsWritten() throws Exception {
-        byte[] file = write();
+        byte[] file = write(ROWS, PAGE_ROWS);
         try (HardwoodContext context = HardwoodContext.create(THREADS)) {
             for (int pass = 0; pass < PASSES; pass++) {
                 int row = 0;
@@ -78,26 +77,48 @@ class BinaryScratchHoldTest {
         }
     }
 
+    /// The same through the row reader, whose recycled holders keep their chunks and fill them
+    /// again from batch to batch.
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    void everyValueReadsAsWrittenThroughTheRowReader() throws Exception {
+        byte[] file = write(ROW_READER_ROWS, ROW_READER_PAGE_ROWS);
+        try (HardwoodContext context = HardwoodContext.create(THREADS)) {
+            for (int pass = 0; pass < PASSES; pass++) {
+                int row = 0;
+                try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)), context);
+                     RowReader rows = reader.rowReader()) {
+                    while (rows.hasNext()) {
+                        rows.next();
+                        assertThat(rows.getString("v")).as("pass %d, row %d", pass, row).isEqualTo(value(row));
+                        row++;
+                    }
+                }
+                assertThat(row).as("rows of pass %d", pass).isEqualTo(ROW_READER_ROWS);
+            }
+        }
+    }
+
     /// A value of its own length per row, so that bytes written from another page or another
     /// offset do not read as the row's value.
     private static String value(int row) {
         return "row-" + row + "-" + "x".repeat(row % 13);
     }
 
-    /// One required `BYTE_ARRAY` column `v`, `PLAIN`-encoded, GZIP-compressed, in pages of
-    /// `PAGE_ROWS` rows.
-    private static byte[] write() throws Exception {
+    /// `rows` rows of one required `BYTE_ARRAY` column `v`, `PLAIN`-encoded, GZIP-compressed, in
+    /// pages of `pageRows` rows.
+    private static byte[] write(int rows, int pageRows) throws Exception {
         FileSchema schema = FileSchema.builder("binary")
                 .addColumn("v", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)
                 .build();
-        byte[][] values = new byte[ROWS][];
-        for (int i = 0; i < ROWS; i++) {
+        byte[][] values = new byte[rows][];
+        for (int i = 0; i < rows; i++) {
             values[i] = value(i).getBytes(StandardCharsets.UTF_8);
         }
         WriterConfig config = WriterConfig.builder()
                 .encoding(ColumnEncoding.PLAIN)
                 .codec(CompressionCodec.GZIP)
-                .pageTargetRows(PAGE_ROWS)
+                .pageTargetRows(pageRows)
                 .build();
         InMemoryOutputFile out = OutputFile.inMemory();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {

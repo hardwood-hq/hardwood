@@ -126,7 +126,7 @@ class ParallelFillValidityTest {
             total += length;
         }
         BatchPlan.RowGroupBatches rowGroup = new BatchPlan(total, false, false, 0).plan(0, 0, "f.parquet", false, total);
-        Cell cell = new Cell("f.parquet", false, total, total, 0, false);
+        Cell cell = new Cell("f.parquet", false, total, total, 0);
         cell.allocate(EXCHANGE, COLUMN);
         Map<PageTask, FlatPageValues> pages = new IdentityHashMap<>();
 

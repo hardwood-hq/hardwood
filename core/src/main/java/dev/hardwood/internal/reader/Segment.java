@@ -28,15 +28,9 @@ final class Segment {
     boolean wroteValidity;
 
     // === Binary columns ([BinaryFill]) ===
-    /// The bytes of the segment's plain values, from its page's measure.
-    int bytes;
-    /// Where the segment's bytes start in the cell's byte buffer, assigned when the cell is sized.
-    int byteOffset;
     /// Whether the fill wrote the segment's entry ids; the cell's completion marks every other
     /// segment's values as having none.
     boolean wroteIds;
-    /// The segment's bytes while it waits for its cell to be sized ([Cell#park]).
-    BinaryPageValues parkedValues;
 
     Segment(Cell cell, PageTask page, int recordStart, int recordEnd, int cellOffset) {
         this.cell = cell;

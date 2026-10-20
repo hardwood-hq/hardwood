@@ -37,7 +37,7 @@ The entry points differ in the column they serve and in where the values live:
 | Entry point | Column | Returns | Values in |
 |---|---|---|---|
 | `decodeFlat` | without repetition, fixed-width numeric or `BOOLEAN` | `FlatPageValues` | the fetched page for [stored values](#page-decode); otherwise the task's transient buffer, or the fetched page for stored `DATA_PAGE_V2` values in a heap buffer, for the page's task |
-| `decodeFlatBinary` | without repetition, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` | `BinaryPageValues` | the page's own scratch, since a segment parked on its cell reads them after the task ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)) |
+| `decodeFlatBinary` | without repetition, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` or `INT96` | `BinaryPageValues` | the task's transient buffer or the fetched page, for the page's task |
 | `decodeNestedInPlace` | decoded through levels | `InPlaceNestedPage`: levels, `fixedListK` and one of the two readers | the fetched page for [stored values](#page-decode); otherwise the page's own scratch, until its cells are filled ([NESTED_DECODE.md](NESTED_DECODE.md#level-decode-and-scratch)) |
 | `nullsInPlace` | a null placeholder ([STATISTICS_PRUNING.md](STATISTICS_PRUNING.md)) | all-zero definition and repetition levels and no value bytes, without reading the page; refuses a required column | none |
 

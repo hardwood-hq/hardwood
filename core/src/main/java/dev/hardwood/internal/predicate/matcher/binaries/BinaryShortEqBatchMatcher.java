@@ -52,7 +52,8 @@ public final class BinaryShortEqBatchMatcher implements BinaryBatchMatcher {
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         BinaryBatchValues vals = (BinaryBatchValues) batch.values;
-        byte[] bytes = vals.bytes();
+        byte[][] buffers = vals.buffers();
+        int[] bufferIds = vals.bufferIds();
         int[] starts = vals.starts();
         int[] ends = vals.ends();
         int n = batch.recordCount;
@@ -64,7 +65,7 @@ public final class BinaryShortEqBatchMatcher implements BinaryBatchMatcher {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                word |= (matches(bytes, starts[i], ends[i]) ? 1L : 0L) << b;
+                word |= (matches(buffers[bufferIds[i]], starts[i], ends[i]) ? 1L : 0L) << b;
             }
             outWords[w] = word;
         }

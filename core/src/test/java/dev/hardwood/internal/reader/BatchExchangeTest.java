@@ -130,6 +130,24 @@ class BatchExchangeTest {
         assertThat(exchange.newBatch()).isSameAs(returned);
     }
 
+    /// An exchange recycling every holder keeps every holder returned, the ones read-ahead filled
+    /// past the initial three included, so that a read reuses them all.
+    @Test
+    void keepsEveryReturnedHolder() {
+        BatchExchange<Object> exchange = BatchExchange.recyclingEveryHolder("c", Object::new);
+        List<Object> filled = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            filled.add(exchange.newBatch());
+        }
+        for (Object batch : filled) {
+            exchange.recycle(batch);
+        }
+
+        for (Object batch : filled) {
+            assertThat(exchange.newBatch()).isSameAs(batch);
+        }
+    }
+
     /// A recycling exchange's bounded ready queue refuses a batch without waiting when it is full,
     /// and the consumer's next take runs the room listener, in recycling mode as in detaching mode.
     @Test

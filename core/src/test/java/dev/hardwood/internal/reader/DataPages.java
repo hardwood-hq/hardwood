@@ -262,18 +262,20 @@ final class DataPages {
         byte[][] out = new byte[length][];
         if (view.dictionary() != null) {
             int[] ids = new int[length];
-            view.copyIds(from, length, ids, starts, ends, 0);
+            view.copyIds(from, length, ids, starts, ends, new int[length], 0);
             for (int i = 0; i < length; i++) {
                 out[i] = ids[i] < 0 ? null : view.dictionary().entry(ids[i]);
             }
             return out;
         }
-        byte[] bytes = new byte[view.bytes(from, view.size())];
-        view.copyPlain(from, length, starts, ends, 0, bytes, 0);
+        BinaryBatchValues chunks = new BinaryBatchValues(length);
+        int[] bufferIds = new int[length];
+        view.copyPlain(from, length, starts, ends, bufferIds, 0, new PlainBytes(chunks, view.bytes(from, view.size())));
+        byte[][] buffers = chunks.buffers();
         int[] definitionLevels = view.definitionLevels();
         for (int i = 0; i < length; i++) {
             if (definitionLevels == null || definitionLevels[from + i] == maxDefinitionLevel) {
-                out[i] = Arrays.copyOfRange(bytes, starts[i], ends[i]);
+                out[i] = Arrays.copyOfRange(buffers[bufferIds[i]], starts[i], ends[i]);
             }
         }
         return out;

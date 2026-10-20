@@ -15,19 +15,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// A [BinaryBatchValues] filled positionally, as a cell's segments fill it ([BinaryFill],
-/// [NestedFill]): entry ids whose views are built when a reader first needs them, beside plain
-/// values whose bytes and views the segments write.
+/// [NestedFill]): entry ids whose views into the dictionary's bytes are built when a reader first
+/// needs them, beside plain values whose bytes and views the segments write.
 class BinaryBatchValuesTest {
 
     private static final Dictionary.ByteArrayDictionary STATIONS = dictionary("Hamburg", "Oslo", "Abha");
 
     @Test
-    void dictionaryValuesViewOneCopyOfTheDictionary() {
+    void dictionaryValuesPointIntoTheDictionary() {
         BinaryBatchValues values = filled(STATIONS, null, 1, 0, 1, 2, 1, 0);
 
         assertThat(strings(values, 6)).containsExactly("Oslo", "Hamburg", "Oslo", "Abha", "Oslo", "Hamburg");
-        assertThat(values.byteCount()).isEqualTo("HamburgOsloAbha".length());
+        for (int i = 0; i < 6; i++) {
+            assertThat(values.buffer(i)).as("value %d", i).isSameAs(STATIONS.entryBytes());
+        }
         assertThat(values.starts()[0]).isEqualTo(values.starts()[2]).isEqualTo(values.starts()[4]);
+        assertThat(values.bufferCount()).isEqualTo(2);
     }
 
     @Test
@@ -39,29 +42,19 @@ class BinaryBatchValuesTest {
         assertThat(values.stringAt(2)).isEqualTo("Abha");
     }
 
-    /// Values drawing less from the dictionary than its size are appended, and the dictionary is
-    /// not copied in.
-    @Test
-    void aDictionaryLargerThanTheBatchsValuesFromItIsNotCopiedIn() {
-        BinaryBatchValues values = filled(STATIONS, null, 2);
-
-        assertThat(strings(values, 1)).containsExactly("Abha");
-        assertThat(values.byteCount()).isEqualTo("Abha".length());
-    }
-
     @Test
     void aBatchViewsItsDictionaryAlongsidePlainValues() {
         BinaryBatchValues values = filled(STATIONS, null, 0, 1, 0, "Tunis", 1, 2, 2, 2);
 
         assertThat(strings(values, 8)).containsExactly("Hamburg", "Oslo", "Hamburg", "Tunis", "Oslo", "Abha", "Abha", "Abha");
-        // The dictionary values' bytes exceed the dictionary's, so it is copied in once after the plain bytes.
-        assertThat(values.byteCount()).isEqualTo("TunisHamburgOsloAbha".length());
         assertThat(values.dictIndices).containsExactly(0, 1, 0, -1, 1, 2, 2, 2);
+        assertThat(values.buffer(0)).isSameAs(STATIONS.entryBytes());
+        assertThat(values.buffer(3)).isNotSameAs(STATIONS.entryBytes());
     }
 
     @Test
     void aSecondDictionaryInOneBatchIsRejected() {
-        BinaryBatchValues values = new BinaryBatchValues(4, 32);
+        BinaryBatchValues values = new BinaryBatchValues(4);
         values.prepareForFill();
         values.installDictionary(STATIONS);
 
@@ -75,10 +68,12 @@ class BinaryBatchValuesTest {
         BinaryBatchValues values = filled(STATIONS, null, 0, 1, 2, 0);
         values.ensureViews();
 
-        fill(values, dictionary("Accra", "Lima"), null, 1, 1, 0, 1);
+        Dictionary.ByteArrayDictionary next = dictionary("Accra", "Lima");
+        fill(values, next, null, 1, 1, 0, 1);
 
         assertThat(strings(values, 4)).containsExactly("Lima", "Lima", "Accra", "Lima");
-        assertThat(values.byteCount()).isEqualTo("AccraLima".length());
+        assertThat(values.buffer(0)).isSameAs(next.entryBytes());
+        assertThat(values.bufferCount()).isEqualTo(2);
     }
 
     @Test
@@ -102,8 +97,7 @@ class BinaryBatchValuesTest {
         values.ensureViews();
 
         assertThat(strings(values, 4)).containsExactly("Hamburg", "Oslo", "Abha", "Hamburg");
-        // The deferred values' bytes exceed the dictionary's, so it is copied in once.
-        assertThat(values.byteCount()).isEqualTo("HamburgOsloAbha".length());
+        assertThat(values.buffer(3)).isSameAs(STATIONS.entryBytes());
     }
 
     @Test
@@ -159,20 +153,21 @@ class BinaryBatchValuesTest {
     }
 
     @Test
-    void compactingCarriesWhereTheDictionaryWasCopiedIn() {
+    void compactingKeepsTheBuffersTheViewsPointInto() {
         BinaryBatchValues raw = filled(STATIONS, null, "Tunis", 0, 1, 0, 1, 2, 0, 1);
         raw.ensureViews();
 
         BinaryBatchValues kept = raw.compact(new int[]{ 0, 2, 5 }, 3);
 
         assertThat(strings(kept, 3)).containsExactly("Tunis", "Oslo", "Abha");
-        // The kept values point into the dictionary already copied in; nothing is appended.
-        assertThat(kept.byteCount()).isEqualTo("TunisHamburgOsloAbha".length());
+        assertThat(kept.buffer(0)).isSameAs(raw.buffer(0));
+        assertThat(kept.buffer(2)).isSameAs(STATIONS.entryBytes());
+        assertThat(kept.bufferCount()).isEqualTo(raw.bufferCount());
     }
 
     private static BinaryBatchValues filled(Dictionary.ByteArrayDictionary dictionary,
                                             BinaryBatchValues.ViewDemand demand, Object... entries) {
-        BinaryBatchValues values = new BinaryBatchValues(entries.length, 32);
+        BinaryBatchValues values = new BinaryBatchValues(entries.length);
         fill(values, dictionary, demand, entries);
         return values;
     }
@@ -194,19 +189,20 @@ class BinaryBatchValuesTest {
                 views |= (Integer) entry < 0;
             }
         }
-        values.prepareBytes(plainBytes);
+        PlainBytes dest = new PlainBytes(values, plainBytes);
         if (views) {
             values.installViews();
         }
         int[] ids = dictionary != null ? values.installDictionary(dictionary) : null;
-        int pos = 0;
         for (int i = 0; i < entries.length; i++) {
             if (entries[i] instanceof String text) {
                 byte[] bytes = utf8(text);
-                System.arraycopy(bytes, 0, values.fillBytes(), pos, bytes.length);
-                values.fillStarts()[i] = pos;
-                pos += bytes.length;
-                values.fillEnds()[i] = pos;
+                byte[] chunk = dest.room(bytes.length);
+                System.arraycopy(bytes, 0, chunk, dest.position(), bytes.length);
+                values.fillBufferIds()[i] = dest.id();
+                values.fillStarts()[i] = dest.position();
+                values.fillEnds()[i] = dest.position() + bytes.length;
+                dest.advance(bytes.length);
                 if (ids != null) {
                     ids[i] = -1;
                 }
@@ -215,6 +211,7 @@ class BinaryBatchValuesTest {
                 int id = (Integer) entries[i];
                 ids[i] = id;
                 if (id < 0) {
+                    values.fillBufferIds()[i] = 0;
                     values.fillStarts()[i] = 0;
                     values.fillEnds()[i] = 0;
                 }
@@ -234,7 +231,7 @@ class BinaryBatchValuesTest {
     private static String[] strings(BinaryBatchValues values, int count) {
         String[] result = new String[count];
         for (int i = 0; i < count; i++) {
-            result[i] = new String(values.bytes(), values.starts()[i], values.ends()[i] - values.starts()[i],
+            result[i] = new String(values.buffer(i), values.starts()[i], values.ends()[i] - values.starts()[i],
                     StandardCharsets.UTF_8);
         }
         return result;

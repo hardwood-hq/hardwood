@@ -561,8 +561,8 @@ public class ColumnReader implements Closeable {
         }
         BinaryBatchValues bbv = realLeafBinary();
         int leafCount = nested ? getValueCount() : recordCount;
-        cachedBinaryValues = new BinaryValues(bbv.bytes(), trimToLeafCount(bbv.starts(), leafCount),
-                trimToLeafCount(bbv.ends(), leafCount));
+        cachedBinaryValues = new BinaryValues(bbv.buffers(), trimToLeafCount(bbv.bufferIds(), leafCount),
+                trimToLeafCount(bbv.starts(), leafCount), trimToLeafCount(bbv.ends(), leafCount));
     }
 
     /// Resolves the dictionary view of the current batch: ids only when every non-null
@@ -616,8 +616,8 @@ public class ColumnReader implements Closeable {
 
     /// The per-batch [BinaryBatchValues] is sized to the read's batch
     /// capacity; only the first `leafCount` views are meaningful at the
-    /// public-API surface. Trim if needed (the bytes buffer itself is not
-    /// trimmed — the public contract documents it that way).
+    /// public-API surface. Trim if needed (the buffers the views point into
+    /// are not trimmed).
     private static int[] trimToLeafCount(int[] views, int leafCount) {
         if (views.length == leafCount) {
             return views;

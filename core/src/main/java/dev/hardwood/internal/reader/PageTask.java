@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /// One page of a scheduled column on its way into batches: the page, where it came from, its
 /// place in the read's row order, the decoder its task decodes it with, and the [Segment]s the
@@ -35,11 +34,6 @@ class PageTask {
     final long firstRow;
     /// The segments the page was placed as, in page order.
     final List<Segment> segments = new ArrayList<>(2);
-
-    /// A flat binary page's scratch, which holds its decompressed bytes until every segment that
-    /// parked is filled, and the holds on it: one for the page's task and one per parked segment.
-    PageDecoder.LevelScratch ownScratch;
-    final AtomicInteger holds = new AtomicInteger(1);
 
     PageTask(PageInfo info, String fileName, int rowGroup, int pageIndex, BatchPlan.RowGroupBatches batches,
              PageDecoder decoder, long firstRow) {

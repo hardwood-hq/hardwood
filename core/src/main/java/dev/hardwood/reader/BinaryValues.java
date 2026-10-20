@@ -38,14 +38,17 @@ import dev.hardwood.Experimental;
 @Experimental
 public final class BinaryValues {
 
-    private final byte[] bytes;
+    private final byte[][] buffers;
+    private final int[] bufferIds;
     private final int[] starts;
     private final int[] ends;
 
+    /// @param bufferIds which of `buffers` each value is in, of length the batch's value count
     /// @param starts the values' starts, of length the batch's value count
     /// @param ends the values' ends, of length the batch's value count
-    BinaryValues(byte[] bytes, int[] starts, int[] ends) {
-        this.bytes = bytes;
+    BinaryValues(byte[][] buffers, int[] bufferIds, int[] starts, int[] ends) {
+        this.buffers = buffers;
+        this.bufferIds = bufferIds;
         this.starts = starts;
         this.ends = ends;
     }
@@ -60,7 +63,7 @@ public final class BinaryValues {
     /// @throws IndexOutOfBoundsException if `i` is not in `[0, size())`
     public byte[] buffer(int i) {
         checkValue(i);
-        return bytes;
+        return buffers[bufferIds[i]];
     }
 
     /// Where value `i` starts in [#buffer(int)], inclusive.
@@ -90,7 +93,7 @@ public final class BinaryValues {
     ///         in `dst` from `dstOffset` on
     public void copyTo(int i, byte[] dst, int dstOffset) {
         int start = starts[i];
-        System.arraycopy(bytes, start, dst, dstOffset, ends[i] - start);
+        System.arraycopy(buffers[bufferIds[i]], start, dst, dstOffset, ends[i] - start);
     }
 
     /// Whether value `i` equals the bytes `[offset, offset + length)` of `other`.
@@ -99,14 +102,14 @@ public final class BinaryValues {
     ///         within `other`
     /// @throws IllegalArgumentException if `length` is negative
     public boolean contentEquals(int i, byte[] other, int offset, int length) {
-        return Arrays.equals(bytes, starts[i], ends[i], other, offset, offset + length);
+        return Arrays.equals(buffers[bufferIds[i]], starts[i], ends[i], other, offset, offset + length);
     }
 
     /// A copy of value `i`.
     ///
     /// @throws IndexOutOfBoundsException if `i` is not in `[0, size())`
     public byte[] getBinary(int i) {
-        return Arrays.copyOfRange(bytes, starts[i], ends[i]);
+        return Arrays.copyOfRange(buffers[bufferIds[i]], starts[i], ends[i]);
     }
 
     private void checkValue(int i) {

@@ -140,8 +140,8 @@ class ReaderCloseLatencyTest {
     ///
     /// [RowReader] recycles its batch holders, so its ready queue is limited in holders rather
     /// than rows, and the pipeline comes to rest at another point of the file than on the column
-    /// path. Its file's columns are flat `BYTE_ARRAY`, whose cells are sized once their pages
-    /// are measured.
+    /// path. Its file's columns are flat `BYTE_ARRAY`, whose segments copy their bytes into chunks
+    /// of their own.
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     void rowReaderCloseDoesNotScaleWithProjectionWidth() throws Exception {

@@ -94,11 +94,10 @@ final class ShortValueEquality {
 
     /// Writes one bit per row into `outWords`, set iff the row's bytes equal a member.
     void test(BinaryBatchValues vals, int recordCount, long[] outWords) {
-        byte[] bytes = vals.bytes();
+        byte[][] buffers = vals.buffers();
+        int[] bufferIds = vals.bufferIds();
         int[] starts = vals.starts();
         int[] ends = vals.ends();
-        // The last position an eight-byte read fits at; negative for an array under eight bytes.
-        int lastLongStart = bytes.length - Long.BYTES;
         int activeWords = (recordCount + 63) >>> 6;
 
         for (int w = 0; w < activeWords; w++) {
@@ -107,13 +106,15 @@ final class ShortValueEquality {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
+                byte[] bytes = buffers[bufferIds[i]];
                 int start = starts[i];
                 int length = ends[i] - start;
                 long hit;
                 if (length > Long.BYTES) {
                     hit = containsAny(longMembers, bytes, start, start + length) ? 1L : 0L;
                 }
-                else if (start <= lastLongStart) {
+                // An eight-byte read fits before the end of the value's buffer
+                else if (start <= bytes.length - Long.BYTES) {
                     long value = (long) LONG_BE.get(bytes, start) & PREFIX_MASKS[length];
                     hit = 0L;
                     for (int m = 0; m < shortLengths.length; m++) {

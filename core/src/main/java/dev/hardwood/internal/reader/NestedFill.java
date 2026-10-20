@@ -118,8 +118,8 @@ final class NestedFill {
         return batch;
     }
 
-    /// Writes every segment's binary values: the plain values' bytes, each segment's at the sum of
-    /// the bytes before it, and their views; the dictionary values' entry ids, their views built
+    /// Writes every segment's binary values: the plain values' bytes, copied into the batch's
+    /// chunks in segment order, and their views; the dictionary values' entry ids, their views built
     /// when a reader first needs them.
     private static void fillBinary(List<NestedSegment> segments, int valueCount, BinaryBatchValues out,
                                    BinaryBatchValues.ViewDemand viewDemand) {
@@ -127,17 +127,13 @@ final class NestedFill {
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             plainBytes += segment.page.measure.bytes(segment.valueStart, segment.valueEnd);
-            if (plainBytes > Integer.MAX_VALUE) {
-                throw BinaryBatchValues.bufferOverflow(segment.cellValueOffset);
-            }
         }
-        out.prepareBytes((int) plainBytes);
-        int destByte = 0;
+        PlainBytes dest = new PlainBytes(out, plainBytes);
         boolean[] wroteIds = new boolean[segments.size()];
         for (int i = 0; i < segments.size(); i++) {
             NestedSegment segment = segments.get(i);
             try {
-                destByte = fillBinary(segment, out, destByte, wroteIds, i);
+                fillBinary(segment, out, dest, wroteIds, i);
             }
             catch (RuntimeException e) {
                 throw new SegmentFillException(segment.page, e);
@@ -160,12 +156,10 @@ final class NestedFill {
         }
     }
 
-    /// Writes one segment's binary values: its plain values' bytes from `destByte` on and their
-    /// views, or its entry ids, recording in `wroteIds[index]` that it wrote ids.
-    ///
-    /// @return the byte after the segment's plain bytes
-    private static int fillBinary(NestedSegment segment, BinaryBatchValues out, int destByte, boolean[] wroteIds,
-                                  int index) {
+    /// Writes one segment's binary values: its plain values' bytes to `dest` and their views, or
+    /// its entry ids, recording in `wroteIds[index]` that it wrote ids.
+    private static void fillBinary(NestedSegment segment, BinaryBatchValues out, PlainBytes dest,
+                                   boolean[] wroteIds, int index) {
         // Each fill reads through a view of its own: in-place values keep a cursor, and two cells
         // sharing the page may be filled from it at once
         BinaryPageValues values = segment.page.measure.binary().view();
@@ -190,15 +184,13 @@ final class NestedFill {
             int pagePos = runs == null ? kept : runs.pagePosition(run, kept);
             int destPos = segment.cellValueOffset + kept - segment.valueStart;
             if (ids != null) {
-                values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), destPos);
+                values.copyIds(pagePos, n, ids, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos);
             }
             else {
-                destByte = values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), destPos, out.fillBytes(),
-                        destByte);
+                values.copyPlain(pagePos, n, out.fillStarts(), out.fillEnds(), out.fillBufferIds(), destPos, dest);
             }
             kept += n;
         }
-        return destByte;
     }
 
     /// Writes a segment of a page read in place straight from the page's bytes, through the kept

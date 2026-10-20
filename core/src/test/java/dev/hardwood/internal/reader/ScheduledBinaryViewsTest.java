@@ -77,11 +77,10 @@ class ScheduledBinaryViewsTest {
         assertThat(demand.requested).as("the reader's views raised the column's demand").isTrue();
         // Deferred, built and eager batches alike carry each value's bytes.
         for (BinaryBatchValues values : batches) {
-            byte[] bytes = values.bytes();
             int[] starts = values.starts();
             int[] ends = values.ends();
             for (int i = 0; i < 10; i++) {
-                assertThat(new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+                assertThat(new String(values.buffer(i), starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
                         .isEqualTo(values.stringAt(i));
             }
         }

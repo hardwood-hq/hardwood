@@ -27,25 +27,16 @@ import dev.hardwood.schema.ColumnSchema;
 /// 3. **Sealed** when the batch holds every record the plan puts in it.
 /// 4. **Allocated** by the first page task that reaches it ([#allocate]): its arrays are created
 ///    at the size the plan gives, once.
-/// 5. **Sized**, for a [#measured] cell only, once it is sealed and every segment's page has
-///    measured its bytes: its byte buffer is created at the sum of the segments' bytes, and each
-///    segment gets its offset in it ([BinaryFill#size]).
-/// 6. **Filled**: each segment by its page's task, concurrently.
-/// 7. **Completed** by the task that fills its last segment, or by the seal when that comes last,
+/// 5. **Filled**: each segment by its page's task, concurrently.
+/// 6. **Completed** by the task that fills its last segment, or by the seal when that comes last,
 ///    and published in plan order.
 ///
 /// [#pending] decides which completes the cell: it starts at one, the seal's token, gains one per
 /// segment placed and loses one per segment filled and one at the seal, so it reaches zero
-/// exactly once, after the last fill and the seal both happened. A measured cell's count starts
-/// at two, the sizing holding the second token, so that it completes after it is sized.
-/// [#unsized] decides which sizes it the same way, counting measures instead of fills. Fills
-/// write disjoint ranges of the cell's values without a lock; the validity words at the edges of
-/// a segment's bits are merged atomically ([FlatFill]).
-///
-/// A segment of plain bytes that its page fills before its cell is sized cannot write them yet:
-/// it writes nothing and parks with a view of its page ([#park]), whose bytes the page keeps, and
-/// the sizing writes it from the page. Every other array of a measured cell is plan-sized, so no
-/// other fill waits.
+/// exactly once, after the last fill and the seal both happened. Fills write disjoint ranges of
+/// the cell's values without a lock; the validity words at the edges of a segment's bits are
+/// merged atomically ([FlatFill]). A binary column's segments copy their plain bytes into chunks
+/// of their own ([BinaryFill]), so no fill waits for another.
 final class Cell implements ScheduledCell<BatchExchange.Batch> {
 
     /// [#plannedRecords] of a cell whose batch the plan leaves open past the row group it opens in.
@@ -74,8 +65,6 @@ final class Cell implements ScheduledCell<BatchExchange.Batch> {
     final int capacity;
     /// The read's row of the batch's first record.
     final long firstRow;
-    /// Whether the cell's byte buffer is sized from its pages' measures: a binary column's cell.
-    final boolean measured;
 
     /// The batch, created by [#allocate].
     private BatchExchange.Batch batch;
@@ -94,26 +83,18 @@ final class Cell implements ScheduledCell<BatchExchange.Batch> {
 
     /// Which task completes the cell; see the class description.
     final AtomicInteger pending;
-    /// Which task sizes a measured cell: one for the seal plus one per segment not yet measured.
-    final AtomicInteger unsized = new AtomicInteger(1);
-    /// Set once a measured cell is sized; written under the cell's monitor.
-    private volatile boolean sized;
-    /// Guarded by the cell's monitor: segments whose bytes wait for the sizing.
-    private List<Segment> parked;
 
     /// The cell's validity bits, once a segment met a null. Installed once, by compare-and-set.
     @SuppressWarnings("unused")
     private volatile long[] validity;
 
-    Cell(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow,
-         boolean measured) {
+    Cell(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
         this.fileName = fileName;
         this.alwaysMatches = alwaysMatches;
         this.plannedRecords = plannedRecords;
         this.capacity = capacity;
         this.firstRow = firstRow;
-        this.measured = measured;
-        this.pending = new AtomicInteger(measured ? 2 : 1);
+        this.pending = new AtomicInteger(1);
     }
 
     /// Places the page's kept records `[recordStart, recordEnd)` into this cell after every
@@ -131,9 +112,6 @@ final class Cell implements ScheduledCell<BatchExchange.Batch> {
         segments.add(segment);
         lastPage = page;
         pending.incrementAndGet();
-        if (measured) {
-            unsized.incrementAndGet();
-        }
         return segment;
     }
 
@@ -185,36 +163,6 @@ final class Cell implements ScheduledCell<BatchExchange.Batch> {
     @Override
     public BatchExchange.Batch batch() {
         return batch;
-    }
-
-    /// Whether a measured cell is sized.
-    boolean isSized() {
-        return sized;
-    }
-
-    /// Parks a segment that reads its page through `values`, unless the cell was sized meanwhile.
-    ///
-    /// @return whether the segment is parked: the sizing fills it from `values`
-    synchronized boolean park(Segment segment, BinaryPageValues values) {
-        if (sized) {
-            return false;
-        }
-        segment.parkedValues = values;
-        if (parked == null) {
-            parked = new ArrayList<>(2);
-        }
-        parked.add(segment);
-        return true;
-    }
-
-    /// Marks the cell sized, after which no segment parks, and takes the segments parked.
-    ///
-    /// @return the parked segments, `null` if none
-    synchronized List<Segment> markSized() {
-        sized = true;
-        List<Segment> taken = parked;
-        parked = null;
-        return taken;
     }
 
     @Override

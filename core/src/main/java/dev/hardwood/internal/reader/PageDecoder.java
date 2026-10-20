@@ -251,14 +251,14 @@ public class PageDecoder {
     /// Reads a data page (`V1` or `V2`) of a binary column without repetition whose values a fill
     /// reads in place, in any encoding the format defines for its type.
     ///
-    /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and their bytes
-    /// in `scratch`'s own buffer, so that a segment parked on its cell reads them after the task.
+    /// The returned values hold `scratch`'s definition levels, ids and byte prefix, and the
+    /// task's [#transientBytes] or the fetched page, until the fill is done.
     ///
     /// @throws ParquetReadException as [#decodeFlat] does
     BinaryPageValues decodeFlatBinary(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch,
                                       DecodeBuffers buffers) {
         requireColumn(binaryWidth >= 0 && column.maxRepetitionLevel() == 0, "decodeFlatBinary");
-        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, true, buffers);
+        InPlacePage page = readInPlace(pageBuffer, dictionary, scratch, false, buffers);
         BinaryPageValues values = binaryValues(page, dictionary, scratch);
         page.commit(column);
         return values;

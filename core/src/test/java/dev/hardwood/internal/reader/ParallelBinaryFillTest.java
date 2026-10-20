@@ -27,9 +27,8 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// The segments of one binary cell filled at the same time, each by its own thread, write their
-/// entry ids, views, bytes and validity at their own positions ([BinaryFill]), while the cell is
-/// sized on another thread: a plain segment filled before the sizing parks with a view of its
-/// page, and the sizing writes it from the page.
+/// entry ids, views and validity at their own positions, and their plain bytes into chunks of
+/// their own ([BinaryFill]).
 ///
 /// Each segment comes from a page of its own, of one of the two kinds a binary page is read as:
 /// `PLAIN` values and dictionary ids, both in place. Each has nulls at random rows unless it is
@@ -53,7 +52,7 @@ class ParallelBinaryFillTest {
 
     @Test
     @Timeout(value = 120, unit = TimeUnit.SECONDS)
-    void concurrentFillsWhileTheCellIsSizedWriteEverySegmentInPlace() throws Exception {
+    void concurrentFillsWriteEverySegmentInPlace() throws Exception {
         AtomicInteger round = new AtomicInteger(-1);
         AtomicInteger finished = new AtomicInteger();
         AtomicReference<Round> current = new AtomicReference<>();
@@ -70,16 +69,6 @@ class ParallelBinaryFillTest {
                 current.set(prepared);
                 finished.set(0);
                 round.set(r);
-                // The sizing races the fills: some segments are filled before it and park
-                for (int spin = random.nextInt(2_000); spin > 0; spin--) {
-                    Thread.onSpinWait();
-                }
-                List<Segment> parked = BinaryFill.size(prepared.cell, prepared.out);
-                if (parked != null) {
-                    for (Segment segment : parked) {
-                        BinaryFill.unpark(segment, prepared.out, 1);
-                    }
-                }
                 while (finished.get() < THREADS) {
                     Thread.onSpinWait();
                 }
@@ -98,40 +87,46 @@ class ParallelBinaryFillTest {
         }
     }
 
-    /// A plain segment filled before its cell is sized parks with a view of its page and writes
-    /// nothing; the sizing hands it back, and it is then written at the offset the sizing gave it.
+    /// A segment's plain bytes go into chunks of at most [BinaryBatchValues#CHUNK_BYTES], a value
+    /// never spanning two; a value longer than a chunk gets a buffer of its own length.
     @Test
-    void aParkedSegmentIsWrittenWhenItsCellIsSized() {
-        List<String> first = List.of("one", "two");
-        List<String> second = new ArrayList<>(List.of("three", "four", "five"));
-        second.set(1, null);
-        Cell cell = new Cell("f.parquet", false, 5, 5, 0, true);
-        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(BatchExchange.detachingFlat("v", 8), COLUMN).values;
-        BatchPlan.RowGroupBatches rowGroup = new BatchPlan(5, false, false, 0).plan(0, 0, "f.parquet", false, 5);
-        Segment a = place(cell, rowGroup, 0, first.size());
-        Segment b = place(cell, rowGroup, 1, second.size());
-        BinaryPageValues aValues = plain(first);
-        BinaryPageValues bValues = plain(second);
-        a.bytes = BinaryFill.measure(a, aValues);
-        b.bytes = BinaryFill.measure(b, bValues);
-
-        assertThat(BinaryFill.fill(b, bValues, out, 1)).as("filled before its cell is sized").isFalse();
-        assertThat(b.parkedValues).as("parked with a view of its page").isNotNull();
-        List<Segment> parked = BinaryFill.size(cell, out);
-        assertThat(parked).containsExactly(b);
-        BinaryFill.unpark(b, out, 1);
-        assertThat(BinaryFill.fill(a, aValues, out, 1)).as("filled once its cell is sized").isTrue();
+    void plainBytesFillChunksNoLargerThanAChunk() {
+        int chunk = BinaryBatchValues.CHUNK_BYTES;
+        List<String> page = new ArrayList<>();
+        for (int i = 0; i < 7; i++) {
+            page.add(String.valueOf((char) ('a' + i)).repeat(100_000));
+        }
+        page.add(null);
+        page.add("z".repeat(chunk + 1));
+        page.add("tail");
+        Cell cell = new Cell("f.parquet", false, page.size(), page.size(), 0);
+        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(BatchExchange.detachingFlat("v", page.size()), COLUMN)
+                .values;
+        BatchPlan.RowGroupBatches rowGroup = new BatchPlan(page.size(), false, false, 0)
+                .plan(0, 0, "f.parquet", false, page.size());
+        Segment segment = place(cell, rowGroup, 0, page.size());
+        BinaryFill.fill(segment, plain(page), out, 1);
         FlatFill.backfillValidity(cell);
         BinaryFill.finish(cell, out, new BinaryBatchValues.ViewDemand());
 
-        assertThat(b.byteOffset).isEqualTo("onetwo".length());
-        assertThat(out.byteCount()).isEqualTo("onetwothreefive".length());
-        List<String> read = new ArrayList<>();
-        for (int i = 0; i < 5; i++) {
-            read.add(i == 3 ? null : out.stringAt(i));
+        byte[][] buffers = out.buffers();
+        int[] bufferIds = out.bufferIds();
+        int[] starts = out.starts();
+        int[] ends = out.ends();
+        for (int i = 0; i < page.size(); i++) {
+            byte[] buffer = buffers[bufferIds[i]];
+            assertThat(ends[i]).as("value %d within its buffer", i).isBetween(starts[i], buffer.length);
+            String expected = page.get(i);
+            assertThat(new String(buffer, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+                    .as("value %d", i).isEqualTo(expected == null ? "" : expected);
         }
-        assertThat(read).containsExactly("one", "two", "three", null, "five");
-        assertThat(cell.validity()).containsExactly(0b10111L);
+        // Two 100,000-byte values per chunk: four chunks for seven, then the long value's own
+        assertThat(out.bufferCount()).isEqualTo(1 + 4 + 1 + 1);
+        for (int b = 1; b < out.bufferCount(); b++) {
+            byte[] buffer = buffers[b];
+            assertThat(buffer.length).as("buffer %d", b).isLessThanOrEqualTo(buffer == buffers[bufferIds[8]] ? chunk + 1 : chunk);
+        }
+        assertThat(buffers[bufferIds[8]]).hasSize(chunk + 1);
     }
 
     private static void fillRounds(int thread, AtomicInteger round, AtomicInteger finished,
@@ -160,7 +155,7 @@ class ParallelBinaryFillTest {
         }
     }
 
-    /// One round: a measured cell, its segments, measured and sealed, and what they must read.
+    /// One round: a cell, its segments, sealed, and what they must read.
     private record Round(Cell cell, BinaryBatchValues out, List<Segment> segments, List<BinaryPageValues> values,
                          List<String> expected, List<Boolean> fromDictionary) {
     }
@@ -171,7 +166,7 @@ class ParallelBinaryFillTest {
             total += length;
         }
         BatchPlan.RowGroupBatches rowGroup = new BatchPlan(total, false, false, 0).plan(0, 0, "f.parquet", false, total);
-        Cell cell = new Cell("f.parquet", false, total, total, 0, true);
+        Cell cell = new Cell("f.parquet", false, total, total, 0);
         BinaryBatchValues out = (BinaryBatchValues) cell.allocate(BatchExchange.detachingFlat("v", total), COLUMN).values;
         List<Segment> segments = new ArrayList<>();
         List<BinaryPageValues> values = new ArrayList<>();
@@ -188,8 +183,6 @@ class ParallelBinaryFillTest {
             }
             BinaryPageValues pageValues = ids ? ids(page) : plain(page);
             Segment segment = place(cell, rowGroup, s, length);
-            segment.bytes = BinaryFill.measure(segment, pageValues);
-            cell.unsized.decrementAndGet();
             segments.add(segment);
             values.add(pageValues);
             expected.addAll(page);
@@ -200,7 +193,6 @@ class ParallelBinaryFillTest {
     private static void assertFilled(Round round, int r) {
         BinaryBatchValues out = round.out;
         long[] validity = round.cell.validity();
-        byte[] bytes = out.bytes();
         int[] starts = out.starts();
         int[] ends = out.ends();
         for (int i = 0; i < round.expected.size(); i++) {
@@ -214,7 +206,7 @@ class ParallelBinaryFillTest {
                 continue;
             }
             assertThat(out.stringAt(i)).as("round %d, value %d", r, i).isEqualTo(expected);
-            assertThat(new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+            assertThat(new String(out.buffer(i), starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
                     .as("round %d, view %d", r, i).isEqualTo(expected);
         }
     }
@@ -243,9 +235,9 @@ class ParallelBinaryFillTest {
             if (value != null) {
                 byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
                 data.write(bytes.length);
-                data.write(0);
-                data.write(0);
-                data.write(0);
+                data.write(bytes.length >>> 8);
+                data.write(bytes.length >>> 16);
+                data.write(bytes.length >>> 24);
                 data.writeBytes(bytes);
             }
         }

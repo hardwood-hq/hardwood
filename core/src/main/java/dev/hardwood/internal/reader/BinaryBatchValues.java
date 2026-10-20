@@ -22,60 +22,60 @@ import dev.hardwood.row.PqInterval;
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
 /// / `INT96`).
 ///
-/// Value `i` is the view `[starts[i], ends[i])` into `bytes`. Views need not be
-/// contiguous or in value order, and several may cover the same bytes: a value from a
-/// dictionary page points at its entry in a copy of the dictionary's bytes that the
-/// batch holds once, or at a copy of the entry appended to `bytes` ([#ensureViews]), while a
-/// plain value's bytes are written by its segment. A null value's view is empty. Bytes outside
-/// every view, and bytes at or beyond [#byteCount], are unspecified.
+/// Value `i` is the view `[starts[i], ends[i])` into buffer `bufferIds[i]` of [#buffers]. Views
+/// need not be contiguous or in value order, and several may cover the same bytes: a value from a
+/// dictionary page points at its entry in the dictionary's own bytes ([#ensureViews]), while a
+/// plain value's bytes are copied by its segment into a chunk of the batch's ([PlainBytes]). A null
+/// value's view is empty. Bytes outside every view are unspecified.
 ///
-/// `bytes` starts empty and grows on demand: a batch whose values all come from one
-/// small dictionary holds little more than that dictionary's bytes.
+/// The batch allocates no buffer larger than [#CHUNK_BYTES] unless one value is, so its bytes never
+/// need an array whose size grows with the batch: G1 allocates an array larger than half a heap
+/// region as a humongous object, and the smallest region is 1 MB. A dictionary's bytes are the
+/// column chunk's, held once for every batch that draws on it.
 ///
 /// A batch is filled positionally by the segments of a scheduled column's cell
 /// ([#prepareForFill], [BinaryFill], [NestedFill]): each segment writes
-/// its own values' entry ids, views and bytes at its own positions, so the segments are
-/// independent of each other and of the order they are written in. The view arrays and the
-/// entry ids are installed by the first segment that writes them, under the batch's monitor; the
-/// plain values' bytes take `[0, plainBytes)` of `bytes`, sized once every segment is measured
-/// ([#prepareBytes]). The views of dictionary values are not written by the fill: they are built
-/// when a reader first needs them ([#ensureViews]), and a reader of the entry ids alone never
-/// pays for them.
+/// its own values' entry ids, views, buffer ids and chunks at its own positions, so the segments
+/// are independent of each other and of the order they are written in. The view arrays and the
+/// entry ids are installed by the first segment that writes them, and a chunk takes its buffer id
+/// ([#addBuffer]), under the batch's monitor. The views of dictionary values are not written by the
+/// fill: they are built when a reader first needs them ([#ensureViews]), and a reader of the entry
+/// ids alone never pays for them.
 public final class BinaryBatchValues {
+
+    /// The largest chunk of plain values' bytes: below half of G1's smallest region (1 MB), less an
+    /// allowance for the array header.
+    static final int CHUNK_BYTES = 256 * 1024;
 
     private static final byte[] EMPTY = new byte[0];
 
-    private byte[] bytes;
+    /// The buffers the views point into, `[0, bufferCount)` in use. Buffer `0` is empty in a batch
+    /// being filled, for the views of nulls.
+    private byte[][] buffers;
+    private int bufferCount;
+    private int[] bufferIds;
     private int[] starts;
     private int[] ends;
 
-    /// Bytes of [#bytes] in use; the next appended bytes land here.
-    private int byteCount;
+    /// Whether the batch is a recycled holder's, which keeps its full chunks for its next fill
+    /// ([#prepareForFill]), and whose fills take full chunks so that they can be reused.
+    private boolean keepsChunks;
+    /// Full chunks of the last fill, for the next one; `[0, spareCount)` in use.
+    private byte[][] spare = new byte[0][];
+    private int spareCount;
 
-    /// Expected bytes per appended value, sizing [#bytes] on the first value append so a
-    /// batch of plain values does not grow it many times over.
-    private final int bytesPerValueHint;
-
-    /// The dictionary this batch's views draw on, or `null` before its first dictionary value.
-    /// A read with a binary column ends its batches at row-group boundaries
-    /// ([BatchPlan#endsBatchesAtRowGroupBoundaries]), so a batch draws on at most one.
-    private Dictionary.ByteArrayDictionary viewedDictionary;
-
-    /// Where [#viewedDictionary]'s bytes start in [#bytes] once copied in, `-1` until then.
-    private int viewedDictionaryBase;
-
-    /// Bytes of [#viewedDictionary]'s values appended before it is copied in.
-    private long appendedDictionaryBytes;
+    /// The buffer id of [#dictionary]'s bytes once a view points into them, `-1` until then.
+    private int dictionaryBuffer = -1;
 
     /// The chunk dictionary backing [#dictIndices], or `null` when no dictionary
-    /// page has contributed to this batch (every value then materialises from
-    /// [#bytes]). Holds the per-entry `String` cache that lets [#stringAt] reuse
+    /// page has contributed to this batch (every value then materialises from its
+    /// buffer). Holds the per-entry `String` cache that lets [#stringAt] reuse
     /// one instance per dictionary entry per chunk, and is what
     /// `ColumnReader.getBinaryDictionary()` exposes.
     public Dictionary.ByteArrayDictionary dictionary;
 
     /// Per-value dictionary entry index, meaningful only when [#dictionary] is
-    /// non-null. `-1` marks a value that must materialise from [#bytes]: a
+    /// non-null. `-1` marks a value that must materialise from its buffer: a
     /// plain-encoded value or a null position. Allocated by the first segment of entry ids
     /// ([#installDictionary]).
     public int[] dictIndices;
@@ -86,33 +86,30 @@ public final class BinaryBatchValues {
     public boolean idsComplete;
 
     /// An empty batch slot for `capacity` values.
-    public BinaryBatchValues(int capacity, int bytesPerValueHint) {
-        this(EMPTY, null, null, 0, bytesPerValueHint);
+    public BinaryBatchValues(int capacity) {
+        this.buffers = new byte[][] { EMPTY };
+        this.bufferCount = 1;
         this.capacity = capacity;
+        this.viewsPending = true;
     }
 
-    /// A slot over existing views, for a batch that receives no further values.
-    public BinaryBatchValues(byte[] bytes, int[] starts, int[] ends, int byteCount) {
-        this(bytes, starts, ends, byteCount, 0);
-    }
-
-    private BinaryBatchValues(byte[] bytes, int[] starts, int[] ends, int byteCount, int bytesPerValueHint) {
-        this.bytes = bytes;
+    /// A slot over existing views into one buffer, for a batch that receives no further values.
+    public BinaryBatchValues(byte[] bytes, int[] starts, int[] ends) {
+        this.buffers = new byte[][] { bytes };
+        this.bufferCount = 1;
+        this.capacity = starts.length;
         this.starts = starts;
         this.ends = ends;
-        this.byteCount = byteCount;
-        this.bytesPerValueHint = bytesPerValueHint;
-        this.capacity = starts != null ? starts.length : 0;
-        this.viewsPending = starts == null;
+        this.bufferIds = new int[starts.length];
     }
 
-    /// The values this batch can hold. [#starts] and [#ends] are allocated at this size on
-    /// their first write.
+    /// The values this batch can hold. [#starts], [#ends] and [#bufferIds] are allocated at this
+    /// size on their first write.
     private int capacity;
 
-    /// Whether a reader must call [#ensureViews] before reading [#starts] and [#ends]: they are
-    /// not allocated yet, or dictionary values were recorded without their views. The accessors
-    /// test this one flag per value.
+    /// Whether a reader must call [#ensureViews] before reading the views: they are not allocated
+    /// yet, or dictionary values were recorded without their views. The accessors test this one
+    /// flag per value.
     private boolean viewsPending;
 
     /// End of the range whose dictionary values were recorded without views
@@ -125,33 +122,45 @@ public final class BinaryBatchValues {
 
     /// Raised by the first reader that needs the views of deferred dictionary values. From then
     /// on the column builds views as it completes a cell, on the completing thread, so that only the
-    /// batches already in flight have theirs built on the reading thread. One instance per column.
+    /// batches in flight have theirs built on the reading thread. One instance per column.
     static final class ViewDemand {
         volatile boolean requested;
     }
 
-    /// The buffer the views point into, valid up to [#byteCount()]. Builds pending views first.
-    public byte[] bytes() {
+    /// The buffers the views point into: value `i` is in `buffers()[bufferIds()[i]]`. Builds
+    /// pending views first.
+    public byte[][] buffers() {
         ensureViews();
-        return bytes;
+        return buffers;
     }
 
-    /// Value `i` starts at `starts()[i]` in [#bytes()]. Builds pending views first.
+    /// Which of [#buffers()] each value is in. Builds pending views first.
+    public int[] bufferIds() {
+        ensureViews();
+        return bufferIds;
+    }
+
+    /// The buffer value `i` is in. Builds pending views first.
+    public byte[] buffer(int i) {
+        ensureViews();
+        return buffers[bufferIds[i]];
+    }
+
+    /// Value `i` starts at `starts()[i]` in its buffer. Builds pending views first.
     public int[] starts() {
         ensureViews();
         return starts;
     }
 
-    /// Value `i` ends at `ends()[i]` in [#bytes()]. Builds pending views first.
+    /// Value `i` ends at `ends()[i]` in its buffer. Builds pending views first.
     public int[] ends() {
         ensureViews();
         return ends;
     }
 
-    /// Bytes of [#bytes()] in use. Builds pending views first, which may append.
-    public int byteCount() {
-        ensureViews();
-        return byteCount;
+    /// The buffers in use, for tests of how a batch holds its bytes.
+    int bufferCount() {
+        return bufferCount;
     }
 
     /// Whether the view arrays exist yet, for tests of their deferred allocation.
@@ -169,34 +178,41 @@ public final class BinaryBatchValues {
         return capacity;
     }
 
-    /// Allocates [#starts] and [#ends] on their first write.
+    /// Allocates [#starts], [#ends] and [#bufferIds] on their first write.
     private void viewArrays() {
         if (starts == null) {
-            starts = new int[capacity];
-            ends = new int[capacity];
+            allocateViews();
             viewsPending = deferredEnd > 0;
         }
     }
 
-    /// Readies a slot for a positional fill: its arrays are kept, its contents are not. Runs
-    /// before any segment writes.
+    private void allocateViews() {
+        starts = new int[capacity];
+        ends = new int[capacity];
+        bufferIds = new int[capacity];
+    }
+
+    /// Readies a slot for a positional fill: its arrays are kept, its contents and buffers are not.
+    /// Runs before any segment writes.
     void prepareForFill() {
-        byteCount = 0;
+        if (keepsChunks) {
+            keepFullChunks();
+        }
+        Arrays.fill(buffers, 1, bufferCount, null);
+        bufferCount = 1;
+        dictionaryBuffer = -1;
         dictionary = null;
         idsComplete = false;
-        viewedDictionary = null;
-        appendedDictionaryBytes = 0;
         deferredEnd = 0;
         viewDemand = null;
         viewsPending = true;
     }
 
     /// Installs the view arrays for a segment that writes views, unless a segment already has.
-    /// A segment reads them with [#fillStarts] and [#fillEnds] after this.
+    /// A segment reads them with [#fillStarts], [#fillEnds] and [#fillBufferIds] after this.
     synchronized void installViews() {
         if (starts == null) {
-            starts = new int[capacity];
-            ends = new int[capacity];
+            allocateViews();
         }
     }
 
@@ -207,6 +223,65 @@ public final class BinaryBatchValues {
 
     int[] fillEnds() {
         return ends;
+    }
+
+    int[] fillBufferIds() {
+        return bufferIds;
+    }
+
+    /// Makes the batch keep its full chunks from one fill to the next: for a recycled holder,
+    /// whose batches are read before the holder is refilled and never shared with another batch.
+    public void keepChunks() {
+        keepsChunks = true;
+    }
+
+    boolean keepsChunks() {
+        return keepsChunks;
+    }
+
+    /// Keeps the full chunks of the last fill as [#spare], and only those: spares an earlier fill
+    /// left over, the dictionary's bytes and buffers of another size are dropped, so a holder keeps
+    /// what its last fill took.
+    private void keepFullChunks() {
+        Arrays.fill(spare, 0, spareCount, null);
+        spareCount = 0;
+        for (int b = 1; b < bufferCount; b++) {
+            byte[] buffer = buffers[b];
+            if (buffer.length == CHUNK_BYTES && b != dictionaryBuffer) {
+                if (spareCount == spare.length) {
+                    spare = Arrays.copyOf(spare, Math.max(4, spareCount * 2));
+                }
+                spare[spareCount++] = buffer;
+            }
+        }
+    }
+
+    /// Adds a full chunk to the batch's buffers, a spare one where the last fill left one, and
+    /// returns its id; [#chunk(int)] gives the chunk.
+    synchronized int takeChunk() {
+        byte[] chunk;
+        if (spareCount > 0) {
+            chunk = spare[--spareCount];
+            spare[spareCount] = null;
+        }
+        else {
+            chunk = new byte[CHUNK_BYTES];
+        }
+        return addBuffer(chunk);
+    }
+
+    /// Buffer `id`, for the fill that added it.
+    synchronized byte[] chunk(int id) {
+        return buffers[id];
+    }
+
+    /// Adds `buffer` to the batch's buffers and returns its id.
+    synchronized int addBuffer(byte[] buffer) {
+        if (bufferCount == buffers.length) {
+            buffers = Arrays.copyOf(buffers, bufferCount * 2);
+        }
+        buffers[bufferCount] = buffer;
+        return bufferCount++;
     }
 
     /// Adopts `dict` as the dictionary of the batch's entry ids, unless a segment already has, and
@@ -226,20 +301,6 @@ public final class BinaryBatchValues {
         return dictIndices;
     }
 
-    /// Gives the plain values' bytes `[0, plainBytes)` of the byte buffer, reusing it when it is
-    /// large enough. Runs once, when the cell is sized, before any segment writes its bytes.
-    void prepareBytes(int plainBytes) {
-        if (bytes.length < plainBytes) {
-            bytes = new byte[plainBytes];
-        }
-        byteCount = plainBytes;
-    }
-
-    /// The byte buffer, for a segment that writes its bytes once [#prepareBytes] ran.
-    byte[] fillBytes() {
-        return bytes;
-    }
-
     /// Ends a positional fill of `valueCount` values, once every segment is written: the
     /// dictionary values' views are built when a reader first needs them, and building them
     /// raises `demand`.
@@ -249,17 +310,16 @@ public final class BinaryBatchValues {
         viewsPending = starts == null || deferredEnd > 0;
     }
 
-    /// Readies [#starts] and [#ends] for reading: allocates them, and builds the views of the
-    /// dictionary values recorded without them. Every reader of the views calls this first.
+    /// Readies the views for reading: allocates them, and builds the views of the dictionary values
+    /// recorded without them. Every reader of the views calls this first.
     public void ensureViews() {
         if (viewsPending) {
             buildViews();
         }
     }
 
-    /// Builds the deferred views: while the deferred values' bytes stay below the dictionary's size
-    /// they are appended, otherwise the dictionary is copied in once and the values point into it,
-    /// so a batch holds at most twice the bytes that appending every value would take.
+    /// Builds the deferred views: each dictionary value points at its entry in the dictionary's
+    /// own bytes, which the batch takes as one of its buffers.
     private void buildViews() {
         viewArrays();
         viewsPending = false;
@@ -271,46 +331,35 @@ public final class BinaryBatchValues {
         }
         int end = deferredEnd;
         deferredEnd = 0;
-        Dictionary.ByteArrayDictionary dict = dictionary;
-        int[] entryOffsets = dict.entryOffsets();
-        int base = viewBase(dict);
-        if (base < 0) {
-            long deferredBytes = 0;
-            for (int i = 0; i < end; i++) {
-                int entry = dictIndices[i];
-                if (entry >= 0) {
-                    deferredBytes += entryOffsets[entry + 1] - entryOffsets[entry];
-                }
-            }
-            if (appendedDictionaryBytes + deferredBytes < dict.entryBytes().length) {
-                appendedDictionaryBytes += deferredBytes;
-                for (int i = 0; i < end; i++) {
-                    int entry = dictIndices[i];
-                    if (entry >= 0) {
-                        appendEntry(dict, entry, i);
-                    }
-                }
-                return;
-            }
-            base = copyIn(0);
+        int[] entryOffsets = dictionary.entryOffsets();
+        if (dictionaryBuffer < 0) {
+            dictionaryBuffer = addBuffer(dictionary.entryBytes());
         }
         for (int i = 0; i < end; i++) {
             int entry = dictIndices[i];
             if (entry >= 0) {
-                starts[i] = base + entryOffsets[entry];
-                ends[i] = base + entryOffsets[entry + 1];
+                bufferIds[i] = dictionaryBuffer;
+                starts[i] = entryOffsets[entry];
+                ends[i] = entryOffsets[entry + 1];
             }
         }
     }
 
     /// The values at `map[0, count)` as a batch of their own, with their dictionary and entry
-    /// ids. Consumes this batch: the result takes over its byte buffer, which building the
-    /// result's deferred views may append to, so this batch must not be read afterwards.
-    /// Dictionary values whose views are deferred stay deferred, so a filtered read builds
-    /// views only if it reads them.
+    /// ids. The result shares this batch's buffers, which no later fill writes: a refill adds
+    /// chunks of its own. Dictionary values whose views are deferred stay deferred, so a filtered
+    /// read builds views only if it reads them.
+    ///
+    /// @throws IllegalStateException for a batch that keeps its chunks ([#keepChunks]), whose
+    ///         next fill writes them again
     BinaryBatchValues compact(int[] map, int count) {
-        BinaryBatchValues out = new BinaryBatchValues(bytes, null, null, byteCount);
-        out.capacity = count;
+        if (keepsChunks) {
+            throw new IllegalStateException("A batch that keeps its chunks for its next fill cannot be compacted");
+        }
+        BinaryBatchValues out = new BinaryBatchValues(count);
+        out.buffers = Arrays.copyOf(buffers, Math.max(bufferCount, 1));
+        out.bufferCount = bufferCount;
+        out.dictionaryBuffer = dictionaryBuffer;
         out.viewArrays();
         int keptDeferredEnd = 0;
         for (int i = 0; i < count; i++) {
@@ -319,14 +368,12 @@ public final class BinaryBatchValues {
                 keptDeferredEnd = i + 1;
             }
             else {
+                out.bufferIds[i] = bufferIds[rawIdx];
                 out.starts[i] = starts[rawIdx];
                 out.ends[i] = ends[rawIdx];
             }
         }
         out.adoptIds(this, map, count);
-        out.viewedDictionary = viewedDictionary;
-        out.viewedDictionaryBase = viewedDictionaryBase;
-        out.appendedDictionaryBytes = appendedDictionaryBytes;
         out.viewDemand = viewDemand;
         out.deferredEnd = keptDeferredEnd;
         out.viewsPending = keptDeferredEnd > 0;
@@ -349,10 +396,11 @@ public final class BinaryBatchValues {
 
     /// Materialise value `idx` as a fresh `byte[]` copy. Allocates one array
     /// per call — used by convenience accessors and per-row materialisation
-    /// paths; hot loops should read [#bytes()] / [#starts()] / [#ends()] directly.
+    /// paths; hot loops should read [#buffers()] / [#bufferIds()] / [#starts()] / [#ends()]
+    /// directly.
     public byte[] byteArrayAt(int idx) {
         ensureViews();
-        return Arrays.copyOfRange(bytes, starts[idx], ends[idx]);
+        return Arrays.copyOfRange(buffers[bufferIds[idx]], starts[idx], ends[idx]);
     }
 
     /// Decode value `idx` as the single-precision value its `FLOAT16` payload stands for,
@@ -363,7 +411,7 @@ public final class BinaryBatchValues {
     public float float16At(int idx) {
         ensureViews();
         int start = starts[idx];
-        return LogicalTypeConverter.bytesToFloat16(bytes, start, ends[idx] - start);
+        return LogicalTypeConverter.bytesToFloat16(buffers[bufferIds[idx]], start, ends[idx] - start);
     }
 
     /// Decode value `idx` as the decimal its `DECIMAL` payload stands for, reading the
@@ -375,7 +423,7 @@ public final class BinaryBatchValues {
     public BigDecimal decimalAt(int idx, int scale) {
         ensureViews();
         int start = starts[idx];
-        return LogicalTypeConverter.bytesToDecimal(bytes, start, ends[idx] - start, scale);
+        return LogicalTypeConverter.bytesToDecimal(buffers[bufferIds[idx]], start, ends[idx] - start, scale);
     }
 
     /// Decode value `idx` as the [UUID] its payload stands for, reading the bytes
@@ -383,7 +431,7 @@ public final class BinaryBatchValues {
     public UUID uuidAt(int idx) {
         ensureViews();
         int start = starts[idx];
-        return LogicalTypeConverter.bytesToUuid(bytes, start, ends[idx] - start);
+        return LogicalTypeConverter.bytesToUuid(buffers[bufferIds[idx]], start, ends[idx] - start);
     }
 
     /// Decode value `idx` as the [PqInterval] its payload stands for, reading the bytes
@@ -391,7 +439,7 @@ public final class BinaryBatchValues {
     public PqInterval intervalAt(int idx) {
         ensureViews();
         int start = starts[idx];
-        return LogicalTypeConverter.bytesToInterval(bytes, start, ends[idx] - start);
+        return LogicalTypeConverter.bytesToInterval(buffers[bufferIds[idx]], start, ends[idx] - start);
     }
 
     /// Decode value `idx` as the instant its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload stands
@@ -399,7 +447,7 @@ public final class BinaryBatchValues {
     public Instant flba12InstantAt(int idx, LogicalType.TimeUnit unit) {
         ensureViews();
         int start = starts[idx];
-        return Flba12Timestamps.toInstant(bytes, start, ends[idx] - start, unit);
+        return Flba12Timestamps.toInstant(buffers[bufferIds[idx]], start, ends[idx] - start, unit);
     }
 
     /// Decode value `idx` as the wall clock its `FIXED_LEN_BYTE_ARRAY(12)` `TIMESTAMP` payload
@@ -407,14 +455,14 @@ public final class BinaryBatchValues {
     public LocalDateTime flba12LocalDateTimeAt(int idx, LogicalType.TimeUnit unit) {
         ensureViews();
         int start = starts[idx];
-        return Flba12Timestamps.toLocalDateTime(bytes, start, ends[idx] - start, unit);
+        return Flba12Timestamps.toLocalDateTime(buffers[bufferIds[idx]], start, ends[idx] - start, unit);
     }
 
     /// Materialise value `idx` as a UTF-8 decoded `String`. A dictionary-encoded
     /// value (when [#dictionary] is set and `dictIndices[idx]` is non-negative)
     /// reuses the chunk dictionary's per-entry interned cache, so repeated values
     /// are decoded once per chunk; any other value allocates one `String` per
-    /// call from [#bytes].
+    /// call from the value's buffer.
     public String stringAt(int idx) {
         Dictionary.ByteArrayDictionary dict = dictionary;
         if (dict != null) {
@@ -427,7 +475,7 @@ public final class BinaryBatchValues {
         // so this reads it without building the deferred views of the batch's dictionary values.
         int start = starts[idx];
         int len = ends[idx] - start;
-        return new String(bytes, start, len, StandardCharsets.UTF_8);
+        return new String(buffers[bufferIds[idx]], start, len, StandardCharsets.UTF_8);
     }
 
     /// Length in bytes of value `idx`.
@@ -436,87 +484,7 @@ public final class BinaryBatchValues {
         return ends[idx] - starts[idx];
     }
 
-    /// Appends `len` bytes from `src[srcOffset..)` as value `valueIdx`, growing
-    /// [#bytes] if it would otherwise overflow. Throws if the batch's bytes would
-    /// overflow `Integer.MAX_VALUE`.
-    private void appendAt(int valueIdx, byte[] src, int srcOffset, int len) {
-        int start = byteCount;
-        ensureBytes((long) start + len, valueIdx, true);
-        if (len > 0) {
-            System.arraycopy(src, srcOffset, bytes, start, len);
-        }
-        viewArrays();
-        starts[valueIdx] = start;
-        ends[valueIdx] = start + len;
-        byteCount = start + len;
-    }
-
-    /// Records an empty view as value `valueIdx`, as a null value has.
-    private void appendEmpty(int valueIdx) {
-        viewArrays();
-        starts[valueIdx] = byteCount;
-        ends[valueIdx] = byteCount;
-    }
-
-    private void appendEntry(Dictionary.ByteArrayDictionary dict, int entry, int destIdx) {
-        if (entry < 0) {
-            appendEmpty(destIdx);
-        }
-        else {
-            int[] entryOffsets = dict.entryOffsets();
-            int from = entryOffsets[entry];
-            appendAt(destIdx, dict.entryBytes(), from, entryOffsets[entry + 1] - from);
-        }
-    }
-
-    /// Returns where `dict`'s bytes start in [#bytes], or `-1` before they are copied in,
-    /// adopting `dict` as the batch's [#viewedDictionary] on its first value.
-    ///
-    /// @throws IllegalStateException if the batch already draws on another dictionary
-    private int viewBase(Dictionary.ByteArrayDictionary dict) {
-        if (viewedDictionary == null) {
-            viewedDictionary = dict;
-            viewedDictionaryBase = -1;
-            appendedDictionaryBytes = 0;
-        }
-        else if (viewedDictionary != dict) {
-            throw twoDictionaries();
-        }
-        return viewedDictionaryBase;
-    }
-
-    /// Copies [#viewedDictionary] into [#bytes] and returns where it starts; `valueIdx` is the
-    /// value that brought it in, named if the copy overflows the buffer.
-    private int copyIn(int valueIdx) {
-        byte[] entryBytes = viewedDictionary.entryBytes();
-        int base = byteCount;
-        ensureBytes((long) base + entryBytes.length, valueIdx, false);
-        System.arraycopy(entryBytes, 0, bytes, base, entryBytes.length);
-        byteCount = base + entryBytes.length;
-        viewedDictionaryBase = base;
-        return base;
-    }
-
-    /// The failure of a batch whose bytes would exceed 2 GB at value `valueIdx`.
-    static IllegalStateException bufferOverflow(int valueIdx) {
-        return new IllegalStateException("Binary batch buffer would exceed int32 (~2 GB) at value " + valueIdx
-                + "; reduce the batch size for this column.");
-    }
-
     private static IllegalStateException twoDictionaries() {
         return new IllegalStateException("A batch holds values of two column chunks' dictionaries");
-    }
-
-    /// Grows [#bytes] to hold `needed` bytes. A value append sizes a first allocation by
-    /// [#bytesPerValueHint]; a dictionary copy takes what it needs.
-    private void ensureBytes(long needed, int valueIdx, boolean valueAppend) {
-        if (needed > Integer.MAX_VALUE) {
-            throw bufferOverflow(valueIdx);
-        }
-        if (needed > bytes.length) {
-            long hint = valueAppend ? (long) bytesPerValueHint * capacity : 0L;
-            long newSize = Math.min(Integer.MAX_VALUE, Math.max(Math.max((long) bytes.length * 2L, needed), hint));
-            bytes = Arrays.copyOf(bytes, (int) newSize);
-        }
     }
 }

@@ -309,10 +309,13 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Other columns leave Batch.matches null; the merger reads only the columns its plan references.
             final boolean allocateMatches =
                     batchMatchers && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
-            BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
+            BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recyclingEveryHolder(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(columnSchema, batchSize);
+                        if (b.values instanceof BinaryBatchValues binary) {
+                            binary.keepChunks();
+                        }
                         b.capacity = batchSize;
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];

@@ -274,26 +274,28 @@ class PageTrimmerTest {
         int[] starts = new int[size];
         int[] ends = new int[size];
         int[] ids = new int[size];
-        byte[] bytes = new byte[runs.bytes(trimmed.binary(), 0, size)];
+        int[] bufferIds = new int[size];
+        BinaryBatchValues chunks = new BinaryBatchValues(size);
+        PlainBytes dest = new PlainBytes(chunks, runs.bytes(trimmed.binary(), 0, size));
         int kept = 0;
-        int destByte = 0;
         while (kept < size) {
             int run = runs.runOf(kept);
             int n = runs.remaining(run, kept);
             if (values.dictionary() != null) {
-                values.copyIds(runs.pagePosition(run, kept), n, ids, starts, ends, kept);
+                values.copyIds(runs.pagePosition(run, kept), n, ids, starts, ends, bufferIds, kept);
             }
             else {
-                destByte = values.copyPlain(runs.pagePosition(run, kept), n, starts, ends, kept, bytes, destByte);
+                values.copyPlain(runs.pagePosition(run, kept), n, starts, ends, bufferIds, kept, dest);
             }
             kept += n;
         }
+        byte[][] buffers = chunks.buffers();
         byte[][] out = new byte[size][];
         for (int i = 0; i < size; i++) {
             if (trimmed.definitionLevels()[i] == maxDef) {
                 out[i] = values.dictionary() != null
                         ? values.dictionary().entry(ids[i])
-                        : Arrays.copyOfRange(bytes, starts[i], ends[i]);
+                        : Arrays.copyOfRange(buffers[bufferIds[i]], starts[i], ends[i]);
             }
         }
         return out;

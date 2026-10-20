@@ -297,8 +297,7 @@ class DictionaryBinaryBatchMatcherTest {
         }
 
         BinaryBatchValues binaryValues = new BinaryBatchValues(bytes,
-                Arrays.copyOf(offsets, values.length), Arrays.copyOfRange(offsets, 1, values.length + 1),
-                bytes.length);
+                Arrays.copyOf(offsets, values.length), Arrays.copyOfRange(offsets, 1, values.length + 1));
         binaryValues.dictionary = dictionary;
         binaryValues.dictIndices = dictionaryIndices;
 

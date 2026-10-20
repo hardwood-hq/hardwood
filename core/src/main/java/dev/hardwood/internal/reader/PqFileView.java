@@ -96,7 +96,7 @@ final class PqFileView implements PqFile {
         if (inlineValues == null) {
             return 0;
         }
-        byte[] bytes = inlineValues.bytes();
+        byte[] bytes = inlineValues.buffer(inlineIndex);
         int hash = 1;
         for (int i = inlineValues.starts()[inlineIndex], end = inlineValues.ends()[inlineIndex]; i < end; i++) {
             hash = 31 * hash + bytes[i];

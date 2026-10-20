@@ -8,51 +8,42 @@
 package dev.hardwood.internal.reader;
 
 import java.util.Arrays;
-import java.util.List;
 
-/// Fills a [Segment] of a flat binary column's cell from its page's [BinaryPageValues], and sizes
-/// and finishes the cell's [BinaryBatchValues].
+/// Fills a [Segment] of a flat binary column's cell from its page's [BinaryPageValues], and
+/// finishes the cell's [BinaryBatchValues].
 ///
-/// A cell's batch has two kinds of arrays:
-///
-/// - the entry ids, the views and the validity, sized by the plan's records: whichever segment
-///   writes one first installs it, so a fill never waits for them;
-/// - the byte buffer of the plain values, sized by the sum of its segments' bytes, which their
-///   pages' measures give ([#size]).
-///
-/// A segment of dictionary ids writes its ids, and the empty views of its nulls; its values'
-/// views are built when a reader needs them. A segment of plain values writes its views and its
-/// bytes, at the offset the sizing gave it. One whose cell is not sized yet writes nothing and
-/// parks with a view of its page ([Cell#park]), whose bytes the page keeps; the sizing writes its
-/// views, bytes and validity straight from the page ([#unpark]). Every value is written once.
+/// The entry ids, the views and the validity are sized by the plan's records: whichever segment
+/// writes one first installs it, so a fill never waits for them. A segment of dictionary ids writes
+/// its ids, and the empty views of its nulls; its values' views are built when a reader needs them.
+/// A segment of plain values writes its views and copies its bytes into chunks of its own
+/// ([PlainBytes]). Every value is written once.
 final class BinaryFill implements FlatFill.Run {
 
     private final BinaryPageValues values;
     private final FlatFill.ValidityWriter validity;
     private final int[] starts;
     private final int[] ends;
+    private final int[] bufferIds;
     /// The ids the segment writes into, `null` for plain values.
     private final int[] ids;
-    /// Where the segment's bytes go, and the next one.
-    private final byte[] dest;
-    private int destByte;
+    /// Where the segment's bytes go, `null` for ids.
+    private final PlainBytes dest;
 
     private BinaryFill(BinaryPageValues values, FlatFill.ValidityWriter validity, int[] starts, int[] ends,
-                       int[] ids, byte[] dest, int destByte) {
+                       int[] bufferIds, int[] ids, PlainBytes dest) {
         this.values = values;
         this.validity = validity;
         this.starts = starts;
         this.ends = ends;
+        this.bufferIds = bufferIds;
         this.ids = ids;
         this.dest = dest;
-        this.destByte = destByte;
     }
 
     /// Fills `segment` from `values` into the cell's batch `out`.
     ///
     /// @param maxDefinitionLevel the column's, below which a value is null
-    /// @return whether the segment is filled; `false` when it parked, and the sizing completes it
-    static boolean fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel) {
+    static void fill(Segment segment, BinaryPageValues values, BinaryBatchValues out, int maxDefinitionLevel) {
         FlatFill.ValidityWriter validity = new FlatFill.ValidityWriter(segment, maxDefinitionLevel);
         Dictionary.ByteArrayDictionary dictionary = values.dictionary();
         if (dictionary != null) {
@@ -63,29 +54,18 @@ final class BinaryFill implements FlatFill.Run {
                 out.installViews();
             }
             FlatFill.forEachRun(segment, new BinaryFill(values, validity, nulls ? out.fillStarts() : null,
-                    nulls ? out.fillEnds() : null, ids, null, 0));
+                    nulls ? out.fillEnds() : null, nulls ? out.fillBufferIds() : null, ids, null));
             segment.wroteIds = true;
-            return true;
+            return;
         }
         out.installViews();
-        Cell cell = segment.cell;
-        if (segment.bytes > 0 && !cell.isSized() && cell.park(segment, values.view())) {
-            return false;
-        }
-        writePlain(segment, values, out, validity);
-        return true;
+        FlatFill.forEachRun(segment, new BinaryFill(values, validity, out.fillStarts(), out.fillEnds(),
+                out.fillBufferIds(), null, new PlainBytes(out, measure(segment, values))));
     }
 
-    /// Writes a segment's plain values' views and bytes at its offset in the sized byte buffer.
-    private static void writePlain(Segment segment, BinaryPageValues values, BinaryBatchValues out,
-                                   FlatFill.ValidityWriter validity) {
-        FlatFill.forEachRun(segment, new BinaryFill(values, validity, out.fillStarts(), out.fillEnds(), null,
-                out.fillBytes(), segment.bytes > 0 ? segment.byteOffset : 0));
-    }
-
-    /// The bytes of the segment's plain values: `0` for ids.
-    static int measure(Segment segment, BinaryPageValues values) {
-        int[] bytes = new int[1];
+    /// The bytes of the segment's plain values.
+    private static long measure(Segment segment, BinaryPageValues values) {
+        long[] bytes = new long[1];
         FlatFill.forEachRun(segment, (pageRow, destPos, length) -> bytes[0] += values.bytes(pageRow, pageRow + length));
         return bytes[0];
     }
@@ -93,46 +73,12 @@ final class BinaryFill implements FlatFill.Run {
     @Override
     public void write(int pageRow, int destPos, int length) {
         if (ids != null) {
-            values.copyIds(pageRow, length, ids, starts, ends, destPos);
+            values.copyIds(pageRow, length, ids, starts, ends, bufferIds, destPos);
         }
         else {
-            destByte = values.copyPlain(pageRow, length, starts, ends, destPos, dest, destByte);
+            values.copyPlain(pageRow, length, starts, ends, bufferIds, destPos, dest);
         }
         validity.mark(values.definitionLevels(), pageRow, destPos, length);
-    }
-
-    /// Sizes a measured cell once it is sealed and every segment is measured: gives each segment
-    /// its offset in the byte buffer, and the buffer the sum of their bytes.
-    ///
-    /// @return the segments parked before the sizing, whose bytes [#unpark] writes; `null` if none
-    /// @throws IllegalStateException if the cell's bytes would exceed 2 GB
-    static List<Segment> size(Cell cell, BinaryBatchValues out) {
-        long total = 0;
-        for (Segment segment : cell.segments()) {
-            segment.byteOffset = (int) total;
-            total += segment.bytes;
-            if (total > Integer.MAX_VALUE) {
-                throw BinaryBatchValues.bufferOverflow(segment.cellOffset);
-            }
-        }
-        out.prepareBytes((int) total);
-        return cell.markSized();
-    }
-
-    /// Fills a parked segment of a sized cell straight from its page: its views, bytes and validity.
-    /// It runs on the task of the page whose measure sized the cell, so a failure is raised as the
-    /// segment's own page's ([SegmentFillException]).
-    ///
-    /// @param maxDefinitionLevel the column's, below which a value is null
-    static void unpark(Segment segment, BinaryBatchValues out, int maxDefinitionLevel) {
-        BinaryPageValues values = segment.parkedValues;
-        segment.parkedValues = null;
-        try {
-            writePlain(segment, values, out, new FlatFill.ValidityWriter(segment, maxDefinitionLevel));
-        }
-        catch (RuntimeException e) {
-            throw new SegmentFillException(segment.page, e);
-        }
     }
 
     /// Finishes a completed cell's batch: in a batch with entry ids, the values of the segments

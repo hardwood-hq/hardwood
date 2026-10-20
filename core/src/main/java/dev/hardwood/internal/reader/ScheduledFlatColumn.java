@@ -10,7 +10,6 @@ package dev.hardwood.internal.reader;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
 
 import dev.hardwood.internal.DecodeBuffers;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -24,17 +23,16 @@ import dev.hardwood.schema.ColumnSchema;
 ///   metadata before it queues it.
 /// - A page task decodes its page and fills its segments, allocating a cell on the first fill
 ///   that reaches it; the task that fills a cell's last segment completes it and publishes what
-///   can be published. A binary column's task first measures the bytes of each of its segments,
-///   and sizes each cell whose last measure that is ([BinaryFill]).
+///   can be published. A binary column's task copies its segments' plain bytes into chunks of
+///   their own ([BinaryFill]).
 public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Batch> {
 
-    /// The task's scratch for a page of a column that is not binary, whose values are filled
-    /// within its task.
+    /// The task's scratch for a page, whose values are filled within its task.
     private static final DecodeBuffers.Slot<PageDecoder.LevelScratch> SCRATCH = DecodeBuffers.slot();
 
     /// The column's filter fragment, run on each batch as it completes; `null` for none.
     private final ColumnBatchMatcher columnFilter;
-    /// Whether the column is binary, its cells [Cell#measured].
+    /// Whether the column is binary, its cells filled through [BinaryFill].
     private final boolean binary;
     /// Raised once a reader needed the views of deferred dictionary values; a binary column builds
     /// them as its cells complete from then on.
@@ -46,18 +44,10 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         return viewDemand;
     }
 
-    /// Scratch of binary pages whose segments are all filled, for the column's next binary pages.
-    /// Polled and offered without the lock, by page tasks and by the threads that size cells.
-    private final ArrayBlockingQueue<PageDecoder.LevelScratch> binaryScratch =
-            new ArrayBlockingQueue<>(4 * ScheduledColumn.MAX_INFLIGHT_PAGES);
-
     // === Guarded by `lock` ===
     private final Placer<Cell> placer;
     /// Cells whose seal came after their last fill, which a [SealedFillTask] completes.
     private final ArrayDeque<Cell> sealedComplete = new ArrayDeque<>();
-    /// A measured cell whose seal came after its last measure, which a [SealedFillTask] fails the
-    /// read with; `null` while none is.
-    private Cell sealedMeasured;
 
     // === Fetcher only ===
     private BatchPlan.RowGroupBatches rowGroup;
@@ -152,61 +142,39 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
     }
 
     /// Queues a [SealedFillTask] ahead of the queued pages for the cells the fetcher's placement
-    /// sealed after their last fill or measure (lock held), unless one is queued already. Every
-    /// page of such a cell has run, and every queued page starts after it, so the queue stays in
-    /// row order.
+    /// sealed after their last fill (lock held), unless one is queued already. Every page of such
+    /// a cell has run, and every queued page starts after it, so the queue stays in row order.
     private void queueSealedFill() {
-        Cell first = sealedMeasured != null ? sealedMeasured : sealedComplete.peekFirst();
+        Cell first = sealedComplete.peekFirst();
         if (first != null && !done && !(ready.peekFirst() instanceof SealedFillTask)) {
             ready.addFirst(new SealedFillTask(first.firstRow));
         }
     }
 
     /// Completes the cells the fetcher's placement sealed after their last fill, on a
-    /// [SealedFillTask], outside the lock: completing a cell runs the column's filter fragment. A
-    /// measured cell sealed after its last measure fails the read instead
-    /// ([#sealedAfterItsMeasures]).
+    /// [SealedFillTask], outside the lock: completing a cell runs the column's filter fragment.
     private void completeSealed(DecodeBuffers task) {
         while (true) {
-            Cell measured;
-            Cell complete = null;
+            Cell complete;
             lock.lock();
             try {
-                measured = sealedMeasured;
-                sealedMeasured = null;
-                if (measured == null) {
-                    complete = sealedComplete.pollFirst();
-                }
+                complete = sealedComplete.pollFirst();
             }
             finally {
                 lock.unlock();
             }
-            if (measured == null && complete == null) {
+            if (complete == null) {
                 return;
             }
-            Cell cell = measured != null ? measured : complete;
             try {
-                if (measured != null) {
-                    throw sealedAfterItsMeasures(measured);
-                }
                 completeAndPublish(complete, task);
             }
             catch (RuntimeException e) {
                 // The cell cannot complete, and a failure queued behind it would never be raised
-                pageFailed(e, cell.lastPage());
+                pageFailed(e, complete.lastPage());
                 return;
             }
         }
-    }
-
-    /// The failure of a measured cell sealed after every segment placed into it was measured. A
-    /// cell is sealed by the placement of its last page, before that page is measured, unless its
-    /// batch spans the end of a row group, which a read with a binary column never plans
-    /// ([BatchPlan#endsBatchesAtRowGroupBoundaries]): such a batch would draw on two column chunks'
-    /// dictionaries.
-    private static IllegalStateException sealedAfterItsMeasures(Cell cell) {
-        return new IllegalStateException("Batch plan mismatch: the batch of a binary column at row " + cell.firstRow
-                + " is sealed after its last page, but a read with a binary column ends every batch at the end of its row group");
     }
 
     /// What the placer's decisions do to the column; runs under the column lock.
@@ -214,7 +182,7 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
 
         @Override
         public Cell open(String fileName, boolean alwaysMatches, int plannedRecords, int capacity, long firstRow) {
-            Cell cell = new Cell(fileName, alwaysMatches, plannedRecords, capacity, firstRow, binary);
+            Cell cell = new Cell(fileName, alwaysMatches, plannedRecords, capacity, firstRow);
             publishOrder.addLast(cell);
             return cell;
         }
@@ -226,9 +194,6 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
 
         @Override
         public void sealed(Cell cell) {
-            if (cell.measured && cell.unsized.decrementAndGet() == 0 && sealedMeasured == null) {
-                sealedMeasured = cell;
-            }
             if (cell.pending.decrementAndGet() == 0) {
                 sealedComplete.addLast(cell);
             }
@@ -286,18 +251,25 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
         }
     }
 
-    /// Decodes a page of a binary column, measures the bytes of its segments, sizes the cells whose
-    /// last measure that is, and fills its segments. Every segment is measured before any is
-    /// filled, so that a cell this page's measure sizes is sized before the page fills it.
+    /// Decodes a page of a binary column and fills its segments, completing each cell whose last
+    /// segment it fills.
     private void runBinaryPage(PageTask page, DecodeBuffers buffers) {
-        // The page's own scratch: a segment that parks reads the page's bytes after this task
-        PageDecoder.LevelScratch scratch = binaryScratch.poll();
-        page.ownScratch = scratch != null ? scratch : new PageDecoder.LevelScratch();
-        try {
-            fillBinaryPage(page, page.ownScratch, buffers);
-        }
-        finally {
-            release(page);
+        PageDecoder.LevelScratch scratch = scratch(buffers);
+        PageInfo info = page.info;
+        BinaryPageValues values = info.isNullPlaceholder()
+                ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary()
+                : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch, buffers);
+        checkRows(info, values.size());
+        List<Segment> segments = page.segments;
+        for (int i = 0; i < segments.size(); i++) {
+            if (done) {
+                return;
+            }
+            Segment segment = segments.get(i);
+            Cell cell = segment.cell;
+            BinaryFill.fill(segment, values, (BinaryBatchValues) cell.allocate(exchange, column).values,
+                    maxDefinitionLevel);
+            filled(cell, buffers);
         }
     }
 
@@ -308,61 +280,6 @@ public final class ScheduledFlatColumn extends ScheduledColumn<BatchExchange.Bat
             buffers.set(SCRATCH, scratch);
         }
         return scratch;
-    }
-
-    /// Gives up a hold on a flat binary page's scratch, returning it to the column's pool at the last.
-    private void release(PageTask page) {
-        if (page.holds.decrementAndGet() == 0) {
-            PageDecoder.LevelScratch scratch = page.ownScratch;
-            page.ownScratch = null;
-            binaryScratch.offer(scratch);
-        }
-    }
-
-    private void fillBinaryPage(PageTask page, PageDecoder.LevelScratch scratch, DecodeBuffers buffers) {
-        PageInfo info = page.info;
-        BinaryPageValues values = info.isNullPlaceholder()
-                ? page.decoder.nullsInPlace(info.placeholderNumValues(), scratch).binary()
-                : page.decoder.decodeFlatBinary(info.pageData(), info.dictionary(), scratch, buffers);
-        checkRows(info, values.size());
-        List<Segment> segments = page.segments;
-        for (int i = 0; i < segments.size(); i++) {
-            Segment segment = segments.get(i);
-            segment.bytes = BinaryFill.measure(segment, values);
-            if (segment.cell.unsized.decrementAndGet() == 0) {
-                size(segment.cell, buffers);
-            }
-        }
-        for (int i = 0; i < segments.size(); i++) {
-            if (done) {
-                return;
-            }
-            Segment segment = segments.get(i);
-            Cell cell = segment.cell;
-            BinaryBatchValues out = (BinaryBatchValues) cell.allocate(exchange, column).values;
-            // A segment that parks holds the page's bytes until the sizing fills it
-            page.holds.incrementAndGet();
-            if (BinaryFill.fill(segment, values, out, maxDefinitionLevel)) {
-                page.holds.decrementAndGet();
-                filled(cell, buffers);
-            }
-        }
-    }
-
-    /// Sizes a measured cell, writes the bytes of the segments that parked before it was sized,
-    /// and gives up the sizing's token, completing the cell if that was the last.
-    private void size(Cell cell, DecodeBuffers task) {
-        BinaryBatchValues out = (BinaryBatchValues) cell.allocate(exchange, column).values;
-        List<Segment> parked = BinaryFill.size(cell, out);
-        if (parked != null) {
-            for (int i = 0; i < parked.size(); i++) {
-                Segment segment = parked.get(i);
-                BinaryFill.unpark(segment, out, maxDefinitionLevel);
-                release(segment.page);
-                filled(cell, task);
-            }
-        }
-        filled(cell, task);
     }
 
     /// Counts one of the cell's tokens given up, and completes the cell at its last.

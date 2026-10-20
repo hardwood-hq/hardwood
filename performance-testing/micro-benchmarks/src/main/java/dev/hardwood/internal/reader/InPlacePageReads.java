@@ -21,11 +21,12 @@ public final class InPlacePageReads {
     private int[] starts = new int[0];
     private int[] ends = new int[0];
     private int[] ids = new int[0];
-    private byte[] bytes = new byte[0];
+    private int[] bufferIds = new int[0];
 
     /// Reads `page` of `column` and writes its values; returns the array holding them, which the
     /// next read reuses: a primitive array for a numeric column, the entry ids of a dictionary
-    /// page or the value bytes of a plain one for a binary column.
+    /// page or, for a plain one, the batch its values' bytes were copied into, in chunks as a fill
+    /// copies them.
     public Object read(PageDecoder decoder, ColumnSchema column, ByteBuffer page, Dictionary dictionary,
                        DecodeBuffers buffers) {
         if (column.maxRepetitionLevel() > 0) {
@@ -59,16 +60,14 @@ public final class InPlacePageReads {
             starts = new int[size];
             ends = new int[size];
             ids = new int[size];
+            bufferIds = new int[size];
         }
         if (values.dictionary() != null) {
-            values.copyIds(0, size, ids, starts, ends, 0);
+            values.copyIds(0, size, ids, starts, ends, bufferIds, 0);
             return ids;
         }
-        int length = values.bytes(0, size);
-        if (bytes.length < length) {
-            bytes = new byte[length];
-        }
-        values.copyPlain(0, size, starts, ends, 0, bytes, 0);
-        return bytes;
+        BinaryBatchValues chunks = new BinaryBatchValues(size);
+        values.copyPlain(0, size, starts, ends, bufferIds, 0, new PlainBytes(chunks, values.bytes(0, size)));
+        return chunks;
     }
 }

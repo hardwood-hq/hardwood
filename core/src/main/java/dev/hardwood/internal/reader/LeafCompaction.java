@@ -66,8 +66,7 @@ public final class LeafCompaction {
     /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
     /// (nested path); only its `[0, count)` prefix is read. Only the views are
-    /// gathered: the result takes over `raw`'s bytes, and `raw` must not be read
-    /// afterwards (see [BinaryBatchValues#compact]). A dictionary-encoded leaf carries its chunk
+    /// gathered: the result shares `raw`'s buffers (see [BinaryBatchValues#compact]). A dictionary-encoded leaf carries its chunk
     /// dictionary and gathered entry indices through, so `getStrings()` still reuses
     /// the interned instances and the column reader's dictionary ids describe the
     /// compacted values.

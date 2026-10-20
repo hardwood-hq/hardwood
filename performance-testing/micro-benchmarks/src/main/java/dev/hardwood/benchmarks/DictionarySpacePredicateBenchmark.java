@@ -133,7 +133,7 @@ public class DictionarySpacePredicateBenchmark {
         }
 
         BinaryBatchValues values = new BinaryBatchValues(bytes,
-                Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1), bytes.length);
+                Arrays.copyOf(offsets, rows), Arrays.copyOfRange(offsets, 1, rows + 1));
         values.dictionary = dictionary;
         values.dictIndices = dictionaryIndices;
         batch = new BatchExchange.Batch();

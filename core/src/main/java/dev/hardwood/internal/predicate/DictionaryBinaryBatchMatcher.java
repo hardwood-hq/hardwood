@@ -117,6 +117,6 @@ public final class DictionaryBinaryBatchMatcher implements BinaryBatchMatcher {
     /// Tests row `row` through its byte view; the first such call on a batch whose
     /// dictionary values were deferred builds their views.
     private boolean testView(BinaryBatchValues values, int row) {
-        return delegate.testValue(values.bytes(), values.starts()[row], values.ends()[row]);
+        return delegate.testValue(values.buffer(row), values.starts()[row], values.ends()[row]);
     }
 }

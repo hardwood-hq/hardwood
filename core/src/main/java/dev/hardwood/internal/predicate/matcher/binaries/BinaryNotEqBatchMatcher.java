@@ -30,7 +30,8 @@ public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         BinaryBatchValues vals = (BinaryBatchValues) batch.values;
-        byte[] bytes = vals.bytes();
+        byte[][] buffers = vals.buffers();
+        int[] bufferIds = vals.bufferIds();
         int[] starts = vals.starts();
         int[] ends = vals.ends();
         long[] validity = batch.validity;
@@ -44,7 +45,7 @@ public final class BinaryNotEqBatchMatcher implements BinaryBatchMatcher {
             long word = 0L;
             for (int b = 0; b < rows; b++) {
                 int i = base + b;
-                if ((present & (1L << b)) != 0L && testValue(bytes, starts[i], ends[i])) {
+                if ((present & (1L << b)) != 0L && testValue(buffers[bufferIds[i]], starts[i], ends[i])) {
                     word |= 1L << b;
                 }
             }

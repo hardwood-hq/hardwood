@@ -48,11 +48,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// The orders reach the steps of the cell protocol that depend on which task comes first, and
 /// the test counts each, so that a change that stops the reads from reaching one fails here:
 ///
-/// - a binary page filling a segment of `PLAIN` values before its cell is sized parks the segment
-///   ([Cell#park]), and the task of the cell's last measure, another page's, sizes the cell and
-///   writes the parked segments, several at once when several later pages ran first
-///   ([BinaryFill#unpark]); the sizing's token keeps the cell from completing before, and each
-///   parked segment's hold keeps its page's scratch;
+/// - the pages of a binary cell fill their segments in any order, each copying its `PLAIN` values'
+///   bytes into chunks of its own ([BinaryFill]), and the page that fills the cell's last segment,
+///   not necessarily the cell's last page, completes it;
 /// - a page of a column decoded through levels measured before the page ahead of it waits, and
 ///   the task of the page ahead places both ([ScheduledNestedColumn]), including pages that begin
 ///   inside a record, whose leading values go into the cell of the record before; every cell of
@@ -111,10 +109,6 @@ class ShuffledTaskOrderTest {
             }
         }
         assertThat(counts.outOfOrder).as("pages run ahead of an earlier page of their column").isPositive();
-        assertThat(counts.parked).as("segments parked before their cell was sized").isPositive();
-        assertThat(counts.unparkedByOtherPage).as("parked segments written by another page's task")
-                .isEqualTo(counts.parked);
-        assertThat(counts.multiUnpark).as("sizings writing several parked segments").isPositive();
     }
 
     @Test
@@ -185,17 +179,13 @@ class ShuffledTaskOrderTest {
 
     // ==================== Order counts ====================
 
-    /// Counts the orders the tasks ran in, and the parks and unparks they led to. Runs on the
+    /// Counts the orders the tasks ran in. Runs on the
     /// executor's one task thread, apart from [#submitted].
     private static final class OrderCounts implements TaskOrderExecutor.Listener {
 
         private final Map<ScheduledColumn<?>, List<PageTask>> submitted = new IdentityHashMap<>();
         private final Set<PageTask> ran = Collections.newSetFromMap(new IdentityHashMap<>());
-        private final Map<Segment, PageTask> parkedSegments = new IdentityHashMap<>();
         private int outOfOrder;
-        private int parked;
-        private int unparkedByOtherPage;
-        private int multiUnpark;
         private int outOfOrderInsideRecord;
         private final Set<PageTask> ranAhead = Collections.newSetFromMap(new IdentityHashMap<>());
         /// The thread running a task, `null` between tasks.
@@ -239,26 +229,6 @@ class ShuffledTaskOrderTest {
             if (ranAhead.remove(page) && page instanceof NestedPageTask nested && nested.measure != null
                     && nested.measure.leadingValues() > 0) {
                 outOfOrderInsideRecord++;
-            }
-            int[] unparkedHere = new int[1];
-            parkedSegments.entrySet().removeIf(entry -> {
-                if (entry.getKey().parkedValues != null) {
-                    return false;
-                }
-                if (entry.getValue() != page) {
-                    unparkedByOtherPage++;
-                    unparkedHere[0]++;
-                }
-                return true;
-            });
-            if (unparkedHere[0] > 1) {
-                multiUnpark++;
-            }
-            for (Segment segment : page.segments) {
-                if (segment.parkedValues != null) {
-                    parked++;
-                    parkedSegments.put(segment, page);
-                }
             }
         }
     }

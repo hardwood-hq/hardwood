@@ -22,6 +22,6 @@ public final class BinaryBatchValuesFixtures {
             starts[i] = offsets[i];
             ends[i] = offsets[i + 1];
         }
-        return new BinaryBatchValues(bytes, starts, ends, offsets[count]);
+        return new BinaryBatchValues(bytes, starts, ends);
     }
 }

@@ -8,8 +8,7 @@
 package dev.hardwood.internal.reader;
 
 /// The failure of a segment's fill, carrying the page the segment reads, for a fill that runs on
-/// another page's task: a nested cell's fill ([NestedFill]), or a parked binary segment written by
-/// the sizing of its cell ([BinaryFill#unpark]). [ScheduledColumn#pageFailed] unwraps it, so the
+/// another page's task: a nested cell's fill ([NestedFill]). [ScheduledColumn#pageFailed] unwraps it, so the
 /// failure names the segment's page; it never leaves the column.
 final class SegmentFillException extends RuntimeException {
 

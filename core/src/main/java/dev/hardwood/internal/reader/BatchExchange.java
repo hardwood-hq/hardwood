@@ -47,13 +47,6 @@ public class BatchExchange<B> {
 
     static final int READY_QUEUE_CAPACITY = 2;
 
-    /// Per-value byte budget for variable-length `BYTE_ARRAY` / `INT96`
-    /// buffers allocated by [#allocateArray]. The bytes buffer is sized to
-    /// `BINARY_BYTES_PER_VALUE_HINT * capacity` when the first value is appended
-    /// and grown on overflow; a batch whose values are all views into a
-    /// dictionary never allocates it at that size.
-    public static final int BINARY_BYTES_PER_VALUE_HINT = 32;
-
     /// A mutable batch holder for flat columns, reused in recycling mode. The column's pipeline
     /// writes into it, the consumer reads from it.
     ///
@@ -94,7 +87,7 @@ public class BatchExchange<B> {
     private static final Object END_OF_STREAM = new Object();
 
     private final BlockingQueue<Object> readyQueue;
-    private final ArrayBlockingQueue<B> freeQueue;
+    private final BlockingQueue<B> freeQueue;
     private final Supplier<B> batchFactory;
     private final String columnName;
 
@@ -112,7 +105,7 @@ public class BatchExchange<B> {
     private volatile Runnable roomListener;
 
     private BatchExchange(String columnName, BlockingQueue<Object> readyQueue,
-                          ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory,
+                          BlockingQueue<B> freeQueue, Supplier<B> batchFactory,
                           ToIntFunction<B> batchRows, int batchCapacity) {
         this.columnName = columnName;
         this.readyQueue = readyQueue;
@@ -127,7 +120,8 @@ public class BatchExchange<B> {
     /// Three batches are pre-allocated (`READY_QUEUE_CAPACITY + 1`): one filling
     /// plus up to two queued. The consumer must return consumed batches to `freeQueue()`.
     /// A scheduled column fills holders past those three while it decodes ahead
-    /// ([#newBatch]); the free queue keeps at most three of the holders returned.
+    /// ([#newBatch]); the free queue keeps at most three of the holders returned, for holders
+    /// whose arrays are allocated per batch anyway.
     ///
     /// @param columnName column name for error messages
     /// @param batchFactory creates the initial batch holders, and those a scheduled column
@@ -135,8 +129,26 @@ public class BatchExchange<B> {
     /// @param <B> the batch type
     /// @return a recycling [BatchExchange]
     public static <B> BatchExchange<B> recycling(String columnName, Supplier<B> batchFactory) {
+        return recycling(columnName, batchFactory, new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY + 1));
+    }
+
+    /// Creates a recycling exchange whose free queue keeps every holder returned, the ones a
+    /// scheduled column filled past the three pre-allocated while it decoded ahead included, so
+    /// that a read reuses the arrays of every holder its read-ahead filled rather than allocating
+    /// new ones. The holders kept are at most those the read-ahead filled at once.
+    ///
+    /// @param columnName column name for error messages
+    /// @param batchFactory creates the initial batch holders, and those a scheduled column
+    ///        needs beyond them
+    /// @param <B> the batch type
+    /// @return a recycling [BatchExchange]
+    public static <B> BatchExchange<B> recyclingEveryHolder(String columnName, Supplier<B> batchFactory) {
+        return recycling(columnName, batchFactory, new LinkedBlockingQueue<>());
+    }
+
+    private static <B> BatchExchange<B> recycling(String columnName, Supplier<B> batchFactory,
+                                                  BlockingQueue<B> freeQueue) {
         ArrayBlockingQueue<Object> readyQueue = new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY);
-        ArrayBlockingQueue<B> freeQueue = new ArrayBlockingQueue<>(READY_QUEUE_CAPACITY + 1);
 
         for (int i = 0; i < READY_QUEUE_CAPACITY + 1; i++) {
             freeQueue.add(batchFactory.get());
@@ -418,12 +430,8 @@ public class BatchExchange<B> {
     ///
     /// For fixed-width physical types this returns the typed primitive
     /// array (`int[]`, `long[]`, …). For byte-array-shaped types it returns
-    /// an empty [BinaryBatchValues] with views for `capacity` values. Its
-    /// bytes buffer is allocated on first use, sized for appended values by
-    /// `BINARY_BYTES_PER_VALUE_HINT` per value (`BYTE_ARRAY`, `INT96`) or by
-    /// the column's width (`FIXED_LEN_BYTE_ARRAY`). The width is present and
-    /// positive — [RowGroupIterator#initialize] validates it for every column
-    /// a read touches before the first batch is allocated for it.
+    /// an empty [BinaryBatchValues] with views for `capacity` values, whose
+    /// fill allocates the chunks its plain values' bytes take.
     public static Object allocateArray(ColumnSchema column, int capacity) {
         PhysicalType type = column.type();
         return switch (type) {
@@ -432,8 +440,7 @@ public class BatchExchange<B> {
             case FLOAT -> new float[capacity];
             case DOUBLE -> new double[capacity];
             case BOOLEAN -> new boolean[capacity];
-            case BYTE_ARRAY, INT96 -> new BinaryBatchValues(capacity, BINARY_BYTES_PER_VALUE_HINT);
-            case FIXED_LEN_BYTE_ARRAY -> new BinaryBatchValues(capacity, column.typeLength());
+            case BYTE_ARRAY, INT96, FIXED_LEN_BYTE_ARRAY -> new BinaryBatchValues(capacity);
         };
     }
 }
