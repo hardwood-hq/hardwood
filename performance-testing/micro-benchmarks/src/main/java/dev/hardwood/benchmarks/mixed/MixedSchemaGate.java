@@ -14,6 +14,7 @@ import dev.hardwood.HardwoodContext;
 import dev.hardwood.benchmarks.BenchmarkData;
 import dev.hardwood.benchmarks.NestedReads;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 /// Correctness gate for [MixedSchemaReadBenchmark]. Generates the mixed-schema corpus
 /// and asserts the paths that read the same values agree before any timing is trusted:
@@ -50,10 +51,54 @@ public final class MixedSchemaGate {
     /// The 12 scalar columns must fold identically whether or not the file also holds
     /// list columns.
     private static void gateMixed(Path dir, long rows, HardwoodContext context) throws IOException {
-        double mixed = sumScalars(MixedSchemaFileGenerator.mixedFile(dir, rows), context);
-        double flat = sumScalars(MixedSchemaFileGenerator.flatScalarsFile(dir, rows), context);
+        Path mixedPath = MixedSchemaFileGenerator.mixedFile(dir, rows);
+        Path flatPath = MixedSchemaFileGenerator.flatScalarsFile(dir, rows);
+        double mixed = sumScalars(mixedPath, context);
+        double flat = sumScalars(flatPath, context);
         requireClose("mixed scalars vs flat scalars", mixed, flat);
         System.out.printf("  OK  mixed scalars sum=%s%n", mixed);
+
+        // The row path must fold what the column path folds, on either file.
+        double mixedRows = MixedSchemaReadBenchmark.sumScalarRows(mixedPath, null, context);
+        double flatRows = MixedSchemaReadBenchmark.sumScalarRows(flatPath, null, context);
+        requireClose("mixed scalar rows vs columns", mixedRows, mixed);
+        requireClose("flat scalar rows vs columns", flatRows, mixed);
+        System.out.printf("  OK  scalar rows sum=%s%n", mixedRows);
+
+        // A filtered read must keep exactly the rows an unfiltered read selects by hand.
+        double expected = sumScalarRowsWhereI0Positive(mixedPath, context);
+        double mixedFiltered = MixedSchemaReadBenchmark.sumScalarRows(
+                mixedPath, MixedSchemaReadBenchmark.I0_POSITIVE, context);
+        double flatFiltered = MixedSchemaReadBenchmark.sumScalarRows(
+                flatPath, MixedSchemaReadBenchmark.I0_POSITIVE, context);
+        requireClose("mixed filtered scalar rows", mixedFiltered, expected);
+        requireClose("flat filtered scalar rows", flatFiltered, expected);
+        System.out.printf("  OK  filtered scalar rows sum=%s%n", mixedFiltered);
+    }
+
+    /// The filtered row fold's reference: every row of `path` read without a filter, the
+    /// `i0 > 0` test applied here rather than by the reader.
+    private static double sumScalarRowsWhereI0Positive(Path path, HardwoodContext context) throws IOException {
+        double sum = 0;
+        try (ParquetFileReader reader = NestedReads.open(path, context);
+             RowReader rows = reader.rowReader()) {
+            while (rows.hasNext()) {
+                rows.next();
+                if (rows.getInt("i0") <= 0) {
+                    continue;
+                }
+                for (int c = 0; c < 4; c++) {
+                    sum += rows.getInt("i" + c);
+                }
+                for (int c = 0; c < 4; c++) {
+                    sum += rows.getLong("l" + c);
+                }
+                for (int c = 0; c < 4; c++) {
+                    sum += rows.getDouble("d" + c);
+                }
+            }
+        }
+        return sum;
     }
 
     private static void gateStruct(Path dir, long rows, HardwoodContext context) throws IOException {

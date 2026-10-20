@@ -27,7 +27,10 @@ import org.openjdk.jmh.annotations.Warmup;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.benchmarks.BenchmarkData;
 import dev.hardwood.benchmarks.NestedReads;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 /// Schema-composition effects on the nested read path — the workload behind #732
 /// (per-column-worker routing), plus the shapes whose acceptance criteria demand a
@@ -38,6 +41,11 @@ import dev.hardwood.reader.ParquetFileReader;
 ///   (`mixed_*.parquet`, routed onto the nested reader today) versus a file with only
 ///   the scalars (`flat_scalars_*.parquet`, routed onto the flat reader). The delta is
 ///   the per-scalar-column tax #732 removes.
+/// - `rowScalarsMixed` vs `rowScalarsFlat` — the same 12 scalars of the same two files,
+///   through a row reader projected to exactly those columns. The projection leaves the
+///   lists out, so both files read through the flat row reader (#1335).
+/// - `rowScalarsMixedFiltered` vs `rowScalarsFlatFiltered` — the same row reads, filtered
+///   on `i0 > 0`, which keeps about half the rows and is evaluated by the batch matchers.
 /// - `columnStruct` vs `columnStructFlat` — a non-repeated `STRUCT` of primitives
 ///   versus the same leaves as top-level columns (the flat-struct path #732 subsumes).
 /// - `columnRepeatedHeavy` — several `LIST` columns and no scalars: the no-regression
@@ -59,6 +67,14 @@ import dev.hardwood.reader.ParquetFileReader;
 public class MixedSchemaReadBenchmark {
 
     private static final int SCALAR_GROUP = 4;
+
+    /// The 12 non-repeated scalar columns, in schema order: `i0..i3`, `l0..l3`, `d0..d3`.
+    private static final ColumnProjection SCALARS = ColumnProjection.columns(
+            "i0", "i1", "i2", "i3", "l0", "l1", "l2", "l3", "d0", "d1", "d2", "d3");
+
+    /// Keeps about half the rows. `i0` is a uniform random `int`, so no row group's
+    /// statistics prune it and every batch is filtered.
+    static final FilterPredicate I0_POSITIVE = FilterPredicate.gt("i0", 0);
 
     private Path mixedPath;
     private Path flatScalarsPath;
@@ -102,6 +118,26 @@ public class MixedSchemaReadBenchmark {
     @Benchmark
     public double columnScalarsFlat() throws IOException {
         return sumScalars(flatScalarsPath);
+    }
+
+    @Benchmark
+    public double rowScalarsMixed() throws IOException {
+        return sumScalarRows(mixedPath, null, context);
+    }
+
+    @Benchmark
+    public double rowScalarsFlat() throws IOException {
+        return sumScalarRows(flatScalarsPath, null, context);
+    }
+
+    @Benchmark
+    public double rowScalarsMixedFiltered() throws IOException {
+        return sumScalarRows(mixedPath, I0_POSITIVE, context);
+    }
+
+    @Benchmark
+    public double rowScalarsFlatFiltered() throws IOException {
+        return sumScalarRows(flatScalarsPath, I0_POSITIVE, context);
     }
 
     @Benchmark
@@ -165,6 +201,34 @@ public class MixedSchemaReadBenchmark {
             }
             for (int c = 0; c < SCALAR_GROUP; c++) {
                 sum += NestedReads.sumDoubleColumn(reader, "d" + c);
+            }
+        }
+        return sum;
+    }
+
+    /// Folds the 12 non-repeated scalar columns of a file through the row reader, projected
+    /// to exactly those columns and read by index. With a `filter`, only the rows it keeps
+    /// are folded; `null` reads every row.
+    static double sumScalarRows(Path path, FilterPredicate filter, HardwoodContext context) throws IOException {
+        double sum = 0;
+        try (ParquetFileReader reader = NestedReads.open(path, context)) {
+            ParquetFileReader.RowReaderBuilder builder = reader.buildRowReader().projection(SCALARS);
+            if (filter != null) {
+                builder.filter(filter);
+            }
+            try (RowReader rows = builder.build()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    for (int c = 0; c < SCALAR_GROUP; c++) {
+                        sum += rows.getInt(c);
+                    }
+                    for (int c = 0; c < SCALAR_GROUP; c++) {
+                        sum += rows.getLong(SCALAR_GROUP + c);
+                    }
+                    for (int c = 0; c < SCALAR_GROUP; c++) {
+                        sum += rows.getDouble(2 * SCALAR_GROUP + c);
+                    }
+                }
             }
         }
         return sum;
