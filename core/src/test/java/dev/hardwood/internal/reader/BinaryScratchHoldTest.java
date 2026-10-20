@@ -22,6 +22,7 @@ import dev.hardwood.OutputFile;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
@@ -64,11 +65,9 @@ class BinaryScratchHoldTest {
                              .build()) {
                     ColumnReader column = columns.getColumnReader("v");
                     while (columns.nextBatch()) {
-                        byte[] bytes = column.getBinaryValues();
-                        int[] starts = column.getBinaryStarts();
-                        int[] ends = column.getBinaryEnds();
+                        BinaryValues binary = column.getBinaryValues();
                         for (int i = 0; i < column.getRecordCount(); i++) {
-                            String value = new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8);
+                            String value = window(binary, i);
                             assertThat(value).as("pass %d, row %d", pass, row).isEqualTo(value(row));
                             row++;
                         }
@@ -105,5 +104,9 @@ class BinaryScratchHoldTest {
             writer.columnWriter().writeBatch(batch -> batch.bytes("v", values));
         }
         return InMemoryFiles.toByteArray(out);
+    }
+
+    private static String window(BinaryValues values, int i) {
+        return new String(values.buffer(i), values.start(i), values.end(i) - values.start(i), StandardCharsets.UTF_8);
     }
 }

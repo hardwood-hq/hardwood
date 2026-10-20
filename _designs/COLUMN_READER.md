@@ -81,12 +81,14 @@ Tests: `ValidityTest`, `ColumnReaderLayerModelTest`, `ColumnReadersTest`.
 
 ### Variable-length
 
-`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader`): one `byte[]` buffer and, per value, a view `[starts[i], ends[i])` into it, instead of one `byte[]` per value:
+`BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY` and `INT96` leaves are carried as `BinaryBatchValues` (`internal.reader`): one `byte[]` buffer and, per value, a view `[starts[i], ends[i])` into it, instead of one `byte[]` per value. `getBinaryValues()` exposes them as a `BinaryValues`, read by value index:
 
-- `getBinaryStarts()` and `getBinaryEnds()` have length `getValueCount()`; value `i` occupies `[starts[i], ends[i])` of `getBinaryValues()`. A null value's range is empty.
+- **A per-value window.** Value `i` is `[start(i), end(i))` of `buffer(i)`, for `i` in `[0, size())` with `size() == getValueCount()`. A null value's range is empty. A caller reads a value's bytes from its own window; the window is the public shape so that the storage behind it stays the reader's to choose. `buffer(i)` promises no sharing between values, no identity across calls and no zero copy: storage the window cannot point into is served from a copy, and an off-heap accessor can be added beside it.
+- **No per-byte accessor.** A per-byte read checked against the value's length keeps its check inside the caller's loop; an unchecked one reads past the value into its neighbour. A loop over the window compiles as one over a raw array.
+- **No per-value string accessor.** Taking a batch's windows builds its dictionary values' views (see **Deferred views** below); `getStrings()` resolves strings through the dictionary without them and is the string accessor.
+- **A final class.** Its call sites in a caller's loop stay monomorphic and inline. A callback API would put one call site inside the library, megamorphic across callers.
 - Views are not contiguous or ordered, and may overlap. A value from a dictionary-encoded page points at its entry in the batch's single copy of that dictionary once the batch holds one, so values naming one entry may cover the same bytes; a value from a plain page is written to the buffer once, at its segment's offset ([READ_PIPELINE.md](READ_PIPELINE.md#scheduled-columns)).
-- `getBinaryValues()` is not sized to the values: bytes outside every view are unspecified. Consumers bound reads by each value's view, never by `bytes.length`.
-- All three accessors throw `IllegalStateException` on a fixed-width column.
+- `getBinaryValues()` throws `IllegalStateException` on a fixed-width column.
 
 Views are what keep a dictionary-encoded column from costing a byte copy per value. A batch of binary values draws on at most one dictionary ([Dictionary ids](#dictionary-ids)). Building its dictionary values' views appends their bytes until they reach the dictionary's size, and only then copies the dictionary in, at most once per batch, recording two `int`s per value after that. A batch therefore holds at most twice the bytes that appending every value would take, however large the dictionary is. Views must stay free to overlap and to leave value order: that freedom is what lets a dictionary value point at its entry instead of being copied.
 
@@ -170,7 +172,7 @@ Tests: `ColumnReaderBatchArrayIdentityTest`. Freshness on the filtered path is u
 
 ## Boundaries
 
-- **Arrow-compatible buffers (#153).** Validity, offsets and value bytes are Java arrays, and the public accessors return them as arrays (`Validity.words()`, `getInts()`, `getBinaryValues()`, `getLayerOffsets()`). A layout Arrow consumers could take without a copy needs accessors of its own, since these signatures cannot expose off-heap buffers without copying each batch; the model (validity polarity, sentinel layer offsets, real items only) carries over unchanged.
+- **Arrow-compatible buffers (#153).** Validity, offsets and value bytes are Java arrays, and the public accessors return them as arrays (`Validity.words()`, `getInts()`, `getLayerOffsets()`) or windows into arrays (`getBinaryValues()`). A layout Arrow consumers could take without a copy needs accessors of its own, since these signatures cannot expose off-heap buffers without copying each batch; the model (validity polarity, sentinel layer offsets, real items only) carries over unchanged.
 - **Caller-provided buffers (#737).** Every batch allocates fresh arrays; a fill-into-caller-buffers contract for zero-allocation reads does not exist.
 - **Logical types (#514).** The accessors return physical values only; logical conversion for columnar consumers is not exposed.
 - **API stability (#522).** `ColumnReader`, `LayerKind` and `Validity` are `@Experimental`.

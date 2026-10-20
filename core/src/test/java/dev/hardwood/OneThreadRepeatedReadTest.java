@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
@@ -54,10 +55,9 @@ class OneThreadRepeatedReadTest {
                 for (int v = 0; v < ints.getValueCount(); v++) {
                     intSum += values[v];
                 }
-                int[] starts = strings.getBinaryStarts();
-                int[] ends = strings.getBinaryEnds();
-                for (int v = 0; v < strings.getValueCount(); v++) {
-                    stringBytes += ends[v] - starts[v];
+                BinaryValues binary = strings.getBinaryValues();
+                for (int v = 0; v < binary.size(); v++) {
+                    stringBytes += binary.length(v);
                 }
             }
         }

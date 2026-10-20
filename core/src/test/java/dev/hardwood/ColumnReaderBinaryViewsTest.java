@@ -18,12 +18,14 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Reads binary columns through the views of [ColumnReader]: each value reads back through its
 /// own `[start, end)` range, a null's range is empty, and values of a dictionary-encoded column
@@ -74,18 +76,17 @@ class ColumnReaderBinaryViewsTest {
 
             int row = 0;
             while (col.nextBatch()) {
-                byte[] bytes = col.getBinaryValues();
-                int[] starts = col.getBinaryStarts();
-                int[] ends = col.getBinaryEnds();
-                for (int i = 0; i < col.getValueCount(); i++, row++) {
+                BinaryValues values = col.getBinaryValues();
+                assertThat(values.size()).isEqualTo(col.getValueCount());
+                for (int i = 0; i < values.size(); i++, row++) {
                     String expected = station(row);
                     if (expected == null) {
                         assertThat(col.getLeafValidity().isNull(i)).isTrue();
-                        assertThat(ends[i] - starts[i]).isEqualTo(0);
+                        assertThat(values.end(i) - values.start(i)).isEqualTo(0);
                     }
                     else {
-                        assertThat(new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
-                                .isEqualTo(expected);
+                        assertThat(new String(values.buffer(i), values.start(i), values.end(i) - values.start(i),
+                                StandardCharsets.UTF_8)).isEqualTo(expected);
                     }
                 }
             }
@@ -99,11 +100,13 @@ class ColumnReaderBinaryViewsTest {
              ColumnReader col = reader.columnReader("station")) {
 
             assertThat(col.nextBatch()).isTrue();
-            int[] starts = col.getBinaryStarts();
+            BinaryValues values = col.getBinaryValues();
 
             // Rows 0, 4 and 8 all hold "Hamburg".
-            assertThat(starts[4]).isEqualTo(starts[0]);
-            assertThat(starts[8]).isEqualTo(starts[0]);
+            assertThat(values.buffer(4)).isSameAs(values.buffer(0));
+            assertThat(values.start(4)).isEqualTo(values.start(0));
+            assertThat(values.buffer(8)).isSameAs(values.buffer(0));
+            assertThat(values.start(8)).isEqualTo(values.start(0));
         }
     }
 
@@ -116,21 +119,72 @@ class ColumnReaderBinaryViewsTest {
 
             int row = 0;
             while (col.nextBatch()) {
-                byte[] bytes = col.getBinaryValues();
-                int[] starts = col.getBinaryStarts();
-                int[] ends = col.getBinaryEnds();
-                for (int i = 0; i < col.getValueCount(); i++, row++) {
+                BinaryValues values = col.getBinaryValues();
+                for (int i = 0; i < values.size(); i++, row++) {
                     byte[] expected = code(row);
                     if (expected == null) {
                         assertThat(col.getLeafValidity().isNull(i)).isTrue();
-                        assertThat(ends[i] - starts[i]).isEqualTo(0);
+                        assertThat(values.length(i)).isEqualTo(0);
                     }
                     else {
-                        assertThat(Arrays.copyOfRange(bytes, starts[i], ends[i])).isEqualTo(expected);
+                        assertThat(Arrays.copyOfRange(values.buffer(i), values.start(i), values.end(i)))
+                                .isEqualTo(expected);
                     }
                 }
             }
             assertThat(row).isEqualTo(ROWS);
+        }
+    }
+
+    /// The conveniences read the same bytes as the window.
+    @Test
+    void conveniencesReadTheWindow() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReader col = reader.columnReader("station")) {
+
+            assertThat(col.nextBatch()).isTrue();
+            BinaryValues values = col.getBinaryValues();
+            byte[] copy = new byte[64];
+            for (int i = 0; i < values.size(); i++) {
+                byte[] window = Arrays.copyOfRange(values.buffer(i), values.start(i), values.end(i));
+                assertThat(values.length(i)).isEqualTo(window.length);
+                assertThat(values.getBinary(i)).isEqualTo(window);
+                values.copyTo(i, copy, 3);
+                assertThat(Arrays.copyOfRange(copy, 3, 3 + window.length)).isEqualTo(window);
+                assertThat(values.contentEquals(i, copy, 3, window.length)).isTrue();
+                assertThat(values.contentEquals(i, copy, 2, window.length)).isEqualTo(window.length == 0);
+            }
+        }
+    }
+
+    @Test
+    void refusesAValueOutsideTheBatch() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(file)));
+             ColumnReader col = reader.columnReader("station")) {
+
+            assertThat(col.nextBatch()).isTrue();
+            BinaryValues values = col.getBinaryValues();
+            int size = values.size();
+            assertThatThrownBy(() -> values.buffer(size))
+                    .isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("Value " + size + " out of bounds for " + size + " values");
+            assertThatThrownBy(() -> values.buffer(-1))
+                    .isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage("Value -1 out of bounds for " + size + " values");
+            String arrayBound = "Index " + size + " out of bounds for length " + size;
+            assertThatThrownBy(() -> values.start(size)).isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
+            assertThatThrownBy(() -> values.end(size)).isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
+            assertThatThrownBy(() -> values.length(size)).isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
+            assertThatThrownBy(() -> values.getBinary(size)).isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
+            assertThatThrownBy(() -> values.copyTo(size, new byte[64], 0)).isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
+            assertThatThrownBy(() -> values.contentEquals(size, new byte[64], 0, 1))
+                    .isInstanceOf(IndexOutOfBoundsException.class)
+                    .hasMessage(arrayBound);
         }
     }
 

@@ -13,6 +13,7 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
@@ -79,26 +80,20 @@ class ColumnReaderBatchArrayIdentityTest {
         assertBackingFreshPerBatch("ints", col -> col.getLeafValidity().words());
     }
 
-    /// Both varlength leaf buffers — the byte buffer and the sentinel-suffixed
-    /// offsets — are fresh per batch.
+    /// A batch's [BinaryValues] and the array its values are read from are fresh per batch.
     @Test
     void binaryBuffersFreshPerBatch() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE));
              ColumnReader col = reader.buildColumnReader("labels").batchSize(2).build()) {
 
             assertThat(col.nextBatch()).isTrue();
-            byte[] bytes0 = col.getBinaryValues();
-            int[] starts0 = col.getBinaryStarts();
-            int[] ends0 = col.getBinaryEnds();
+            BinaryValues binary0 = col.getBinaryValues();
 
             assertThat(col.nextBatch()).isTrue();
-            byte[] bytes1 = col.getBinaryValues();
-            int[] starts1 = col.getBinaryStarts();
-            int[] ends1 = col.getBinaryEnds();
+            BinaryValues binary1 = col.getBinaryValues();
 
-            assertThat(bytes0).as("getBinaryValues() buffer").isNotSameAs(bytes1);
-            assertThat(starts0).as("getBinaryStarts() buffer").isNotSameAs(starts1);
-            assertThat(ends0).as("getBinaryEnds() buffer").isNotSameAs(ends1);
+            assertThat(binary0).as("getBinaryValues()").isNotSameAs(binary1);
+            assertThat(binary0.buffer(0)).as("getBinaryValues() buffer").isNotSameAs(binary1.buffer(0));
         }
     }
 

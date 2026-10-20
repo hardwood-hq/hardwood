@@ -25,6 +25,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.BinaryDictionary;
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -64,7 +65,7 @@ class ColumnReaderDictionaryIdsTest {
                 assertThat(ids).hasSize(col.getValueCount());
                 for (int i = 0; i < col.getValueCount(); i++) {
                     viaIds.add(col.getBinaryDictionary().getString(ids[i]));
-                    viaRanges.add(range(col.getBinaryValues(), col.getBinaryStarts()[i], col.getBinaryEnds()[i]));
+                    viaRanges.add(range(col.getBinaryValues(), i));
                 }
             }
             assertThat(viaIds).hasSize(200).isEqualTo(viaRanges);
@@ -112,7 +113,7 @@ class ColumnReaderDictionaryIdsTest {
                             : "distinct-%06d".formatted(row - 2_000);
                     String actual = ids != null
                             ? col.getBinaryDictionary().getString(ids[i])
-                            : range(col.getBinaryValues(), col.getBinaryStarts()[i], col.getBinaryEnds()[i]);
+                            : range(col.getBinaryValues(), i);
                     assertThat(actual).isEqualTo(expected);
                 }
             }
@@ -271,7 +272,7 @@ class ColumnReaderDictionaryIdsTest {
                 assertThat(ids).isNotNull();
                 for (int i = 0; i < col.getValueCount(); i++, values++) {
                     assertThat(col.getBinaryDictionary().getBinary(ids[i])).isEqualTo(
-                            Arrays.copyOfRange(col.getBinaryValues(), col.getBinaryStarts()[i], col.getBinaryEnds()[i]));
+                            bytesOf(col.getBinaryValues(), i));
                 }
             }
             assertThat(values).isEqualTo(4_096);
@@ -291,7 +292,7 @@ class ColumnReaderDictionaryIdsTest {
             for (int i = 0; i < col.getValueCount(); i++) {
                 byte[] entry = col.getBinaryDictionary().getBinary(ids[i]);
                 assertThat(entry).hasSize(12).isEqualTo(
-                        Arrays.copyOfRange(col.getBinaryValues(), col.getBinaryStarts()[i], col.getBinaryEnds()[i]));
+                        bytesOf(col.getBinaryValues(), i));
             }
         }
     }
@@ -491,12 +492,12 @@ class ColumnReaderDictionaryIdsTest {
     }
 
     private static void assertViewsMatchStrings(ColumnReader col) {
-        byte[] bytes = col.getBinaryValues();
-        int[] starts = col.getBinaryStarts();
-        int[] ends = col.getBinaryEnds();
+        BinaryValues binary = col.getBinaryValues();
         String[] strings = col.getStrings();
+        byte[][] copies = col.getBinaries();
         for (int i = 0; i < col.getValueCount(); i++) {
-            assertThat(range(bytes, starts[i], ends[i])).isEqualTo(strings[i]);
+            assertThat(range(binary, i)).isEqualTo(strings[i]);
+            assertThat(binary.getBinary(i)).isEqualTo(copies[i]);
         }
     }
 
@@ -538,7 +539,11 @@ class ColumnReaderDictionaryIdsTest {
         return InMemoryFiles.toByteArray(out);
     }
 
-    private static String range(byte[] bytes, int start, int end) {
-        return new String(bytes, start, end - start, StandardCharsets.UTF_8);
+    private static String range(BinaryValues values, int i) {
+        return new String(values.buffer(i), values.start(i), values.end(i) - values.start(i), StandardCharsets.UTF_8);
+    }
+
+    private static byte[] bytesOf(BinaryValues values, int i) {
+        return Arrays.copyOfRange(values.buffer(i), values.start(i), values.end(i));
     }
 }

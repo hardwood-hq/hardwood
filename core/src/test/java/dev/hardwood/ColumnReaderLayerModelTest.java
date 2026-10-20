@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
@@ -185,7 +186,7 @@ class ColumnReaderLayerModelTest {
     }
 
     /// `plain_uncompressed_with_nulls.parquet` has a flat `optional binary`
-    /// column. `getBinaryValues()` with `getBinaryStarts()` and `getBinaryEnds()` round-trip every
+    /// column. Each value's window in `getBinaryValues()` round-trips every
     /// non-null value — no STRUCT or REPEATED layers; `getLayerCount() == 0`.
     @Test
     void flatBinaryRoundTrip() throws Exception {
@@ -197,24 +198,21 @@ class ColumnReaderLayerModelTest {
             assertThat(col.nextBatch()).isTrue();
             assertThat(col.getLayerCount()).isEqualTo(0);
 
-            byte[] bytes = col.getBinaryValues();
-            int[] starts = col.getBinaryStarts();
-            int[] ends = col.getBinaryEnds();
+            BinaryValues binary = col.getBinaryValues();
             Validity validity = col.getLeafValidity();
 
-            assertThat(starts).hasSize(col.getValueCount());
-            assertThat(ends).hasSize(col.getValueCount());
+            assertThat(binary.size()).isEqualTo(col.getValueCount());
 
             // Row 0 = "alice", row 1 = null, row 2 = "charlie"
             assertThat(validity.isNotNull(0)).isTrue();
-            String s0 = new String(bytes, starts[0], ends[0] - starts[0], StandardCharsets.UTF_8);
+            String s0 = window(binary, 0);
             assertThat(s0).isEqualTo("alice");
 
             assertThat(validity.isNull(1)).isTrue();   // null
-            assertThat(ends[1] - starts[1]).isEqualTo(0);
+            assertThat(binary.length(1)).isEqualTo(0);
 
             assertThat(validity.isNotNull(2)).isTrue();
-            String s2 = new String(bytes, starts[2], ends[2] - starts[2], StandardCharsets.UTF_8);
+            String s2 = window(binary, 2);
             assertThat(s2).isEqualTo("charlie");
 
             // Convenience-accessor parity
@@ -242,18 +240,13 @@ class ColumnReaderLayerModelTest {
 
             int[] layerOffsets = col.getLayerOffsets(0);
             Validity listValidity = col.getLayerValidity(0);
-            byte[] bytes = col.getBinaryValues();
-            int[] starts = col.getBinaryStarts();
-            int[] ends = col.getBinaryEnds();
+            BinaryValues binary = col.getBinaryValues();
 
             // 4 records, sentinel suffix
             assertThat(layerOffsets).hasSize(5);
             // Row 0: ["a","b","c"]
             assertThat(layerOffsets[1] - layerOffsets[0]).isEqualTo(3);
-            String row0First = new String(bytes,
-                    starts[layerOffsets[0]],
-                    ends[layerOffsets[0]] - starts[layerOffsets[0]],
-                    StandardCharsets.UTF_8);
+            String row0First = window(binary, layerOffsets[0]);
             assertThat(row0First).isEqualTo("a");
 
             // Row 1: empty list (present, zero items)
@@ -267,15 +260,17 @@ class ColumnReaderLayerModelTest {
 
             // Row 3: ["single"]
             assertThat(layerOffsets[4] - layerOffsets[3]).isEqualTo(1);
-            String row3 = new String(bytes,
-                    starts[layerOffsets[3]],
-                    ends[layerOffsets[3]] - starts[layerOffsets[3]],
-                    StandardCharsets.UTF_8);
+            String row3 = window(binary, layerOffsets[3]);
             assertThat(row3).isEqualTo("single");
 
+            // The copies read the compacted leaf values, as the windows do.
+            byte[][] copies = col.getBinaries();
+            for (int i = 0; i < binary.size(); i++) {
+                assertThat(binary.getBinary(i)).isEqualTo(copies[i] == null ? new byte[0] : copies[i]);
+            }
+
             // One view per leaf value
-            assertThat(starts).hasSize(col.getValueCount());
-            assertThat(ends).hasSize(col.getValueCount());
+            assertThat(binary.size()).isEqualTo(col.getValueCount());
 
             // Convenience-accessor parity
             String[] flat = col.getStrings();
@@ -435,14 +430,12 @@ class ColumnReaderLayerModelTest {
              ColumnReader col = reader.columnReader("tags.list.element")) {
 
             assertThat(col.nextBatch()).isTrue();
-            byte[] bytes = col.getBinaryValues();
-            int[] starts = col.getBinaryStarts();
-            int[] ends = col.getBinaryEnds();
+            BinaryValues binary = col.getBinaryValues();
 
             // The buffer need not be sized to the values; every view lies within it.
             for (int i = 0; i < col.getValueCount(); i++) {
-                assertThat(starts[i]).isBetween(0, ends[i]);
-                assertThat(ends[i]).isLessThanOrEqualTo(bytes.length);
+                assertThat(binary.start(i)).isBetween(0, binary.end(i));
+                assertThat(binary.end(i)).isLessThanOrEqualTo(binary.buffer(i).length);
             }
         }
     }
@@ -497,15 +490,11 @@ class ColumnReaderLayerModelTest {
             assertThat(mapValidity.isNotNull(5)).isTrue();   // duplicate keys, present
 
             // Lockstep read of (key, value) pairs for row 4 ("Eve" → single_key=42).
-            byte[] keyBytes = keys.getBinaryValues();
-            int[] keyStarts = keys.getBinaryStarts();
-            int[] keyEnds = keys.getBinaryEnds();
+            BinaryValues keyValues = keys.getBinaryValues();
             int[] valueInts = values.getInts();
 
             int entry = keyOffsets[4];
-            int kStart = keyStarts[entry];
-            int kLen = keyEnds[entry] - kStart;
-            String key = new String(keyBytes, kStart, kLen, StandardCharsets.UTF_8);
+            String key = window(keyValues, entry);
             assertThat(key).isEqualTo("single_key");
             assertThat(valueInts[entry]).isEqualTo(42);
         }
@@ -594,5 +583,9 @@ class ColumnReaderLayerModelTest {
             assertThat(aCol.getInts()).containsExactly(1, 2);
             assertThat(bCol.getStrings()).containsExactly("x", "y");
         }
+    }
+
+    private static String window(BinaryValues values, int i) {
+        return new String(values.buffer(i), values.start(i), values.end(i) - values.start(i), StandardCharsets.UTF_8);
     }
 }

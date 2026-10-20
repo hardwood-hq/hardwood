@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import dev.hardwood.reader.BinaryValues;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -67,9 +68,7 @@ class DictionaryFallbackNullsTest {
                 if (dictionaryIds != null) {
                     batchesWithIds++;
                 }
-                byte[] bytes = labels.getBinaryValues();
-                int[] starts = labels.getBinaryStarts();
-                int[] ends = labels.getBinaryEnds();
+                BinaryValues binary = labels.getBinaryValues();
                 String[] strings = labels.getStrings();
                 for (int i = 0; i < labels.getRecordCount(); i++, row++) {
                     String expected = label(row);
@@ -79,8 +78,10 @@ class DictionaryFallbackNullsTest {
                     if (expected == null) {
                         continue;
                     }
-                    assertThat(new String(bytes, starts[i], ends[i] - starts[i], StandardCharsets.UTF_8))
+                    assertThat(window(binary, i))
                             .as("row %d view", row).isEqualTo(expected);
+                    assertThat(binary.getBinary(i))
+                            .as("row %d copy", row).isEqualTo(expected.getBytes(StandardCharsets.UTF_8));
                     if (dictionaryIds != null) {
                         assertThat(labels.getBinaryDictionary().getString(dictionaryIds[i]))
                                 .as("row %d id", row).isEqualTo(expected);
@@ -349,5 +350,9 @@ class DictionaryFallbackNullsTest {
             }
         }
         assertThat(viaColumns).isEqualTo(expected);
+    }
+
+    private static String window(BinaryValues values, int i) {
+        return new String(values.buffer(i), values.start(i), values.end(i) - values.start(i), StandardCharsets.UTF_8);
     }
 }

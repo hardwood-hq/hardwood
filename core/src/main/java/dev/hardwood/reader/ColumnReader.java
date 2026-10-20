@@ -62,8 +62,8 @@ import dev.hardwood.schema.ColumnSchema;
 /// returned array may be kept and read after the reader has advanced,
 /// including handed off to another thread for processing. The reader itself
 /// is still a single-threaded cursor: only one consumer thread may advance it.
-/// (The note on [#getBinaryValues()] that the array is not sized to the values is
-/// about its *length*, not reuse; that buffer is fresh per batch too.) Treat returned
+/// The [BinaryValues] from [#getBinaryValues()] and the arrays it reads from belong to
+/// their batch the same way. Treat returned
 /// arrays as read-only: the accessors of one batch share arrays (the dictionary ids,
 /// for instance, back [#getStrings()]'s reuse of `String`s), so changing one can
 /// change what another accessor of the batch returns.
@@ -98,9 +98,7 @@ public class ColumnReader implements Closeable {
     // Cached real-items-only typed leaf arrays for nested batches. Allocated
     // on first access and invalidated when a step is adopted.
     private Object cachedRealValues;
-    private byte[] cachedRealBinaryBytes;
-    private int[] cachedRealBinaryStarts;
-    private int[] cachedRealBinaryEnds;
+    private BinaryValues cachedBinaryValues;
     private boolean dictionaryResolved;
     private int[] cachedDictionaryIds;
     private BinaryDictionary cachedBinaryDictionary;
@@ -194,9 +192,7 @@ public class ColumnReader implements Closeable {
         realViewComputed = false;
         currentRealView = null;
         cachedRealValues = null;
-        cachedRealBinaryBytes = null;
-        cachedRealBinaryStarts = null;
-        cachedRealBinaryEnds = null;
+        cachedBinaryValues = null;
         dictionaryResolved = false;
         cachedDictionaryIds = null;
         cachedBinaryDictionary = null;
@@ -328,39 +324,14 @@ public class ColumnReader implements Closeable {
 
     // ==================== Varlength Leaf Buffers ====================
 
-    /// The bytes a varlength leaf's values are read from. Value `i` occupies
-    /// `[getBinaryStarts()[i], getBinaryEnds()[i])`.
-    ///
-    /// Values need not be contiguous or in value order, and several may cover the
-    /// same bytes, as values of a dictionary-encoded column naming the same
-    /// dictionary entry may. The array is not sized to the values; bytes outside
-    /// every value's range are unspecified.
+    /// The values of a varlength leaf, read by value index. See [BinaryValues] for how a value's
+    /// bytes are read.
     ///
     /// @throws IllegalStateException for non-byte-array leaves
-    public byte[] getBinaryValues() {
+    public BinaryValues getBinaryValues() {
         checkBatchAvailable();
         ensureRealBinary();
-        return cachedRealBinaryBytes;
-    }
-
-    /// Start of each value in [#getBinaryValues()], inclusive. Length ==
-    /// `getValueCount()`. A null value's range is empty.
-    ///
-    /// @throws IllegalStateException for non-byte-array leaves
-    public int[] getBinaryStarts() {
-        checkBatchAvailable();
-        ensureRealBinary();
-        return cachedRealBinaryStarts;
-    }
-
-    /// End of each value in [#getBinaryValues()], exclusive. Length ==
-    /// `getValueCount()`; the byte length of value `i` is `ends[i] - starts[i]`.
-    ///
-    /// @throws IllegalStateException for non-byte-array leaves
-    public int[] getBinaryEnds() {
-        checkBatchAvailable();
-        ensureRealBinary();
-        return cachedRealBinaryEnds;
+        return cachedBinaryValues;
     }
 
     // ==================== Dictionary ====================
@@ -401,7 +372,7 @@ public class ColumnReader implements Closeable {
     /// Materialises one `byte[]` per leaf value, copying out of the binary
     /// buffer. Returns `null` at indexes where [#getLeafValidity()] is unset.
     /// Allocates one byte array per leaf — hot loops should consult
-    /// [#getBinaryValues()] with [#getBinaryStarts()] and [#getBinaryEnds()] directly.
+    /// each value's window in [#getBinaryValues()] directly.
     ///
     /// The returned array has length [#getValueCount()] — i.e. the **real
     /// leaf count**, not [#getRecordCount()]. For a flat column the two
@@ -414,6 +385,7 @@ public class ColumnReader implements Closeable {
             return cachedBinaries;
         }
         ensureRealBinary();
+        BinaryValues values = cachedBinaryValues;
         int n = getValueCount();
         Validity validity = getLeafValidity();
         byte[][] result = new byte[n][];
@@ -422,14 +394,14 @@ public class ColumnReader implements Closeable {
                 result[i] = null;
                 continue;
             }
-            result[i] = Arrays.copyOfRange(cachedRealBinaryBytes, cachedRealBinaryStarts[i], cachedRealBinaryEnds[i]);
+            result[i] = values.getBinary(i);
         }
         cachedBinaries = result;
         return result;
     }
 
     /// Convenience: materialises one `String` per leaf value by UTF-8 decoding
-    /// the slice of [#getBinaryValues()] for each entry. Returns `null` at
+    /// each value of [#getBinaryValues()]. Returns `null` at
     /// indexes where [#getLeafValidity()] is unset.
     ///
     /// The column has to hold text: a `BYTE_ARRAY` annotated `STRING`, `ENUM` or
@@ -584,14 +556,13 @@ public class ColumnReader implements Closeable {
     }
 
     private void ensureRealBinary() {
-        if (cachedRealBinaryBytes != null) {
+        if (cachedBinaryValues != null) {
             return;
         }
         BinaryBatchValues bbv = realLeafBinary();
         int leafCount = nested ? getValueCount() : recordCount;
-        cachedRealBinaryBytes = bbv.bytes();
-        cachedRealBinaryStarts = trimToLeafCount(bbv.starts(), leafCount);
-        cachedRealBinaryEnds = trimToLeafCount(bbv.ends(), leafCount);
+        cachedBinaryValues = new BinaryValues(bbv.bytes(), trimToLeafCount(bbv.starts(), leafCount),
+                trimToLeafCount(bbv.ends(), leafCount));
     }
 
     /// Resolves the dictionary view of the current batch: ids only when every non-null
