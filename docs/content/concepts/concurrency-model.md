@@ -78,7 +78,11 @@ A schema of many columns spreads both the copying and the flush across all the t
 - **Size the pool to the workload.** `HardwoodContext.create(n)` sets the number of
   threads that decompress and decode pages, and that encode and compress column chunks on write, which is the bulk of the CPU, so `n` is the main throughput
   and CPU dial. The default (available processors) suits a process whose main job is reading
-  Parquet; lower it when Hardwood shares the machine with other heavy work. Fetching page bytes on
+  Parquet; lower it when Hardwood shares the machine with other heavy work. Lower it as well when
+  your read loop spends longer per batch than the pool takes to decode it: the read then goes at
+  the pace of your loop, and the threads beyond what it can take in compete with it for cores,
+  shared caches and memory bandwidth, so such a read can finish sooner, and with less CPU, on 2 to 4
+  threads than on the default. Measure the read at a few values of `n` to find its best. Fetching page bytes on
   demand, a lighter stage, runs on the JVM's virtual-thread carriers rather than this pool. Speculative fetches (the next file's footer, the
   next row group's fetch plans and first chunk, the chunk after the one being read) run on the
   common `ForkJoinPool`. `n` bounds neither. For strict CPU isolation on a shared machine, also cap
