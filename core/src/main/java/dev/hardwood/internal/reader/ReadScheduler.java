@@ -312,7 +312,10 @@ public final class ReadScheduler {
     /// the cap past the read's first unpublished row `readPublished`, or at most one batch capacity
     /// past its own column's first unpublished row. The latter keeps the read live: a column with
     /// repetition seals its open cell only on the page holding the next record start.
+    ///
+    /// Both rows are the indexed ones, read in the same pass, so a page is admitted against the
+    /// state the choice reports. A column publishing meanwhile is marked changed and chosen again.
     private boolean admitted(ScheduledColumn<?> column, long row, long readPublished) {
-        return row - column.publishedRow() <= batchCapacity || row - readPublished < capRows;
+        return row - column.indexedPublishedRow <= batchCapacity || row - readPublished < capRows;
     }
 }
