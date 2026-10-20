@@ -29,6 +29,7 @@ import dev.hardwood.InMemoryOutputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -408,7 +409,7 @@ class WriterParallelEncodingTest {
     /// the caller appends and encodes every chunk itself, the single-threaded write. It also shows
     /// that a busy pool slows a write down to the caller's pace without stalling it.
     private static byte[] onBusyPool(Write write) throws Exception {
-        try (HardwoodContext busy = HardwoodContext.create(1)) {
+        try (HardwoodContextImpl busy = HardwoodContextImpl.create(1)) {
             CountDownLatch release = new CountDownLatch(1);
             busy.executor().submit(() -> {
                 release.await();

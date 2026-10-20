@@ -16,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.CountingInputFile;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
@@ -252,7 +253,7 @@ class MultiFileRowReaderTest {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
         List<Path> files = List.of(filePath, filePath);
 
-        try (HardwoodContext context = HardwoodContext.create(2)) {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create(2)) {
             List<Long> ids = new ArrayList<>();
 
             try (Hardwood hardwood = Hardwood.create(context);

@@ -31,13 +31,19 @@ public interface HardwoodContext extends AutoCloseable {
 
     /// Get the executor service for parallel operations.
     ///
-    /// A read waits for work only this executor's threads run, so a reader built with this
+    /// The executor runs Hardwood's own work: it decodes the pages of every read and encodes the
+    /// column chunks of every write on this context, so a task submitted to it competes with
+    /// them. A read waits for work only this executor's threads run, so a reader built with this
     /// context cannot be built in a task running on it: building one there fails with an
     /// [IllegalStateException].
+    ///
+    /// @deprecated The executor is not meant to run the caller's tasks, and this method has no
+    ///             replacement; it will be removed in the next major release.
+    @Deprecated(since = "1.1", forRemoval = true)
     ExecutorService executor();
 
-    /// Closes the context. The pool accepts no new task, and the tasks already submitted to
-    /// [#executor()] run to completion; the call waits up to five seconds for them.
+    /// Closes the context. The pool accepts no new task, and the tasks already submitted to it
+    /// run to completion; the call waits up to five seconds for them.
     @Override
     void close();
 

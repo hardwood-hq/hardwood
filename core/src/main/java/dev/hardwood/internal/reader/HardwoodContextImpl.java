@@ -123,6 +123,9 @@ public class HardwoodContextImpl implements HardwoodContext {
         return new LibdeflatePool();
     }
 
+    /// The pool that decodes pages and encodes column chunks. Stays as the internal accessor once
+    /// [HardwoodContext#executor()] is removed.
+    @SuppressWarnings("removal")
     @Override
     public ExecutorService executor() {
         return executor;

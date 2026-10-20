@@ -13,6 +13,12 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
+## 1.1.0.CR1 (unreleased)
+
+**Deprecations:**
+
+- `HardwoodContext.executor()` is deprecated for removal in the next major release, without a replacement ([#1581](https://github.com/hardwood-hq/hardwood/issues/1581))
+
 ## 1.1.0.Beta2 (2026-10-11)
 
 [Announcement blog post](https://www.morling.dev/blog/row-group-control-faster-s3-reads-footer-caching-hardwood-1-1-0-beta2/) ·
