@@ -255,9 +255,10 @@ public final class ScheduledNestedColumn extends ScheduledColumn<NestedBatch> {
         }
         if (placementEnded) {
             // Nothing is placed after the end: the pages left over past a row cap are dropped,
-            // and those not submitted yet are not decoded
+            // and those not submitted yet are not decoded. A queued SealedFillTask stays: the
+            // cells the fetcher sealed before have no other task to fill them
             unplaced.clear();
-            ready.clear();
+            ready.removeIf(task -> !(task instanceof SealedFillTask));
             lastPlaced = null;
         }
         if (!fetchEnded) {
