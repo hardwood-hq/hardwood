@@ -28,12 +28,14 @@ struct is therefore flat work wearing a nested shape, which is why #475 exists. 
 document says *nested* only where it names today's classes or the path a read takes
 today, and *repeated* wherever the axis is meant.
 
-## Finding 1 — dispatch is per file, and reads the file schema
+## Finding 1 — dispatch is per file, and reads the file schema (closed by #1335; stage 5 owns the remainder)
 
-`ParquetFileReader.createRowReader` routes on `FileSchema.isFlatSchema()`. That method
-asks about the file, so a projection of nothing but top-level primitives lands on
-`NestedRowReader` whenever the file holds one list column anywhere — including a
-column the projection never names.
+`ParquetFileReader.createRowReader` routed on `FileSchema.isFlatSchema()`. That method
+asks about the file, so a projection of nothing but top-level primitives landed on
+`NestedRowReader` whenever the file held one list column anywhere — including a
+column the projection never names. Stage 3 moved the choice to the decoded projection; a
+read that decodes a repeated column or a group still puts every column on the nested
+reader, which stage 5 removes.
 
 Measured before #1287, on a 1M-row uncompressed file holding twenty `int32` columns
 and one `list<string>`, projecting the twenty scalars and reading two or all twenty of them per
@@ -42,7 +44,7 @@ and the reads are identical between the two columns and only the reader differs.
 Minimum of 5 runs after 3 warmups, one JVM per figure, taken in the dev container
 without a pinned clock.
 
-| Read per row | `NestedRowReader` (today) | `FlatRowReader` | ratio |
+| Read per row | `NestedRowReader` (before #1335) | `FlatRowReader` | ratio |
 | --- | --- | --- | --- |
 | 2 of 20 columns | 46.0 ms | 15.2 ms | 3.03× |
 | 20 of 20 columns | 63.7 ms | 26.1 ms | 2.44× |
@@ -184,7 +186,7 @@ the reader merge is the last thing that should meet two copies of a decode.
 | --- | --- | --- | --- | --- |
 | 1 | State the leaf decode once | Finding 4 | #1334; unblocks #971, #1156, #447, #1021 | — |
 | 2 | Benchmark projected reads | — | none (hardwood-benchmarks) | — |
-| 3 | Choose the reader from the projection | Finding 1 | #1335 | 2 for numbers |
+| 3 | Choose the reader from the projection (done in #1335, see below) | Finding 1 | #1335 | 2 for numbers |
 | 4 | Non-repeated structs on the flat path | — | #475, #631 | 1, 3 |
 | 5 | One reader, pipeline chosen per column | Findings 2 and 5; remainder of 1 | #732 | 1, 4 |
 | 6 | Cut the nested column's per-batch cost (done in #1287, see below) | Finding 6 | #1024, #750, #1045 | — |
@@ -241,33 +243,18 @@ projections.
 
 ### Stage 3 — choose the reader from the projection, not the file
 
-Closes finding 1. Issue: #1335.
+Done in #1335: `ParquetFileReader.isFlatProjection` takes the flat reader when every
+decoded column, predicate-only columns included, has `maxRepetitionLevel == 0` and every
+decoded top-level field is a primitive
+([ROW_READER.md](../_designs/ROW_READER.md#flat-and-nested-readers)). Stage 4 deletes the
+second clause. `ColumnProjectionTest` asserts the concrete reader class for flat, flipped,
+repeated, struct and filter-only reads. Closes finding 1 except the reads stage 5 owns.
+Issue: #1335.
 
-Take the flat reader when only flat top-level columns are projected — *flat* is
-non-repeated, *top-level* is not under a group. As a predicate over the projection,
-replacing `schema.isFlatSchema()` at the dispatch site: every projected column has
-`maxRepetitionLevel == 0`, and every projected top-level field is a primitive.
-`ProjectedSchema` answers both, and no new code path is added.
-
-Both clauses earn their place — an unannotated `repeated int32` is a top-level primitive
-that repeats — but only the first is the axis. `account.id` is flat and still
-unreachable, because `FlatRowReader` keys its name map on the leaf name and reports leaf
-columns where the nested reader reports top-level fields. Stage 4 deletes the second
-clause.
-
-Existing coverage carries most of the guardrail: the core suite passes unmodified under
-the change, with one read changing reader,
-`ColumnProjectionTest.testNestedSchemaProjectTopLevelField`. Two gaps remain:
-
-- **The motivating shape is untested.** `nested_struct_test.parquet` has no repeated
-  column. Nothing projects top-level primitives from a file containing a list or map;
-  `list_basic_test.parquet` (`id` plus two lists) covers it, with nulls, a logical type
-  and a filtered read.
-- **Nothing asserts which reader serves a read**, so the flip is invisible and can be
-  undone silently. Assert the concrete reader class for a flat, a flipped and a repeated
-  projection.
-
-Judged on the `projectedScalars` workload.
+Measured with `MixedSchemaReadBenchmark`'s `rowScalars*` methods rather than stage 2's
+`projectedScalars`, which stays open: 12 scalars read by row from a 2M-row file that also
+holds two lists went from 60.4 to 35.3 ms, and from 56.9 to 24.8 ms under a filter on one
+of them, matching the scalar-only twin file.
 
 ### Stage 4 — non-repeated structs on the flat path
 

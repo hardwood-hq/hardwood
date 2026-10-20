@@ -154,6 +154,6 @@ Tests: `ParquetReaderTest`, `BuilderCombinationTest`, `MultiFilePlanningTest`, `
 - **`tail` over several files.** Rejected at `build()` with `UnsupportedOperationException`; the tail plan and its mask probe are single-file.
 - **`tail` with a filter (#542).** Rejected at `build()`; see [RECORD_FILTERING.md](RECORD_FILTERING.md#row-selection-over-the-filtered-relation).
 - **Row-layer overhead (#1045).** Reading a file through `RowReader` costs measurably more CPU and allocation than reading the same columns through `ColumnReaders`.
-- **Reader choice per file (#732).** The flat/nested choice is one decision for the read, taken from the decoded projection against the reference schema. A decoded column that repeats, or whose top-level field is a group, puts every column of that read on the nested path. A column neither projected nor referenced by the predicate does not.
+- **Reader choice per read (#732).** The flat/nested choice is one decision for the read, taken from the decoded projection against the reference schema. A decoded column that repeats, or whose top-level field is a group, puts every column of that read on the nested path. A column neither projected nor referenced by the predicate does not.
 - **File name in nested caller-mistake messages (#1156).** `TopLevelFieldMap` and the nested flyweights raise their caller-mistake messages without the file name, which in a multi-file read leaves the file unidentified.
 - **Forward-only.** A `RowReader` has no backward step, reset or reposition; a new position is a new reader.
